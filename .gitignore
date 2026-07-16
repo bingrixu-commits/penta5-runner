@@ -3,6 +3,9 @@
 node_modules/
 api/node_modules/
 data/state.json
+data/state.json.bak*
+data/.state.*.tmp
+data/*.tmp
 data/proxy_latest_cache.json
 data/penta5_supervisor_state.json
 data/penta5_supervisor.log
@@ -13,6 +16,7 @@ data/stable_math_filter.json
 data/codex_percent_server.json
 *.bak
 *.bak_*
+*.bak-
 panel.html.bak_*
 api.bak.*/
 backups/
