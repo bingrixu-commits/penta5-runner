@@ -161,7 +161,6 @@ button.gray{background:#4b5563}
     <div id="tipReadyBanner" class="tip-ready-banner" role="status" aria-live="polite"></div>
     <nav class="section-nav" id="sectionNav" aria-label="页面分区">
       <a href="#txtConvertBox">回删命中率</a>
-      <a href="#txtTwoRemainTopBox">二定回删</a>
       <a href="#txtThreeRemainTopBox">三定回删</a>
       <a href="#practiceModelBox">自有转换靶场</a>
       <a href="#section-lottery">开奖数据</a>
@@ -174,25 +173,15 @@ button.gray{background:#4b5563}
 
 <div class="card section-anchor" id="txtConvertBox">
   <div class="card-head">
-    <h2>二定/三定回删命中率</h2>
+    <h2>三定回删命中率</h2>
     <button type="button" class="card-toggle" id="txtConvertToggle" data-collapse-toggle="txtConvert" data-collapse-default="0" aria-expanded="true">收起</button>
   </div>
   <div class="card-body" id="txtConvertBody" data-collapse-body="txtConvert">
-  <div class="small">按真实旧号回删分段统计命中率；点「重新计算」才跑，避免开奖刷新时卡死。</div>
+  <div class="small">按真实旧号回删分段统计命中率；点「重新计算」才跑（手动核对，不占 GPU），避免开奖刷新时卡死。</div>
 
-  <div id="txtTwoRemainTopBox" class="section-anchor nested-collapse" style="margin:10px 0 0;border:1px solid #8b5cf6;border-radius:12px;background:#f5f3ff;padding:10px;">
-    <div class="card-head" data-collapse-head="txtTwoRemainTop">
-      <div class="card-head-title"><b style="font-size:16px;color:#5b21b6;">二定回删命中率（千百 · 删30剩70）</b></div>
-      <button type="button" class="card-toggle" data-collapse-toggle="txtTwoRemainTop" data-collapse-default="0" aria-expanded="true">收起</button>
-    </div>
-    <div class="card-body" data-collapse-body="txtTwoRemainTop">
-      <div id="txtTwoFrameworkInfo" class="small">等待远程数据...</div>
-      <div id="txtTwoRemainContent" class="small" style="margin-top:8px;"></div>
-    </div>
-  </div>
   <div id="txtThreeRemainTopBox" class="section-anchor nested-collapse" style="margin:10px 0 0;border:1px solid #f97316;border-radius:12px;background:#fff7ed;padding:10px;">
     <div class="card-head" data-collapse-head="txtThreeRemainTop">
-      <div class="card-head-title"><b style="font-size:16px;color:#9a3412;">三定回删命中率（千百十 · 回删100剩900）</b></div>
+      <div class="card-head-title"><b style="font-size:16px;color:#9a3412;">三定回删命中率（千百十 · 回删150剩850）</b></div>
       <button type="button" class="card-toggle" data-collapse-toggle="txtThreeRemainTop" data-collapse-default="0" aria-expanded="true">收起</button>
     </div>
     <div class="card-body" data-collapse-body="txtThreeRemainTop">
@@ -1160,16 +1149,16 @@ function txtBuildContent(config,day,data){
   return {count:groups.length,width:config.width,text:txtFormatTokenList(displayGroups),preview:txtFormatTokenList(displayGroups,80)};
 }
 var TXT_POSITION_HISTORY_WINDOW = 50;
-/** 二定只留千百一档：删30剩70；三定只留千百十一档：回删100剩900 */
+/** 二定回删已下线；三定只留千百十一档：回删150剩850（面板手动核对，不走 GPU） */
 var TXT_POSITION_TWO_ONLY_POSITIONS = [0, 1];
-var TXT_POSITION_TWO_REMAIN_TARGETS = [70];
-var TXT_POSITION_TWO_REMAIN_TARGET = TXT_POSITION_TWO_REMAIN_TARGETS[0];
+var TXT_POSITION_TWO_REMAIN_TARGETS = [];
+var TXT_POSITION_TWO_REMAIN_TARGET = 70;
 var TXT_POSITION_TWO_EXCLUDE_TARGET = TXT_POSITION_TWO_REMAIN_TARGET;
 var TXT_POSITION_THREE_ONLY_POSITIONS = [0, 1, 2];
-var TXT_POSITION_THREE_REMAIN_TARGETS = [900];
-var TXT_POSITION_THREE_REMAIN_TARGET = 900;
-var TXT_POSITION_THREE_REMAIN_MIN = 900;
-var TXT_POSITION_THREE_REMAIN_MAX = 900;
+var TXT_POSITION_THREE_REMAIN_TARGETS = [850];
+var TXT_POSITION_THREE_REMAIN_TARGET = 850;
+var TXT_POSITION_THREE_REMAIN_MIN = 850;
+var TXT_POSITION_THREE_REMAIN_MAX = 850;
 var TXT_POSITION_TWO_TARGET = TXT_POSITION_TWO_REMAIN_TARGET;
 var TXT_POSITION_THREE_TARGET = TXT_POSITION_THREE_REMAIN_TARGET;
 var TXT_POSITION_BACKTEST_LIMIT = 30;
@@ -1199,7 +1188,7 @@ function txtPositionNormalizeThreeRemainTarget(value){
   if(TXT_POSITION_THREE_REMAIN_TARGETS.indexOf(next)<0)next=TXT_POSITION_THREE_REMAIN_TARGET;
   return next;
 }
-/** 模型键：二定=剩80 一档；三定=剩900 一档 */
+/** 模型键：二定已下线；三定=剩850 一档 */
 function txtPositionModelTarget(size,override){
   if(size===3){
     if(override!=null&&Number(override)>0)return txtPositionNormalizeThreeRemainTarget(override);
@@ -1224,7 +1213,7 @@ function txtPositionClampRemainCount(size,count,remainTarget){
 function txtPositionRemainLabel(size,remainTarget){
   var target=txtPositionModelTarget(size,remainTarget);
   if(size===2||size===3){
-    // 与界面「回删」前缀拼成「回删30剩70 / 回删100剩900」，避免「回删删」
+    // 与界面「回删」前缀拼成「回删150剩850」，避免「回删删」
     return txtPositionDeleteCount(size,target)+"剩"+target;
   }
   return "固定剩"+target;
@@ -1322,8 +1311,11 @@ function txtPositionPredictionForTargetRow(data,row){
   return null;
 }
 function txtPositionCombos(size){
-  // 二定只留千百剩80 一张卡；三定只留千百十剩900 一张卡
-  if(size===2)return [TXT_POSITION_TWO_ONLY_POSITIONS.slice()];
+  // 二定已下线；三定只留千百十剩850 一张卡
+  if(size===2){
+    if(!TXT_POSITION_TWO_REMAIN_TARGETS.length)return [];
+    return [TXT_POSITION_TWO_ONLY_POSITIONS.slice()];
+  }
   if(size===3)return [TXT_POSITION_THREE_ONLY_POSITIONS.slice()];
   return [];
 }
@@ -2020,12 +2012,12 @@ function txtPositionModelFrameHtmlFromComputed(twoByTarget,threeByTarget,twoSyst
   var twoRec=txtPositionRecommendItem(twoItems);
   var threeRec=txtPositionRecommendItem(threeItems);
   return '<div style="border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;padding:9px;margin-top:8px;">'
-    +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#0f172a;">二定/三定旧码原位置核查</b><span style="color:#64748b;">二定只留千百：删30剩70；三定只留千百十：回删100剩900。</span></div>'
+    +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#0f172a;">三定旧码原位置核查</b><span style="color:#64748b;">三定只留千百十：回删150剩850。</span></div>'
     +'<div style="margin-top:6px;font-size:12px;font-weight:700;color:#9a3412;">中/不中按最新开奖对上期回删结果回算，不是下方当前生成按钮的即时码。</div>'
     +(twoRec?('<div style="border:1px solid #c4b5fd;border-radius:9px;background:#f5f3ff;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#5b21b6;">二定推荐</b>'+txtPositionRecommendSummary(twoRec,"二定")+'</div>'):'')
-    +render("二定：只留千百",twoItems,twoRec,"#ddd6fe")
+    +render("二定：已下线",twoItems,twoRec,"#ddd6fe")
     +(threeRec?('<div style="border:1px solid #fed7aa;border-radius:9px;background:#fff7ed;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#9a3412;">三定推荐</b>'+txtPositionRecommendSummary(threeRec,"三定")+'</div>'):'')
-    +render("三定：回删100剩900",threeItems,threeRec,"#fed7aa")
+    +render("三定：回删150剩850",threeItems,threeRec,"#fed7aa")
     +'</div>';
 }
 function txtPositionSplitModelFrameHtmlFromComputed(twoByTarget,threeByTarget,twoSystemStatsByTarget,threeSystemStatsByTarget){
@@ -2068,13 +2060,13 @@ function txtPositionSplitModelFrameHtmlFromComputed(twoByTarget,threeByTarget,tw
   var threeRec=txtPositionRecommendItem(threeItems);
   return {
     twoBox:'<div style="border:1px solid #c4b5fd;border-radius:10px;background:#f5f3ff;padding:9px;margin-top:8px;">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#5b21b6;">二定核查</b><span style="color:#64748b;">只留千百 · 删30剩70 · TXT空格 · 攻击语逗号</span></div>'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#5b21b6;">二定核查</b><span style="color:#64748b;">二定回删已下线</span></div>'
       +'<div style="margin-top:6px;font-size:12px;font-weight:700;color:#6d28d9;">中/不中按最新开奖对上期回删结果回算，不是下方当前生成按钮的即时码。</div>'
       +(twoRec?('<div style="border:1px solid #c4b5fd;border-radius:9px;background:white;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#5b21b6;">推荐</b>'+txtPositionRecommendSummary(twoRec,"二定")+'</div>'):'')
       +render("二定位置模型",twoItems,twoRec,"#ddd6fe")
       +'</div>',
     threeBox:'<div style="border:1px solid #fdba74;border-radius:10px;background:#fff7ed;padding:9px;margin-top:8px;">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定核查</b><span style="color:#64748b;">只留千百十 · 回删100剩900 · 真实旧号回删 · TXT空格 · 攻击语各字封尾</span></div>'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定核查</b><span style="color:#64748b;">只留千百十 · 回删150剩850 · 真实旧号回删 · TXT空格 · 攻击语各字封尾</span></div>'
       +'<div style="margin-top:6px;font-size:12px;font-weight:700;color:#9a3412;">中/不中按最新开奖对上期回删结果回算，不是下方当前生成按钮的即时码。</div>'
       +(threeRec?('<div style="border:1px solid #fed7aa;border-radius:9px;background:white;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#9a3412;">推荐</b>'+txtPositionRecommendSummary(threeRec,"三定")+'</div>'):'')
       +render("三定位置模型",threeItems,threeRec,"#fed7aa")
@@ -2088,7 +2080,7 @@ function txtTwoRemainTopHtmlFromComputed(twoByTarget,twoSystemStatsByTarget){
     (twoByTarget[target]||[]).forEach(function(item){twoItems.push(item);});
   });
   if(!twoItems.length){
-    return '<div style="margin-top:6px;color:#64748b;">二定命中率计算中…</div>';
+    return '<div style="margin-top:6px;color:#64748b;">二定回删已下线</div>';
   }
   var rows=twoItems.map(function(item){
     var ok=item.latest&&typeof item.latest.success==="boolean"?item.latest.success:null;
@@ -2147,7 +2139,7 @@ function txtPositionQuickModelFrameHtml(data,kind){
   var isThree=String(kind||"")==="three";
   if(isThree){
     return '<div style="border:1px solid #fdba74;border-radius:10px;background:#fff7ed;padding:9px;margin-top:8px;">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定旧码原位置核查</b><span style="color:#64748b;">只留千百十 · 回删100剩900，按真实旧号自动分段回算。</span></div>'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定旧码原位置核查</b><span style="color:#64748b;">只留千百十 · 回删150剩850，按真实旧号自动分段回算。</span></div>'
       +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">'
       +'<button type="button" data-txt-position-generate="three" style="border:0;border-radius:7px;padding:7px 10px;background:#ea580c;color:white;font-weight:900;cursor:pointer;font-size:13px;">一键生成所有三定TXT</button>'
       +'</div>'
@@ -2155,7 +2147,7 @@ function txtPositionQuickModelFrameHtml(data,kind){
       +'</div>';
   }
   return '<div style="border:1px solid #c4b5fd;border-radius:10px;background:#f5f3ff;padding:9px;margin-top:8px;">'
-    +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#5b21b6;">二定旧码原位置核查</b><span style="color:#64748b;">只留千百 · 删30剩70，自动分段回算。</span></div>'
+    +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#5b21b6;">二定旧码原位置核查</b><span style="color:#64748b;">二定回删已下线。</span></div>'
     +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">'
     +'<button type="button" data-txt-position-generate="two" style="border:0;border-radius:7px;padding:7px 10px;background:#7c3aed;color:white;font-weight:900;cursor:pointer;font-size:13px;">一键生成所有二定TXT</button>'
     +'</div>'
@@ -2445,8 +2437,8 @@ function txtUpdatePositionFrameworkInfo(data){
   var twoInfo=txtPositionInfoEl("two");
   var threeInfo=txtPositionInfoEl("three");
   var shared="共享历史 "+rows.length+" 期；纯旧码回删不加排除码；点按钮才算命中率，避免开奖后卡死。";
-  if(twoInfo)twoInfo.textContent=shared+" 二定千百：删30剩70。";
-  if(threeInfo)threeInfo.textContent=shared+" 三定千百十：回删100剩900。";
+  if(twoInfo)twoInfo.textContent="二定回删已下线。";
+  if(threeInfo)threeInfo.textContent=shared+" 三定千百十：回删150剩850。";
   // 不再自动分段回算：开奖窗每4秒刷新会反复占满主线程，表现为网页卡、结算慢
   var key=txtPositionDetailCacheKey(data||{});
   if(txtPositionDetailHtmlCache[key]){
@@ -2465,7 +2457,7 @@ function txtPositionDetailCacheKey(data){
   var first=rows[0]||{};
   var pk=(data&&data.currentPrediction&&data.currentPrediction.positionKills)||{};
   var backupSig=["wan","qian","bai","shi"].map(function(key){return txtPositionBackupDigitFromEntry(pk[key]);}).join("");
-  return String(first.period||first.uid||"")+"|"+String(rows.length)+"|two_qianbai_70_three_qianbaishi_900|b"+backupSig;
+  return String(first.period||first.uid||"")+"|"+String(rows.length)+"|three_qianbaishi_850|b"+backupSig;
 }
 function txtPositionApplyDetailHtml(payload,twoBox,threeBox){
   payload=payload||{};
@@ -2530,8 +2522,8 @@ function txtStartPositionProgressiveRender(data,twoBox,threeBox){
   var twoByTarget={},threeByTarget={},twoSystemStatsByTarget={},threeSystemStatsByTarget={};
   var twoContent=$("txtTwoRemainContent");
   var threeContent=$("txtThreeRemainContent");
-  if(twoContent)setHtml(twoContent,'<div data-txt-two-progress="1" style="margin-top:6px;color:#6d28d9;font-weight:700;">准备中…</div>');
-  if(threeContent)setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">等待二定完成后开跑…</div>');
+  if(twoContent)setHtml(twoContent,'<div data-txt-two-progress="1" style="margin-top:6px;color:#6d28d9;font-weight:700;">二定回删已下线</div>');
+  if(threeContent)setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">准备中…</div>');
   TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){twoByTarget[target]=[];});
   TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){threeByTarget[target]=[];});
   var tasks=[];
@@ -2640,7 +2632,7 @@ function txtRunPositionDetailRender(){
     setHtml(twoBox,txtPositionQuickModelFrameHtml(data||{},"two"));
   }
   txtStartPositionProgressiveRender(data||{},twoBox,threeBox);
-  txtSetStatus("已开始分段计算：二定千百删30剩70；三定千百十回删100剩900；期间页面应仍可滚动。");
+  txtSetStatus("已开始分段计算：三定千百十回删150剩850；期间页面应仍可滚动。");
 }
 function txtSchedulePositionDetailRender(data,twoBox,threeBox){
   if(!TXT_POSITION_TWO_LITE_MODE)twoBox=twoBox||txtPositionModelBoxEl("two");
@@ -2659,11 +2651,11 @@ function txtSchedulePositionDetailRender(data,twoBox,threeBox){
   window.__txtPositionProgressiveKey=null;
   if(twoBox){
     twoBox.setAttribute("data-txt-position-filled","1");
-    setHtml(twoBox,'<div style="border:1px solid #c4b5fd;border-radius:10px;background:#f5f3ff;padding:9px;margin-top:8px;"><b style="color:#5b21b6;">二定回删核查</b><div style="margin-top:6px;color:#64748b;font-size:13px;">千百删30剩70，纯旧码回删，正在分段计算真实胜率…</div><button type="button" data-txt-position-run-detail="1" style="margin-top:8px;border:0;border-radius:8px;padding:8px 12px;background:#7c3aed;color:white;font-weight:900;cursor:pointer;font-size:13px;">重新计算二定回删</button></div>');
+    setHtml(twoBox,'<div style="border:1px solid #c4b5fd;border-radius:10px;background:#f5f3ff;padding:9px;margin-top:8px;"><b style="color:#5b21b6;">二定回删核查</b><div style="margin-top:6px;color:#64748b;font-size:13px;">二定回删已下线。</div></div>');
   }
   var twoContent=$("txtTwoRemainContent");
   var threeContent=$("txtThreeRemainContent");
-  if(TXT_POSITION_TWO_LITE_MODE&&twoContent&&!twoBox)setHtml(twoContent,'<div data-txt-two-progress="1" style="margin-top:6px;color:#6d28d9;font-weight:700;">二定命中率计算中…</div>');
+  if(TXT_POSITION_TWO_LITE_MODE&&twoContent&&!twoBox)setHtml(twoContent,'<div data-txt-two-progress="1" style="margin-top:6px;color:#6d28d9;font-weight:700;">二定回删已下线</div>');
   if(TXT_POSITION_THREE_LITE_MODE&&threeContent&&!threeBox)setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">三定命中率计算中…</div>');
   txtStartPositionProgressiveRender(data||{},twoBox,threeBox);
 }
@@ -4301,7 +4293,7 @@ function initTxtConverter(){
     if(positionSingleSize)txtGenerateSinglePositionFramework(positionSingleSize,positionSinglePositions,positionSingleExclude);
     if(positionCopySingleSize)txtCopySinglePositionFramework(positionCopySingleSize,positionCopySinglePositions,positionCopySingleExclude);
     if(customTwoGenerate){
-      txtSetStatus("自定义二定50组已移除：二定只留千百删30剩70；三定只留千百十回删100剩900。");
+      txtSetStatus("自定义二定50组已移除：二定回删已下线；三定只留千百十回删150剩850。");
     }
     if(positionCopy)txtCopyPositionFramework(positionCopy==="three"||positionCopy==="3"?"three":"two");
     if(positionDownload)txtDownloadPositionFramework(positionDownload==="three"||positionDownload==="3"?"three":"two");
@@ -4761,7 +4753,7 @@ safeOrderRows();
   var practiceLastCelebrationKey = "";
   var practiceSnapshotStore = {};
   var dailyStreakReportCache = {};
-var PANEL_UI_VERSION = "20260717_three_ding_v5_hewei_mixed";
+var PANEL_UI_VERSION = "20260717_three_remain_850_v1";
 var PANEL_SNAPSHOT_VERSIONS = {
     autoTop6:"backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit",
     recommend2:"backend-recommend2-snapshot-v15-formal-anytwo5",
