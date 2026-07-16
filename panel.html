@@ -4761,14 +4761,14 @@ safeOrderRows();
   var practiceLastCelebrationKey = "";
   var practiceSnapshotStore = {};
   var dailyStreakReportCache = {};
-var PANEL_UI_VERSION = "20260716_three_ding_pos_kill_v302";
+var PANEL_UI_VERSION = "20260717_three_ding_v5_hewei_mixed";
 var PANEL_SNAPSHOT_VERSIONS = {
     autoTop6:"backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit",
     recommend2:"backend-recommend2-snapshot-v15-formal-anytwo5",
     killFramework:"backend-kill-framework-snapshot-v7-formal-anytwo5",
-    compactAttack:"backend-three-ding-framework-v4-qbs-fixed3-anytwo5",
+    compactAttack:"backend-three-ding-framework-v5-qbs-fixed3-hewei-anytwo5-mixed",
     threeDingTwo:"backend-three-ding-two-v5-hewei-first-2pos-anytwo5-qbs",
-    threeDingOne:"backend-three-ding-one-v4-hewei-first-1pos-anytwo5-alt",
+    threeDingOne:"backend-three-ding-one-v5-hewei-first-2pos-anytwo5-alt",
     sideStable:"backend-side-stable-snapshot-v4-1pos-2hewei-2digit-sum-anytwo5-three5-old1300",
     coldFramework:"backend-cold-framework-snapshot-v5-anytwo5",
     dingKill:"backend-ding-kill-snapshot-v3-anytwo5",
@@ -5404,6 +5404,25 @@ var PANEL_SNAPSHOT_VERSIONS = {
     candidateCache[key]=out;
     return out;
   }
+  // 合尾5码禁全单/全双（02468、13579），否则沾任一合尾近乎恒真
+  function isUniformParityDigitSet(value){
+    var digits=uniqueDigitList(value);
+    if(digits.length<2)return false;
+    var seenOdd=false,seenEven=false;
+    for(var i=0;i<digits.length;i++){
+      if(Number(digits[i])%2===0)seenEven=true;
+      else seenOdd=true;
+      if(seenOdd&&seenEven)return false;
+    }
+    return seenOdd||seenEven;
+  }
+  function digitSetCandidatesMixedParity(size){
+    var key="digitSetMixed"+String(size);
+    if(candidateCache[key])return candidateCache[key];
+    var out=digitSetCandidates(size).filter(function(code){return !isUniformParityDigitSet(code);});
+    candidateCache[key]=out;
+    return out;
+  }
   function digitSetCandidatesFromDigits(sourceDigits,size){
     var key="digitSetFrom:"+String(sourceDigits||"")+":"+String(size);
     if(candidateCache[key])return candidateCache[key];
@@ -5472,8 +5491,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(extra.kind==="sizeRatio")return ["0大4小","1大3小","2大2小","3大1小","4大0小"];
     if(extra.kind==="recentExactCode")return [recentExactCodeWindowValueFromKey(extra.key)];
     if(extra.kind==="twoDigits")return twoDigitCandidates();
-    if(extra.kind==="twoHeweiTails")return digitSetCandidates(5);
-    if(extra.kind==="threeHeweiTails")return digitSetCandidates(5);
+    if(extra.kind==="twoHeweiTails")return digitSetCandidatesMixedParity(5);
+    if(extra.kind==="threeHeweiTails")return digitSetCandidatesMixedParity(5);
     return threeDigitCandidates();
   }
   function extraMatches(record,extra,candidate){
@@ -6296,12 +6315,17 @@ var PANEL_SNAPSHOT_VERSIONS = {
       formalCompact.forEach(function(item){
         if(item&&item.kind==="position"&&item.key&&["wan","qian","bai"].indexOf(String(item.key))>=0)compactPosKeys[String(item.key)]=true;
       });
-      return items.length===4
-        &&formalCompact.length===4
+      return items.length===5
+        &&formalCompact.length===5
         &&formalCompactCount(function(item){return item&&item.kind==="position"&&["wan","qian","bai"].indexOf(String(item.key))>=0;})===3
         &&Object.keys(compactPosKeys).length===3
         &&["wan","qian","bai"].every(function(key){return !!compactPosKeys[key];})
-        &&formalCompactCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1;
+        &&formalCompactCount(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai"&&/^\d$/.test(String(item.code||""));})===1
+        &&formalCompactCount(function(item){
+          if(!(item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"))return false;
+          var code=String(item.code||"");
+          return /^\d{5}$/.test(code)&&!isUniformParityDigitSet(code);
+        })===1;
     }
     if(storeName==="threeDingTwo"){
       var formalTd2=items.filter(function(item){return item&&item.side!=="backup";});
@@ -6324,10 +6348,10 @@ var PANEL_SNAPSHOT_VERSIONS = {
       formalTd1.forEach(function(item){
         if(item&&item.kind==="position"&&item.key&&["wan","qian","bai"].indexOf(String(item.key))>=0)td1PosKeys[String(item.key)]=true;
       });
-      return items.length===4
-        &&formalTd1.length===4
-        &&formalTd1Count(function(item){return item&&item.kind==="position"&&["wan","qian","bai"].indexOf(String(item.key))>=0;})===1
-        &&Object.keys(td1PosKeys).length===1
+      return items.length===5
+        &&formalTd1.length===5
+        &&formalTd1Count(function(item){return item&&item.kind==="position"&&["wan","qian","bai"].indexOf(String(item.key))>=0;})===2
+        &&Object.keys(td1PosKeys).length===2
         &&formalTd1Count(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai"&&/^\d$/.test(String(item.code||""));})===1
         &&formalTd1Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
         &&formalTd1Count(function(item){return item&&item.kind==="extra"&&["twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3"].indexOf(String(item.key))>=0&&/^\d{2}$/.test(String(item.code||""));})===1;
@@ -7887,13 +7911,13 @@ var PANEL_SNAPSHOT_VERSIONS = {
     return latestFrameworkEvaluation(data,"killFramework",{version:PANEL_SNAPSHOT_VERSIONS.killFramework,total:8});
   }
   function latestCompactAttackEvaluation(data){
-    return latestFrameworkEvaluation(data,"compactAttack",{version:PANEL_SNAPSHOT_VERSIONS.compactAttack,total:4});
+    return latestFrameworkEvaluation(data,"compactAttack",{version:PANEL_SNAPSHOT_VERSIONS.compactAttack,total:5});
   }
   function latestThreeDingTwoEvaluation(data){
     return latestFrameworkEvaluation(data,"threeDingTwo",{versionPrefix:"backend-three-ding-two-",total:4});
   }
   function latestThreeDingOneEvaluation(data){
-    return latestFrameworkEvaluation(data,"threeDingOne",{versionPrefix:"backend-three-ding-one-",total:4});
+    return latestFrameworkEvaluation(data,"threeDingOne",{versionPrefix:"backend-three-ding-one-",total:5});
   }
   function latestSideStableEvaluation(data){
     return latestFrameworkEvaluation(data,"sideStable",{version:PANEL_SNAPSHOT_VERSIONS.sideStable,total:8});
@@ -8110,8 +8134,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
   function buildThreeDingFrameworkAttackText(items,options){
     var list=frameworkAttackItems(items);
     if(!list.length)return "";
-    var opts=options&&typeof options==="object"?options:{};
-    // 三定系列攻击语必须写明千/百/十三个位置：框架挑中位除码 + 定位看板排除码写入各位；不含个位
+    // 三定系列（原/A/B）攻击语只吃本框定位项单码：挑中位除对应码，未挑中位保留全码；
+    // 禁止叠全局 positionKills 双码看板，否则会比模型多排除数字（A/B 各只除1码却变成除2码）。
     var order=["千","百","十"];
     var keepByLabel={};
     var picked=0;
@@ -8130,32 +8154,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
         return keep.indexOf(digit)>=0;
       }).join("");
     });
-    // 至少要有1个定位排除（B=1 / A=2 / 原三定=3），否则攻击语无意义
+    // 至少要有1个定位排除（B=2 / A=2 / 原三定=3），否则攻击语无意义
     if(picked<1)return "";
-    // 定位排除看板（positionKills 正式双码）写入千/百/十，避免只挑1位时千/百仍是全码
-    var data=opts.data||window.__penta5TxtState||state||{};
-    var prediction=(data&&data.currentPrediction)||(state&&state.currentPrediction)||{};
-    var pk=(prediction&&prediction.positionKills)||{};
-    var labelToState={千:"wan",百:"qian",十:"bai"};
-    order.forEach(function(label){
-      var entry=pk[labelToState[label]]||{};
-      var digits=[];
-      if(typeof positionFormalKillDigits==="function"){
-        digits=positionFormalKillDigits(entry)||[];
-      }else if(Array.isArray(entry.killDigits)){
-        digits=entry.killDigits.map(function(d){return String(d==null?"":d).replace(/\D/g,"").charAt(0);}).filter(Boolean).slice(0,2);
-      }
-      if(!digits.length){
-        var main=String(entry.recommendDigit!=null?entry.recommendDigit:(entry.selectedDigit!=null?entry.selectedDigit:(entry.main!=null?entry.main:""))).replace(/\D/g,"").charAt(0);
-        if(main)digits=[main];
-      }
-      if(!digits.length)return;
-      var base=keepByLabel[label]||"1234567890";
-      digits.forEach(function(digit){
-        base=String(base).split(String(digit)).join("");
-      });
-      keepByLabel[label]=base||keepByLabel[label]||"1234567890";
-    });
     var head=order.map(function(label){return label+(keepByLabel[label]||"1234567890");}).join("");
     var full="";
     try{
@@ -9124,7 +9124,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     return killFrameworkPickTop(data,pool,count,preferUniqueKey);
   }
   function compactAttackFrameworkPracticeItems(data){
-    // 三定框架：原三项定位固定千百十，各除1码 + 二数合
+    // 三定框架：千百十合尾 + 三项定位固定千百十各除1码 + 二数合（禁全单全双）
     data=data||state||{};
     var pool=practicePoolItems();
     var positions=compactAttackPickTop(data,pool.filter(function(item){
@@ -9134,11 +9134,19 @@ var PANEL_SNAPSHOT_VERSIONS = {
       var found=null;
       pool.forEach(function(item){
         if(found)return;
-        if(item&&item.kind==="extra"&&item.key===key&&!item.practiceSource&&item.code!=null&&String(item.code)!=="--"&&/^\d{5}$/.test(String(item.code)))found=item;
+        if(item&&item.kind==="extra"&&item.key===key&&!item.practiceSource&&item.code!=null&&String(item.code)!=="--"&&/^\d{5}$/.test(String(item.code))&&!isUniformParityDigitSet(String(item.code)))found=item;
       });
       return found;
     }
-    var extras=[findExtra("anyTwoHeweiHit")].filter(Boolean);
+    function findHewei(key){
+      var found=null;
+      pool.forEach(function(item){
+        if(found)return;
+        if(item&&item.kind==="hewei"&&item.key===key&&!item.practiceSource&&item.code!=null&&String(item.code)!=="--"&&/^\d$/.test(String(item.code)))found=item;
+      });
+      return found;
+    }
+    var extras=[findHewei("wanQianBai"),findExtra("anyTwoHeweiHit")].filter(Boolean);
     var out=positions.concat(extras);
     return out.map(function(item){
       var copy=Object.assign({},item||{});
@@ -9154,7 +9162,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="compactAttackFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #c4b5fd;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架</b><div class="small">等待模型就绪</div>','compactAttackFramework',true)
         +panelCollapseBodyOpen('compactAttackFramework')
-        +'<div style="border:1px solid #c4b5fd;border-radius:10px;padding:10px;background:#f5f3ff;color:#475569;font-size:13px;">三定框架：原三项定位固定千/百/十各除1个数字 + 二数合1项；二数合只按千百十两两合尾；排除数字各算法独立。</div>'
+        +'<div style="border:1px solid #c4b5fd;border-radius:10px;padding:10px;background:#f5f3ff;color:#475569;font-size:13px;">三定框架：千百十合尾1码 + 千/百/十各除1码（定位加强）+ 二数合5码（禁全单全双）；二数合只按千百十两两合尾；共5项全过才算中。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9171,11 +9179,10 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="compactAttackFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #c4b5fd;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架</b><div class="small">原三项定位固定千百十各除1码 + 二数合；二数合只按千百十两两合尾；排除数字各算法独立、同框禁同码；共4项，全通过才算中；攻击语在下方</div>','compactAttackFramework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架</b><div class="small">千百十合尾 + 千百十各除1码（定位加强）+ 二数合禁全单全双；二数合只按千百十两两合尾；同框禁同码；共5项，全通过才算中；攻击语在下方</div>','compactAttackFramework',true)
       +panelCollapseBodyOpen('compactAttackFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #c4b5fd;border-radius:12px;padding:12px;background:#f5f3ff;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkPositionBoardHtml(data)
       +frameworkAttackTextHtml("三定框架",top,"frameworkAttackCompact",{threeDing:true,data:data})
       +latestHtml
       +(repair.length?'<div style="margin-top:8px;border:1px solid #ddd6fe;background:#faf5ff;color:#6b21a8;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
@@ -9213,7 +9220,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
       +panelCollapseBodyOpen('threeDingTwoFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #f9a8d4;border-radius:12px;padding:12px;background:#fdf2f8;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkPositionBoardHtml(data)
       +frameworkAttackTextHtml("三定框架A",top,"frameworkAttackThreeDingTwo",{threeDing:true,data:data})
       +latestHtml
       +(repair.length?'<div style="margin-top:8px;border:1px solid #fbcfe8;background:#fce7f3;color:#9d174d;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
@@ -9230,7 +9236,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="threeDingOneFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架B</b><div class="small">等待模型就绪</div>','threeDingOneFramework',true)
         +panelCollapseBodyOpen('threeDingOneFramework')
-        +'<div style="border:1px solid #fda4af;border-radius:10px;padding:10px;background:#fff1f2;color:#475569;font-size:13px;">三定框架B：只从千百十挑1个位置排除1码 + 千百十合尾 + 二数合（千百十作用）+ 对数避开1组；与A各算各的，尽量不同码。</div>'
+        +'<div style="border:1px solid #fda4af;border-radius:10px;padding:10px;background:#fff1f2;color:#475569;font-size:13px;">三定框架B：从千百十挑2个位置各排除1码 + 千百十合尾 + 二数合（千百十作用）+ 对数避开1组；与A各算各的，尽量不同码；共5项全过才算中。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9247,11 +9253,10 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="threeDingOneFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架B</b><div class="small">千百十挑1位 + 合尾(优先备用) + 二数合(分框) + 对数避开；单码/二数合尽量与A错开；共4项全过才算中</div>','threeDingOneFramework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架B</b><div class="small">千百十挑2位 + 合尾(优先备用) + 二数合(分框) + 对数避开；单码/二数合尽量与A错开；共5项全过才算中</div>','threeDingOneFramework',true)
       +panelCollapseBodyOpen('threeDingOneFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #fda4af;border-radius:12px;padding:12px;background:#fff1f2;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkPositionBoardHtml(data)
       +frameworkAttackTextHtml("三定框架B",top,"frameworkAttackThreeDingOne",{threeDing:true,data:data})
       +latestHtml
       +(repair.length?'<div style="margin-top:8px;border:1px solid #fecdd3;background:#ffe4e6;color:#9f1239;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
