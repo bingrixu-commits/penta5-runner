@@ -1,0 +1,14 @@
+{
+  "name": "penta5-rds-api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "import": "node import_from_state.js",
+    "init-schema": "node init_schema.js"
+  },
+  "dependencies": {
+    "mysql2": "2.3.3"
+  }
+}

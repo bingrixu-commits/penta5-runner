@@ -1,0 +1,17 @@
+{
+  "last_sent_key": "2026-07-08T22:23:30.437Z:20260709076:prediction:period:20260709076:1783549374328",
+  "last_period": "20260709076",
+  "last_prediction_id": "prediction:period:20260709076:1783549374328",
+  "last_status": "ACCEPTED",
+  "martingale_level": 4,
+  "updated_at": "2026-07-09T06:28:46",
+  "martingale_previous_level": 4,
+  "martingale_last_stake": "1.6",
+  "martingale_last_outcome": "pending-payout",
+  "martingale_max_level": 4,
+  "martingale_multiplier": 2.0,
+  "martingale_base_stake": 0.2,
+  "last_message": "千123456790百1234567890十123457890个123456790四定千百十合123456790千百十个合234567890除单双单单各1.6",
+  "last_martingale_level": 4,
+  "last_martingale_stake": "1.6"
+}

@@ -1,0 +1,2839 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>纯 JSON 开奖大数据滚动分析系统</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f6f8;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:14px}
+h1{text-align:center;font-size:22px;margin:14px 0 12px}
+.status{padding:12px;border-radius:10px;background:#e8f1ff;color:#1d4ed8;margin-bottom:12px;font-weight:700;word-break:break-word}
+.status.ok{background:#e8f8ef;color:#047857}
+.status.err{background:#fee2e2;color:#b91c1c}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{background:#fff;border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 5px rgba(0,0,0,.08)}
+.card h2{font-size:18px;margin:0 0 12px}
+.table{width:100%;border-collapse:collapse}
+.table td{border-bottom:1px solid #edf0f3;padding:11px 8px;vertical-align:middle}
+.table td:first-child{background:#f3f4f6;font-weight:700;width:32%}
+.ball{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;margin:3px;background:#e11d48;color:#fff;font-weight:900}
+.ball.dark{background:#111827}
+.ball.blue{background:#4338ca}
+.tag{display:inline-block;background:#eef2ff;border-radius:999px;padding:5px 9px;margin:3px;font-size:13px}
+.btns{display:flex;gap:10px;margin-bottom:12px}
+button{border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:800;padding:12px 14px;font-size:16px}
+button.gray{background:#4b5563}
+.small{font-size:13px;color:#6b7280;line-height:1.6}
+.rate{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #eee;padding:9px 0}
+.rate span{text-align:right}
+.shape-choice{display:flex;flex-direction:column;gap:8px;min-width:0}
+.shape-choice__head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.shape-choice__code{font-weight:800;font-size:20px;color:#0f172a;line-height:1.25;word-break:break-all}
+.shape-choice__rate{font-size:13px;color:#475569;white-space:nowrap}
+.shape-choice__details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.shape-choice__detail{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:7px 9px;min-width:0}
+.shape-choice__label{font-size:12px;color:#64748b;line-height:1.3;margin-bottom:3px}
+.shape-choice__value{display:block;min-width:0}
+.shape-token-list{display:grid;grid-template-columns:repeat(4,max-content);gap:4px;align-items:center;min-width:0}
+.shape-token{display:inline-flex;align-items:center;justify-content:center;background:#fff;border:1px solid #cbd5e1;border-radius:6px;min-width:26px;padding:2px 5px;font-size:13px;font-weight:800;line-height:1.25;color:#0f172a;white-space:nowrap}
+.shape-choice__percent{display:block;margin-top:5px;font-size:13px;font-weight:800;line-height:1.25;color:#0f172a;white-space:nowrap}
+#practiceFireworks{position:fixed;inset:0;z-index:9999;pointer-events:none;overflow:hidden}
+#practiceFireworks canvas{position:absolute;inset:0;width:100%;height:100%}
+.practice-toast{position:absolute;left:50%;top:18%;transform:translateX(-50%);background:rgba(15,23,42,.94);color:white;border-radius:14px;padding:14px 22px;font-size:22px;font-weight:900;box-shadow:0 14px 38px rgba(15,23,42,.32);white-space:nowrap}
+.practice-hit-strong{font-size:16px!important;font-weight:900!important;padding:10px 12px!important;box-shadow:0 8px 22px rgba(22,101,52,.15)}
+@media(max-width:700px){.grid2{grid-template-columns:1fr}.ball{width:34px;height:34px}.rate{display:block}.rate span{text-align:left;display:block;margin-top:4px}}
+@media(max-width:700px){.shape-choice__details{grid-template-columns:1fr}.shape-choice__code{font-size:18px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>纯 JSON 开奖大数据滚动分析系统</h1>
+<div id="status" class="status">等待同步...</div>
+
+<div class="btns">
+<button onclick="loadState()">刷新数据</button>
+<button class="gray" onclick="manualSync()">手动同步</button>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2>最新开奖数据</h2>
+    <table class="table">
+      <tr><td>期号</td><td id="period">--</td></tr>
+      <tr><td>开奖时间</td><td id="opentime">--</td></tr>
+      <tr><td>开奖号码</td><td id="numbers">--</td></tr>
+      <tr><td>三对数排除</td><td id="threeDuishuCode">--</td></tr>
+      <tr><td>总合尾</td><td id="totalHewei">--</td></tr>
+      <tr><td>综合合尾</td><td id="subHewei">--</td></tr>
+    </table>
+    <div class="small" id="meta"></div>
+  </div>
+
+  <div class="card">
+    <h2>下一期大数据排除建议</h2>
+    <table class="table">
+      <tr><td>三个合尾统一避开码</td><td id="killThreeFour">--</td></tr>
+<tr><td>万千百合尾避开码</td><td id="killWanQianBai">--</td></tr>
+<tr><td>千百十合尾避开码</td><td id="killQianBaiShi">--</td></tr>
+<tr><td>万千百十合尾避开码</td><td id="killWanQianBaiShi">--</td></tr>
+
+      <tr><td>万位排除</td><td id="wan">--</td></tr>
+      <tr><td>千位排除</td><td id="qian">--</td></tr>
+      <tr><td>百位排除</td><td id="bai">--</td></tr>
+      <tr><td>十位排除</td><td id="shi">--</td></tr>
+    </table>
+    <div class="small" id="predMeta"></div>
+  </div>
+</div>
+
+
+
+
+
+<div class="card">
+  <h2>最近后台历史</h2>
+  <div id="history">--</div>
+</div>
+</div>
+
+<script>
+function $(id){return document.getElementById(id)}
+function esc(s){return String(s==null?"--":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function ball(n,cls){return '<span class="ball '+(cls||'')+'">'+esc(n)+'</span>'}
+function tag(t){return '<span class="tag">'+esc(t)+'</span>'}
+function setStatus(t,ok){var el=$("status");el.textContent=t;el.className="status "+(ok?"ok":"err")}
+function rate(total,match){return total?((match/total)*100).toFixed(2)+"%":"0.00%"}
+function panelCleanUrl(path){
+  var cleanPath=String(path||"/");
+  if(cleanPath.charAt(0)!=="/")cleanPath="/"+cleanPath;
+  var protocol=(location&&location.protocol)||"http:";
+  var host=(location&&location.host)||"8.210.5.221:3001";
+  return protocol+"//"+host+cleanPath;
+}
+function panelFetch(path,options){
+  var opts=options||{};
+  if(!opts.cache)opts.cache="no-store";
+  if(!opts.credentials)opts.credentials="same-origin";
+  return fetch(panelCleanUrl(path),opts);
+}
+function posHtml(p){
+  p=p||{};
+  if(typeof p==="string" || typeof p==="number"){return ball(p,"dark")}
+  var recommend=p.recommendDigit || p.selectedDigit || p.main || (p.killDigits&&p.killDigits[0]) || p.mainDigit || "--";
+  var main=p.primaryDigit || p.mainAlgorithmDigit || p.mainDigit || p.main || "--";
+  var backup=p.originalBackupDigit || p.backupAlgorithmDigit || p.backup || p.backupDigit || (p.killDigits&&p.killDigits[1]) || "--";
+  return ball(recommend,"dark")+" 推荐 "+ball(main,"dark")+" 主攻 "+ball(backup,"blue")+" 备用";
+}
+function buildHeweiReport(data){
+  var stat={
+    wanQianBai:{label:"万千百合尾",total:0,match:0},
+    qianBaiShi:{label:"千百十合尾",total:0,match:0},
+    wanQianBaiShi:{label:"万千百十合尾",total:0,match:0},
+    total:{label:"三个合尾统一避开码",total:0,match:0}
+  };
+
+  function getDigit(value){
+    if(value && typeof value==="object")
+      return String(value.killDigit||"");
+    return value===undefined ? "" : String(value);
+  }
+
+  var list=Array.isArray(data.predictions)?data.predictions:[];
+
+  list.forEach(function(p){
+    if(!p || !p.evaluated || !p.evaluation) return;
+
+    var e=p.evaluation;
+    var g=e.actualCompositeHeweiGroup;
+    if(!Array.isArray(g) || g.length<3) return;
+
+    var independent=
+      p.independentHeweiKills ||
+      e.previousIndependentHeweiKills || {};
+
+    [
+      ["wanQianBai",0],
+      ["qianBaiShi",1],
+      ["wanQianBaiShi",2]
+    ].forEach(function(item){
+      var key=item[0],index=item[1];
+      var digit=getDigit(independent[key]);
+      if(!digit || digit==="--") return;
+      stat[key].total++;
+      if(digit!==String(g[index])) stat[key].match++;
+    });
+
+    var unified=String(
+      p.threeFourHeweiKillDigit ||
+      e.previousThreeFourKillDigit || ""
+    );
+
+    if(unified && unified!=="--"){
+      stat.total.total++;
+      if(
+        unified!==String(g[0]) &&
+        unified!==String(g[1]) &&
+        unified!==String(g[2])
+      ) stat.total.match++;
+    }
+  });
+
+  var html="";
+  ["wanQianBai","qianBaiShi","wanQianBaiShi","total"]
+  .forEach(function(key){
+    var x=stat[key];
+    html+='<div class="rate"><b>'+x.label+
+      '</b><span>总共 '+x.total+
+      ' 次｜命中 '+x.match+
+      ' 次｜命中率 '+rate(x.total,x.match)+
+      '</span></div>';
+  });
+
+  return html;
+}
+
+function buildMainBackupSummary(data){
+  var stat={
+    main:{total:0,match:0},
+    backup:{total:0,match:0}
+  };
+  var positions=["wan","qian","bai","shi"];
+  var list=Array.isArray(data.predictions)?data.predictions:[];
+
+  list.forEach(function(pred){
+    if(!pred || !pred.evaluated || !pred.evaluation) return;
+
+    var e=pred.evaluation;
+    var kills=e.previousPositionKills||{};
+    var actual=e.actualNumbers||[];
+
+    positions.forEach(function(pos,index){
+      var arr=Array.isArray(kills[pos])?kills[pos]:[];
+
+      if(arr[0]!==undefined && actual[index]!==undefined){
+        stat.main.total++;
+        if(String(arr[0])!==String(actual[index])) stat.main.match++;
+      }
+
+      if(arr[1]!==undefined && actual[index]!==undefined){
+        stat.backup.total++;
+        if(String(arr[1])!==String(actual[index])) stat.backup.match++;
+      }
+    });
+  });
+
+  return '<div class="rate"><b>主攻总命中率</b><span>总共 '+stat.main.total+
+    ' 次｜命中 '+stat.main.match+' 次｜命中率 '+rate(stat.main.total,stat.main.match)+'</span></div>'+
+    '<div class="rate"><b>备用总命中率</b><span>总共 '+stat.backup.total+
+    ' 次｜命中 '+stat.backup.match+' 次｜命中率 '+rate(stat.backup.total,stat.backup.match)+'</span></div>';
+}
+
+
+function positionRateText(data,pos,index){
+  var rt=0,rm=0,mt=0,mm=0,bt=0,bm=0;
+  var list=(Array.isArray(data.predictions)?data.predictions:[])
+    .filter(function(p){return p&&p.evaluated&&p.evaluation;})
+    .slice(0,30);
+
+  list.forEach(function(pred){
+    var actual=pred.evaluation.actualNumbers;
+    if(!Array.isArray(actual)||actual[index]===undefined)return;
+    var saved=pred.positionKills&&pred.positionKills[pos]||{};
+    var fallback=pred.evaluation.previousPositionKills&&pred.evaluation.previousPositionKills[pos]||[];
+    var recommend=String(saved.recommendDigit||saved.selectedDigit||saved.main||(saved.killDigits&&saved.killDigits[0])||fallback[0]||"");
+    var main=String(saved.primaryDigit||saved.mainAlgorithmDigit||saved.mainDigit||saved.main||fallback[0]||"");
+    var backup=String(saved.originalBackupDigit||saved.backupAlgorithmDigit||saved.backup||saved.backupDigit||(saved.killDigits&&saved.killDigits[1])||fallback[1]||"");
+    if(recommend&&recommend!=="--"){
+      rt++;
+      if(recommend!==String(actual[index]))rm++;
+    }
+    if(main&&main!=="--"){
+      mt++;
+      if(main!==String(actual[index]))mm++;
+    }
+    if(backup&&backup!=="--"){
+      bt++;
+      if(backup!==String(actual[index]))bm++;
+    }
+  });
+
+  return '<div class="small">推荐命中率 '+rate(rt,rm)+
+    ' <br>主攻命中率 '+rate(mt,mm)+
+    ' <br>备用命中率 '+rate(bt,bm)+'</div>';
+}
+function independentHeweiRateText(data,key,index){
+  var total=0,match=0;
+  var list=(Array.isArray(data.predictions)?data.predictions:[])
+    .filter(function(p){return p&&p.evaluated&&p.evaluation;})
+    .slice(0,30);
+
+  list.forEach(function(pred){
+    if(!pred || !pred.evaluated || !pred.evaluation) return;
+
+    var saved=
+      pred.independentHeweiKills ||
+      pred.evaluation.previousIndependentHeweiKills || {};
+
+    var item=saved[key];
+    var digit=item && typeof item==="object" ?
+      String(item.killDigit||"") : String(item||"");
+
+    var group=pred.evaluation.actualCompositeHeweiGroup;
+
+    if(!digit || digit==="--" || !Array.isArray(group)) return;
+
+    total++;
+    if(digit!==String(group[index])) match++;
+  });
+
+  return " 近30期命中率 "+rate(total,match);
+}
+
+
+function unifiedHeweiRateText(data){
+  var total=0,match=0;
+  var list=(Array.isArray(data.predictions)?data.predictions:[])
+    .filter(function(p){return p&&p.evaluated&&p.evaluation;})
+    .slice(0,30);
+
+  list.forEach(function(p){
+    var digit=String(
+      p.threeFourHeweiKillDigit ||
+      p.evaluation.previousThreeFourKillDigit || ""
+    );
+    var group=p.evaluation.actualCompositeHeweiGroup;
+
+    if(!digit || digit==="--" || !Array.isArray(group)) return;
+
+    total++;
+    if(
+      digit!==String(group[0]) &&
+      digit!==String(group[1]) &&
+      digit!==String(group[2])
+    ) match++;
+  });
+
+  return " 近30期命中率 "+rate(total,match);
+}
+
+function render(data){
+  if(!data || !data.ok){setStatus("后台有错误："+(data&&data.lastError?data.lastError.reason:"未知"),false)}
+  else{setStatus("远程后台同步成功｜数据来自阿里云 3001｜关网页不影响后台继续跑",true)}
+
+  var r=data.latestRecord||{};
+  var nums=Array.isArray(r.numbers)?r.numbers:[];
+  $("period").textContent=r.period||"--";
+  $("opentime").textContent=r.opentime||"--";
+  $("numbers").innerHTML=nums.length?nums.map(function(n){return ball(n)}).join(""):"--";
+
+  var m=r.metrics||{};
+  $("totalHewei").innerHTML=(m.totalHewei!=null)?ball(m.totalHewei,"blue")+" 总和："+esc(m.totalSum):"--";
+  $("subHewei").innerHTML=
+    tag("万千百："+(m.wanQianBaiHewei||"--"))+
+    tag("千百十："+(m.qianBaiShiHewei||"--"))+
+    tag("万千百十："+(m.wanQianBaiShiHewei||"--"));
+
+  $("meta").innerHTML=
+    "后台地址：http://8.210.5.221:3001<br>"+
+    "最后同步："+esc(data.lastSync&&data.lastSync.text)+"<br>"+
+    "硬盘文件："+esc(data.stateFile);
+
+  var p=data.currentPrediction||{};
+  $("killThreeFour").innerHTML=ball(p.threeFourHeweiKillDigit||"--","dark")+" 命中率 "+esc((data.rates&&data.rates.threeFour)||"0.00%");
+
+  $("killThreeFour").innerHTML=ball(p.threeFourHeweiKillDigit||"--","dark")+unifiedHeweiRateText(data);
+  var independentKills=p.independentHeweiKills||{};
+  $("killWanQianBai").innerHTML=ball(
+    independentKills.wanQianBai ?
+    independentKills.wanQianBai.killDigit : "--","dark");
+  $("killQianBaiShi").innerHTML=ball(
+    independentKills.qianBaiShi ?
+    independentKills.qianBaiShi.killDigit : "--","dark");
+  $("killWanQianBaiShi").innerHTML=ball(
+    independentKills.wanQianBaiShi ?
+    independentKills.wanQianBaiShi.killDigit : "--","dark");
+
+  
+  $("killWanQianBai").innerHTML += independentHeweiRateText(data,"wanQianBai",0);
+  $("killQianBaiShi").innerHTML += independentHeweiRateText(data,"qianBaiShi",1);
+  $("killWanQianBaiShi").innerHTML += independentHeweiRateText(data,"wanQianBaiShi",2);
+
+  var pk=p.positionKills||{};
+  $("wan").innerHTML=posHtml(pk.wan)+positionRateText(data,"wan",0);
+  $("qian").innerHTML=posHtml(pk.qian)+positionRateText(data,"qian",1);
+  $("bai").innerHTML=posHtml(pk.bai)+positionRateText(data,"bai",2);
+  $("shi").innerHTML=posHtml(pk.shi)+positionRateText(data,"shi",3);
+
+  $("predMeta").innerHTML="预测基准期号："+esc(p.basePeriod)+"<br>生成时间："+esc(p.generatedAtText||p.generatedAt);
+
+  var counters=data.counters||{};
+  var rates=data.rates||{};
+  var labels={
+    positionTotal:"万千百十定位双码总击",
+    wan:"万位双码",
+    qian:"千位双码",
+    bai:"百位双码",
+    shi:"十位双码",
+    totalHewei:"总合尾综合排除",
+    threeFour:"三个合尾统一避开码"
+  };
+  var html="";
+  Object.keys(labels).forEach(function(k){
+    var c=counters[k]||{};
+    html+='<div class="rate"><b>'+labels[k]+'</b><span>总共 '+(c.total||0)+' 次｜命中 '+(c.match||0)+' 次｜命中率 '+(rates[k]||rate(c.total||0,c.match||0))+'</span></div>';
+  });
+  html+=buildMainBackupSummary(data);
+  if($("rates")) if($("rates")) $("rates").innerHTML=html;
+
+  if($("heweiReport")) $("heweiReport").innerHTML=buildHeweiReport(data);
+
+  var h=Array.isArray(data.history)?data.history.slice(0,20):[];
+  $("history").innerHTML=h.length?h.map(function(x){
+    return '<div class="rate"><b>'+esc(x.period)+'</b><span>'+esc(x.opentime)+' ｜ '+(x.numbers||[]).join(" ")+'</span></div>';
+  }).join(""):"--";
+}
+async function loadState(){
+  try{
+    setStatus("正在读取阿里云后台...",true);
+    var res=await panelFetch("/state?t="+Date.now(),{cache:"no-store"});
+    var data=await res.json();
+    render(data);
+  }catch(e){
+    setStatus("读取失败："+e.message,false);
+  }
+}
+async function manualSync(){
+  try{
+    setStatus("正在手动同步...",true);
+    await panelFetch("/sync",{method:"POST"});
+    setTimeout(loadState,500);
+  }catch(e){
+    setStatus("同步失败："+e.message,false);
+  }
+}
+
+function safeOrderRows(){
+  var ids=["wan","qian","bai","shi","killWanQianBai","killQianBaiShi","killWanQianBaiShi","killThreeFour"];
+  var rows=ids.map(function(id){
+    var el=document.getElementById(id);
+    return el ? el.parentElement : null;
+  }).filter(Boolean);
+  if(!rows.length) return;
+  var parent=rows[0].parentElement;
+  rows.forEach(function(row){parent.appendChild(row);});
+}
+safeOrderRows();
+loadState();
+setInterval(loadState,8000);
+document.addEventListener("visibilitychange",function(){if(!document.hidden)loadState();});
+window.addEventListener("focus",loadState);
+window.addEventListener("pageshow",loadState);
+window.addEventListener("online",loadState);
+</script>
+
+
+
+
+
+
+
+
+<!-- PENTA5_V5_START -->
+<script>
+(function(){
+  "use strict";
+
+  var state = null;
+  var loading = false;
+  var evaluationCache = {};
+  var calculationCache = null;
+  var practiceOutputTimer = null;
+  var panelLoopStarted = false;
+  var practiceLastCelebrationKey = "";
+  var PANEL_UI_VERSION = "20260708_auth_fetch_v13";
+  var PANEL_CANONICAL_PATH = "/panel";
+  try{
+    var isPanelPath = location && location.pathname.indexOf("/panel") >= 0;
+    if(isPanelPath && location.search && history && history.replaceState){
+      history.replaceState(null, "", PANEL_CANONICAL_PATH);
+    }
+    var oldUiVersion = localStorage.getItem("penta5PanelUiVersion") || "";
+    if(isPanelPath && oldUiVersion !== PANEL_UI_VERSION){
+      localStorage.setItem("penta5PanelUiVersion", PANEL_UI_VERSION);
+      var reloadKey = "penta5PanelReloaded:" + PANEL_UI_VERSION;
+      if(sessionStorage.getItem(reloadKey) !== "1"){
+        sessionStorage.setItem(reloadKey, "1");
+        location.reload();
+      }
+    }else{
+      localStorage.setItem("penta5PanelUiVersion", PANEL_UI_VERSION);
+    }
+  }catch(e){}
+  var PANEL_REFRESH_MS = 8000;
+  var PANEL_AUTO_SYNC_MIN_MS = 8000;
+  var PANEL_SYNC_STALE_MS = 18000;
+  var panelSyncRunning = false;
+  var panelLastSyncAttemptAt = 0;
+  var MODEL_SAFE_RATE = 85;
+  var MODEL_REPAIR_RATE = 85;
+  var MODEL_STABLE_WINDOW = 1000;
+  var practiceMode = "auto";
+  var practiceManualSelection = {};
+  var practiceManualInitialized = false;
+  try{
+    practiceMode = localStorage.getItem("penta5PracticeMode") || "auto";
+    practiceManualSelection = JSON.parse(localStorage.getItem("penta5PracticeManualSelection") || "{}") || {};
+    practiceManualInitialized = localStorage.getItem("penta5PracticeManualInitialized") === "1";
+    practiceLastCelebrationKey = localStorage.getItem("penta5PracticeLastCelebrationKey") || "";
+  }catch(e){practiceMode="auto";practiceManualSelection={};practiceManualInitialized=false;practiceLastCelebrationKey="";}
+  var DEFAULT_PRACTICE_MODEL = "千1234567890百1234567890十1234567890个1234567890四定1234567890百十个合1234567890千百十个合123468790除小小小大各";
+  function normalizePracticeSeedText(value){
+    var text=String(value||DEFAULT_PRACTICE_MODEL).replace(/\s+/g,"");
+    text=text.replace(/四定除值\d+/g,"四定");
+    text=text.replace(/除对数\d{3}/g,"");
+    text=text.replace(/含对数\d{3}/g,"");
+    text=text.replace(/中对数\d{3}/g,"");
+    text=text.replace(/除和值\d+/g,"");
+    text=text.replace(/除值\d+/g,"");
+    text=text.replace(/各+$/,"");
+    return (text||DEFAULT_PRACTICE_MODEL.replace(/各+$/,""))+"各";
+  }
+  var POS = [
+    {key:"wan", label:"千位", index:0},
+    {key:"qian", label:"百位", index:1},
+    {key:"bai", label:"十位", index:2},
+    {key:"shi", label:"个位", index:3}
+  ];
+  var HEWEI = [
+    {id:"killWanQianBai", key:"wanQianBai", label:"千百十合尾"},
+    {id:"killQianBaiShi", key:"qianBaiShi", label:"百十个合尾"},
+    {id:"killWanQianBaiShi", key:"wanQianBaiShi", label:"千百十个合尾"},
+    {id:"killThreeFour", key:"unified", label:"三个合尾统一"}
+  ];
+  var SHAPES = [
+    {id:"shapeParity", key:"shapeParity", label:"单双形态", pool:["单","双"]},
+    {id:"shapeSize", key:"shapeSize", label:"大小形态", pool:["大","小"]},
+    {id:"shapeMixed", key:"shapeMixed", label:"单双大小形态", pool:["大","小","单","双"]}
+  ];
+  var EXTRAS = [
+    {id:"sumAvoid",key:"sumAvoid",label:"前四位和值避开",kind:"sum"},
+    {id:"threeDigitAvoid",key:"threeDigitAvoid",label:"对数共现避开",kind:"threeDigits"},
+    {id:"twoDigitAvoid",key:"twoDigitAvoid",label:"对数避开1组",kind:"twoDigits"},
+    {id:"twoDigitAvoid2",key:"twoDigitAvoid2",label:"对数避开2组",kind:"twoDigits"},
+    {id:"twoDigitAvoid3",key:"twoDigitAvoid3",label:"对数避开3组",kind:"twoDigits"},
+    {id:"twoDigitHit",key:"twoDigitHit",label:"两数共现命中",kind:"twoDigits",mode:"hit"},
+    {id:"threeDigitHit",key:"threeDigitHit",label:"三数共现命中",kind:"threeDigits",mode:"hit"}
+  ];
+
+  function esc(v){
+    return String(v == null ? "" : v).replace(/[&<>\"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});
+  }
+  function pct(n){ return n!==null&&n!==undefined&&isFinite(Number(n)) ? Number(n).toFixed(2)+"%" : "--"; }
+  function circle(v, color){
+    return '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:34px;padding:0 7px;border-radius:18px;background:'+(color||"#0f172a")+';color:#fff;font-weight:700;margin-right:7px;box-sizing:border-box;">'+esc(v)+'</span>';
+  }
+  function unique(a){
+    var out=[];
+    (Array.isArray(a)?a:[]).forEach(function(x){x=String(x);if(out.indexOf(x)<0)out.push(x);});
+    return out;
+  }
+  function records(data){
+    return (Array.isArray(data&&data.history)?data.history:[]).filter(function(r){return r&&Array.isArray(r.numbers)&&r.numbers.length>=4;});
+  }
+  function evalRows(data){
+    return (Array.isArray(data&&data.predictions)?data.predictions:[])
+      .filter(function(p){return p&&p.evaluated&&p.evaluation;})
+      .sort(function(a,b){return String(b.evaluation.evaluatedAt||"").localeCompare(String(a.evaluation.evaluatedAt||""));});
+  }
+  function propertyMatches(digit, prop){
+    var n=Number(digit);
+    if(prop==="大") return n>=5;
+    if(prop==="小") return n<5;
+    if(prop==="单") return n%2===1;
+    if(prop==="双") return n%2===0;
+    return false;
+  }
+  function patternOf(record, kind){
+    var nums=(record&&record.numbers||[]).slice(0,4);
+    if(kind==="shapeParity") return nums.map(function(n){return Number(n)%2?"单":"双";}).join("");
+    if(kind==="shapeSize") return nums.map(function(n){return Number(n)>=5?"大":"小";}).join("");
+    return "";
+  }
+  function expand(pool, length){
+    var out=[""];
+    for(var i=0;i<length;i++){
+      var next=[];
+      out.forEach(function(prefix){pool.forEach(function(x){next.push(prefix+x);});});
+      out=next;
+    }
+    return out;
+  }
+  var candidateCache={};
+  function isThreeWithOneShape(code){
+    code=String(code||"");
+    if(!/^[大小单双]{4}$/.test(code))return false;
+    var counts={};
+    code.split("").forEach(function(ch){counts[ch]=(counts[ch]||0)+1;});
+    var values=Object.keys(counts).map(function(key){return counts[key];}).sort(function(a,b){return a-b;});
+    return values.length===2&&values[0]===1&&values[1]===3;
+  }
+  function oppositeShapeToken(token){
+    if(token==="单")return "双";
+    if(token==="双")return "单";
+    if(token==="大")return "小";
+    if(token==="小")return "大";
+    return "单";
+  }
+  function candidates(shape){
+    if(!candidateCache[shape.key]){
+      var all=expand(shape.pool,4);
+      var threeWithOne=all.filter(isThreeWithOneShape);
+      candidateCache[shape.key]=threeWithOne.length?threeWithOne:all;
+    }
+    return candidateCache[shape.key];
+  }
+  function forceThreeWithOneShape(code,shapeKey){
+    code=String(code||"").replace(/\s+/g,"");
+    if(isThreeWithOneShape(code))return code;
+    if(!/^[大小单双]{4}$/.test(code))return code;
+    var shape=SHAPES.filter(function(s){return s.key===shapeKey;})[0];
+    var pool=shape?candidates(shape):[];
+    if(!pool.length){
+      var base=code.charAt(0)||"单";
+      return base+base+base+oppositeShapeToken(base);
+    }
+    function distance(candidate){
+      var diff=0;
+      for(var i=0;i<4;i++)if(candidate.charAt(i)!==code.charAt(i))diff++;
+      return diff;
+    }
+    return pool.slice().sort(function(a,b){
+      var da=distance(a),db=distance(b);
+      if(da!==db)return da-db;
+      var aFirst=a.charAt(0)===code.charAt(0)?0:1;
+      var bFirst=b.charAt(0)===code.charAt(0)?0:1;
+      if(aFirst!==bFirst)return aFirst-bFirst;
+      return a.localeCompare(b,"zh-CN");
+    })[0]||code;
+  }
+  function shapeMatches(record, shapeKey, candidate){
+    if(shapeKey==="shapeParity"||shapeKey==="shapeSize") return patternOf(record,shapeKey)===candidate;
+    var chars=String(candidate).split("");
+    var nums=(record&&record.numbers||[]).slice(0,4);
+    if(nums.length<4||chars.length<4) return false;
+    for(var i=0;i<4;i++) if(!propertyMatches(nums[i],chars[i])) return false;
+    return true;
+  }
+  function stableShapeIndex(history, shape, size){
+    if(!size)return 0;
+    var latest=(history&&history[0])||{};
+    var raw=String(latest.period||latest.uid||"0").replace(/\D/g,"");
+    var periodSeed=Number(raw.slice(-4)||0);
+    var nums=(latest.numbers||[]).slice(0,4);
+    var numberSeed=0;
+    nums.forEach(function(n,i){numberSeed+=Number(n||0)*(i+5);});
+    var keySeed=0;
+    String(shape&&shape.key||"").split("").forEach(function(ch,i){keySeed+=ch.charCodeAt(0)*(i+1);});
+    return Math.abs(periodSeed+numberSeed+keySeed)%size;
+  }
+  function shapeDynamicPoolSize(shape){
+    if(!shape)return 3;
+    if(shape.key==="shapeParity")return 2;
+    if(shape.key==="shapeSize")return 4;
+    return 6;
+  }
+  function shapeCandidateSet(history, shape){
+    var longH=(history||[]).slice(0,1000);
+    var recent=(history||[]).slice(0,30);
+    var pool=candidates(shape);
+    var prior=pool.length?1/pool.length:1/16;
+    var scored=pool.map(function(candidate){
+      var longHits=0;
+      longH.forEach(function(r){if(shapeMatches(r,shape.key,candidate))longHits++;});
+      var longRate=(longHits+prior*16)/(longH.length+16);
+      var weightedHits=0, weights=0;
+      recent.forEach(function(r,i){var w=Math.pow(0.94,i);weights+=w;if(shapeMatches(r,shape.key,candidate))weightedHits+=w;});
+      var recentRate=(weightedHits+prior*10)/(weights+10);
+      return {value:candidate, score:longRate*0.70+recentRate*0.30, longHits:longHits};
+    });
+    scored.sort(function(a,b){
+      if(a.score!==b.score)return a.score-b.score;
+      if(a.longHits!==b.longHits)return a.longHits-b.longHits;
+      return a.value.localeCompare(b.value,"zh-CN");
+    });
+    return scored;
+  }
+  function chooseShapeSet(history, shape){
+    var scored=shapeCandidateSet(history,shape);
+    var pool=scored.slice(0,Math.min(shapeDynamicPoolSize(shape),scored.length));
+    if(!pool.length){var empty=scored[0]||{value:"--",score:1};return {value:empty.value,primary:empty.value,backup:"--",detail:scored};}
+    var idx=stableShapeIndex(history,shape,pool.length);
+    var selected=pool[idx]||pool[0];
+    var primary=pool[0]||selected;
+    var backup=pool[(idx+1)%pool.length]||pool[1]||primary;
+    if(backup.value===selected.value){
+      for(var i=0;i<pool.length;i++){if(pool[i].value!==selected.value){backup=pool[i];break;}}
+    }
+    return {value:selected.value,primary:primary.value,backup:backup.value,detail:scored};
+  }
+  function chooseShape(history, shape){
+    var set=chooseShapeSet(history,shape);
+    return {value:set.value,score:1,primary:set.primary,backup:set.backup};
+  }
+  function historyIndex(history, evaluation){
+    var uid=String(evaluation&&evaluation.targetUid||"");
+    var period=String(evaluation&&evaluation.targetPeriod||"");
+    for(var i=0;i<history.length;i++){
+      if((uid&&String(history[i].uid||"")===uid)||(period&&String(history[i].period||"")===period))return i;
+    }
+    return -1;
+  }
+  function shapeResultForEvaluation(data, evaluation, shape){
+    var side=arguments.length>3?arguments[3]:"recommend";
+    var cacheKey="shape:"+shape.key+":"+side+":"+String(evaluation&&evaluation.targetUid||evaluation&&evaluation.targetPeriod||"");
+    if(Object.prototype.hasOwnProperty.call(evaluationCache,cacheKey))return evaluationCache[cacheKey];
+    var h=records(data), idx=historyIndex(h,evaluation);
+    if(idx<0) return evaluationCache[cacheKey]=null;
+    var training=h.slice(idx+1,idx+121);
+    if(training.length<8) return evaluationCache[cacheKey]=null;
+    var set=chooseShapeSet(training,shape);
+    var prediction=set.value;
+    if(side==="main")prediction=set.primary;
+    if(side==="backup")prediction=set.backup;
+    return evaluationCache[cacheKey]={success:!shapeMatches(h[idx],shape.key,prediction), prediction:prediction};
+  }
+  function sumOf(record){
+    return (record&&record.numbers||[]).slice(0,4).reduce(function(a,n){return a+Number(n||0);},0);
+  }
+  function sumPrior(sum){
+    var count=0;
+    for(var a=0;a<10;a++)for(var b=0;b<10;b++)for(var c=0;c<10;c++)for(var d=0;d<10;d++)if(a+b+c+d===sum)count++;
+    return count/10000;
+  }
+  function threeDigitCandidates(){
+    if(candidateCache.threeDigitAvoid)return candidateCache.threeDigitAvoid;
+    var out=[];
+    for(var a=0;a<8;a++)for(var b=a+1;b<9;b++)for(var c=b+1;c<10;c++)out.push(""+a+b+c);
+    candidateCache.threeDigitAvoid=out;
+    return out;
+  }
+  function twoDigitCandidates(){
+    if(candidateCache.twoDigitAvoid)return candidateCache.twoDigitAvoid;
+    var out=[],digits="1234567890".split("");
+    for(var a=0;a<digits.length-1;a++)for(var b=a+1;b<digits.length;b++)out.push(digits[a]+digits[b]);
+    candidateCache.twoDigitAvoid=out;
+    return out;
+  }
+  function extraCandidates(extra){
+    if(extra.kind==="sum"){var out=[];for(var i=10;i<=26;i++)out.push(String(i));return out;}
+    if(extra.kind==="twoDigits")return twoDigitCandidates();
+    return threeDigitCandidates();
+  }
+  function extraMatches(record,extra,candidate){
+    if(extra.kind==="sum")return sumOf(record)===Number(candidate);
+    var group=String(candidate).split("");
+    var actual=(record&&record.numbers||[]).slice(0,4).map(String);
+    return group.every(function(n){return actual.indexOf(n)>=0;});
+  }
+  function extraSuccess(extra,matched){
+    return extra&&extra.mode==="hit" ? !!matched : !matched;
+  }
+  function chooseExtra(history,extra){
+    var longH=(history||[]).slice(0,1000),recent=(history||[]).slice(0,30);
+    var scored=extraCandidates(extra).map(function(candidate){
+      var prior=extra.kind==="sum"?sumPrior(Number(candidate)):0.0204;
+      var longHits=0;
+      longH.forEach(function(r){if(extraMatches(r,extra,candidate))longHits++;});
+      var longRate=(longHits+prior*20)/(longH.length+20);
+      var weightedHits=0,weights=0;
+      recent.forEach(function(r,i){var w=Math.pow(0.94,i);weights+=w;if(extraMatches(r,extra,candidate))weightedHits+=w;});
+      var recentRate=(weightedHits+prior*12)/(weights+12);
+      var usefulRangePenalty=extra.kind==="sum"?Math.abs(Number(candidate)-18)*0.002:0;
+      return {value:candidate,score:longRate*0.70+recentRate*0.30+usefulRangePenalty,longHits:longHits};
+    });
+    scored.sort(function(a,b){
+      if(extra&&extra.mode==="hit"){
+        if(a.score!==b.score)return b.score-a.score;
+        if(a.longHits!==b.longHits)return b.longHits-a.longHits;
+        return Number(a.value)-Number(b.value);
+      }
+      if(a.score!==b.score)return a.score-b.score;
+      if(a.longHits!==b.longHits)return a.longHits-b.longHits;
+      return Number(a.value)-Number(b.value);
+    });
+    return scored[0]||{value:"--",score:1};
+  }
+  function twoDigitCode(value){
+    var out=[];
+    String(value==null?"":value).replace(/\D/g,"").split("").forEach(function(digit){
+      if(out.indexOf(digit)<0)out.push(digit);
+    });
+    return out.slice(0,2).join("");
+  }
+  function rankedTwoDigitCooccurCodes(history,limit,weighted){
+    var extra=EXTRAS.filter(function(item){return item.key==="twoDigitHit";})[0];
+    if(!extra)return [];
+    var rows=(history||[]).slice(0,Math.max(1,Number(limit||120)));
+    if(!rows.length)return [];
+    var scored=twoDigitCandidates().map(function(pair){
+      var hits=0,weightedHits=0,weightTotal=0;
+      rows.forEach(function(row,index){
+        var weight=weighted?Math.pow(0.94,index):1;
+        weightTotal+=weight;
+        if(extraMatches(row,extra,pair)){
+          hits++;
+          weightedHits+=weight;
+        }
+      });
+      var rate=weightTotal?weightedHits/weightTotal:0;
+      return {code:pair,rate:rate,hits:hits};
+    });
+    scored.sort(function(a,b){
+      if(a.rate!==b.rate)return b.rate-a.rate;
+      if(a.hits!==b.hits)return b.hits-a.hits;
+      return Number(a.code)-Number(b.code);
+    });
+    return scored.map(function(item){return item.code;});
+  }
+  function twoDigitCooccurCandidateItems(data){
+    var extra=EXTRAS.filter(function(item){return item.key==="twoDigitHit";})[0];
+    if(!extra)return [];
+    var history=records(data);
+    var prediction=data&&data.currentPrediction||{};
+    var saved=prediction.extraKills&&prediction.extraKills.twoDigitHit||{};
+    var savedCode=saved.value!=null?saved.value:(saved.code!=null?saved.code:(history.length?chooseExtra(history,extra).value:""));
+    var candidateRows=[
+      ["两数共现数据推荐",savedCode],
+      ["两数共现近30权重",(rankedTwoDigitCooccurCodes(history,30,true)[0]||"")],
+      ["两数共现120稳定",(rankedTwoDigitCooccurCodes(history,120,false)[0]||"")]
+    ];
+    rankedTwoDigitCooccurCodes(history,300,true).forEach(function(code,index){
+      var uniqueCount={};
+      candidateRows.forEach(function(row){
+        var normalized=twoDigitCode(row[1]);
+        if(normalized)uniqueCount[normalized]=true;
+      });
+      if(Object.keys(uniqueCount).length<3)candidateRows.push(["两数共现稳定备选"+(index+1),code]);
+    });
+    var out=[],seen={};
+    candidateRows.forEach(function(row){
+      if(out.length>=3)return;
+      var code=twoDigitCode(row[1]);
+      if(!code||code.length<2||seen[code])return;
+      seen[code]=true;
+      out.push({kind:"extra",key:"twoDigitHit",side:"recommend",name:row[0],code:code});
+    });
+    return out;
+  }
+  function threeDuishuCode(value){
+    var digits=String(value==null?"":value).replace(/\D/g,"");
+    return digits.length>=3?digits.slice(0,3):"";
+  }
+  function threeDuishuPairTokens(item){
+    var pairs=Array.isArray(item&&item.pairs)?item.pairs:[];
+    var out=[],seen={};
+    pairs.forEach(function(pair){
+      var code=String(pair==null?"":pair).replace(/\D/g,"").slice(0,2);
+      if(code.length===2&&!seen[code]){
+        seen[code]=true;
+        out.push(code);
+      }
+    });
+    if(out.length)return out;
+    var code=threeDuishuCode(item&&item.code);
+    if(code.length>=3){
+      for(var i=0;i<code.length;i++){
+        var pairCode=code.charAt(i);
+        if(pairCode&&!seen[pairCode]){
+          seen[pairCode]=true;
+          out.push(pairCode);
+        }
+      }
+    }
+    return out;
+  }
+  function threeDuishuCandidateItem(data){
+    var duishu=data&&data.threeDuishuRecommendation;
+    if(!duishu||!duishu.ok||!duishu.code)return null;
+    var item={
+      kind:"threeDuishu",
+      key:"threeDuishu",
+      side:"recommend",
+      name:"三对数排除",
+      code:threeDuishuCode(duishu.code),
+      pairs:Array.isArray(duishu.pairs)?duishu.pairs.slice(0,3):[],
+      pairCodes:Array.isArray(duishu.pairCodes)?duishu.pairCodes.slice(0,3):[],
+      quality:duishu.quality||"",
+      rate30:duishu.rate30,
+      rate120:duishu.rate120,
+      rate300:duishu.rate300,
+      stableScore:duishu.score
+    };
+    item.rate=displayedItemRate(data,item,30);
+    item.rate10=displayedItemRate(data,item,10);
+    markItemConfidence(data,item);
+    return item;
+  }
+  function extraResultForEvaluation(data,evaluation,extra){
+    var cacheKey="extra:"+extra.key+":"+String(evaluation&&evaluation.targetUid||evaluation&&evaluation.targetPeriod||"");
+    if(Object.prototype.hasOwnProperty.call(evaluationCache,cacheKey))return evaluationCache[cacheKey];
+    if(evaluation&&evaluation.independentExtras&&evaluation.independentExtras[extra.key]){
+      var saved=evaluation.independentExtras[extra.key];
+      return evaluationCache[cacheKey]={success:saved.success,prediction:saved.value||saved.code||""};
+    }
+    var h=records(data),idx=historyIndex(h,evaluation);
+    if(idx<0)return evaluationCache[cacheKey]=null;
+    var training=h.slice(idx+1,idx+121);
+    if(training.length<8)return evaluationCache[cacheKey]=null;
+    var prediction=chooseExtra(training,extra).value;
+    return evaluationCache[cacheKey]={success:extraSuccess(extra,extraMatches(h[idx],extra,prediction)),prediction:prediction};
+  }
+  function rateOf(list){
+    var vals=list.filter(function(x){return typeof x==="boolean";});
+    if(!vals.length)return null;
+    return vals.filter(Boolean).length*100/vals.length;
+  }
+  function positionSuccess(ev,key,side){
+    var item=ev&&ev.independentPosition&&ev.independentPosition[key];
+    var kills=unique(ev&&ev.previousPositionKills&&ev.previousPositionKills[key]);
+    if(!item||kills.length<2)return null;
+    var actual=String(item.actualDigit);
+    return actual!==String(side==="main"?kills[0]:kills[1]);
+  }
+  function heweiSuccess(ev,key){
+    if(!ev)return null;
+    if(key==="unified")return typeof ev.independentThreeFourSuccess==="boolean"?ev.independentThreeFourSuccess:null;
+    var item=ev.independentHewei&&ev.independentHewei[key];
+    return item&&typeof item.success==="boolean"?item.success:null;
+  }
+  function itemSuccess(data,item,row){
+    var ev=row&&row.evaluation;
+    if(item.kind==="position"){
+      if(item.side==="recommend"){
+        var pos=POS.filter(function(p){return p.key===item.key;})[0];
+        var actual=ev&&ev.actualNumbers;
+        if(!pos||!Array.isArray(actual)||actual[pos.index]===undefined)return null;
+        var saved=row&&row.positionKills&&row.positionKills[item.key]||{};
+        var fallback=ev.previousPositionKills&&ev.previousPositionKills[item.key]||[];
+        var code=saved.recommendDigit||saved.selectedDigit||saved.main||(saved.killDigits&&saved.killDigits[0])||fallback[0];
+        if(code==null||String(code)==="--")return null;
+        return String(code)!==String(actual[pos.index]);
+      }
+      return positionSuccess(ev,item.key,item.side);
+    }
+    if(item.kind==="hewei"){
+      var group=ev&&ev.actualCompositeHeweiGroup;
+      if(!Array.isArray(group))return null;
+      var digit="";
+      if(item.key==="unified"){
+        var detail=row&&row.detail&&row.detail.threeFourHeweiKill||{};
+        if(item.side==="backup")digit=row.threeFourHeweiBackupDigit||detail.backupDigit;
+        else if(item.side==="main")digit=detail.primaryDigit||row.threeFourHeweiKillDigit;
+        else digit=row.threeFourHeweiKillDigit||detail.killDigit;
+        if(digit==null||String(digit)==="--")return null;
+        digit=String(digit);
+        return digit!==String(group[0])&&digit!==String(group[1])&&digit!==String(group[2]);
+      }
+      var saved=row&&row.independentHeweiKills||ev.previousIndependentHeweiKills||{};
+      var hitem=saved[item.key]||{};
+      if(item.side==="backup")digit=hitem.backupDigit;
+      else if(item.side==="main")digit=hitem.primaryDigit||hitem.killDigit;
+      else digit=hitem.killDigit;
+      if(digit==null||String(digit)==="--")return null;
+      var index=item.key==="wanQianBai"?0:(item.key==="qianBaiShi"?1:2);
+      return String(digit)!==String(group[index]);
+    }
+    if(item.kind==="shape"){
+      var shape=SHAPES.filter(function(s){return s.key===item.key;})[0];
+      if(shape&&item.code!=null&&String(item.code)!=="--"){
+        var actualNumbers=ev&&ev.actualNumbers;
+        if(!Array.isArray(actualNumbers)||actualNumbers.length<4)return null;
+        return !shapeMatches({numbers:actualNumbers},shape.key,String(item.code));
+      }
+      var result=shapeResultForEvaluation(data,ev,shape,item.side||"recommend");
+      return result?result.success:null;
+    }
+    if(item.kind==="extra"){
+      var extra=EXTRAS.filter(function(s){return s.key===item.key;})[0];
+      if(extra&&item.code!=null&&String(item.code)!=="--"){
+        var actualDigits=ev&&((Array.isArray(ev.actualNumbers)&&ev.actualNumbers.length>=4)?ev.actualNumbers:ev.actualFirstFourDigits);
+        if(!Array.isArray(actualDigits)||actualDigits.length<4)return null;
+        return extraSuccess(extra,extraMatches({numbers:actualDigits},extra,String(item.code)));
+      }
+      var extraResult=extraResultForEvaluation(data,ev,extra);
+      return extraResult?extraResult.success:null;
+    }
+    if(item.kind==="threeDuishu"){
+      var actual=ev&&((Array.isArray(ev.actualNumbers)&&ev.actualNumbers.length>=4)?ev.actualNumbers:ev.actualFirstFourDigits);
+      if(!Array.isArray(actual)||actual.length<4)return null;
+      var actualText=actual.slice(0,4).map(String).join("");
+      var pairs=threeDuishuPairTokens(item);
+      if(!pairs.length)return null;
+      var appeared=pairs.some(function(pair){
+        var digits=String(pair).split("");
+        return digits.every(function(digit){return actualText.indexOf(String(digit))>=0;});
+      });
+      return !appeared;
+    }
+    return null;
+  }
+  function itemHistorySuccess(data,item,row){
+    if(!item||!row||item.code==null||String(item.code)==="--")return null;
+    var code=String(item.code);
+    if(item.kind==="position"){
+      var pos=POS.filter(function(p){return p.key===item.key;})[0];
+      var nums=Array.isArray(row.numbers)?row.numbers:[];
+      if(!pos||nums[pos.index]===undefined)return null;
+      return String(nums[pos.index])!==code;
+    }
+    if(item.kind==="hewei"){
+      var m=row.metrics||{};
+      var fields={
+        wanQianBai:"wanQianBaiHewei",
+        qianBaiShi:"qianBaiShiHewei",
+        wanQianBaiShi:"wanQianBaiShiHewei"
+      };
+      if(item.key==="unified"){
+        var group=[m.wanQianBaiHewei,m.qianBaiShiHewei,m.wanQianBaiShiHewei].filter(function(v){return v!==undefined&&v!==null&&String(v)!=="--";});
+        if(group.length<3)return null;
+        return group.every(function(v){return String(v)!==code;});
+      }
+      var field=fields[item.key];
+      if(!field||m[field]===undefined||m[field]===null||String(m[field])==="--")return null;
+      return String(m[field])!==code;
+    }
+    if(item.kind==="shape"){
+      var shape=SHAPES.filter(function(s){return s.key===item.key;})[0];
+      return shape?(!shapeMatches(row,shape.key,code)):null;
+    }
+    if(item.kind==="extra"){
+      var extra=EXTRAS.filter(function(s){return s.key===item.key;})[0];
+      return extra?extraSuccess(extra,extraMatches(row,extra,code)):null;
+    }
+    if(item.kind==="threeDuishu"){
+      var nums4=Array.isArray(row.numbers)?row.numbers.slice(0,4):[];
+      if(nums4.length<4)return null;
+      var actualText=nums4.map(String).join("");
+      var pairs=threeDuishuPairTokens(item);
+      if(!pairs.length)return null;
+      var appeared=pairs.some(function(pair){
+        return String(pair).split("").every(function(digit){return actualText.indexOf(String(digit))>=0;});
+      });
+      return !appeared;
+    }
+    return null;
+  }
+  function historyBacktestRate(data,item,limit){
+    var rows=records(data).slice(0,Math.max(1,Number(limit||30)));
+    if(!rows.length)return null;
+    return rateOf(rows.map(function(row){return itemHistorySuccess(data,item,row);}));
+  }
+  function projectRate(data,item,limit){
+    return rateOf(evalRows(data).slice(0,limit||30).map(function(row){return itemSuccess(data,item,row);}));
+  }
+  function displayedItemRate(data,item,limit){
+    var shared=historyBacktestRate(data,item,limit);
+    if(shared!==null&&shared!==undefined&&isFinite(Number(shared)))return shared;
+    var direct=projectRate(data,item,limit);
+    if(direct!==null&&direct!==undefined&&isFinite(Number(direct)))return direct;
+    if(item.kind==="extra"){
+      var backend=backendExtraRate(data,item.key);
+      return backend!==null&&backend!==undefined&&isFinite(Number(backend))?backend:null;
+    }
+    var rows=records(data).slice(0,limit||30), results=[];
+    if(!rows.length||item.code==null||String(item.code)==="--")return null;
+    if(item.kind==="shape"){
+      var shape=SHAPES.filter(function(s){return s.key===item.key;})[0];
+      if(!shape)return null;
+      rows.forEach(function(row){results.push(!shapeMatches(row,shape.key,item.code));});
+      return rateOf(results);
+    }
+    if(item.kind==="extra"){
+      var extra=EXTRAS.filter(function(s){return s.key===item.key;})[0];
+      if(!extra)return null;
+      rows.forEach(function(row){results.push(extraSuccess(extra,extraMatches(row,extra,item.code)));});
+      return rateOf(results);
+    }
+    return direct;
+  }
+  function modelRateNumber(value){
+    var n=Number(value);
+    return isFinite(n)?n:null;
+  }
+  function itemSafetyRate(data,item){
+    var r30=modelRateNumber(displayedItemRate(data,item,30));
+    var r120=modelRateNumber(displayedItemRate(data,item,120));
+    if(r30===null&&r120===null)return null;
+    if(r30===null)return r120;
+    if(r120===null)return r30;
+    return Math.min(r30,r120);
+  }
+  function markItemConfidence(data,item){
+    if(!item)return item;
+    if(item.kind==="threeDuishu"){
+      item.safetyRate=item.rate!=null?item.rate:(item.rate30!=null?item.rate30:null);
+      item.lowConfidence=false;
+      return item;
+    }
+    var safety=itemSafetyRate(data,item);
+    item.safetyRate=safety;
+    item.lowConfidence=safety!==null&&safety<MODEL_SAFE_RATE;
+    return item;
+  }
+  function backendExtraRate(data,key){
+    var extra=data&&data.currentPrediction&&data.currentPrediction.extraKills&&data.currentPrediction.extraKills[key];
+    var rate=extra&&extra.performance&&extra.performance.rate;
+    if(rate!==null&&rate!==undefined&&isFinite(Number(rate)))return Number(rate);
+    var counter=data&&data.counters&&data.counters[key];
+    if(counter&&Number(counter.total)>0)return Number(counter.match||0)*100/Number(counter.total||1);
+    var raw=data&&data.rates&&data.rates[key];
+    if(raw!==null&&raw!==undefined){
+      var parsed=Number(String(raw).replace("%",""));
+      if(isFinite(parsed))return parsed;
+    }
+    return null;
+  }
+  function currentItems(data){
+    var p=data&&data.currentPrediction||{};
+    var pk=p.positionKills||{};
+    var list=[];
+    function addUniqueItem(item){
+      if(!item||item.code==null)return;
+      var codeText=String(item.code);
+      if(!codeText||codeText==="--"||codeText==="undefined"||codeText==="null")return;
+      item.code=codeText;
+      var id=[item.kind,item.key,codeText].join(":");
+      for(var i=0;i<list.length;i++){
+        if([list[i].kind,list[i].key,String(list[i].code)].join(":")===id)return;
+      }
+      list.push(item);
+    }
+    addUniqueItem(threeDuishuCandidateItem(data));
+    POS.forEach(function(pos){
+      var entry=pk[pos.key]||{};
+      var recommend=entry.recommendDigit!=null?entry.recommendDigit:(entry.selectedDigit!=null?entry.selectedDigit:(entry.main!=null?entry.main:(entry.killDigits&&entry.killDigits[0])));
+      var main=entry.primaryDigit!=null?entry.primaryDigit:(entry.mainAlgorithmDigit!=null?entry.mainAlgorithmDigit:(entry.mainDigit!=null?entry.mainDigit:entry.main));
+      var backup=entry.originalBackupDigit!=null?entry.originalBackupDigit:(entry.backupAlgorithmDigit!=null?entry.backupAlgorithmDigit:(entry.backup!=null?entry.backup:(entry.backupDigit!=null?entry.backupDigit:(entry.killDigits&&entry.killDigits[1]))));
+      addUniqueItem({kind:"position",key:pos.key,side:"recommend",name:pos.label+"推荐",code:String(recommend)});
+      addUniqueItem({kind:"position",key:pos.key,side:"main",name:pos.label+"主攻",code:String(main)});
+      addUniqueItem({kind:"position",key:pos.key,side:"backup",name:pos.label+"备用",code:String(backup)});
+    });
+    var ih=p.independentHeweiKills||{};
+    HEWEI.forEach(function(h){
+      var recommend="--",main="--",backup="--";
+      if(h.key==="unified"){
+        var detail=p.detail&&p.detail.threeFourHeweiKill||{};
+        recommend=p.threeFourHeweiKillDigit||detail.killDigit||"--";
+        main=detail.primaryDigit||recommend||"--";
+        backup=p.threeFourHeweiBackupDigit||detail.backupDigit||"--";
+      }else{
+        var hewei=ih[h.key]||{};
+        recommend=hewei.killDigit||"--";
+        main=hewei.primaryDigit||recommend||"--";
+        backup=hewei.backupDigit||"--";
+      }
+      addUniqueItem({kind:"hewei",key:h.key,side:"recommend",name:h.label+"推荐",code:String(recommend)});
+      addUniqueItem({kind:"hewei",key:h.key,side:"main",name:h.label+"主攻",code:String(main)});
+      addUniqueItem({kind:"hewei",key:h.key,side:"backup",name:h.label+"备用",code:String(backup)});
+    });
+    SHAPES.forEach(function(s){
+      var chosen=chooseShapeSet(records(data),s);
+      list.push({kind:"shape",key:s.key,side:"recommend",name:s.label+"推荐",code:chosen.value});
+    });
+    var backendExtras=p.extraKills||{};
+    EXTRAS.forEach(function(extra){
+      var saved=backendExtras[extra.key];
+      var code=saved&&(saved.value!=null?saved.value:(saved.code!=null?saved.code:null));
+      list.push({kind:"extra",key:extra.key,name:extra.label,code:code!=null?String(code):chooseExtra(records(data),extra).value});
+    });
+    list.forEach(function(item){item.rate=displayedItemRate(data,item,30);item.rate10=displayedItemRate(data,item,10);markItemConfidence(data,item);});
+    return list;
+  }
+  
+/* PENTA5_V28_STABLE_TOP_START */
+  function topSeven(data,items){
+    var list=(items||currentItems(data)).slice().filter(function(x){return x&&x.rate!=null;});
+    var evaluatedCount=evalRows(data).length;
+    function stageLabel(){
+      if(evaluatedCount>=MODEL_STABLE_WINDOW)return "稳定期";
+      if(evaluatedCount>=120)return "小修期";
+      return "观察期";
+    }
+    function calcMulti(item){
+      var r30=displayedItemRate(data,item,30);
+      var r60=displayedItemRate(data,item,60);
+      var r120=displayedItemRate(data,item,120);
+      var r300=displayedItemRate(data,item,MODEL_STABLE_WINDOW);
+      if(r60==null||!isFinite(Number(r60)))r60=r30;
+      if(r120==null||!isFinite(Number(r120)))r120=r60;
+      if(r300==null||!isFinite(Number(r300)))r300=r120;
+      var score;
+      if(evaluatedCount>=MODEL_STABLE_WINDOW){
+        score=(Number(r30||0)*0.10)+(Number(r60||0)*0.15)+(Number(r120||0)*0.20)+(Number(r300||0)*0.55);
+      }else if(evaluatedCount>=120){
+        score=(Number(r30||0)*0.20)+(Number(r60||0)*0.20)+(Number(r120||0)*0.40)+(Number(r300||0)*0.20);
+      }else{
+        score=(Number(r30||0)*0.45)+(Number(r60||0)*0.35)+(Number(r120||0)*0.20);
+      }
+      item.rate30=r30;
+      item.rate60=r60;
+      item.rate120=r120;
+      item.rate300=r300;
+      item.rateLong=r300;
+      item.stageLabel=stageLabel();
+      item.stableScore=score;
+      return item;
+    }
+    list.forEach(function(item){calcMulti(item);markItemConfidence(data,item);});
+    function order(a,b){
+      if((b.stableScore||0)!==(a.stableScore||0))return (b.stableScore||0)-(a.stableScore||0);
+      if((b.rate300||0)!==(a.rate300||0))return (b.rate300||0)-(a.rate300||0);
+      if((b.rate60||0)!==(a.rate60||0))return (b.rate60||0)-(a.rate60||0);
+      if((b.rate120||0)!==(a.rate120||0))return (b.rate120||0)-(a.rate120||0);
+      return String(a.name||"").localeCompare(String(b.name||""));
+    }
+    function itemId(item){return [item.kind,item.key,item.side||"recommend",String(item.code)].join(":");}
+    var chosen=[];
+    var used={};
+    var repairReport=[];
+    var comboRows=records(data);
+    var comboLimit=Math.min(MODEL_STABLE_WINDOW, comboRows.length||0);
+    if(comboLimit<1){
+      comboRows=evalRows(data);
+      comboLimit=Math.min(MODEL_STABLE_WINDOW, comboRows.length||0);
+    }
+    var comboWindow=comboRows.slice(0,comboLimit);
+    function comboStatsFor(items){
+      var list=(items||[]).filter(Boolean),total=0,hit=0,nearHit=0,validChecks=0,successChecks=0;
+      comboWindow.forEach(function(row){
+        var results=list.map(function(item){
+          var result=itemSuccess(data,item,row);
+          if(typeof result!=="boolean")result=itemHistorySuccess(data,item,row);
+          return result;
+        }).filter(function(x){return typeof x==="boolean";});
+        if(results.length!==list.length||!results.length)return;
+        total++;
+        var wins=0;
+        results.forEach(function(ok){validChecks++;if(ok){wins++;successChecks++;}});
+        if(wins===results.length)hit++;
+        if(results.length>1&&wins>=results.length-1)nearHit++;
+      });
+      return {
+        total:total,
+        hit:hit,
+        nearHit:nearHit,
+        rate:total?hit*100/total:null,
+        nearRate:total?nearHit*100/total:null,
+        avgRate:validChecks?successChecks*100/validChecks:null
+      };
+    }
+    function comboPickScore(item){
+      var stats=comboStatsFor(chosen.concat([item]));
+      var full=stats.rate===null?-1:Number(stats.rate||0);
+      var near=stats.nearRate===null?full:Number(stats.nearRate||0);
+      var avg=stats.avgRate===null?0:Number(stats.avgRate||0);
+      return full*10000+near*100+avg+(Number(item.stableScore||0)/100);
+    }
+    function pickBestForCombo(pool,maxPerSameModel){
+      var modelCount={};
+      chosen.forEach(function(item){
+        var modelKey=[item.kind,item.key].join(":");
+        modelCount[modelKey]=Number(modelCount[modelKey]||0)+1;
+      });
+      var best=null,bestScore=-Infinity;
+      (pool||[]).forEach(function(item){
+        var id=itemId(item);
+        var modelKey=[item.kind,item.key].join(":");
+        if(used[id])return;
+        if(Number(modelCount[modelKey]||0)>=Number(maxPerSameModel||2))return;
+        var score=comboPickScore(item);
+        if(score>bestScore){
+          best=item;
+          bestScore=score;
+        }else if(score===bestScore&&best&&order(item,best)<0){
+          best=item;
+        }
+      });
+      if(best){
+        used[itemId(best)]=true;
+        chosen.push(best);
+        return true;
+      }
+      return false;
+    }
+    function modelLabel(item){
+      return String((item&&item.name)||"模型")+" "+String((item&&item.code)!=null?item.code:"--");
+    }
+    function safetyText(item){
+      var safety=item&&item.safetyRate;
+      return safety!==null&&safety!==undefined&&isFinite(Number(safety))?Number(safety).toFixed(2)+"%":"样本不足";
+    }
+    function isHealthy(item){
+      if(!item)return false;
+      markItemConfidence(data,item);
+      var safety=item.safetyRate;
+      return !item.lowConfidence&&(safety===null||safety===undefined||!isFinite(Number(safety))||Number(safety)>=MODEL_REPAIR_RATE);
+    }
+    function noteLow(pool,label){
+      (pool||[]).forEach(function(item){
+        markItemConfidence(data,item);
+        if(item.lowConfidence){
+          repairReport.push(label+"暂停低命中："+modelLabel(item)+"，安全率 "+safetyText(item));
+        }
+      });
+    }
+    function addMany(pool,count,maxPerSameModel){
+      while(chosen.length<5&&count.value>0){
+        if(!pickBestForCombo((pool||[]).slice().sort(order),maxPerSameModel))break;
+        count.value--;
+      }
+    }
+    var positionPool=list.filter(function(x){return x.kind==="position";});
+    var heweiPool=list.filter(function(x){return x.kind==="hewei";});
+    noteLow(positionPool,"定位池");
+    noteLow(heweiPool,"合尾池");
+    var safeList=list.filter(isHealthy);
+    var beforePosition=chosen.length;
+    addMany(safeList.filter(function(x){return x.kind==="position";}),{value:3},2);
+    if(chosen.length-beforePosition<3)repairReport.push("定位池健康项不足3个，已从备用健康池补位。");
+    var beforeHewei=chosen.length;
+    addMany(safeList.filter(function(x){return x.kind==="hewei";}),{value:2},2);
+    if(chosen.length-beforeHewei<2)repairReport.push("合尾池健康项不足2个，已从备用健康池补位。");
+    var cooccurItems=list.filter(function(item){
+      return item&&item.kind==="extra"&&isTwoDigitAvoidKey(item.key);
+    }).map(function(item){
+      calcMulti(item);
+      markItemConfidence(data,item);
+      return item;
+    }).filter(function(item){return item&&item.stableScore!=null;}).sort(order);
+    noteLow(cooccurItems,"两数共现池");
+    var healthyCooccurItems=cooccurItems.filter(isHealthy);
+    if(healthyCooccurItems.length){
+      var cooccur=healthyCooccurItems.slice().sort(function(a,b){
+        var sa=comboPickScore(a),sb=comboPickScore(b);
+        if(sb!==sa)return sb-sa;
+        return order(a,b);
+      })[0];
+      cooccur.name="两数共现避开稳定";
+      var cooccurId=itemId(cooccur);
+      if(!used[cooccurId]){
+        used[cooccurId]=true;
+        chosen.push(cooccur);
+      }
+    }else if(cooccurItems.length){
+      repairReport.push("两数共现三路均未达安全阈值，暂停第6项共现模型，改用健康备用模型。");
+    }
+    function canUseFallback(item){
+      if(!isHealthy(item))return false;
+      if(used[itemId(item)])return false;
+      if(item.kind==="extra"&&(item.key==="twoDigitHit"||item.key==="threeDigitHit"))return false;
+      return true;
+    }
+    var fallbackPool=safeList.filter(canUseFallback).sort(order);
+    while(chosen.length<6){
+      var before=chosen.length;
+      if(!pickBestForCombo(fallbackPool,2))break;
+      var item=chosen[chosen.length-1];
+      item.repairedIntoTop=true;
+      repairReport.push("健康备用补位："+modelLabel(item)+"，安全率 "+safetyText(item));
+      if(chosen.length===before)break;
+    }
+    if(chosen.length<6){
+      repairReport.push("健康模型不足6项，当前仅启用 "+chosen.length+" 项，等待新数据后自动恢复。");
+    }
+    chosen.forEach(function(item){item.rate=item.stableScore;});
+    chosen.repairReport=repairReport;
+    return chosen;
+  }
+/* PENTA5_V28_STABLE_TOP_END */
+
+  function combinedRate(data,top){
+    var allRows=records(data);
+    var limit=Math.min(MODEL_STABLE_WINDOW, allRows.length||0);
+    if(limit<1){
+      allRows=evalRows(data);
+      limit=Math.min(MODEL_STABLE_WINDOW, allRows.length||0);
+    }
+    var rows=allRows.slice(0,limit),total=0,hit=0,nearHit=0,validChecks=0,successChecks=0;
+    var todayStats=todayComboStreakStats(data,top,allRows);
+    rows.forEach(function(row){
+      var results=(top||[]).map(function(item){
+        var result=itemSuccess(data,item,row);
+        if(typeof result!=="boolean")result=itemHistorySuccess(data,item,row);
+        return result;
+      }).filter(function(x){return typeof x==="boolean";});
+      if(results.length!==(top||[]).length||!results.length)return;
+      total++;
+      var wins=0;
+      results.forEach(function(ok){validChecks++;if(ok){wins++;successChecks++;}});
+      if(wins===results.length)hit++;
+      if(results.length>1&&wins>=results.length-1)nearHit++;
+    });
+    return {
+      total:total,
+      hit:hit,
+      nearHit:nearHit,
+      rate:total?hit*100/total:null,
+      nearRate:total?nearHit*100/total:null,
+      avgRate:validChecks?successChecks*100/validChecks:null,
+      limit:limit,
+      label:"近"+limit+"期",
+      todayStats:todayStats
+    };
+  }
+  function dateKeyFromValue(value){
+    var text=String(value==null?"":value).trim();
+    var match=text.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if(match){
+      return match[1]+"-"+String(match[2]).padStart(2,"0")+"-"+String(match[3]).padStart(2,"0");
+    }
+    match=text.match(/^(\d{4})(\d{2})(\d{2})/);
+    if(match)return match[1]+"-"+match[2]+"-"+match[3];
+    return "";
+  }
+  function rowDateKey(row){
+    var ev=row&&row.evaluation||{};
+    return dateKeyFromValue(ev.targetOpenTime)
+      ||dateKeyFromValue(ev.evaluatedAtText)
+      ||dateKeyFromValue(ev.evaluatedAt)
+      ||dateKeyFromValue(row&&row.baseOpenTime)
+      ||dateKeyFromValue(row&&row.basePeriod)
+      ||dateKeyFromValue(ev.targetPeriod)
+      ||dateKeyFromValue(row&&row.opentime)
+      ||dateKeyFromValue(row&&row.period);
+  }
+  function todayKeyForData(data){
+    var latest=data&&data.latestRecord||{};
+    return dateKeyFromValue(latest.opentime)
+      ||dateKeyFromValue(latest.period)
+      ||dateKeyFromValue(new Date().toISOString());
+  }
+  function topComboFullSuccess(data,top,row){
+    var list=Array.isArray(top)?top:[];
+    var results=list.map(function(item){
+      var result=itemSuccess(data,item,row);
+      if(typeof result!=="boolean")result=itemHistorySuccess(data,item,row);
+      return result;
+    }).filter(function(x){return typeof x==="boolean";});
+    if(results.length!==list.length||!results.length)return null;
+    return results.every(Boolean);
+  }
+  function comboFullRateForItems(data,items,rows,limit){
+    var source=(Array.isArray(rows)?rows:records(data)).slice(0,Math.max(1,Number(limit||MODEL_STABLE_WINDOW)));
+    var total=0,hit=0;
+    source.forEach(function(row){
+      var ok=topComboFullSuccess(data,items,row);
+      if(typeof ok!=="boolean")return;
+      total++;
+      if(ok)hit++;
+    });
+    return {total:total,hit:hit,rate:total?hit*100/total:null,label:"近"+total+"期"};
+  }
+  function todayComboStreakStats(data,top,rows){
+    var today=todayKeyForData(data);
+    var list=(Array.isArray(rows)?rows:evalRows(data)).filter(function(row){return rowDateKey(row)===today;});
+    list=list.slice().sort(function(a,b){
+      var ae=(a&&a.evaluation)||{},be=(b&&b.evaluation)||{};
+      return String(ae.targetOpenTime||ae.evaluatedAt||a.baseOpenTime||a.basePeriod||"").localeCompare(String(be.targetOpenTime||be.evaluatedAt||b.baseOpenTime||b.basePeriod||""));
+    });
+    var valid=0,currentWin=0,currentMiss=0,maxWin=0,maxMiss=0,lastResult=null;
+    list.forEach(function(row){
+      var ok=topComboFullSuccess(data,top,row);
+      if(typeof ok!=="boolean")return;
+      valid++;
+      lastResult=ok;
+      if(ok){
+        currentWin++;
+        currentMiss=0;
+        if(currentWin>maxWin)maxWin=currentWin;
+      }else{
+        currentMiss++;
+        currentWin=0;
+        if(currentMiss>maxMiss)maxMiss=currentMiss;
+      }
+    });
+    return {
+      day:today,
+      total:valid,
+      currentWin:lastResult===true?currentWin:0,
+      currentMiss:lastResult===false?currentMiss:0,
+      maxWin:maxWin,
+      maxMiss:maxMiss
+    };
+  }
+  function stableTodayStreakStats(storeName,stats){
+    var source=stats&&typeof stats==="object"?stats:{};
+    var day=source.day||todayKeyForData(state||{});
+    var key="penta5StableTodayStreak:"+storeName+":"+day;
+    var saved={};
+    try{saved=JSON.parse(localStorage.getItem(key)||"{}")||{};}catch(e){saved={};}
+    var merged={
+      day:day,
+      total:Math.max(Number(source.total||0),Number(saved.total||0)),
+      currentWin:Number(source.currentWin||0),
+      currentMiss:Number(source.currentMiss||0),
+      maxWin:Math.max(Number(source.maxWin||0),Number(saved.maxWin||0)),
+      maxMiss:Math.max(Number(source.maxMiss||0),Number(saved.maxMiss||0))
+    };
+    try{
+      localStorage.setItem(key,JSON.stringify({
+        day:merged.day,
+        total:merged.total,
+        currentWin:merged.currentWin,
+        currentMiss:merged.currentMiss,
+        maxWin:merged.maxWin,
+        maxMiss:merged.maxMiss,
+        updatedAt:new Date().toISOString()
+      }));
+    }catch(e){}
+    return merged;
+  }
+  function todayItemStreakStats(data,item,rows){
+    var today=todayKeyForData(data);
+    var list=(Array.isArray(rows)?rows:evalRows(data)).filter(function(row){return rowDateKey(row)===today;});
+    list=list.slice().sort(function(a,b){
+      var ae=(a&&a.evaluation)||{},be=(b&&b.evaluation)||{};
+      return String(ae.targetOpenTime||ae.evaluatedAt||a.baseOpenTime||a.basePeriod||"").localeCompare(String(be.targetOpenTime||be.evaluatedAt||b.baseOpenTime||b.basePeriod||""));
+    });
+    var valid=0,currentWin=0,currentMiss=0,maxWin=0,maxMiss=0,lastResult=null;
+    list.forEach(function(row){
+      var ok=itemSuccess(data,item,row);
+      if(typeof ok!=="boolean")return;
+      valid++;
+      lastResult=ok;
+      if(ok){
+        currentWin++;
+        currentMiss=0;
+        if(currentWin>maxWin)maxWin=currentWin;
+      }else{
+        currentMiss++;
+        currentWin=0;
+        if(currentMiss>maxMiss)maxMiss=currentMiss;
+      }
+    });
+    return {
+      day:today,
+      total:valid,
+      currentWin:lastResult===true?currentWin:0,
+      currentMiss:lastResult===false?currentMiss:0,
+      maxWin:maxWin,
+      maxMiss:maxMiss
+    };
+  }
+  function isCooccurrenceExtra(extra){
+    return !!(extra&&extra.mode==="hit");
+  }
+  function isTwoDigitAvoidKey(key){
+    return key==="twoDigitAvoid"||key==="twoDigitAvoid2"||key==="twoDigitAvoid3";
+  }
+  function twoDigitAvoidGroupItems(items){
+    var keys=["twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3"];
+    return keys.map(function(key){
+      return (items||[]).filter(function(item){return item&&item.kind==="extra"&&item.key===key;})[0];
+    }).filter(Boolean);
+  }
+  function rowById(id){var el=document.getElementById(id);return el?(el.closest?el.closest("tr"):el.parentElement):null;}
+  function setLabel(id,text){var row=rowById(id);if(row&&row.children&&row.children[0])row.children[0].textContent=text;}
+  function ensureShapeRows(){
+    var anchor=rowById("killThreeFour");
+    if(!anchor||!anchor.parentElement)return;
+    SHAPES.forEach(function(s){
+      var cell=document.getElementById(s.id);
+      if(!cell){
+        var tr=document.createElement("tr");
+        tr.innerHTML='<td>'+esc(s.label)+'避开</td><td id="'+s.id+'">--</td>';
+        anchor.parentElement.appendChild(tr);
+      }
+    });
+    EXTRAS.forEach(function(extra){
+      var cell=document.getElementById(extra.id);
+      if(!cell){
+        var tr=document.createElement("tr");
+        tr.innerHTML='<td>'+esc(extra.label)+'</td><td id="'+extra.id+'">--</td>';
+        anchor.parentElement.appendChild(tr);
+      }
+    });
+    var oldGroupRow=document.getElementById("twoDigitAvoidGroupRow");
+    if(oldGroupRow&&oldGroupRow.parentNode)oldGroupRow.parentNode.removeChild(oldGroupRow);
+    var oldGroupBox=document.getElementById("twoDigitAvoidGroupBox");
+    if(oldGroupBox&&oldGroupBox.parentNode&&oldGroupBox.parentNode.id!=="autoTop5Recommend"){
+      oldGroupBox.parentNode.removeChild(oldGroupBox);
+    }
+  }
+  function reorderRows(){
+    var first=rowById("wan");if(!first||!first.parentElement)return;
+    var parent=first.parentElement;
+    ["wan","qian","bai","shi","killWanQianBai","killQianBaiShi","killWanQianBaiShi","killThreeFour","shapeParity","shapeSize","shapeMixed","sumAvoid","threeDigitAvoid","twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3","twoDigitHit","threeDigitHit"].forEach(function(id){var r=rowById(id);if(r)parent.appendChild(r);});
+  }
+  function renderLatest(data,top){
+    var latest=data&&data.latestRecord||{}, nums=Array.isArray(latest.numbers)?latest.numbers:[];
+    var numberCell=document.getElementById("numbers");
+    if(numberCell&&nums.length>=5){
+      numberCell.innerHTML=nums.map(function(n,i){return circle(n,i===4?"#94a3b8":"#e11d48");}).join("")+'<span style="font-size:12px;color:#64748b;">最后一位不参与分析</span>';
+    }
+    var first4=nums.slice(0,4).map(Number), sum=first4.reduce(function(a,b){return a+b;},0);
+    var duishu=data&&data.threeDuishuRecommendation;
+    var duishuCell=document.getElementById("threeDuishuCode");
+    if(duishuCell){
+      if(duishu&&duishu.ok&&duishu.code){
+        var walk=duishu.walkForward||{};
+        var block=duishu.block||{};
+        var duishuItem=threeDuishuCandidateItem(data);
+        var duishuToday=duishuItem?todayItemStreakStats(data,duishuItem,evalRows(data)):{total:0,currentWin:0,currentMiss:0,maxWin:0,maxMiss:0};
+        duishuCell.innerHTML='<span style="display:inline-flex;align-items:center;justify-content:center;min-width:58px;height:34px;border-radius:18px;background:#111827;color:#fff;font-size:20px;font-weight:800;letter-spacing:0;margin-right:8px;">'+esc(duishu.code)+'</span>'
+          +'<span style="font-size:12px;color:#64748b;">'+esc((duishu.pairs||[]).join("|"))+' ｜ '+esc(duishu.quality||"观察")+' ｜ 滚测 '+pct(walk.rate)+' ｜ 30期 '+pct(duishu.rate30)+' ｜ 1000期 '+pct(duishu.rate300)+' ｜ 块底 '+pct(block.minRate)+'</span>'
+          +'<div style="font-size:12px;color:#0f172a;font-weight:700;margin-top:4px;">今日最高连中：'+esc(duishuToday.total?duishuToday.maxWin:"--")+'手 ｜ 今日最高连败：'+esc(duishuToday.total?duishuToday.maxMiss:"--")+'手 <span style="font-weight:500;color:#64748b;">（今日已回算'+esc(duishuToday.total||0)+'期）</span></div>'
+          +'<div style="font-size:12px;color:#475569;margin-top:2px;">当前连中：'+esc(duishuToday.currentWin||0)+'手 ｜ 当前连败：'+esc(duishuToday.currentMiss||0)+'手</div>';
+      }else{
+        duishuCell.innerHTML="--";
+      }
+    }
+    var total=document.getElementById("totalHewei");
+    if(total){setLabel("totalHewei","四位合尾");total.innerHTML=circle(sum%10,"#4338ca")+'总和：'+sum;}
+    var sub=document.getElementById("subHewei"),m=latest.metrics||{};
+    if(sub){
+      setLabel("subHewei","分项合尾");
+      var html='<span class="tag">千百十：'+esc(m.wanQianBaiHewei||"--")+'</span> '
+        +'<span class="tag">百十个：'+esc(m.qianBaiShiHewei||"--")+'</span> '
+        +'<span class="tag">千百十个：'+esc(m.wanQianBaiShiHewei||"--")+'</span>';
+      sub.innerHTML=html;
+    }
+  }
+  function heweiRateValue(data,h){
+    var rt=0,rm=0,mt=0,mm=0,bt=0,bm=0;
+    var list=(Array.isArray(data&&data.predictions)?data.predictions:[]).filter(function(p){return p&&p.evaluated&&p.evaluation;}).slice(0,30);
+    list.forEach(function(pred){
+      var group=pred.evaluation.actualCompositeHeweiGroup;
+      if(!Array.isArray(group))return;
+      var recommend="",main="",backup="";
+      if(h.key==="unified"){
+        var detail=pred.detail&&pred.detail.threeFourHeweiKill||{};
+        recommend=String(pred.threeFourHeweiKillDigit||detail.killDigit||"");
+        main=String(detail.primaryDigit||recommend||"");
+        backup=String(pred.threeFourHeweiBackupDigit||detail.backupDigit||"");
+        if(recommend&&recommend!=="--"){
+          rt++;
+          if(recommend!==String(group[0])&&recommend!==String(group[1])&&recommend!==String(group[2]))rm++;
+        }
+        if(main&&main!=="--"){
+          mt++;
+          if(main!==String(group[0])&&main!==String(group[1])&&main!==String(group[2]))mm++;
+        }
+        if(backup&&backup!=="--"){
+          bt++;
+          if(backup!==String(group[0])&&backup!==String(group[1])&&backup!==String(group[2]))bm++;
+        }
+      }else{
+        var saved=pred.independentHeweiKills||pred.evaluation.previousIndependentHeweiKills||{};
+        var item=saved[h.key]||{};
+        recommend=String(item.killDigit||"");
+        main=String(item.primaryDigit||recommend||"");
+        backup=String(item.backupDigit||"");
+        var index=h.key==="wanQianBai"?0:(h.key==="qianBaiShi"?1:2);
+        if(recommend&&recommend!=="--"){
+          rt++;
+          if(recommend!==String(group[index]))rm++;
+        }
+        if(main&&main!=="--"){
+          mt++;
+          if(main!==String(group[index]))mm++;
+        }
+        if(backup&&backup!=="--"){
+          bt++;
+          if(backup!==String(group[index]))bm++;
+        }
+      }
+    });
+    return {recommend:rate(rt,rm),main:rate(mt,mm),backup:rate(bt,bm)};
+  }
+  function heweiDisplayHtml(data,h){
+    var p=data&&data.currentPrediction||{};
+    var selected="--",primary="--",backup="--";
+    var lowHint="";
+    if(h.key==="unified"){
+      var detail=p.detail&&p.detail.threeFourHeweiKill||{};
+      selected=String(p.threeFourHeweiKillDigit||detail.killDigit||"--");
+      primary=String(detail.primaryDigit||selected||"--");
+      backup=String(p.threeFourHeweiBackupDigit||detail.backupDigit||"--");
+      if(detail.recommendable===false)lowHint='<div class="small" style="color:#b45309;margin-top:4px;">观察标记，仍独立参与排序</div>';
+    }else{
+      var ih=p.independentHeweiKills||{};
+      var item=ih[h.key]||{};
+      selected=String(item.killDigit||"--");
+      primary=String(item.primaryDigit||selected||"--");
+      backup=String(item.backupDigit||"--");
+    }
+    var r=heweiRateValue(data,h);
+    return circle(selected)+' 推荐 <span style="color:#475569;">'+r.recommend+'</span> '
+      +circle(primary,"#0f172a")+' 主攻 <span style="color:#475569;">'+r.main+'</span> '
+      +circle(backup,"#4338ca")+' 备用 <span style="color:#475569;">'+r.backup+'</span>'+lowHint;
+  }
+  function heweiBackupRateText(data,h){
+    var r=heweiRateValue(data,h);
+    return '<div class="small">推荐命中率 '+r.recommend+' <br>主攻命中率 '+r.main+' <br>备用命中率 '+r.backup+'</div>';
+  }
+  function shapeTokens(shape,code){
+    var text=String(code==null?"--":code);
+    if(!text || text==="--")return ["--"];
+    var tokens=[];
+    for(var j=0;j<text.length;j++)tokens.push(text.charAt(j));
+    return tokens.filter(Boolean);
+  }
+  function shapeTokenHtml(shape,code){
+    return '<span class="shape-token-list">'+shapeTokens(shape,code).map(function(token){
+      return '<span class="shape-token">'+esc(token)+'</span>';
+    }).join("")+'</span>';
+  }
+  function shapeChoiceHtml(shape,rec,main,backup){
+    return '<div class="shape-choice">'
+      +'<div class="shape-choice__head">'
+      +'<span class="shape-choice__code">'+shapeTokenHtml(shape,rec.code)+'</span>'
+      +'<span class="shape-choice__rate">推荐 '+pct(rec.rate)+'</span>'
+      +'</div>'
+      +'<div class="shape-choice__details">'
+      +'<div class="shape-choice__detail"><div class="shape-choice__label">主攻</div><div class="shape-choice__value">'+shapeTokenHtml(shape,main.code)+'<span class="shape-choice__percent">'+pct(main.rate)+'</span></div></div>'
+      +'<div class="shape-choice__detail"><div class="shape-choice__label">备用</div><div class="shape-choice__value">'+shapeTokenHtml(shape,backup.code)+'<span class="shape-choice__percent">'+pct(backup.rate)+'</span></div></div>'
+      +'</div>'
+      +'</div>';
+  }
+  function renderRows(data,items){
+    POS.forEach(function(pos){setLabel(pos.key,pos.label+"排除");});
+    HEWEI.forEach(function(h){setLabel(h.id,h.label+"避开码");var cell=document.getElementById(h.id);if(cell)cell.innerHTML=heweiDisplayHtml(data,h);});
+    SHAPES.forEach(function(s){
+      var cell=document.getElementById(s.id),set=chooseShapeSet(records(data),s);
+      if(cell){
+        var rec={kind:"shape",key:s.key,side:"recommend",code:set.value};
+        var main={kind:"shape",key:s.key,side:"main",code:set.primary};
+        var backup={kind:"shape",key:s.key,side:"backup",code:set.backup};
+        rec.rate=displayedItemRate(data,rec,30);main.rate=displayedItemRate(data,main,30);backup.rate=displayedItemRate(data,backup,30);
+        cell.innerHTML=shapeChoiceHtml(s,rec,main,backup);
+      }
+    });
+    EXTRAS.forEach(function(extra){
+      var item=items.filter(function(x){return x.key===extra.key;})[0],cell=document.getElementById(extra.id);
+      if(cell&&item){
+        markItemConfidence(data,item);
+        cell.innerHTML=circle(item.code)+'<span style="color:#475569;">近30期命中率 '+pct(item.rate)+'</span>';
+      }
+    });
+  }
+  function twoDigitAvoidGroupHtml(data,items){
+    var group=twoDigitAvoidGroupItems(items);
+    if(group.length<3){
+      return '<div id="twoDigitAvoidGroupBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bfdbfe;">'
+        +'<div style="border:1px solid #bfdbfe;border-radius:10px;padding:10px;background:#eff6ff;color:#475569;font-size:13px;">对数避开三项组合：等待三组模型齐全</div>'
+        +'</div>';
+    }
+    var today=stableTodayStreakStats("twoDigitAvoidGroup",todayComboStreakStats(data,group,records(data)));
+    var combo=comboFullRateForItems(data,group,records(data),MODEL_STABLE_WINDOW);
+    var chips=group.map(function(item,index){
+      return '<span style="display:inline-flex;align-items:center;gap:6px;margin:3px 10px 3px 0;white-space:nowrap;"><b>'+esc(index+1)+'组</b>'+circle(item.code,"#0f172a")+'<span style="font-size:12px;color:#64748b;">30期 '+pct(displayedItemRate(data,item,30))+'</span></span>';
+    }).join("");
+    return '<div id="twoDigitAvoidGroupBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bfdbfe;">'
+      +'<div style="width:100%;box-sizing:border-box;border:1px solid #bfdbfe;border-radius:12px;padding:12px;background:#f8fbff;color:#0f172a;">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+      +'<b style="font-size:16px;">对数避开三项组合</b>'
+      +'<span style="font-size:12px;color:#475569;">三项一起通过才算中，任一项不过算连败</span>'
+      +'</div>'
+      +'<div style="margin-top:7px;">'+chips+'</div>'
+      +'<div style="margin-top:8px;font-weight:800;">三项组合'+esc(combo.label)+'全通过率：'+pct(combo.rate)+' <span style="font-size:12px;font-weight:500;color:#64748b;">（有效回算'+esc(combo.total)+'期，全通过'+esc(combo.hit)+'期）</span></div>'
+      +'<div style="margin-top:5px;font-size:13px;font-weight:800;">今日最高连中：'+esc(today.total?today.maxWin:"--")+'手 ｜ 今日最高连败：'+esc(today.total?today.maxMiss:"--")+'手 <span style="font-size:12px;font-weight:500;color:#64748b;">（今日已回算'+esc(today.total||0)+'期）</span></div>'
+      +'<div style="margin-top:3px;font-size:13px;color:#475569;">当前连中：'+esc(today.currentWin||0)+'手 ｜ 当前连败：'+esc(today.currentMiss||0)+'手</div>'
+      +'</div>'
+      +'</div>';
+  }
+  function renderTwoDigitAvoidGroupBox(data,items){
+    var box=document.getElementById("twoDigitAvoidGroupBox");
+    if(box)box.outerHTML=twoDigitAvoidGroupHtml(data,items);
+  }
+  function renderCooccurrenceBox(data,items){
+    var box=document.getElementById("cooccurrenceDigitsBox");
+    if(box&&box.parentNode)box.parentNode.removeChild(box);
+  }
+  function cooccurrenceInlineHtml(data,items){
+    var parts=[];
+    EXTRAS.filter(isCooccurrenceExtra).forEach(function(extra){
+      var item=(items||[]).filter(function(x){return x.kind==="extra"&&x.key===extra.key;})[0];
+      var saved=data&&data.currentPrediction&&data.currentPrediction.extraKills&&data.currentPrediction.extraKills[extra.key]||{};
+      var code=item&&item.code!=null?String(item.code):String(saved.code||saved.value||"--");
+      var viewItem={kind:"extra",key:extra.key,side:"recommend",name:extra.label,code:code};
+      parts.push('<span style="display:inline-flex;align-items:center;gap:5px;margin:3px 10px 3px 0;white-space:nowrap;"><b>'+esc(extra.label.replace("命中",""))+'</b>'+circle(code,"#0f172a")+'<span style="font-size:12px;color:#64748b;">30期 '+pct(displayedItemRate(data,viewItem,30))+' ｜ 120期 '+pct(displayedItemRate(data,viewItem,120))+'</span></span>');
+    });
+    if(!parts.length)return "";
+    return '<div style="margin-top:10px;padding-top:9px;border-top:1px solid #bfdbfe;color:#0f172a;">'
+      +'<span style="font-weight:800;margin-right:8px;">共现数字</span>'
+      +'<span style="font-size:12px;color:#64748b;margin-right:8px;">三路候选，最稳一组进入第6项</span>'
+      +parts.join("")
+      +'</div>';
+  }
+  function translateReports(){
+    ["rates","heweiReport"].forEach(function(id){
+      var el=document.getElementById(id);if(!el)return;
+      var html=el.innerHTML;
+      var pairs=[
+        ["万千百十定位双码总击","千百十个定位双码总击"],
+        ["万千百十合尾","千百十个合尾"],
+        ["万千百合尾","千百十合尾"],
+        ["千百十合尾","百十个合尾"],
+        ["万位","千位"],["千位","百位"],["百位","十位"],["十位","个位"]
+      ];
+      pairs.forEach(function(p,i){html=html.split(p[0]).join("__V5_LABEL_"+i+"__");});
+      pairs.forEach(function(p,i){html=html.split("__V5_LABEL_"+i+"__").join(p[1]);});
+      el.innerHTML=html;
+    });
+  }
+  function renderTop(data,top,combo,items){
+    var latest=document.getElementById("numbers");
+    var card=latest&&(latest.closest?latest.closest(".card"):latest.parentElement);
+    if(!card){
+      card=rowById("wan");card=card&&(card.closest?card.closest(".card"):card.parentElement);
+    }
+    if(!card)return;
+    var box=document.getElementById("autoTop5Recommend");
+    if(!box){
+      box=document.createElement("div");
+      box.id="autoTop5Recommend";
+      box.className="card";
+    }
+    box.className="card";
+    box.style.cssText="background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 5px rgba(0,0,0,.08);";
+    if(card.parentNode){
+      card.parentNode.insertBefore(box,card.nextSibling);
+    }
+    var phase=(top&&top[0]&&top[0].stageLabel)||"观察期";
+    var html='<b style="font-size:17px;">自动推荐使用6项</b><div style="font-size:13px;color:#64748b;margin-top:4px;">固定规则：定位池挑3项，合尾池挑2项，两数共现避开3个模型里挑1项；推荐/主攻/备用都可参选，同一定位或同一合尾最多上2项。所有模型独立评分，低于安全阈值 '+esc(MODEL_REPAIR_RATE)+'% 自动暂停并用健康备用补位。120期以下观察，120-1000期小修，1000期以上按稳定权重判断。当前：'+esc(phase)+'。</div>';
+    var repair=(top&&top.repairReport)||[];
+    if(repair.length){
+      html+='<div style="margin-top:8px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:9px;padding:8px 10px;font-size:12px;line-height:1.65;">'
+        +'<b>自动修复报告：</b>'
+        +repair.slice(0,6).map(function(text){return '<div>'+esc(text)+'</div>';}).join("")
+        +(repair.length>6?'<div>其余 '+esc(repair.length-6)+' 条低命中记录已折叠。</div>':"")
+        +'</div>';
+    }else{
+      html+='<div style="margin-top:8px;border:1px solid #bbf7d0;background:#f0fdf4;color:#166534;border-radius:9px;padding:8px 10px;font-size:12px;">自动修复报告：当前六项均通过安全阈值。</div>';
+    }
+    html+='<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">';
+    (top||[]).forEach(function(x,i){
+      html+='<div style="display:flex;align-items:center;gap:6px;font-size:14px;flex-wrap:wrap;"><span style="width:20px;color:#2563eb;font-weight:700;">'+(i+1)+'.</span><span style="min-width:115px;font-weight:700;">'+esc(x.name)+'</span>'+circle(x.code)+'<span style="color:#475569;">综合 '+pct(x.stableScore!=null?x.stableScore:x.rate)+'</span><span style="font-size:12px;color:#64748b;">30期 '+pct(x.rate30)+' ｜ 120期 '+pct(x.rate120)+' ｜ 1000期 '+pct(x.rate300)+'</span></div>';
+    });
+    var comboLabel=(combo&&combo.label)||"近30期";
+    var todayStats=stableTodayStreakStats("autoTop6",combo&&combo.todayStats||{});
+    var todayLine='<div style="font-size:12px;font-weight:700;color:#0f172a;margin-top:6px;">'
+      +'今日六项最高连中：'+esc(todayStats.total?todayStats.maxWin:"--")+'手'
+      +' ｜ 今日六项最高连败：'+esc(todayStats.total?todayStats.maxMiss:"--")+'手'
+      +' <span style="font-weight:500;color:#64748b;">（今日已回算'+esc(todayStats.total||0)+'期）</span>'
+      +'</div>'
+      +'<div style="font-size:12px;font-weight:500;color:#475569;margin-top:3px;">'
+      +'当前连中：'+esc(todayStats.currentWin||0)+'手 ｜ 当前连败：'+esc(todayStats.currentMiss||0)+'手'
+      +'</div>';
+    html+='</div><div style="margin-top:10px;padding-top:9px;border-top:1px solid #bfdbfe;font-weight:700;color:#0f172a;">六项组合'+esc(comboLabel)+'全通过率：'+pct(combo.rate)
+      +' <span style="font-size:12px;font-weight:400;color:#64748b;">（有效回算'+esc(combo.total)+'期，全通过'+esc(combo.hit)+'期）</span>'
+      +'<div style="font-size:12px;font-weight:500;color:#475569;margin-top:4px;">5/6容错通过率：'+pct(combo.nearRate)+' ｜ 六项单项平均：'+pct(combo.avgRate)+'</div>'
+      +todayLine
+      +'</div>';
+    html+=twoDigitAvoidGroupHtml(data,items||[]);
+    box.innerHTML=html;
+  }
+  function removeCodesFromSegment(text,startLabel,endLabels,codes){
+    var start=text.indexOf(startLabel);if(start<0)return text;
+    var valueStart=start+startLabel.length,end=text.length;
+    (endLabels||[]).forEach(function(label){var idx=text.indexOf(label,valueStart);if(idx>=0&&idx<end)end=idx;});
+    var value=text.slice(valueStart,end);
+    if(!/^\d+$/.test(value))return text;
+    (codes||[]).forEach(function(code){value=value.split(String(code)).join("");});
+    return text.slice(0,valueStart)+value+text.slice(end);
+  }
+  function selectedCodes(top,kind,key){
+    return top.filter(function(item){return item.kind===kind&&item.key===key;}).map(function(item){return item.code;});
+  }
+  function isSelectablePracticeMode(){
+    return practiceMode==="manual"||practiceMode==="pure";
+  }
+  function buildPracticeModel(base,top,options){
+    var text=String(base||"").replace(/\s+/g,"");
+    var list=Array.isArray(top)?top:[];
+    var opts=options||{};
+    var positionMap=[
+      {start:"千",end:["百"],key:"wan"},
+      {start:"百",end:["十"],key:"qian"},
+      {start:"十",end:["个"],key:"bai"},
+      {start:"个",end:["四定","千百十个合","除"],key:"shi"}
+    ];
+    positionMap.forEach(function(cfg){text=removeCodesFromSegment(text,cfg.start,cfg.end,selectedCodes(list,"position",cfg.key));});
+    function uniqueCodes(){
+      var out=[],seen={};
+      Array.prototype.slice.call(arguments).forEach(function(arr){
+        (arr||[]).forEach(function(code){
+          code=String(code);
+          if(code&&!seen[code]){seen[code]=true;out.push(code);}
+        });
+      });
+      return out;
+    }
+    function removeFromPool(codes){
+      var value="1234567890";
+      (codes||[]).forEach(function(code){value=value.split(String(code)).join("");});
+      return value;
+    }
+    function ensureHeweiSegment(label,endLabels,codes){
+      codes=uniqueCodes(codes);
+      if(!codes.length)return;
+      if(text.indexOf(label)<0)text+=label+removeFromPool(codes);
+      text=removeCodesFromSegment(text,label,endLabels,codes);
+    }
+    var unifiedHeweiCodes=selectedCodes(list,"hewei","unified");
+    function independentOrUnifiedHewei(codes){
+      codes=uniqueCodes(codes);
+      return codes.length?codes:unifiedHeweiCodes;
+    }
+    ensureHeweiSegment("千百十合",["百十个合","千百十个合","除"],independentOrUnifiedHewei(selectedCodes(list,"hewei","wanQianBai")));
+    ensureHeweiSegment("百十个合",["千百十个合","除"],independentOrUnifiedHewei(selectedCodes(list,"hewei","qianBaiShi")));
+    ensureHeweiSegment("千百十个合",["除"],independentOrUnifiedHewei(uniqueCodes(selectedCodes(list,"hewei","total"),selectedCodes(list,"hewei","wanQianBaiShi"))));
+
+    text=text.replace(/四定除值\d+/g,"四定");
+    text=text.replace(/除对数\d{2,3}/g,"");
+    text=text.replace(/含对数\d{2,3}/g,"");
+    text=text.replace(/中对数\d{2,3}/g,"");
+    text=text.replace(/除和值\d+/g,"");
+    text=text.replace(/除值\d+/g,"");
+    text=text.replace(/除[大小单双]{4}/g,"");
+
+    var tokens=[];
+    var seen={};
+    function pushToken(token){
+      token=String(token||"");
+      if(!token||seen[token])return;
+      seen[token]=true;
+      tokens.push(token);
+    }
+    function selectedPositionDigits(key){
+      var out=[];
+      for(var i=0;i<list.length;i++){
+        var item=list[i];
+        if(!item||item.kind!=="position"||item.key!==key||item.code==null)continue;
+        var digit=String(item.code).replace(/\D/g,"").charAt(0);
+        if(digit!==""&&out.indexOf(digit)<0)out.push(digit);
+      }
+      return out;
+    }
+    function reversePositionToken(key,axis){
+      var values=[];
+      selectedPositionDigits(key).forEach(function(digit){
+        var n=Number(digit);
+        if(!isFinite(n))return;
+        var token=axis==="parity"?(n%2===1?"双":"单"):(n>=5?"小":"大");
+        if(values.indexOf(token)<0)values.push(token);
+      });
+      return values.length===1?values[0]:"";
+    }
+    function selectedShapeCode(shapeKey){
+      for(var i=0;i<list.length;i++){
+        var item=list[i];
+        if(!item||item.kind!=="shape"||item.key!==shapeKey||item.code==null)continue;
+        var code=String(item.code);
+        if(/^[大小单双]{4}$/.test(code))return forceThreeWithOneShape(code,shapeKey);
+      }
+      return "";
+    }
+    function baseShapeCode(shapeKey,fallback){
+      var selected=selectedShapeCode(shapeKey);
+      if(selected)return selected;
+      var shape=SHAPES.filter(function(s){return s.key===shapeKey;})[0];
+      if(shape){
+        var picked=chooseShapeSet(records(state||{}),shape);
+        var code=String((picked&&picked.value)||"");
+        if(/^[大小单双]{4}$/.test(code))return forceThreeWithOneShape(code,shapeKey);
+      }
+      return fallback;
+    }
+    function completeLockedShape(shapeKey,locked,fallback){
+      var base=baseShapeCode(shapeKey,fallback);
+      var shape=SHAPES.filter(function(s){return s.key===shapeKey;})[0];
+      var pool=shape?candidates(shape):[];
+      function matchesLocked(candidate){
+        for(var i=0;i<4;i++){
+          if(locked[i]&&candidate.charAt(i)!==locked[i])return false;
+        }
+        return true;
+      }
+      function distance(candidate,target){
+        var diff=0;
+        for(var i=0;i<4;i++)if(candidate.charAt(i)!==target.charAt(i))diff++;
+        return diff;
+      }
+      var matches=pool.filter(matchesLocked);
+      if(matches.length){
+        return matches.slice().sort(function(a,b){
+          var da=distance(a,base),db=distance(b,base);
+          if(da!==db)return da-db;
+          var aFirst=a.charAt(0)===base.charAt(0)?0:1;
+          var bFirst=b.charAt(0)===base.charAt(0)?0:1;
+          if(aFirst!==bFirst)return aFirst-bFirst;
+          return a.localeCompare(b,"zh-CN");
+        })[0]||base;
+      }
+      var out=String(base||fallback||"").split("");
+      var fill=String(fallback||"");
+      for(var i=0;i<4;i++){
+        if(locked[i]){
+          out[i]=locked[i];
+        }else if(!/^[大小单双]$/.test(out[i]||"")){
+          out[i]=fill.charAt(i)||"单";
+        }
+      }
+      return out.join("");
+    }
+    function addReversePositionShapes(){
+      var parity=[null,null,null,null];
+      var size=[null,null,null,null];
+      var changed=false;
+      POS.forEach(function(pos,index){
+        var parityToken=reversePositionToken(pos.key,"parity");
+        var sizeToken=reversePositionToken(pos.key,"size");
+        if(parityToken){parity[index]=parityToken;changed=true;}
+        if(sizeToken){size[index]=sizeToken;changed=true;}
+      });
+      if(!changed)return;
+      var parityCode=completeLockedShape("shapeParity",parity,"双双双单");
+      var sizeCode=completeLockedShape("shapeSize",size,"大大大小");
+      var evaluatedCount=evalRows(state||{}).length;
+      var reverseCandidates=[];
+      function addShapeCandidate(shapeKey,code,name){
+        if(!/^[大小单双]{4}$/.test(code))return;
+        var item={kind:"shape",key:shapeKey,side:"recommend",name:name,code:forceThreeWithOneShape(code,shapeKey)};
+        var r30=displayedItemRate(state||{},item,30);
+        var r60=displayedItemRate(state||{},item,60);
+        var r120=displayedItemRate(state||{},item,120);
+        var r300=displayedItemRate(state||{},item,MODEL_STABLE_WINDOW);
+        if(r60==null||!isFinite(Number(r60)))r60=r30;
+        if(r120==null||!isFinite(Number(r120)))r120=r60;
+        if(r300==null||!isFinite(Number(r300)))r300=r120;
+        if(evaluatedCount>=MODEL_STABLE_WINDOW){
+          item.stableScore=(Number(r30||0)*0.10)+(Number(r60||0)*0.15)+(Number(r120||0)*0.20)+(Number(r300||0)*0.55);
+        }else if(evaluatedCount>=120){
+          item.stableScore=(Number(r30||0)*0.20)+(Number(r60||0)*0.20)+(Number(r120||0)*0.40)+(Number(r300||0)*0.20);
+        }else{
+          item.stableScore=(Number(r30||0)*0.45)+(Number(r60||0)*0.35)+(Number(r120||0)*0.20);
+        }
+        item.rate30=r30;
+        item.rate60=r60;
+        item.rate120=r120;
+        item.rate300=r300;
+        reverseCandidates.push(item);
+      }
+      addShapeCandidate("shapeParity",parityCode,"单双反形态");
+      addShapeCandidate("shapeSize",sizeCode,"大小反形态");
+      reverseCandidates.sort(function(a,b){
+        if((b.stableScore||0)!==(a.stableScore||0))return (b.stableScore||0)-(a.stableScore||0);
+        if((b.rate120||0)!==(a.rate120||0))return (b.rate120||0)-(a.rate120||0);
+        if((b.rate300||0)!==(a.rate300||0))return (b.rate300||0)-(a.rate300||0);
+        return String(a.name||"").localeCompare(String(b.name||""),"zh-CN");
+      });
+      if(reverseCandidates.length)pushToken("除"+reverseCandidates[0].code);
+    }
+    if(opts.addReversePositionShapes!==false)addReversePositionShapes();
+    list.forEach(function(item){
+      if(!item||!item.code)return;
+      var key="";
+      var token="";
+      if(item.kind==="extra"&&item.key==="sumAvoid"){
+        key="extra.sumAvoid";
+        token="除和值"+item.code;
+      }else if(item.kind==="extra"&&item.key==="threeDigitAvoid"){
+        key="extra.threeDigitAvoid";
+        token="除对数"+item.code;
+      }else if(item.kind==="extra"&&(item.key==="twoDigitAvoid"||item.key==="twoDigitAvoid2"||item.key==="twoDigitAvoid3")){
+        key="extra."+item.key;
+        token="除对数"+item.code;
+      }else if(item.kind==="extra"&&item.key==="twoDigitHit"){
+        key="extra.twoDigitHit";
+        token="含对数"+item.code;
+      }else if(item.kind==="extra"&&item.key==="threeDigitHit"){
+        key="extra.threeDigitHit";
+        token="含对数"+item.code;
+      }else if(item.kind==="threeDuishu"){
+        key="threeDuishu."+String(item.code||"");
+        threeDuishuPairTokens(item).forEach(function(pairCode){
+          pushToken("除对数"+pairCode);
+        });
+        token="";
+      }else if(item.kind==="shape"){
+        var shapeCode=forceThreeWithOneShape(item.code,item.key);
+        key="shape."+(item.key||"")+"."+shapeCode;
+        token="除"+shapeCode;
+      }else if(item.kind!=="position"&&item.kind!=="hewei"){
+        key="other."+practiceItemId(item)+"."+item.code;
+        token="除"+item.code;
+      }
+      if(token&&!seen[key])pushToken(token);
+    });
+
+    var generated=(text+tokens.join("")).replace(/\s+/g,"").trim();
+    return generated.replace(/各+$/,"")+"各";
+  }
+  function practiceItemId(item){
+    if(!item)return "";
+    if(item.kind==="threeDuishu")return [item.kind||"",item.key||"",item.side||"recommend",String(item.code||"")].join("|");
+    return [item.kind||"",item.key||"",item.side||"recommend"].join("|");
+  }
+  function practiceDisplayCode(item){
+    if(!item)return "";
+    if(item.kind==="threeDuishu"){
+      var pairs=threeDuishuPairTokens(item);
+      return String(item.code||"")+(pairs.length?"("+pairs.join("/")+")":"");
+    }
+    return String(item.code||"");
+  }
+  function practiceSelectionKey(){
+    var keys=[];
+    Object.keys(practiceManualSelection||{}).forEach(function(key){
+      if(practiceManualSelection[key])keys.push(key);
+    });
+    return keys.sort().join(",");
+  }
+  function practiceItemsKey(items){
+    return (items||[]).map(function(item){
+      return [practiceItemId(item),item&&item.code!=null?String(item.code):"",item&&item.rate!=null?String(item.rate):"",item&&item.rate10!=null?String(item.rate10):""].join("=");
+    }).join(";");
+  }
+  function savePracticeSettings(){
+    try{
+      localStorage.setItem("penta5PracticeMode",practiceMode);
+      localStorage.setItem("penta5PracticeManualSelection",JSON.stringify(practiceManualSelection||{}));
+      localStorage.setItem("penta5PracticeManualInitialized",practiceManualInitialized?"1":"0");
+    }catch(e){}
+  }
+  function practicePoolItems(){
+    var data=state||{};
+    var p=data.currentPrediction||{};
+    var pk=p.positionKills||{};
+    var list=[];
+    function addItem(item){
+      if(!item||item.code==null||String(item.code)==="--")return;
+      list.push(item);
+    }
+    addItem(threeDuishuCandidateItem(data));
+    POS.forEach(function(pos){
+      var entry=pk[pos.key]||{};
+      var recommend=entry.recommendDigit!=null?entry.recommendDigit:(entry.selectedDigit!=null?entry.selectedDigit:(entry.main!=null?entry.main:(entry.killDigits&&entry.killDigits[0])));
+      var main=entry.primaryDigit!=null?entry.primaryDigit:(entry.mainAlgorithmDigit!=null?entry.mainAlgorithmDigit:(entry.mainDigit!=null?entry.mainDigit:entry.main));
+      var backup=entry.originalBackupDigit!=null?entry.originalBackupDigit:(entry.backupAlgorithmDigit!=null?entry.backupAlgorithmDigit:(entry.backup!=null?entry.backup:(entry.backupDigit!=null?entry.backupDigit:(entry.killDigits&&entry.killDigits[1]))));
+      addItem({kind:"position",key:pos.key,side:"recommend",name:pos.label+"推荐",code:String(recommend)});
+      addItem({kind:"position",key:pos.key,side:"main",name:pos.label+"主攻",code:String(main)});
+      addItem({kind:"position",key:pos.key,side:"backup",name:pos.label+"备用",code:String(backup)});
+    });
+    var ih=p.independentHeweiKills||{};
+    HEWEI.forEach(function(h){
+      var recommend="--",main="--",backup="--";
+      if(h.key==="unified"){
+        var detail=p.detail&&p.detail.threeFourHeweiKill||{};
+        recommend=p.threeFourHeweiKillDigit||detail.killDigit||"--";
+        main=detail.primaryDigit||recommend||"--";
+        backup=p.threeFourHeweiBackupDigit||detail.backupDigit||"--";
+      }else{
+        var hewei=ih[h.key]||{};
+        recommend=hewei.killDigit||"--";
+        main=hewei.primaryDigit||recommend||"--";
+        backup=hewei.backupDigit||"--";
+      }
+      addItem({kind:"hewei",key:h.key,side:"recommend",name:h.label+"推荐",code:String(recommend)});
+      addItem({kind:"hewei",key:h.key,side:"main",name:h.label+"主攻",code:String(main)});
+      addItem({kind:"hewei",key:h.key,side:"backup",name:h.label+"备用",code:String(backup)});
+    });
+    SHAPES.forEach(function(s){
+      var chosen=chooseShapeSet(records(data),s);
+      addItem({kind:"shape",key:s.key,side:"recommend",name:s.label+"推荐",code:chosen.value});
+      addItem({kind:"shape",key:s.key,side:"main",name:s.label+"主攻",code:chosen.primary});
+      addItem({kind:"shape",key:s.key,side:"backup",name:s.label+"备用",code:chosen.backup});
+    });
+    var backendExtras=p.extraKills||{};
+    EXTRAS.forEach(function(extra){
+      var saved=backendExtras[extra.key];
+      var code=saved&&(saved.value!=null?saved.value:(saved.code!=null?saved.code:null));
+      addItem({kind:"extra",key:extra.key,side:"recommend",name:extra.label,code:code!=null?String(code):chooseExtra(records(data),extra).value});
+    });
+    list.forEach(function(item){item.rate=displayedItemRate(data,item,30);item.rate10=displayedItemRate(data,item,10);markItemConfidence(data,item);});
+    return list;
+  }
+  function seedManualSelection(top){
+    if(practiceManualInitialized)return;
+    practiceManualSelection={};
+    (top||[]).forEach(function(item){practiceManualSelection[practiceItemId(item)]=true;});
+    practiceManualInitialized=true;
+    savePracticeSettings();
+  }
+  function currentPracticeItems(top){
+    if(!isSelectablePracticeMode())return top||[];
+    return practicePoolItems().filter(function(item){return !!practiceManualSelection[practiceItemId(item)];});
+  }
+  function renderPracticeManualList(top){
+    var wrap=document.getElementById("practiceManualList");
+    if(!wrap)return;
+    if(!isSelectablePracticeMode()){
+      if(wrap.style.display!=="none")wrap.style.display="none";
+      if(wrap.innerHTML!=="")wrap.innerHTML="";
+      wrap.setAttribute("data-practice-manual-key","auto");
+      return;
+    }
+    var items=practicePoolItems();
+    wrap.style.display="grid";
+    wrap.style.gridTemplateColumns="repeat(auto-fit,minmax(145px,1fr))";
+    wrap.style.gap="6px";
+    wrap.style.margin="8px 0";
+    var cacheKey=practiceItemsKey(items)+"|"+practiceSelectionKey();
+    if(wrap.getAttribute("data-practice-manual-key")===cacheKey)return;
+    wrap.setAttribute("data-practice-manual-key",cacheKey);
+    if(!items.length){
+      var emptyHtml='<span style="font-size:12px;color:#64748b;">暂无可选模型</span>';
+      if(wrap.innerHTML!==emptyHtml)wrap.innerHTML=emptyHtml;
+      return;
+    }
+    var html=items.map(function(item){
+      var id=practiceItemId(item);
+      var checked=practiceManualSelection[id]?" checked":"";
+      var style="display:flex;align-items:center;gap:5px;font-size:12px;border:1px solid #bbf7d0;border-radius:7px;padding:5px;background:#fff;color:#020617;";
+      var suffix="";
+      var code=practiceDisplayCode(item);
+      return '<label style="'+style+'">'
+        +'<input type="checkbox" data-practice-id="'+esc(id)+'"'+checked+'>'
+        +'<span>'+esc(item.name)+' '+esc(code)+' '+pct(item.rate)+esc(suffix)+'</span></label>';
+    }).join("");
+    if(wrap.innerHTML!==html)wrap.innerHTML=html;
+  }
+
+  function latestEvaluatedPracticeRow(data){
+    var rows=evalRows(data||{});
+    return rows.length?rows[0]:null;
+  }
+  function practiceOutcomePeriod(row){
+    var ev=row&&row.evaluation||{};
+    return String(ev.targetPeriod||ev.period||row.basePeriod||row.baseUid||"");
+  }
+  function latestPracticePeriod(data){
+    var latest=(data&&data.latestRecord)||{};
+    return String(latest.period||latest.uid||"");
+  }
+  function predictionPracticePeriod(data){
+    var pred=(data&&data.currentPrediction)||{};
+    return String(pred.basePeriod||pred.baseUid||"");
+  }
+  function practiceStateIsFresh(data){
+    var latest=(data&&data.latestRecord)||{};
+    var pred=(data&&data.currentPrediction)||{};
+    if(!latest||!pred)return false;
+    var latestPeriod=String(latest.period||"");
+    var latestUid=String(latest.uid||"");
+    var predPeriod=String(pred.basePeriod||"");
+    var predUid=String(pred.baseUid||"");
+    if(latestPeriod&&predPeriod&&latestPeriod===predPeriod)return true;
+    if(latestUid&&predUid&&latestUid===predUid)return true;
+    return false;
+  }
+  function sleepPanel(ms){
+    return new Promise(function(resolve){setTimeout(resolve,ms);});
+  }
+  async function refreshPracticeStateBeforeGenerate(){
+    for(var i=0;i<4;i++){
+      if(loading){
+        var waits=0;
+        while(loading&&waits<20){await sleepPanel(100);waits++;}
+      }
+      await refresh();
+      if(practiceStateIsFresh(state||{}))return true;
+      maybeKickPanelSync(state||{});
+      await sleepPanel(650);
+    }
+    return practiceStateIsFresh(state||{});
+  }
+  function practiceModeLabel(){
+    if(practiceMode==="manual")return "手动选择";
+    if(practiceMode==="pure")return "随意生成";
+    return "自动推荐";
+  }
+  function practiceOutcomeKey(period,items,modeLabel){
+    return String(period||"")+"|"+String(modeLabel||practiceModeLabel())+"|"+(items||[]).map(function(item){
+      return [practiceItemId(item),item&&item.code!=null?String(item.code):""].join("=");
+    }).join(";");
+  }
+  function launchPracticeFireworks(message){
+    var old=document.getElementById("practiceFireworks");
+    if(old&&old.parentNode)old.parentNode.removeChild(old);
+    var overlay=document.createElement("div");
+    overlay.id="practiceFireworks";
+    var canvas=document.createElement("canvas");
+    var toast=document.createElement("div");
+    toast.className="practice-toast";
+    toast.textContent=message||"靶场模型全部通过";
+    overlay.appendChild(canvas);
+    overlay.appendChild(toast);
+    document.body.appendChild(overlay);
+    var ctx=canvas.getContext("2d");
+    var ratio=Math.max(1,window.devicePixelRatio||1);
+    var width=0,height=0,particles=[];
+    function resize(){
+      width=window.innerWidth||document.documentElement.clientWidth||800;
+      height=window.innerHeight||document.documentElement.clientHeight||600;
+      canvas.width=Math.floor(width*ratio);
+      canvas.height=Math.floor(height*ratio);
+      canvas.style.width=width+"px";
+      canvas.style.height=height+"px";
+      ctx.setTransform(ratio,0,0,ratio,0,0);
+    }
+    function burst(x,y,count){
+      var colors=["#ef4444","#f59e0b","#22c55e","#06b6d4","#3b82f6","#a855f7","#f43f5e"];
+      for(var i=0;i<count;i++){
+        var angle=Math.PI*2*i/count+Math.random()*0.22;
+        var speed=2.6+Math.random()*5.2;
+        particles.push({
+          x:x,y:y,
+          vx:Math.cos(angle)*speed,
+          vy:Math.sin(angle)*speed,
+          size:2+Math.random()*3.8,
+          life:58+Math.random()*26,
+          color:colors[Math.floor(Math.random()*colors.length)]
+        });
+      }
+    }
+    resize();
+    var burstPlan=[
+      [0.18,0.28,56],[0.34,0.36,50],[0.52,0.30,58],[0.70,0.40,50],[0.86,0.32,56],
+      [0.25,0.46,48],[0.45,0.24,54],[0.63,0.50,48],[0.80,0.26,54],
+      [0.16,0.38,46],[0.38,0.48,52],[0.58,0.34,48],[0.76,0.44,52],
+      [0.28,0.30,44],[0.50,0.52,50],[0.72,0.28,44]
+    ];
+    burstPlan.forEach(function(plan,index){
+      setTimeout(function(){burst(width*plan[0],height*plan[1],plan[2]);},index*420);
+    });
+    var frame=0;
+    function draw(){
+      frame++;
+      ctx.clearRect(0,0,width,height);
+      particles=particles.filter(function(p){return p.life>0;});
+      particles.forEach(function(p){
+        p.life-=1;
+        p.vy+=0.045;
+        p.x+=p.vx;
+        p.y+=p.vy;
+        ctx.globalAlpha=Math.max(0,p.life/84);
+        ctx.fillStyle=p.color;
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,p.size,0,Math.PI*2);
+        ctx.fill();
+      });
+      ctx.globalAlpha=1;
+      if(frame<480 || particles.length){
+        requestAnimationFrame(draw);
+      }else if(overlay&&overlay.parentNode){
+        overlay.parentNode.removeChild(overlay);
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+  function updatePracticeHitStatus(selectedItems){
+    var box=document.getElementById("practiceHitStatus");
+    if(!box)return;
+    var modeLabel=practiceModeLabel();
+    var items=(selectedItems||[]).filter(function(item){return item&&item.code!=null&&String(item.code)!=="--";});
+    if(!items.length){
+      box.style.display="none";
+      box.innerHTML="";
+      return;
+    }
+    var row=latestEvaluatedPracticeRow(state||{});
+    if(!row){
+      box.style.display="block";
+      box.style.background="#f8fafc";
+      box.style.borderColor="#e2e8f0";
+      box.style.color="#475569";
+      box.textContent="本期开奖结果（"+modeLabel+"）：等待已开奖回算数据";
+      return;
+    }
+    var period=practiceOutcomePeriod(row);
+    var results=items.map(function(item){
+      var success=itemSuccess(state||{},item,row);
+      return {item:item,success:success};
+    });
+    var valid=results.filter(function(result){return typeof result.success==="boolean";});
+    var passed=valid.filter(function(result){return result.success;}).length;
+    var failed=valid.length-passed;
+    box.style.display="block";
+    if(valid.length!==items.length){
+      box.style.background="#f8fafc";
+      box.style.borderColor="#e2e8f0";
+      box.style.color="#475569";
+      box.textContent="本期开奖结果（"+modeLabel+"）："+(period||"--")+"｜已识别 "+valid.length+"/"+items.length+" 项，等待完整回算";
+      return;
+    }
+    var allPassed=valid.length>0&&passed===valid.length;
+    box.style.background=allPassed?"#dcfce7":"#fff7ed";
+    box.style.borderColor=allPassed?"#86efac":"#fed7aa";
+    box.style.color=allPassed?"#166534":"#9a3412";
+    box.className=allPassed?"practice-hit-strong":"";
+    box.innerHTML="本期开奖结果（"+esc(modeLabel)+"）："+esc(period||"--")+"｜通过 "+esc(passed)+"/"+esc(valid.length)+(failed?("｜未过 "+esc(failed)):"｜全部通过");
+    if(allPassed){
+      var key=practiceOutcomeKey(period,items,modeLabel);
+      if(key&&key!==practiceLastCelebrationKey){
+        practiceLastCelebrationKey=key;
+        try{localStorage.setItem("penta5PracticeLastCelebrationKey",key);}catch(e){}
+        launchPracticeFireworks("靶场"+modeLabel+"全部通过 "+passed+"/"+valid.length);
+      }
+    }
+  }
+
+  function challengeStats(data,top,missLimit){
+    var rows=evalRows(data).slice(0,100).reverse();
+    var success=0,fail=0,currentMiss=0,total=0;
+    rows.forEach(function(row){
+      var results=(top||[]).map(function(item){return itemSuccess(data,item,row);}).filter(function(x){return typeof x==="boolean";});
+      if(results.length!==(top||[]).length||!results.length)return;
+      total++;
+      if(results.every(Boolean)){
+        success++;
+        currentMiss=0;
+      }else{
+        currentMiss++;
+        if(currentMiss>=missLimit){
+          fail++;
+          currentMiss=0;
+        }
+      }
+    });
+    return {limit:missLimit,total:total,success:success,fail:fail,currentMiss:currentMiss};
+  }
+  function challengeModeHtml(title,stat){
+    return '<div style="flex:1;min-width:190px;border:1px solid #bfdbfe;border-radius:10px;padding:9px;background:#fff;">'
+      +'<div style="font-weight:700;color:#0f172a;margin-bottom:5px;">'+esc(title)+'</div>'
+      +'<div style="font-size:12px;color:#475569;line-height:1.65;">规则：连续 '+esc(stat.limit)+' 期不中失败</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:7px;font-size:12px;">'
+      +'<span style="background:#dcfce7;color:#166534;border-radius:999px;padding:4px 8px;">成功 '+esc(stat.success)+' 次</span>'
+      +'<span style="background:#fee2e2;color:#991b1b;border-radius:999px;padding:4px 8px;">失败 '+esc(stat.fail)+' 次</span>'
+      +'<span style="background:#e0f2fe;color:#075985;border-radius:999px;padding:4px 8px;">当前连续不中 '+esc(stat.currentMiss)+' 期</span>'
+      +'<span style="background:#f1f5f9;color:#334155;border-radius:999px;padding:4px 8px;">样本 '+esc(stat.total)+' 期</span>'
+      +'</div></div>';
+  }
+  function renderChallengeBox(top){
+    var latest=document.getElementById("numbers");
+    var host=latest&&(latest.closest?latest.closest(".card"):latest.parentElement);
+    if(!host)return;
+    var box=document.getElementById("challengeModeBox");
+    if(!box){
+      box=document.createElement("div");
+      box.id="challengeModeBox";
+      box.style.cssText="margin:14px 0 0;padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:12px;";
+      host.appendChild(box);
+    }
+    var s4=challengeStats(state||{},top||[],4);
+    var s5=challengeStats(state||{},top||[],5);
+    var count=Array.isArray(top)?top.length:0;
+    box.innerHTML='<b style="font-size:17px;">'+esc(count||6)+'项闯关统计</b>'
+      +'<div style="font-size:12px;color:#64748b;margin:4px 0 8px;">按当前系统推荐'+esc(count||6)+'项回算近100期；全部命中算成功，连续不中达到阈值算失败。</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;">'+challengeModeHtml("模式1",s4)+challengeModeHtml("模式2",s5)+'</div>';
+  }
+  function copyPracticeText(){
+    var output=document.getElementById("practiceModelOutput");if(!output)return;
+    var value=output.value||output.textContent||"";
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(value).catch(function(){output.focus();output.select();document.execCommand("copy");});}
+    else{output.focus();output.select();document.execCommand("copy");}
+    var button=document.getElementById("copyPracticeModel");if(button){button.textContent="已复制";setTimeout(function(){button.textContent="一键复制";},1200);}
+  }
+  
+/* PENTA5_V33_PRACTICE_FLEXIBLE_START */
+  function v33PracticeCount(top){
+    return Array.isArray(top)?top.length:0;
+  }
+  function v33RefreshPracticeText(top){
+    var count=v33PracticeCount(top);
+    var box=document.getElementById("practiceModelBox");
+    if(!box)return;
+    var hint=box.querySelector('[data-v33-practice-hint="1"]');
+    if(!hint){
+      var title=box.querySelector("b");
+      hint=document.createElement("div");
+      hint.setAttribute("data-v33-practice-hint","1");
+      hint.style.cssText="font-size:12px;color:#64748b;margin:4px 0 8px;";
+      if(title&&title.parentNode)title.parentNode.insertBefore(hint,title.nextSibling);
+    }
+    hint.textContent="默认按系统当前推荐"+count+"项生成；手动选择可自由增减模型；随意生成只按勾选项，不额外补反向形态。";
+    var auto=document.getElementById("practiceModeAuto");
+    if(auto&&auto.parentNode){
+      auto.parentNode.lastChild.nodeValue=" 系统推荐"+count+"项";
+    }
+  }
+  function ensurePracticeBox(top){
+    var latest=document.getElementById("numbers");
+    var host=latest&&(latest.closest?latest.closest(".card"):latest.parentElement);
+    if(!host)return;
+    var box=document.getElementById("practiceModelBox");
+    if(!box){
+      box=document.createElement("div");box.id="practiceModelBox";box.style.cssText="margin:14px 0 0;padding:12px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:12px;";
+      box.innerHTML='<b style="font-size:17px;">靶场模型</b><div data-v33-practice-hint="1" style="font-size:12px;color:#64748b;margin:4px 0 8px;">默认按系统当前推荐项生成；手动选择可自由增减模型；随意生成只按勾选项，不额外补反向形态。</div>'
+          +'<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0 8px;font-size:13px;"><label><input type="radio" name="practiceMode" id="practiceModeAuto" value="auto"> 系统推荐</label><label><input type="radio" name="practiceMode" id="practiceModeManual" value="manual"> 手动选择模型</label><label><input type="radio" name="practiceMode" id="practiceModePure" value="pure"> 随意生成（不额外加）</label></div>'
+          +'<div id="practiceManualList" style="display:none;"></div>'
+          +'<textarea id="practiceModelInput" style="width:100%;min-height:68px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:8px;resize:vertical;font-size:13px;"></textarea>'
+          +'<div style="display:flex;gap:8px;margin:8px 0;"><button id="generatePracticeModel" type="button" style="border:0;border-radius:7px;padding:7px 12px;background:#16a34a;color:white;font-weight:700;cursor:pointer;">按当前选择生成</button><button id="copyPracticeModel" type="button" style="border:0;border-radius:7px;padding:7px 12px;background:#334155;color:white;font-weight:700;cursor:pointer;">一键复制</button></div>'
+          +'<textarea id="practiceModelOutput" readonly style="width:100%;min-height:68px;box-sizing:border-box;border:1px solid #86efac;border-radius:8px;padding:8px;background:white;font-size:13px;"></textarea>'
+          +'<div id="practiceHitStatus" style="display:none;font-size:12px;line-height:1.6;border:1px solid #86efac;border-radius:8px;padding:7px 9px;margin-top:8px;background:#dcfce7;color:#166534;"></div>';
+      host.appendChild(box);
+      var input=document.getElementById("practiceModelInput");
+      try{
+        var savedPracticeModel=localStorage.getItem("penta5PracticeModel")||DEFAULT_PRACTICE_MODEL;
+        var normalizedPracticeModel=normalizePracticeSeedText(savedPracticeModel);
+        input.value=normalizedPracticeModel;
+        if(normalizedPracticeModel!==savedPracticeModel)localStorage.setItem("penta5PracticeModel",normalizedPracticeModel);
+      }catch(e){input.value=DEFAULT_PRACTICE_MODEL;}
+      function updatePracticeModelOutput(force){
+          try{localStorage.setItem("penta5PracticeModel",input.value);}catch(e){}
+          var activeTop=calculationCache?calculationCache.top:top;
+          v33RefreshPracticeText(activeTop);
+          renderPracticeManualList(activeTop);
+          var output=document.getElementById("practiceModelOutput");
+          if(!output)return;
+          if(!practiceStateIsFresh(state||{})){
+            var waitKey="waiting||"+stateRenderKey(state||{});
+            output.setAttribute("data-practice-output-key",waitKey);
+            output.setAttribute("data-practice-period",latestPracticePeriod(state||{}));
+            output.value="等待最新开奖模型同步中，避免生成上期模型";
+            updatePracticeHitStatus([]);
+            maybeKickPanelSync(state||{});
+            return;
+          }
+          var selected=currentPracticeItems(activeTop);
+          updatePracticeHitStatus(selected);
+          var outputKey=[stateRenderKey(state||{}),latestPracticePeriod(state||{}),predictionPracticePeriod(state||{}),String(input.value||""),practiceMode,practiceItemsKey(activeTop||[]),practiceItemsKey(selected),practiceSelectionKey()].join("||");
+          if(force!==true && output.getAttribute("data-practice-output-key")===outputKey)return;
+          var nextValue=buildPracticeModel(input.value,selected,{addReversePositionShapes:practiceMode!=="pure"});
+          output.setAttribute("data-practice-output-key",outputKey);
+          output.setAttribute("data-practice-period",latestPracticePeriod(state||{}));
+          if(output.value!==nextValue)output.value=nextValue;
+        }
+      function schedulePracticeModelOutput(){
+          if(practiceOutputTimer)clearTimeout(practiceOutputTimer);
+          practiceOutputTimer=setTimeout(function(){practiceOutputTimer=null;updatePracticeModelOutput(false);},180);
+        }
+      box._pentaUpdatePracticeModelOutput=updatePracticeModelOutput;
+      box._pentaSchedulePracticeModelOutput=schedulePracticeModelOutput;
+      input.addEventListener("input",schedulePracticeModelOutput);
+        var autoMode=document.getElementById("practiceModeAuto"),manualMode=document.getElementById("practiceModeManual"),pureMode=document.getElementById("practiceModePure"),manualList=document.getElementById("practiceManualList");
+        if(autoMode)autoMode.checked=practiceMode!=="manual"&&practiceMode!=="pure";
+        if(manualMode)manualMode.checked=practiceMode==="manual";
+        if(pureMode)pureMode.checked=practiceMode==="pure";
+        if(autoMode)autoMode.addEventListener("change",function(){practiceMode="auto";savePracticeSettings();updatePracticeModelOutput(true);});
+        if(manualMode)manualMode.addEventListener("change",function(){practiceMode="manual";seedManualSelection(calculationCache?calculationCache.top:top);savePracticeSettings();updatePracticeModelOutput(true);});
+        if(pureMode)pureMode.addEventListener("change",function(){practiceMode="pure";seedManualSelection(calculationCache?calculationCache.top:top);savePracticeSettings();updatePracticeModelOutput(true);});
+        if(manualList)manualList.addEventListener("change",function(ev){var target=ev.target;if(target&&target.getAttribute&&target.getAttribute("data-practice-id")){practiceManualSelection[target.getAttribute("data-practice-id")]=!!target.checked;practiceManualInitialized=true;savePracticeSettings();updatePracticeModelOutput(true);}});
+        document.getElementById("generatePracticeModel").addEventListener("click",async function(){
+          var btn=this;
+          if(btn){btn.disabled=true;btn.textContent="同步中...";}
+          try{
+            await refreshPracticeStateBeforeGenerate();
+            updatePracticeModelOutput(true);
+          }finally{
+            if(btn){btn.disabled=false;btn.textContent="按当前选择生成";}
+          }
+        });
+        document.getElementById("copyPracticeModel").addEventListener("click",copyPracticeText);
+    }
+    if(box._pentaUpdatePracticeModelOutput)box._pentaUpdatePracticeModelOutput(false);
+    renderChallengeBox(top);
+  }
+/* PENTA5_V33_PRACTICE_FLEXIBLE_END */
+
+  function parsePanelTimeMs(value){
+    if(!value)return 0;
+    var direct=Date.parse(String(value));
+    if(isFinite(direct))return direct;
+    var normalized=String(value).replace(/-/g,"/");
+    var parsed=Date.parse(normalized);
+    return isFinite(parsed)?parsed:0;
+  }
+  function latestSyncAgeMs(data){
+    var last=(data&&data.lastSync)||{};
+    var latest=(data&&data.latestRecord)||{};
+    var ms=parsePanelTimeMs(last.at)||parsePanelTimeMs(latest.capturedAt)||parsePanelTimeMs(latest.opentime);
+    return ms?Math.max(0,Date.now()-ms):Number.POSITIVE_INFINITY;
+  }
+  function maybeKickPanelSync(data){
+    var now=Date.now();
+    if(panelSyncRunning)return;
+    if(now-panelLastSyncAttemptAt<PANEL_AUTO_SYNC_MIN_MS)return;
+    if(data&&data.ok&&latestSyncAgeMs(data)<=PANEL_SYNC_STALE_MS)return;
+    panelLastSyncAttemptAt=now;
+    panelSyncRunning=true;
+    panelFetch("/sync",{method:"POST",cache:"no-store"})
+      .then(function(){setTimeout(refresh,500);})
+      .catch(function(err){console.warn("panel auto sync failed",err);})
+      .finally(function(){panelSyncRunning=false;});
+  }
+  function stateRenderKey(data){
+    var latest=(data&&data.latestRecord)||{};
+    var last=(data&&data.lastSync)||{};
+    var current=(data&&data.currentPrediction)||{};
+    var ev=current.evaluation||{};
+    var nums=Array.isArray(latest.numbers)?latest.numbers.join(""):"";
+    var syncNums=Array.isArray(last.latestNumbers)?last.latestNumbers.join(""):"";
+    return [
+      data&&data.updatedAt||"",
+      latest.uid||"",
+      latest.period||"",
+      nums,
+      last.at||"",
+      last.latestPeriod||"",
+      syncNums,
+      current.id||"",
+      current.evaluated?"1":"0",
+      ev.targetUid||"",
+      ev.targetPeriod||"",
+      ev.evaluatedAt||"",
+      Array.isArray(data&&data.predictions)?data.predictions.length:"0"
+    ].join(":");
+  }
+  function renderAll(){
+    if(!state||!state.ok)return;
+    ensureShapeRows();reorderRows();
+    var cacheKey=stateRenderKey(state);
+    if(!calculationCache||calculationCache.key!==cacheKey){
+      evaluationCache={};
+      var items=currentItems(state),top=topSeven(state,items),combo=combinedRate(state,top);
+      calculationCache={key:cacheKey,items:items,top:top,combo:combo};
+    }
+    renderLatest(state,calculationCache.top);
+    renderRows(state,calculationCache.items);renderTop(state,calculationCache.top,calculationCache.combo,calculationCache.items);ensurePracticeBox(calculationCache.top);renderCooccurrenceBox(state,calculationCache.items);translateReports();
+  }
+  async function refresh(){
+    if(loading)return;loading=true;
+    try{
+      var response=await panelFetch("/state?_="+Date.now(),{cache:"no-store"});
+      var nextState=await response.json();
+      var previousKey=stateRenderKey(state);
+      var nextKey=stateRenderKey(nextState);
+      var firstRender=!state;
+      state=nextState;
+      if(previousKey!==nextKey){calculationCache=null;evaluationCache={};}
+      renderAll();
+      maybeKickPanelSync(nextState);
+    }
+    catch(err){console.error("v5 panel refresh failed",err);}
+    finally{loading=false;}
+  }
+  function startPanelLoop(){
+    if(panelLoopStarted)return;
+    panelLoopStarted=true;
+    refresh();
+    setInterval(refresh,PANEL_REFRESH_MS);
+    document.addEventListener("visibilitychange",function(){if(!document.hidden)refresh();});
+    window.addEventListener("focus",refresh);
+    window.addEventListener("pageshow",refresh);
+    window.addEventListener("online",refresh);
+  }
+  document.addEventListener("DOMContentLoaded",startPanelLoop);
+  if(document.readyState!=="loading")startPanelLoop();
+
+
+
+
+
+/* PENTA5_V25_CHALLENGE_START */
+  function v24RecordDigits(record){
+    var nums=(record&&record.numbers)||[];
+    return nums.slice(0,4).map(function(n){return Number(n);}).filter(function(n){return !isNaN(n);});
+  }
+  function v24ShapeKind(shape){
+    var key=String((shape&&shape.key)||shape||"").toLowerCase();
+    var label=String((shape&&shape.label)||"");
+    if(key.indexOf("mix")>=0 || key.indexOf("combo")>=0 || (label.indexOf("单双")>=0 && label.indexOf("大小")>=0))return "mix";
+    if(key.indexOf("big")>=0 || key.indexOf("size")>=0 || label.indexOf("大小")>=0)return "size";
+    return "oddEven";
+  }
+  function v24ShapeValue(record,shape){
+    var digits=v24RecordDigits(record);
+    if(digits.length<4)return "";
+    var kind=v24ShapeKind(shape);
+    if(kind==="size")return digits.map(function(n){return n>=5?"大":"小";}).join("");
+    if(kind==="mix")return "";
+    return digits.map(function(n){return n%2?"单":"双";}).join("");
+  }
+  function v24HashText(text){
+    var hash=2166136261;
+    text=String(text||"");
+    for(var i=0;i<text.length;i++){hash^=text.charCodeAt(i);hash=(hash*16777619)>>>0;}
+    return hash>>>0;
+  }
+  function v24HistoryBeforeRecord(data,evaluation){
+    var hist=(data&&data.history)||[];
+    if(!evaluation)return hist;
+    var idx=-1;
+    for(var i=0;i<hist.length;i++){
+      if((evaluation.uid&&hist[i].uid===evaluation.uid)||(evaluation.period&&hist[i].period===evaluation.period)){idx=i;break;}
+    }
+    return idx>=0?hist.slice(idx+1):hist;
+  }
+  function v24ShapeScores(history,shape){
+    var rows=(history||[]).slice(0,1000);
+    var pool=candidates(shape);
+    var prior=pool.length?1/pool.length:0;
+    return pool.map(function(value){
+      var weightedHits=0,weights=0,hits=0,recent=9999;
+      rows.forEach(function(record,index){
+        var w=rows.length-index;
+        weights+=w;
+        if(shapeMatches(record,shape.key,value)){
+          weightedHits+=w;
+          hits++;
+          if(recent===9999)recent=index;
+        }
+      });
+      var occurrence=(weightedHits+prior*10)/(weights+10);
+      return {value:value,score:occurrence,hits:hits,recent:recent};
+    }).sort(function(a,b){
+      if(a.score!==b.score)return a.score-b.score;
+      if(a.hits!==b.hits)return a.hits-b.hits;
+      if(a.recent!==b.recent)return b.recent-a.recent;
+      return a.value.localeCompare(b.value,"zh-CN");
+    });
+  }
+  function chooseShapeSet(history,shape){
+    var scores=v24ShapeScores(history||[],shape);
+    if(!scores.length)return {value:"--",primary:"--",backup:"--",detail:{poolSize:0,dynamic:true}};
+    var primary=scores[0].value;
+    var backup=(scores.find(function(item){return item.value!==primary;})||scores[0]).value;
+    var latest=(history&&history[0])||{};
+    var seed=v24HashText(String((shape&&shape.key)||shape||"")+"|"+String(latest.period||latest.uid||"")+"|"+scores.slice(0,6).map(function(item){return item.value+":"+item.score;}).join("|"));
+    var pool=scores.slice(0,Math.min(scores.length,5));
+    var selected=(pool[seed%pool.length]||scores[0]).value;
+    if(selected===backup && pool.length>2)backup=(pool[(seed+1)%pool.length]||scores[1]||scores[0]).value;
+    return {value:selected,primary:primary,backup:backup,detail:{poolSize:pool.length,dynamic:true}};
+  }
+  function chooseShape(history,shape){
+    return chooseShapeSet(history,shape).value;
+  }
+  function shapeResultForEvaluation(data,evaluation,shape,side){
+    var training=v24HistoryBeforeRecord(data,evaluation);
+    var picked=chooseShapeSet(training,shape);
+    if(side==="main")return picked.primary;
+    if(side==="backup")return picked.backup;
+    return picked.value;
+  }
+  function v24ChallengeGroupHit(data,top,record){
+    var items=(top||[]).slice(0,7);
+    if(!items.length || !record)return null;
+    for(var i=0;i<items.length;i++){
+      try{
+        if(!itemSuccess(data,record,items[i]))return false;
+      }catch(err){return false;}
+    }
+    return true;
+  }
+  function v24ChallengeSeries(data,top){
+    var hist=(data&&data.history)||[];
+    var series=[];
+    var max=Math.min(hist.length,180);
+    for(var i=0;i<max;i++){
+      if(!hist[i]||!hist[i].numbers)continue;
+      var hit=v24ChallengeGroupHit(data,top,hist[i]);
+      if(hit===true||hit===false)series.push(hit);
+    }
+    return series;
+  }
+  function v24ChallengeStats(data,top,limit){
+    var newestFirst=v24ChallengeSeries(data,top);
+    var chronological=newestFirst.slice().reverse();
+    var success=0;
+    var fail=0;
+    var streak=0;
+    var maxStreak=0;
+    for(var i=0;i<chronological.length;i++){
+      if(chronological[i]){
+        success++;
+        streak=0;
+      }else{
+        streak++;
+        if(streak>maxStreak)maxStreak=streak;
+        if(streak>=limit){
+          fail++;
+          streak=0;
+        }
+      }
+    }
+    var currentMiss=0;
+    for(var j=0;j<newestFirst.length;j++){
+      if(newestFirst[j])break;
+      currentMiss++;
+    }
+    var eventTotal=success+fail;
+    return {
+      limit:limit,
+      sample:newestFirst.length,
+      success:success,
+      fail:fail,
+      eventTotal:eventTotal,
+      successRate:eventTotal?((success/eventTotal)*100):null,
+      currentMiss:currentMiss,
+      maxMiss:maxStreak,
+      recent:newestFirst.slice(0,12)
+    };
+  }
+  function v24ChallengeLine(title,stat){
+    var rateText=stat.successRate===null?"--":stat.successRate.toFixed(2)+"%";
+    return '<div class="rate"><b>'+esc(title)+'</b><span>回算期数 '+esc(stat.sample)+' ｜ 闯关成功 '+esc(stat.success)+' ｜ 闯关失败 '+esc(stat.fail)+' ｜ 当前连续不过 '+esc(stat.currentMiss)+' ｜ 成功率 '+esc(rateText)+'</span></div>';
+  }
+  function renderChallengeBox(top){
+    var data=state||{};
+    var box=document.getElementById("challengeBox");
+    if(!box){
+      box=document.createElement("div");
+      box.id="challengeBox";
+      box.className="card";
+      var wrap=document.querySelector(".wrap")||document.body;
+      var practice=document.getElementById("practiceModelOutput");
+      if(practice&&practice.closest&&practice.closest(".card")&&practice.closest(".card").parentNode){
+        var card=practice.closest(".card");
+        card.parentNode.insertBefore(box,card.nextSibling);
+      }else{wrap.appendChild(box);}
+    }
+    var mode4=v24ChallengeStats(data,top,4);
+    var mode5=v24ChallengeStats(data,top,5);
+    var recent=v24ChallengeSeries(data,top).slice(0,12).map(function(hit){return hit?'成功':'不过';}).join(' ');
+    box.innerHTML='<h2>7项推荐闯关模式</h2>'+
+      '<div class="small">口径：7项全部命中才算闯关成功；任意1项不过就累计连续不过。连续不过达到阈值，只记1次闯关失败并重新计数。</div>'+
+      v24ChallengeLine('模式1：连续4期不过失败',mode4)+
+      v24ChallengeLine('模式2：连续5期不过失败',mode5)+
+      '<div class="small">最近走势：'+esc(recent||'样本不足')+'</div>';
+  }
+/* PENTA5_V25_CHALLENGE_END */
+
+
+
+/* PENTA5_V26_LAYOUT_START */
+  function renderChallengeBox(top){
+    var legacy=document.getElementById("challengeModeBox");
+    if(legacy&&legacy.parentNode)legacy.parentNode.removeChild(legacy);
+    var old=document.getElementById("challengeBox");
+    if(old&&old.parentNode)old.parentNode.removeChild(old);
+
+    var practice=document.getElementById("practiceModelBox");
+    var latest=document.getElementById("numbers");
+    var latestCard=latest&&(latest.closest?latest.closest(".card"):latest.parentElement);
+    if(!practice||!latestCard||!latestCard.parentNode)return;
+
+    practice.className="card";
+    practice.style.cssText="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 5px rgba(0,0,0,.08);";
+
+    var autoTop=document.getElementById("autoTop5Recommend");
+    var parent=(autoTop&&autoTop.parentNode)||latestCard.parentNode;
+    var anchor=autoTop||latestCard;
+    var after=anchor.nextSibling;
+    while(after&&after.nodeType===3&&!String(after.nodeValue||"").trim())after=after.nextSibling;
+    if(practice.parentNode!==parent || practice.previousSibling!==anchor){
+      parent.insertBefore(practice,after);
+    }
+  }
+/* PENTA5_V26_LAYOUT_END */
+
+})();
+
+</script>
+<!-- PENTA5_V5_END -->
+</body>
+</html>

@@ -1,0 +1,1832 @@
+<!doctype html>
+<!-- CODEX_FINAL_IFRAME_0130 -->
+<!-- CODEX_BOOTSTRAP_FRONTEND_0135 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>纯 JSON 开奖大数据滚动分析系统 - 增强版</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --panel-soft: #eef7f1;
+      --ink: #132033;
+      --muted: #66758a;
+      --line: #dbe3ee;
+      --green: #15a86b;
+      --green-soft: #e7f8ef;
+      --blue: #2664e8;
+      --blue-soft: #eaf0ff;
+      --red: #dd2f55;
+      --red-soft: #ffe9ee;
+      --amber: #c78110;
+      --amber-soft: #fff4da;
+      --gray: #eef2f7;
+      --shadow: 0 10px 30px rgba(30, 55, 90, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #f7fafc 0%, #edf4f8 100%);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      font-size: 14px;
+    }
+
+    .page {
+      width: min(1180px, calc(100vw - 28px));
+      margin: 24px auto 40px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: 0;
+      font-weight: 900;
+    }
+
+    .status {
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: var(--green-soft);
+      color: #027448;
+      font-weight: 800;
+      min-width: 240px;
+      text-align: center;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr auto auto auto;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    input, textarea, button, select {
+      font: inherit;
+    }
+
+    input[type="text"], textarea, select {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 10px 12px;
+      outline: none;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 144px;
+      resize: vertical;
+      line-height: 1.55;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 800;
+      color: #fff;
+      background: var(--blue);
+    }
+
+    button.secondary {
+      background: #4f5b6f;
+    }
+
+    button.green {
+      background: var(--green);
+    }
+
+    button.ghost {
+      color: var(--ink);
+      background: #e7edf5;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel h2 {
+      margin: 0;
+      padding: 14px 16px;
+      font-size: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-body {
+      padding: 14px;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      border-top: 1px solid var(--line);
+    }
+
+    .kv:first-child {
+      border-top: 0;
+    }
+
+    .kv b {
+      padding: 12px 10px;
+      background: #f3f5f8;
+      font-size: 16px;
+    }
+
+    .kv span {
+      padding: 12px 10px;
+    }
+
+    .balls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .ball {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      background: var(--red);
+      color: #fff;
+      font-weight: 900;
+      font-size: 16px;
+    }
+
+    .ball.gray {
+      background: #8ea0bd;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      font-weight: 800;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.8;
+    }
+
+    .model-controls {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .model {
+      border: 1px solid #a8efc8;
+      background: #f8fffb;
+      border-radius: 8px;
+      padding: 8px 9px;
+      display: grid;
+      grid-template-columns: 20px 1fr;
+      gap: 6px;
+      align-items: start;
+    }
+
+    .model input {
+      margin-top: 2px;
+    }
+
+    .model strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .model em {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-style: normal;
+      margin-top: 2px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .summary-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .summary-card h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    .digits {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      min-height: 29px;
+    }
+
+    .digit {
+      min-width: 25px;
+      height: 25px;
+      border-radius: 6px;
+      display: inline-grid;
+      place-items: center;
+      font-weight: 900;
+      border: 1px solid var(--line);
+      background: var(--gray);
+    }
+
+    .digit.keep {
+      color: #055f3e;
+      border-color: #8ce1b5;
+      background: var(--green-soft);
+    }
+
+    .digit.drop {
+      color: #9c1230;
+      border-color: #f4a7b8;
+      background: var(--red-soft);
+      text-decoration: line-through;
+    }
+
+    .metric {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 10px;
+      align-items: center;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #edf1f6;
+      overflow: hidden;
+    }
+
+    .bar i {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: var(--green);
+    }
+
+    .rules {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .rule {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+    }
+
+    .rule.warn {
+      border-color: #f0c875;
+      background: var(--amber-soft);
+    }
+
+    .rule.bad {
+      border-color: #ee9bae;
+      background: var(--red-soft);
+    }
+
+    .rule b {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .tabs button {
+      padding: 8px 10px;
+      background: #e7edf5;
+      color: var(--ink);
+    }
+
+    .tabs button.active {
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .footer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    @media (max-width: 900px) {
+      header, .toolbar, .layout, .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      header {
+        align-items: stretch;
+      }
+
+      .model-controls {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+
+<script>
+// CODEX_DIGIT_POOL_GLOBAL_FALLBACK_0205
+window.DIGIT_POOL = window.DIGIT_POOL || ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+var DIGIT_POOL = window.DIGIT_POOL;
+</script>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <h1>纯 JSON 开奖大数据滚动分析系统 - 增强版</h1>
+      <div id="status" class="status">等待数据</div>
+    </header>
+
+    <section class="toolbar">
+      <input id="sourceUrl" type="text" value="/state" aria-label="JSON地址" />
+      <button id="fetchBtn">读取后台</button>
+      <button id="pasteBtn" class="secondary">粘贴 JSON</button>
+      <button id="demoBtn" class="ghost">示例数据</button>
+    </section>
+
+    <section class="layout">
+      <aside class="panel">
+        <h2>最新开奖数据</h2>
+        <div class="panel-body">
+          <div class="kv"><b>期号</b><span id="issue">-</span></div>
+          <div class="kv"><b>开奖时间</b><span id="drawTime">-</span></div>
+          <div class="kv">
+            <b>开奖号码</b>
+            <span>
+              <span id="balls" class="balls"></span>
+              <span class="small">最后一位不参与部分合尾分析</span>
+            </span>
+          </div>
+          <div class="kv"><b>四位合尾</b><span><span id="fourTail" class="pill">-</span> <span id="sumText">总和: -</span></span></div>
+          <div class="kv"><b>分项合尾</b><span id="subTails" class="pill-row"></span></div>
+          <div class="kv"><b>状态</b><span id="meta" class="small">-</span></div>
+        </div>
+      </aside>
+
+      <section class="panel">
+        <h2>靶场模型</h2>
+        <div class="panel-body">
+          <div class="tabs">
+            <button class="active" data-tab="models">模型</button>
+            <button data-tab="json">JSON</button>
+            <button data-tab="settings">参数</button>
+          </div>
+
+          <div id="modelsTab">
+            <div class="small">默认只勾选高命中、低冲突模型。最终结果使用加权投票，不再简单全量保留。</div>
+            <div id="modelControls" class="model-controls"></div>
+            <div class="footer-actions">
+              <button id="selectRecommended" class="green">推荐组合</button>
+              <button id="selectStrict" class="secondary">严格组合</button>
+              <button id="selectAll" class="ghost">全选</button>
+              <button id="clearAll" class="ghost">清空</button>
+            </div>
+          </div>
+
+          <div id="jsonTab" class="hidden">
+            <textarea id="jsonInput" placeholder="粘贴 state.json 内容"></textarea>
+            <div class="footer-actions">
+              <button id="parseJson" class="green">解析 JSON</button>
+            </div>
+          </div>
+
+          <div id="settingsTab" class="hidden">
+            <div class="kv"><b>保底保留</b><span><select id="minKeep"><option value="5">每位至少留 5 个</option><option value="6" selected>每位至少留 6 个</option><option value="7">每位至少留 7 个</option><option value="8">每位至少留 8 个</option></select></span></div>
+            <div class="kv"><b>最低命中率</b><span><select id="minHitRate"><option value="0.70">70%</option><option value="0.80">80%</option><option value="0.86" selected>86%</option><option value="0.90">90%</option><option value="0.93">93%</option></select></span></div>
+            <div class="kv"><b>冲突保护</b><span><select id="conflictGuard"><option value="on" selected>开启</option><option value="off">关闭</option></select></span></div>
+            <div class="small">冲突保护开启后，如果模型把某一位压到过窄，系统会自动回补低风险号码，避免因为过度排除导致失真。</div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+      <h2>最终排除结果</h2>
+      <div class="panel-body">
+        <div id="summaryGrid" class="summary-grid"></div>
+        <div id="rules" class="rules"></div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+      <h2>可复制结果</h2>
+      <div class="panel-body">
+        <div id="copyText" class="mono">等待计算</div>
+        <div class="footer-actions">
+          <button id="copyBtn">复制结果</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    const POSITIONS = [
+      { key: "qian", name: "千" },
+      { key: "bai", name: "百" },
+      { key: "shi", name: "十" },
+      { key: "ge", name: "个" }
+    ];
+
+    const defaultModels = [
+      { id: "codex_default_qian", name: "Codex千位主排", scope: "qian", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" },
+      { id: "codex_default_bai", name: "Codex百位主排", scope: "bai", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" },
+      { id: "codex_default_shi", name: "Codex十位主排", scope: "shi", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" },
+      { id: "codex_default_ge", name: "Codex个位主排", scope: "ge", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" }
+    ];let state = {};
+    let autoFetchRunning = false;
+    let models = defaultModels.map((item) => ({ ...item, enabled: item.recommended }));
+
+    const el = (id) => document.getElementById(id);
+
+    function normalizeDigits(raw) {
+      if (Array.isArray(raw)) {
+        return raw.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 9).slice(-5);
+      }
+      const found = String(raw || "").match(/\d/g) || [];
+      return found.map(Number).slice(-5);
+    }
+
+    function readDraw(input) {
+      if (input && input.latestRecord && Array.isArray(input.latestRecord.numbers)) {
+        const digits = normalizeDigits(input.latestRecord.numbers);
+        if (digits.length >= 5) {
+          return {
+            issue: input.latestRecord.period || input.latestRecord.issue || input.latestRecord.expect || "-",
+            time: input.latestRecord.openTime || input.latestRecord.opentime || input.latestRecord.time || input.latestRecord.datetime || "-",
+            digits
+          };
+        }
+      }
+
+      if (input && input.lastSync && Array.isArray(input.lastSync.latestNumbers)) {
+        const digits = normalizeDigits(input.lastSync.latestNumbers);
+        if (digits.length >= 5) {
+          return {
+            issue: input.lastSync.latestPeriod || input.lastSync.period || "-",
+            time: input.lastSync.text || input.lastSync.at || input.updatedAt || "-",
+            digits
+          };
+        }
+      }
+
+      const candidates = [
+        input.latestRecord,
+        input.latest,
+        input.current,
+        input.last,
+        input.lastSync,
+        input.data,
+        input.result,
+        input
+      ].filter(Boolean);
+
+      for (const item of candidates) {
+        const issue = item.issue || item.expect || item.period || item.latestPeriod || item.qihao || input.issue || input.expect || input.latestPeriod || "-";
+        const time = item.time || item.drawTime || item.openTime || item.opentime || item.datetime || item.at || input.time || input.drawTime || input.updatedAt || "-";
+        const code = item.code || item.openCode || item.open_code || item.number || item.result || item.numbers || item.latestNumbers || input.code || input.open_code || input.result || input.latestNumbers;
+        const digits = normalizeDigits(code);
+        if (digits.length >= 5) {
+          return { issue, time, digits };
+        }
+      }
+
+      return {
+        issue: "-",
+        time: "-",
+        digits: [0, 5, 3, 8, 8]
+      };
+    }
+
+    function getFront4(draw) {
+      if (!draw || !Array.isArray(draw.digits) || draw.digits.length < 5) {
+        return [0, 0, 0, 0];
+      }
+      return draw.digits.slice(0, 4);
+    }
+
+    function tail(values) {
+      return values.reduce((sum, value) => sum + value, 0) % 10;
+    }
+
+    function renderDraw(draw) {
+      el("issue").textContent = draw.issue;
+      el("drawTime").textContent = draw.time;
+      el("balls").innerHTML = draw.digits.map((n, idx) => `<span class="ball ${idx === 4 ? "gray" : ""}">${n}</span>`).join("");
+
+      const front4 = getFront4(draw);
+      const sum = front4.reduce((a, b) => a + b, 0);
+      el("fourTail").textContent = tail(front4);
+      el("sumText").textContent = `总和: ${sum}`;
+      el("subTails").innerHTML = [
+        `千百十: ${tail(front4.slice(0, 3))}`,
+        `百十个: ${tail(front4.slice(1, 4))}`,
+        `千百十个: ${tail(front4)}`
+      ].map((text) => `<span class="pill">${text}</span>`).join("");
+
+      el("meta").innerHTML = [
+        `后台地址: ${el("sourceUrl").value || "-"}`,
+        `本地刷新: ${new Date().toLocaleString("zh-CN", { hour12: false })}`,
+        `解析来源: state.json / 手动输入`
+      ].join("<br>");
+    }
+
+    function renderModels() {
+      el("modelControls").innerHTML = models.map((model, index) => {
+        const suffix = model.digit !== undefined ? model.digit : model.value;
+        const rate = `${(model.hitRate * 100).toFixed(2)}%`;
+        return `
+          <label class="model">
+            <input type="checkbox" data-index="${index}" ${model.enabled ? "checked" : ""} />
+            <span>
+              <strong>${model.name} ${suffix} ${rate}</strong>
+              <em>${describeModel(model)}</em>
+            </span>
+          </label>
+        `;
+      }).join("");
+
+      document.querySelectorAll("#modelControls input").forEach((input) => {
+        input.addEventListener("change", () => {
+          models[Number(input.dataset.index)].enabled = input.checked;
+          recalc();
+        });
+      });
+    }
+
+    function describeModel(model) {
+      if (model.scope === "qian" || model.scope === "bai" || model.scope === "shi" || model.scope === "ge") {
+        const pos = POSITIONS.find((item) => item.key === model.scope);
+        return `${pos.name}位排除 ${model.digit}`;
+      }
+      if (model.mode === "avoidTail") return `避开合尾 ${model.digit}`;
+      if (model.mode === "preferTail") return `偏向合尾 ${model.digit}`;
+      if (model.mode === "avoidSum") return `避开和值 ${model.digit}`;
+      if (model.mode === "avoidAny") return `任意位避开 ${model.value}`;
+      return "形态过滤";
+    }
+
+    function performanceRate(performance, fallback) {
+      if (performance && Number.isFinite(Number(performance.rate))) {
+        return Number(performance.rate) / 100;
+      }
+      if (Number.isFinite(Number(fallback))) {
+        return Number(fallback) / 100;
+      }
+      return 0.86;
+    }
+
+    function pushDigitModel(out, source, uiScope, label, field, recommended, strict) {
+      if (!source || source[field] === undefined || source[field] === null || source[field] === "--") return;
+      const digit = Number(source[field]);
+      if (!Number.isInteger(digit) || digit < 0 || digit > 9) return;
+      out.push({
+        id: `${uiScope}_${field}_${digit}`,
+        name: label,
+        scope: uiScope,
+        mode: "drop",
+        digit,
+        hitRate: performanceRate(source.performance, 86),
+        recommended: !!recommended,
+        strict: !!strict,
+        enabled: !!recommended
+      });
+    }
+
+    function updateModelsFromState(payload) {
+      const prediction = payload && payload.currentPrediction;
+      if (!prediction || typeof prediction !== "object") {
+        return false;
+      }
+
+      const out = [];
+      const positionKills = prediction.positionKills || {};
+      const positionMap = [
+        { backend: "wan", ui: "qian", label: "千位" },
+        { backend: "qian", ui: "bai", label: "百位" },
+        { backend: "bai", ui: "shi", label: "十位" },
+        { backend: "shi", ui: "ge", label: "个位" }
+      ];
+
+      positionMap.forEach((item) => {
+        const source = positionKills[item.backend] || {};
+        pushDigitModel(out, source, item.ui, `${item.label}主攻`, "main", true, true);
+        pushDigitModel(out, source, item.ui, `${item.label}备用`, "backup", false, false);
+      });
+
+      const hewei = prediction.independentHeweiKills || {};
+      const heweiMap = [
+        { key: "wanQianBai", scope: "tail_qbs", label: "千百十合尾", recommended: true, strict: false },
+        { key: "qianBaiShi", scope: "tail_bsg", label: "百十个合尾", recommended: true, strict: false },
+        { key: "wanQianBaiShi", scope: "tail_all", label: "千百十个合尾", recommended: true, strict: true }
+      ];
+
+      heweiMap.forEach((item) => {
+        const source = hewei[item.key] || {};
+        const digit = Number(source.killDigit);
+        if (Number.isInteger(digit) && digit >= 0 && digit <= 9) {
+          out.push({
+            id: `${item.key}_${digit}`,
+            name: item.label,
+            scope: item.scope,
+            mode: "avoidTail",
+            digit,
+            hitRate: performanceRate(source.performance, 86),
+            recommended: item.recommended,
+            strict: item.strict,
+            enabled: item.recommended
+          });
+        }
+      });
+
+      const extras = prediction.extraKills || {};
+      if (extras.sumAvoid && extras.sumAvoid.value !== undefined) {
+        out.push({
+          id: `sumAvoid_${extras.sumAvoid.value}`,
+          name: "前四位和值避开",
+          scope: "sum4",
+          mode: "avoidSum",
+          digit: Number(extras.sumAvoid.value),
+          hitRate: performanceRate(extras.sumAvoid.performance, 86),
+          recommended: true,
+          strict: true,
+          enabled: true
+        });
+      }
+      if (extras.threeDigitAvoid && extras.threeDigitAvoid.value !== undefined) {
+        out.push({
+          id: `threeDigitAvoid_${extras.threeDigitAvoid.value}`,
+          name: "对数共现避开",
+          scope: "pair",
+          mode: "avoidAny",
+          value: String(extras.threeDigitAvoid.value),
+          hitRate: performanceRate(extras.threeDigitAvoid.performance, 86),
+          recommended: true,
+          strict: true,
+          enabled: true
+        });
+      }
+      if (extras.twoDigitAvoid && extras.twoDigitAvoid.value !== undefined) {
+        out.push({
+          id: `twoDigitAvoid_${extras.twoDigitAvoid.value}`,
+          name: "对数避开两个数字",
+          scope: "pair",
+          mode: "avoidAny",
+          value: String(extras.twoDigitAvoid.value),
+          hitRate: performanceRate(extras.twoDigitAvoid.performance, 86),
+          recommended: false,
+          strict: false,
+          enabled: false
+        });
+      }
+
+      if (out.length === 0) {
+        return false;
+      }
+      models = out;
+      renderModels();
+      return true;
+    }
+
+    function recordDigit(record, backendKey, index) {
+      if (!record) return null;
+      if (record.positions && record.positions[backendKey] !== undefined) {
+        const n = Number(record.positions[backendKey]);
+        return Number.isInteger(n) && n >= 0 && n <= 9 ? n : null;
+      }
+      if (Array.isArray(record.numbers) && record.numbers[index] !== undefined) {
+        const n = Number(record.numbers[index]);
+        return Number.isInteger(n) && n >= 0 && n <= 9 ? n : null;
+      }
+      return null;
+    }
+
+    function buildOwnPositionModels(payload) {
+      // CODEX_STABLE_MODEL_0200: conservative rolling-backtest exclusion model.
+      // Latest draw is display-only. It is not used for training, so the page will not "open what it excludes".
+      const history = Array.isArray(payload && payload.history) ? payload.history : [];
+      const latest = (payload && payload.latestRecord) || history[0] || null;
+
+      const sameRecord = (a, b) => {
+        if (!a || !b) return false;
+        if (a.uid && b.uid && String(a.uid) === String(b.uid)) return true;
+        if (a.period && b.period && String(a.period) === String(b.period)) return true;
+        return false;
+      };
+
+      const sourceRecords = history.filter((item) => item && !sameRecord(item, latest));
+      const records = sourceRecords.length >= 18 ? sourceRecords : history.filter(Boolean);
+      if (records.length < 18) return false;
+
+      const positionMap = [
+        { backend: "wan", ui: "qian", label: "千位", index: 0 },
+        { backend: "qian", ui: "bai", label: "百位", index: 1 },
+        { backend: "bai", ui: "shi", label: "十位", index: 2 },
+        { backend: "shi", ui: "ge", label: "个位", index: 3 }
+      ];
+
+      // CODEX_DIGIT_POOL_FIX_0205: keep digit pool local to the stable model.
+      const stableDigitPool = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+      const ruleList = [
+        { id: "balancedLow", label: "低频均衡" },
+        { id: "cold8", label: "近8冷排" },
+        { id: "cold16", label: "近16冷排" },
+        { id: "hotCool", label: "过热回落" },
+        { id: "gapSafe", label: "间隔稳排" },
+        { id: "prevAvoid", label: "前期避重" }
+      ];
+
+      function sequenceFor(training, pos) {
+        return training.map((record) => recordDigit(record, pos.backend, pos.index)).filter((digit) => digit !== null);
+      }
+
+      function countDigit(seq, digit, size) {
+        return seq.slice(0, size).filter((item) => item === digit).length;
+      }
+
+      function gapOf(seq, digit) {
+        const index = seq.indexOf(digit);
+        return index < 0 ? 99 : index;
+      }
+
+      function buildStats(training, pos, blockDigit) {
+        const seq = sequenceFor(training, pos);
+        return stableDigitPool.map((digit) => {
+          const recent8 = countDigit(seq, digit, 8);
+          const recent16 = countDigit(seq, digit, 16);
+          const recent40 = countDigit(seq, digit, 40);
+          const gap = gapOf(seq, digit);
+          const prev = seq[0] || null;
+          const latestPenalty = blockDigit !== undefined && blockDigit !== null && String(digit) === String(blockDigit) ? 999 : 0;
+          return { digit, recent8, recent16, recent40, gap, prev, latestPenalty };
+        });
+      }
+
+      function pickByRule(training, pos, ruleId, blockDigit) {
+        const seq = sequenceFor(training, pos);
+        if (seq.length < 12) return null;
+        const stats = buildStats(training, pos, blockDigit);
+        const safeStats = stats.filter((item) => item.latestPenalty < 999);
+        const pool = safeStats.length ? safeStats : stats;
+        const withScore = pool.map((item) => {
+          let score = 0;
+          if (ruleId === "prevAvoid") {
+            score = item.digit === item.prev ? -100 : 100 + item.recent8 + item.latestPenalty;
+          } else if (ruleId === "cold8") {
+            score = item.recent8 * 20 + item.recent16 * 4 + (item.gap > 22 ? 8 : 0) + item.latestPenalty;
+          } else if (ruleId === "cold16") {
+            score = item.recent16 * 12 + item.recent40 * 1.5 + (item.gap > 28 ? 10 : 0) + item.latestPenalty;
+          } else if (ruleId === "hotCool") {
+            score = -item.recent8 * 16 - item.recent16 * 2 + (item.gap === 0 ? -6 : 0) + item.latestPenalty;
+          } else if (ruleId === "gapSafe") {
+            const gapCenter = Math.abs(item.gap - 7);
+            score = gapCenter * 4 + item.recent8 * 7 + (item.gap > 18 ? 10 : 0) + item.latestPenalty;
+          } else {
+            score = item.recent8 * 10 + item.recent16 * 3 + Math.abs(item.gap - 9) * 1.3 + (item.digit === item.prev ? 10 : 0) + item.latestPenalty;
+          }
+          return { ...item, score };
+        });
+        withScore.sort((a, b) => a.score - b.score || a.recent8 - b.recent8 || a.recent16 - b.recent16 || Number(a.digit) - Number(b.digit));
+        return withScore[0] ? withScore[0].digit : null;
+      }
+
+      function backtestRule(pos, rule) {
+        const maxTargets = Math.min(records.length - 18, 90);
+        let total = 0;
+        let hit = 0;
+        for (let i = 0; i < maxTargets; i += 1) {
+          const actual = recordDigit(records[i], pos.backend, pos.index);
+          const blockDigit = recordDigit(records[i + 1], pos.backend, pos.index);
+          const training = records.slice(i + 1, i + 91);
+          const pick = pickByRule(training, pos, rule.id, blockDigit);
+          if (actual === null || pick === null) continue;
+          total += 1;
+          if (String(pick) !== String(actual)) hit += 1;
+        }
+        return { total, hit, rate: total ? hit / total : 0 };
+      }
+
+      const out = [];
+      positionMap.forEach((pos) => {
+        const latestDigit = latest ? recordDigit(latest, pos.backend, pos.index) : null;
+        const options = ruleList.map((rule) => {
+          const digit = pickByRule(records, pos, rule.id, latestDigit);
+          const test = backtestRule(pos, rule);
+          const stability = test.rate * 100 + Math.min(test.total, 70) * 0.03;
+          return { rule, digit, ...test, stability };
+        }).filter((item) => item.digit !== null && item.total >= 30);
+
+        options.sort((a, b) => b.rate - a.rate || b.hit - a.hit || b.stability - a.stability);
+        options.slice(0, 2).forEach((item, index) => {
+          const primary = index === 0;
+          const strongEnough = item.rate >= 0.90 && item.total >= 40;
+          out.push({
+            id: `codex_stable_${pos.ui}_${item.digit}_${item.rule.id}_${index}`,
+            name: `Codex${pos.label}${primary ? "稳排" : "备排"} ${item.digit} ${(item.rate * 100).toFixed(2)}%`,
+            scope: pos.ui,
+            mode: "drop",
+            digit: item.digit,
+            hitRate: Math.min(0.97, Math.max(0.80, item.rate)),
+            recommended: primary && strongEnough,
+            strict: primary && item.rate >= 0.93,
+            note: `${item.rule.label} 回测 ${item.hit}/${item.total}，最新开奖号不参与训练`
+          });
+        });
+      });
+
+      if (!out.length) return false;
+      models = out;
+      renderModels();
+      return true;
+    }
+
+    function baseScore() {
+      const score = {};
+      POSITIONS.forEach((pos) => {
+        score[pos.key] = {};
+        DIGITS.forEach((digit) => {
+          score[pos.key][digit] = 0;
+        });
+      });
+      return score;
+    }
+
+    function addDrop(scores, posKey, digit, weight) {
+      if (!scores[posKey] || scores[posKey][digit] === undefined) return;
+      scores[posKey][digit] += weight;
+    }
+
+    function applyModel(scores, model, draw) {
+      const weight = Math.max(0.1, (model.hitRate - 0.5) * 2);
+      if (["qian", "bai", "shi", "ge"].includes(model.scope) && model.mode === "drop") {
+        addDrop(scores, model.scope, model.digit, weight);
+        return;
+      }
+
+      if (model.mode === "avoidAny") {
+        String(model.value).split("").map(Number).forEach((digit) => {
+          POSITIONS.forEach((pos) => addDrop(scores, pos.key, digit, weight * 0.36));
+        });
+        return;
+      }
+
+      if (model.mode === "avoidTail") {
+        applyTailPressure(scores, model.scope, model.digit, weight, draw);
+        return;
+      }
+
+      if (model.mode === "preferTail") {
+        applyTailPressure(scores, model.scope, model.digit, weight * 0.45, draw);
+        return;
+      }
+
+      if (model.mode === "avoidSum") {
+        applySumPressure(scores, model.digit, weight, draw);
+      }
+    }
+
+    function applyTailPressure(scores, scope, targetTail, weight, draw) {
+      const front4 = getFront4(draw);
+      const map = {
+        tail_qbs: [0, 1, 2],
+        tail_bsg: [1, 2, 3],
+        tail_all: [0, 1, 2, 3]
+      };
+      const indexes = map[scope] || [0, 1, 2, 3];
+      const currentTail = tail(indexes.map((idx) => front4[idx]));
+      const delta = (targetTail - currentTail + 10) % 10;
+      indexes.forEach((idx) => {
+        const pos = POSITIONS[idx];
+        addDrop(scores, pos.key, delta, weight * 0.55);
+        addDrop(scores, pos.key, (delta + 1) % 10, weight * 0.25);
+        addDrop(scores, pos.key, (delta + 9) % 10, weight * 0.25);
+      });
+    }
+
+    function applySumPressure(scores, targetSum, weight, draw) {
+      const front4 = getFront4(draw);
+      const currentSum = front4.reduce((sum, value) => sum + value, 0);
+      const diff = targetSum - currentSum;
+      const pressureDigit = ((diff % 10) + 10) % 10;
+      POSITIONS.forEach((pos) => {
+        addDrop(scores, pos.key, pressureDigit, weight * 0.5);
+      });
+    }
+
+    function calculate(draw) {
+      const minKeep = Number(el("minKeep").value);
+      const minHitRate = Number(el("minHitRate").value);
+      const guard = el("conflictGuard").value === "on";
+      const active = models.filter((model) => model.enabled && model.hitRate >= minHitRate);
+      const scores = baseScore();
+
+      active.forEach((model) => applyModel(scores, model, draw));
+
+      const result = {};
+      POSITIONS.forEach((pos) => {
+        const sorted = DIGITS.map((digit) => ({
+          digit,
+          score: scores[pos.key][digit]
+        })).sort((a, b) => b.score - a.score || a.digit - b.digit);
+
+        let dropCount = sorted.filter((item) => item.score > 0).length;
+        const maxDrop = guard ? Math.max(0, 10 - minKeep) : 9;
+        dropCount = Math.min(dropCount, maxDrop);
+
+        const drops = sorted.slice(0, dropCount).filter((item) => item.score > 0).map((item) => item.digit);
+        const keeps = DIGITS.filter((digit) => !drops.includes(digit));
+        const risk = drops.length === 0 ? 0 : drops.reduce((sum, digit) => sum + scores[pos.key][digit], 0) / drops.length;
+
+        result[pos.key] = { pos, sorted, drops, keeps, risk };
+      });
+
+      return { active, scores, result };
+    }
+
+    function renderResult(calc) {
+      el("summaryGrid").innerHTML = POSITIONS.map((pos) => {
+        const item = calc.result[pos.key];
+        const dropHtml = DIGITS.map((digit) => `<span class="digit ${item.drops.includes(digit) ? "drop" : "keep"}">${digit}</span>`).join("");
+        const width = Math.min(100, Math.round(item.risk * 100));
+        return `
+          <article class="summary-card">
+            <h3>${pos.name}位</h3>
+            <div class="digits">${dropHtml}</div>
+            <div class="metric"><span>排除</span><b>${item.drops.length ? item.drops.join(" ") : "无"}</b></div>
+            <div class="metric"><span>保留</span><b>${item.keeps.join(" ")}</b></div>
+            <div class="metric"><span>风险强度</span><div class="bar"><i style="width:${width}%"></i></div></div>
+          </article>
+        `;
+      }).join("");
+
+      const warnings = [];
+      const allFull = POSITIONS.every((pos) => calc.result[pos.key].drops.length === 0);
+      const tooNarrow = POSITIONS.filter((pos) => calc.result[pos.key].keeps.length < Number(el("minKeep").value));
+      const activeCount = calc.active.length;
+
+      if (activeCount === 0) {
+        warnings.push({ type: "bad", title: "没有有效模型", text: "当前勾选模型低于最低命中率阈值，系统无法形成排除。" });
+      }
+      if (allFull) {
+        warnings.push({ type: "warn", title: "当前未形成有效排除", text: "所有位置仍保留 0-9。建议启用严格组合，或降低最低命中率阈值到 80%-86%。" });
+      }
+      if (tooNarrow.length > 0) {
+        warnings.push({ type: "bad", title: "排除过窄", text: `${tooNarrow.map((item) => item.name).join("、")} 位保留数量过少，建议开启冲突保护或提高保底保留。` });
+      }
+      if (calc.active.length > 8) {
+        warnings.push({ type: "warn", title: "模型过多", text: "模型数量过多会互相抵消，最终容易变成全量保留。建议只保留 3-6 个高命中且不同类型的模型。" });
+      }
+      if (warnings.length === 0) {
+        warnings.push({ type: "", title: "组合状态正常", text: "当前模型已经形成可读的排除结果。实际使用时仍建议逐期记录样本外命中，而不是只看历史命中率。" });
+      }
+
+      el("rules").innerHTML = warnings.map((item) => `
+        <div class="rule ${item.type}">
+          <b>${item.title}</b>
+          <span>${item.text}</span>
+        </div>
+      `).join("");
+
+      renderCopy(calc);
+    }
+
+    function renderCopy(calc) {
+      const lines = [];
+      lines.push(`期号: ${el("issue").textContent}`);
+      lines.push(`开奖: ${Array.from(document.querySelectorAll(".ball")).map((node) => node.textContent).join(" ")}`);
+      lines.push(`有效模型: ${calc.active.length}`);
+      POSITIONS.forEach((pos) => {
+        const item = calc.result[pos.key];
+        lines.push(`${pos.name}位排除: ${item.drops.length ? item.drops.join("") : "无"} | 保留: ${item.keeps.join("")}`);
+      });
+      lines.push("说明: 排除结果来自当前勾选模型的加权投票，只用于回测和统计，不代表确定性结果。");
+      el("copyText").textContent = lines.join("\n");
+    }
+
+    function recalc() {
+      const draw = readDraw(state);
+      renderDraw(draw);
+      const calc = calculate(draw);
+      renderResult(calc);
+      el("status").textContent = `已计算: ${calc.active.length} 个有效模型`;
+    }
+
+    async function requestJson(url) {
+      const normalizedUrl = new URL(url, window.location.href).toString();
+      return await new Promise((resolve, reject) => {
+        const iframe = document.createElement("iframe");
+        let finished = false;
+        const cleanup = () => {
+          try { iframe.remove(); } catch (_) {}
+        };
+        const done = (fn, value) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          cleanup();
+          fn(value);
+        };
+        const timer = setTimeout(() => {
+          done(reject, new Error(`${normalizedUrl} iframe timeout`));
+        }, 12000);
+        iframe.style.position = "fixed";
+        iframe.style.left = "-99999px";
+        iframe.style.top = "-99999px";
+        iframe.style.width = "1px";
+        iframe.style.height = "1px";
+        iframe.style.opacity = "0";
+        iframe.onload = () => {
+          try {
+            const doc = iframe.contentDocument || iframe.contentWindow.document;
+            const text = (doc.body && doc.body.textContent ? doc.body.textContent : doc.documentElement.textContent || "").trim();
+            if (!text) {
+              throw new Error(`${normalizedUrl} empty response`);
+            }
+            resolve(JSON.parse(text));
+            done(() => {}, null);
+          } catch (error) {
+            done(reject, error);
+          }
+        };
+        iframe.onerror = () => {
+          done(reject, new Error(`${normalizedUrl} iframe load failed`));
+        };
+        iframe.src = `${normalizedUrl}${normalizedUrl.includes("?") ? "&" : "?"}_=${Date.now()}`;
+        document.body.appendChild(iframe);
+      });
+    }
+
+    function getFetchUrls() {
+      const raw = (el("sourceUrl").value || "").trim();
+      const urls = [];
+      const add = (url) => {
+        if (url && !urls.includes(url)) urls.push(url);
+      };
+      add("/state");
+      add("/data/state.json");
+      add(raw);
+      if (window.location && window.location.origin && window.location.origin !== "null") {
+        add(`${window.location.origin}/state`);
+        add(`${window.location.origin}/data/state.json`);
+      }
+      return urls;
+    }
+
+    async function fetchJson() {
+      if (autoFetchRunning) {
+        return;
+      }
+      autoFetchRunning = true;
+      try {
+        if (window.__PENTA5_BOOTSTRAP_STATE__) {
+          state = window.__PENTA5_BOOTSTRAP_STATE__;
+          window.__PENTA5_BOOTSTRAP_STATE__ = null;
+          buildOwnPositionModels(state);
+          el("jsonInput").value = JSON.stringify(state, null, 2);
+          recalc();
+          el("status").textContent = "已使用服务器直注数据，浏览器拦截不影响。";
+          return;
+        }
+        if (window.__PENTA5_DISABLE_FRONTEND_FETCH__) {
+          el("status").textContent = "正在无刷新同步服务器数据...";
+          if (typeof syncLiveStateByScript === "function") {
+            syncLiveStateByScript();
+          }
+          return;
+        }
+        el("status").textContent = "正在读取后台 /state...";
+        const urls = getFetchUrls();
+        let lastError = null;
+        for (const url of urls) {
+          try {
+            state = await requestJson(url);
+            el("sourceUrl").value = url;
+            buildOwnPositionModels(state);
+            el("jsonInput").value = JSON.stringify(state, null, 2);
+            recalc();
+            return;
+          } catch (error) {
+            lastError = error;
+            console.warn("读取失败，尝试下一个地址:", url, error);
+          }
+        }
+        throw lastError || new Error("没有可用后台地址");
+      } catch (error) {
+        el("status").textContent = `后台读取失败，保留 Codex 占位模型。${error.message || error}`;
+      } finally {
+        autoFetchRunning = false;
+      }
+    }
+
+    
+    async function pasteJson() {
+      try {
+        const text = await navigator.clipboard.readText();
+        el("jsonInput").value = text;
+        parseJsonInput();
+        showTab("json");
+      } catch (error) {
+        showTab("json");
+        el("status").textContent = "请手动粘贴 JSON";
+      }
+    }
+
+    function parseJsonInput() {
+      try {
+        state = JSON.parse(el("jsonInput").value);
+        recalc();
+      } catch (error) {
+        el("status").textContent = "JSON 解析失败";
+        alert(`JSON 解析失败: ${error.message}`);
+      }
+    }
+
+    function loadDemo() {
+      state = {
+        latest: {
+          issue: "20260703280",
+          time: "2026-07-03 23:20:12",
+          code: "61642"
+        }
+      };
+      el("jsonInput").value = JSON.stringify(state, null, 2);
+      recalc();
+    }
+
+    function showTab(tab) {
+      ["models", "json", "settings"].forEach((name) => {
+        el(`${name}Tab`).classList.toggle("hidden", name !== tab);
+      });
+      document.querySelectorAll(".tabs button").forEach((button) => {
+        button.classList.toggle("active", button.dataset.tab === tab);
+      });
+    }
+
+    function bindEvents() {
+      el("fetchBtn").addEventListener("click", fetchJson);
+      el("pasteBtn").addEventListener("click", pasteJson);
+      el("demoBtn").addEventListener("click", loadDemo);
+      el("parseJson").addEventListener("click", parseJsonInput);
+      el("copyBtn").addEventListener("click", async () => {
+        await navigator.clipboard.writeText(el("copyText").textContent);
+        el("status").textContent = "结果已复制";
+      });
+
+      ["minKeep", "minHitRate", "conflictGuard"].forEach((id) => {
+        el(id).addEventListener("change", recalc);
+      });
+
+      el("selectRecommended").addEventListener("click", () => {
+        models = models.map((model) => ({ ...model, enabled: model.recommended }));
+        renderModels();
+        recalc();
+      });
+      el("selectStrict").addEventListener("click", () => {
+        models = models.map((model) => ({ ...model, enabled: model.strict }));
+        renderModels();
+        recalc();
+      });
+      el("selectAll").addEventListener("click", () => {
+        models = models.map((model) => ({ ...model, enabled: true }));
+        renderModels();
+        recalc();
+      });
+      el("clearAll").addEventListener("click", () => {
+        models = models.map((model) => ({ ...model, enabled: false }));
+        renderModels();
+        recalc();
+      });
+
+      document.querySelectorAll(".tabs button").forEach((button) => {
+        button.addEventListener("click", () => showTab(button.dataset.tab));
+      });
+    }
+
+
+    // CODEX_LIVE_SCRIPT_SYNC_0145: sync latest server state without refreshing the page.
+    function applyLiveState(payload) {
+      if (!payload || typeof payload !== "object") {
+        return;
+      }
+      state = payload;
+      buildOwnPositionModels(state);
+      el("jsonInput").value = JSON.stringify(state, null, 2);
+      recalc();
+      el("status").textContent = "已无刷新同步服务器最新数据。";
+    }
+
+    window.__PENTA5_APPLY_LIVE_STATE__ = applyLiveState;
+
+    function syncLiveStateByScript() {
+      const previous = document.getElementById("penta5-live-state-script");
+      if (previous) previous.remove();
+      const script = document.createElement("script");
+      script.id = "penta5-live-state-script";
+      script.async = true;
+      script.src = `/enhanced-state.js?_=${Date.now()}`;
+      script.onerror = () => {
+        el("status").textContent = "无刷新同步失败，保留当前数据。";
+      };
+      document.head.appendChild(script);
+    }
+
+    bindEvents();
+    renderModels();
+    fetchJson();
+    setInterval(syncLiveStateByScript, 30000);
+    // CODEX_LIVE_IMMEDIATE_SYNC_0150: run live sync once immediately after page init.
+    setTimeout(syncLiveStateByScript, 1200);
+    // CODEX_BOOTSTRAP_RELOAD_0135 disabled by CODEX_LIVE_SCRIPT_SYNC_0145.
+  </script>
+<!-- CODEX_PERCENT_PANEL_0300_BEGIN -->
+<style id="codex-percent-panel-style">
+  .codex-percent-card {
+    margin: 18px 0 28px;
+    border: 1px solid #cfe0ef;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+    box-shadow: 0 10px 28px rgba(20, 52, 84, 0.08);
+    overflow: hidden;
+  }
+  .codex-percent-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid #d9e6f2;
+  }
+  .codex-percent-title {
+    font-size: 18px;
+    font-weight: 800;
+    color: #071d35;
+  }
+  .codex-percent-badge {
+    border-radius: 999px;
+    padding: 6px 10px;
+    background: #e9f8f1;
+    color: #057a46;
+    font-weight: 800;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .codex-percent-body {
+    padding: 14px 16px 16px;
+  }
+  .codex-percent-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .codex-percent-box {
+    border: 1px solid #d8e6f3;
+    border-radius: 10px;
+    background: #fff;
+    padding: 10px 12px;
+    min-height: 72px;
+  }
+  .codex-percent-label {
+    color: #55708c;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .codex-percent-value {
+    margin-top: 5px;
+    color: #071d35;
+    font-size: 18px;
+    font-weight: 900;
+    line-height: 1.2;
+  }
+  .codex-percent-sub {
+    margin-top: 5px;
+    color: #667b92;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .codex-percent-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 12px;
+  }
+  .codex-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 999px;
+    padding: 6px 10px;
+    border: 1px solid #d8e6f3;
+    background: #f8fbff;
+    color: #0d2945;
+    font-weight: 800;
+    font-size: 13px;
+  }
+  .codex-pill.good { border-color: #94e4bd; background: #effcf6; color: #067a46; }
+  .codex-pill.bad { border-color: #ffb5c4; background: #fff1f4; color: #c81e43; }
+  .codex-pill.wait { border-color: #f7d889; background: #fff8e6; color: #936200; }
+  .codex-percent-table-wrap {
+    margin-top: 12px;
+    overflow-x: auto;
+    border: 1px solid #d8e6f3;
+    border-radius: 10px;
+    background: #fff;
+  }
+  .codex-percent-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 720px;
+  }
+  .codex-percent-table th,
+  .codex-percent-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid #edf3f8;
+    text-align: left;
+    font-size: 13px;
+    color: #17334e;
+    white-space: nowrap;
+  }
+  .codex-percent-table th {
+    background: #f2f7fc;
+    color: #0d2945;
+    font-weight: 900;
+  }
+  .codex-percent-table tr:last-child td { border-bottom: 0; }
+  @media (max-width: 860px) {
+    .codex-percent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .codex-percent-head { align-items: flex-start; flex-direction: column; }
+  }
+</style>
+<script id="codex-percent-panel-script">
+(function () {
+  "use strict";
+
+  var VERSION = "CODEX_PERCENT_PANEL_0300";
+  var STORE_KEY = "codex_percent_compare_panel_v0300";
+  var POSITIONS = [
+    { key: "qian", label: "千位", index: 0 },
+    { key: "bai", label: "百位", index: 1 },
+    { key: "shi", label: "十位", index: 2 },
+    { key: "ge", label: "个位", index: 3 }
+  ];
+  var memoryStore = { pending: null, history: [] };
+
+  function safeJsonParse(raw, fallback) {
+    try {
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (error) {
+      return fallback;
+    }
+  }
+
+  function loadStore() {
+    try {
+      var parsed = safeJsonParse(window.localStorage.getItem(STORE_KEY), null);
+      if (parsed && Array.isArray(parsed.history)) {
+        return parsed;
+      }
+    } catch (error) {}
+    return memoryStore;
+  }
+
+  function saveStore(store) {
+    memoryStore = store;
+    try {
+      window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
+    } catch (error) {}
+  }
+
+  function normalizeDigit(value) {
+    if (value === null || value === undefined) return "";
+    var match = String(value).match(/[0-9]/);
+    return match ? match[0] : "";
+  }
+
+  function normalizeNumbers(numbers) {
+    if (!Array.isArray(numbers)) return [];
+    return numbers.map(normalizeDigit).filter(Boolean);
+  }
+
+  function getRecordFromPayload(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    var record = payload.latestRecord || payload.lastRecord || payload.record || null;
+    if (!record && payload.lastSync && payload.lastSync.latestPeriod) {
+      record = {
+        period: payload.lastSync.latestPeriod,
+        openTime: payload.lastSync.text || payload.lastSync.at || "",
+        numbers: payload.lastSync.latestNumbers || []
+      };
+    }
+    if (!record && payload.period && payload.numbers) {
+      record = payload;
+    }
+    if (!record || !record.numbers) return null;
+    var nums = normalizeNumbers(record.numbers);
+    if (nums.length < 4) return null;
+    return {
+      period: String(record.period || record.issue || record.uid || payload.latestPeriod || ""),
+      openTime: String(record.openTime || record.time || record.datetime || ""),
+      numbers: nums
+    };
+  }
+
+  function getCurrentRecord() {
+    return getRecordFromPayload(window.__PENTA5_LIVE_STATE__) ||
+      getRecordFromPayload(window.__PENTA5_BOOTSTRAP_STATE__) ||
+      getRecordFromPayload(window.__PENTA5_LAST_STATE__) ||
+      null;
+  }
+
+  function emptyExclusions() {
+    return { qian: [], bai: [], shi: [], ge: [] };
+  }
+
+  function addDigit(exclusions, posKey, digit) {
+    if (!exclusions[posKey]) exclusions[posKey] = [];
+    if (digit && exclusions[posKey].indexOf(digit) === -1) {
+      exclusions[posKey].push(digit);
+    }
+  }
+
+  function parseCheckedModelExclusions() {
+    var exclusions = emptyExclusions();
+    var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type="checkbox"]'));
+    inputs.forEach(function (input) {
+      if (!input.checked) return;
+      var holder = input.closest("label") || input.closest(".model-item") || input.parentElement;
+      if (!holder) return;
+      var text = (holder.innerText || holder.textContent || "").replace(/\s+/g, " ").trim();
+      if (!/Codex/.test(text)) return;
+      POSITIONS.forEach(function (pos) {
+        if (text.indexOf("Codex" + pos.label) === -1 && text.indexOf(pos.label) === -1) return;
+        var digitMatch = text.match(/排\s*([0-9])/);
+        if (!digitMatch) digitMatch = text.match(/避开\s*([0-9])/);
+        if (!digitMatch) digitMatch = text.match(new RegExp(pos.label + "[^0-9]*([0-9])"));
+        if (digitMatch) addDigit(exclusions, pos.key, digitMatch[1]);
+      });
+    });
+    return exclusions;
+  }
+
+  function countExcluded(exclusions) {
+    return POSITIONS.reduce(function (sum, pos) {
+      return sum + ((exclusions[pos.key] || []).length ? 1 : 0);
+    }, 0);
+  }
+
+  function evaluatePrediction(prediction, record) {
+    var nums = record.numbers;
+    var detail = {};
+    var overallPass = true;
+    POSITIONS.forEach(function (pos) {
+      var actual = nums[pos.index] || "";
+      var excluded = (prediction.exclusions && prediction.exclusions[pos.key]) || [];
+      var hit = actual && excluded.indexOf(actual) !== -1;
+      detail[pos.key] = {
+        label: pos.label,
+        actual: actual,
+        excluded: excluded.slice(),
+        pass: !hit,
+        hit: hit
+      };
+      if (hit) overallPass = false;
+    });
+    return {
+      id: String(prediction.afterPeriod || "") + "->" + String(record.period || ""),
+      modelAfterPeriod: String(prediction.afterPeriod || ""),
+      resultPeriod: String(record.period || ""),
+      resultOpenTime: record.openTime || "",
+      numbers: nums.slice(0, 5),
+      detail: detail,
+      overallPass: overallPass,
+      checkedAt: new Date().toLocaleString()
+    };
+  }
+
+  function calcStats(history, limit) {
+    var items = history.slice(0, limit);
+    var total = items.length;
+    var overallOk = items.filter(function (item) { return item.overallPass; }).length;
+    var positionStats = {};
+    POSITIONS.forEach(function (pos) {
+      var ok = items.filter(function (item) {
+        return item.detail && item.detail[pos.key] && item.detail[pos.key].pass;
+      }).length;
+      positionStats[pos.key] = { ok: ok, total: total, rate: total ? ok / total : 0 };
+    });
+    return { total: total, overallOk: overallOk, overallRate: total ? overallOk / total : 0, positions: positionStats };
+  }
+
+  function pct(value) {
+    if (!isFinite(value)) return "-";
+    return (value * 100).toFixed(2) + "%";
+  }
+
+  function exclusionsText(exclusions) {
+    return POSITIONS.map(function (pos) {
+      var digits = (exclusions[pos.key] || []).join(",") || "-";
+      return pos.label + "排 " + digits;
+    }).join("  ");
+  }
+
+  function baselineText(exclusions) {
+    var perPosition = POSITIONS.map(function (pos) {
+      var n = ((exclusions[pos.key] || []).length || 1);
+      return Math.max(0, (10 - n) / 10);
+    });
+    var all = perPosition.reduce(function (acc, value) { return acc * value; }, 1);
+    return "随机基准：单位置排1=90.00%，四位各排1=" + pct(0.9 * 0.9 * 0.9 * 0.9) + "，当前组合基准=" + pct(all);
+  }
+
+  function ensurePanel() {
+    var panel = document.getElementById("codex-percent-panel");
+    if (panel) return panel;
+    panel = document.createElement("section");
+    panel.id = "codex-percent-panel";
+    panel.className = "codex-percent-card";
+    panel.innerHTML = '<div class="codex-percent-head"><div class="codex-percent-title">百分比对照 / 自动验证</div><div class="codex-percent-badge">' + VERSION + '</div></div><div class="codex-percent-body" id="codex-percent-panel-body">等待数据</div>';
+
+    var anchors = Array.prototype.slice.call(document.querySelectorAll("h2,h3,.card-title,.section-title"));
+    var resultAnchor = anchors.find(function (el) {
+      return /最终排除结果|可复制结果/.test(el.innerText || el.textContent || "");
+    });
+    if (resultAnchor) {
+      var container = resultAnchor.closest("section") || resultAnchor.closest(".card") || resultAnchor.parentElement;
+      if (container && container.parentElement) {
+        container.parentElement.insertBefore(panel, container);
+        return panel;
+      }
+    }
+    document.body.appendChild(panel);
+    return panel;
+  }
+
+  function render() {
+    if (window.__CODEX_PERCENT_SERVER_MODE__ && window.__CODEX_PERCENT_SERVER_RENDERED__) return;
+    var panel = ensurePanel();
+    var body = document.getElementById("codex-percent-panel-body");
+    if (!body) return;
+    var record = getCurrentRecord();
+    var exclusions = parseCheckedModelExclusions();
+    var store = loadStore();
+    if (!store || !Array.isArray(store.history)) store = { pending: null, history: [] };
+
+    if (record && record.period) {
+      if (store.pending && String(store.pending.afterPeriod) !== String(record.period)) {
+        var evaluated = evaluatePrediction(store.pending, record);
+        if (!store.history.some(function (item) { return item.id === evaluated.id; })) {
+          store.history.unshift(evaluated);
+          store.history = store.history.slice(0, 120);
+        }
+        store.pending = { afterPeriod: record.period, openTime: record.openTime, exclusions: exclusions, savedAt: new Date().toLocaleString() };
+        saveStore(store);
+      } else if (!store.pending || countExcluded(store.pending.exclusions || emptyExclusions()) === 0 || countExcluded(exclusions) > 0) {
+        store.pending = { afterPeriod: record.period, openTime: record.openTime, exclusions: exclusions, savedAt: new Date().toLocaleString() };
+        saveStore(store);
+      }
+    }
+
+    var h20 = calcStats(store.history || [], 20);
+    var h50 = calcStats(store.history || [], 50);
+    var latest = (store.history || [])[0];
+    var currentExcluded = store.pending ? store.pending.exclusions : exclusions;
+    var pendingText = store.pending ? exclusionsText(store.pending.exclusions) : exclusionsText(exclusions);
+    var recordText = record ? (record.period + " / " + record.numbers.slice(0, 5).join(" ")) : "还没有读到后台记录";
+    var statusClass = latest ? (latest.overallPass ? "good" : "bad") : "wait";
+    var statusText = latest ? (latest.overallPass ? "上一期整体避开" : "上一期有撞号") : "等待下一期开奖验证";
+
+    var posBoxes = POSITIONS.map(function (pos) {
+      var s20 = h20.positions[pos.key] || { ok: 0, total: 0, rate: 0 };
+      var excluded = (currentExcluded[pos.key] || []).join(",") || "-";
+      return '<div class="codex-percent-box"><div class="codex-percent-label">' + pos.label + '近20期</div><div class="codex-percent-value">' + (s20.total ? pct(s20.rate) : '-') + '</div><div class="codex-percent-sub">' + s20.ok + '/' + s20.total + '，当前排：' + excluded + '</div></div>';
+    }).join("");
+
+    var rows = (store.history || []).slice(0, 8).map(function (item) {
+      var cells = POSITIONS.map(function (pos) {
+        var d = item.detail && item.detail[pos.key];
+        if (!d) return '<td>-</td>';
+        var cls = d.pass ? 'good' : 'bad';
+        var txt = d.pass ? '过' : '撞';
+        return '<td><span class="codex-pill ' + cls + '">' + pos.label + txt + ' 开' + (d.actual || '-') + ' 排' + ((d.excluded || []).join(',') || '-') + '</span></td>';
+      }).join("");
+      return '<tr><td>' + item.resultPeriod + '</td><td>' + item.numbers.join(' ') + '</td>' + cells + '<td>' + (item.overallPass ? '<span class="codex-pill good">整体过</span>' : '<span class="codex-pill bad">整体失败</span>') + '</td></tr>';
+    }).join("");
+    if (!rows) rows = '<tr><td colspan="7">等待下一期开奖后自动生成验证记录</td></tr>';
+
+    body.innerHTML =
+      '<div class="codex-percent-grid">' +
+        '<div class="codex-percent-box"><div class="codex-percent-label">当前后台期号 / 开奖</div><div class="codex-percent-value">' + recordText + '</div><div class="codex-percent-sub">最新开奖号不直接当训练答案</div></div>' +
+        '<div class="codex-percent-box"><div class="codex-percent-label">近20期整体</div><div class="codex-percent-value">' + (h20.total ? pct(h20.overallRate) : '-') + '</div><div class="codex-percent-sub">' + h20.overallOk + '/' + h20.total + '，随机四位基准65.61%</div></div>' +
+        '<div class="codex-percent-box"><div class="codex-percent-label">近50期整体</div><div class="codex-percent-value">' + (h50.total ? pct(h50.overallRate) : '-') + '</div><div class="codex-percent-sub">' + h50.overallOk + '/' + h50.total + '，样本越多越准</div></div>' +
+        '<div class="codex-percent-box"><div class="codex-percent-label">当前状态</div><div class="codex-percent-value"><span class="codex-pill ' + statusClass + '">' + statusText + '</span></div><div class="codex-percent-sub">下一期来后自动判定</div></div>' +
+        posBoxes +
+      '</div>' +
+      '<div class="codex-percent-row"><span class="codex-pill wait">待验证：' + pendingText + '</span><span class="codex-pill">' + baselineText(currentExcluded) + '</span></div>' +
+      '<div class="codex-percent-table-wrap"><table class="codex-percent-table"><thead><tr><th>验证期号</th><th>开奖号</th><th>千位</th><th>百位</th><th>十位</th><th>个位</th><th>整体</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function hookLiveState() {
+    if (window.__CODEX_PERCENT_PANEL_HOOKED__) return;
+    window.__CODEX_PERCENT_PANEL_HOOKED__ = true;
+    var oldApply = window.__PENTA5_APPLY_LIVE_STATE__;
+    window.__PENTA5_APPLY_LIVE_STATE__ = function (payload) {
+      window.__PENTA5_LIVE_STATE__ = payload;
+      if (typeof oldApply === "function") {
+        try { oldApply.apply(this, arguments); } catch (error) { console.warn("live state apply failed", error); }
+      }
+      setTimeout(render, 80);
+    };
+  }
+
+  function start() {
+    try {
+      hookLiveState();
+      render();
+      setInterval(render, 5000);
+    } catch (error) {
+      console.warn("percent panel failed", error);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start);
+  } else {
+    start();
+  }
+})();
+</script>
+<!-- CODEX_PERCENT_PANEL_0300_END -->
+
+<!-- CODEX_SERVER_PERCENT_PANEL_0400_BEGIN -->
+<script id="codex-server-percent-panel-0400">
+(function () {
+  "use strict";
+  var POSITIONS = [
+    { key: "qian", label: "千位" },
+    { key: "bai", label: "百位" },
+    { key: "shi", label: "十位" },
+    { key: "ge", label: "个位" }
+  ];
+  function pct(value) {
+    if (!isFinite(value)) return "-";
+    return (value * 100).toFixed(2) + "%";
+  }
+  function ensurePanel() {
+    var panel = document.getElementById("codex-percent-panel");
+    if (!panel) {
+      panel = document.createElement("section");
+      panel.id = "codex-percent-panel";
+      panel.className = "codex-percent-card";
+      panel.innerHTML = '<div class="codex-percent-head"><div class="codex-percent-title">百分比对照 / 服务器自动验证</div><div class="codex-percent-badge">CODEX_SERVER_PERCENT_0400</div></div><div class="codex-percent-body" id="codex-percent-panel-body">等待服务器记录</div>';
+      document.body.appendChild(panel);
+    }
+    var title = panel.querySelector(".codex-percent-title");
+    var badge = panel.querySelector(".codex-percent-badge");
+    if (title) title.textContent = "百分比对照 / 服务器自动验证";
+    if (badge) badge.textContent = "CODEX_SERVER_PERCENT_0400";
+    return panel;
+  }
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>\"]/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch];
+    });
+  }
+  function exclusionsText(exclusions) {
+    exclusions = exclusions || {};
+    return POSITIONS.map(function (pos) {
+      return pos.label + "排 " + esc(((exclusions[pos.key] || []).join(",") || "-"));
+    }).join("  ");
+  }
+  function render(data) {
+    window.__CODEX_PERCENT_SERVER_MODE__ = true;
+    window.__CODEX_PERCENT_SERVER_RENDERED__ = true;
+    ensurePanel();
+    var body = document.getElementById("codex-percent-panel-body");
+    if (!body) return;
+    if (!data || !data.ok) {
+      body.innerHTML = '<div class="codex-percent-row"><span class="codex-pill bad">服务器验证记录暂不可用</span></div>';
+      return;
+    }
+    var latest = data.latestRecord || {};
+    var pending = data.pending || {};
+    var h20 = data.stats20 || { total: 0, overallOk: 0, overallRate: 0, positions: {} };
+    var h50 = data.stats50 || { total: 0, overallOk: 0, overallRate: 0, positions: {} };
+    var rows = (data.history || []).slice(0, 10).map(function (item) {
+      var cells = POSITIONS.map(function (pos) {
+        var d = item.detail && item.detail[pos.key];
+        if (!d) return '<td>-</td>';
+        return '<td><span class="codex-pill ' + (d.pass ? 'good' : 'bad') + '">' + pos.label + (d.pass ? '过' : '撞') + ' 开' + esc(d.actual || '-') + ' 排' + esc((d.excluded || []).join(',') || '-') + '</span></td>';
+      }).join("");
+      return '<tr><td>' + esc(item.resultPeriod || '-') + '</td><td>' + esc((item.numbers || []).join(' ')) + '</td>' + cells + '<td>' + (item.overallPass ? '<span class="codex-pill good">整体过</span>' : '<span class="codex-pill bad">整体失败</span>') + '</td></tr>';
+    }).join("");
+    if (!rows) rows = '<tr><td colspan="7">服务器已开始记录，等下一期开奖后生成第一条验证</td></tr>';
+    var posBoxes = POSITIONS.map(function (pos) {
+      var s = h20.positions && h20.positions[pos.key] ? h20.positions[pos.key] : { ok: 0, total: 0, rate: 0 };
+      var current = pending.exclusions && pending.exclusions[pos.key] ? pending.exclusions[pos.key].join(',') : '-';
+      return '<div class="codex-percent-box"><div class="codex-percent-label">' + pos.label + '近20期</div><div class="codex-percent-value">' + (s.total ? pct(s.rate) : '-') + '</div><div class="codex-percent-sub">' + s.ok + '/' + s.total + '，当前排：' + esc(current) + '</div></div>';
+    }).join("");
+    body.innerHTML = '<div class="codex-percent-grid">' +
+      '<div class="codex-percent-box"><div class="codex-percent-label">服务器最新期号 / 开奖</div><div class="codex-percent-value">' + esc(latest.period || '-') + ' / ' + esc((latest.numbers || []).join(' ')) + '</div><div class="codex-percent-sub">服务器自动读取 state.json</div></div>' +
+      '<div class="codex-percent-box"><div class="codex-percent-label">近20期整体</div><div class="codex-percent-value">' + (h20.total ? pct(h20.overallRate) : '-') + '</div><div class="codex-percent-sub">' + h20.overallOk + '/' + h20.total + '，随机基准65.61%</div></div>' +
+      '<div class="codex-percent-box"><div class="codex-percent-label">近50期整体</div><div class="codex-percent-value">' + (h50.total ? pct(h50.overallRate) : '-') + '</div><div class="codex-percent-sub">' + h50.overallOk + '/' + h50.total + '，服务器保存</div></div>' +
+      '<div class="codex-percent-box"><div class="codex-percent-label">当前待验证</div><div class="codex-percent-value">' + esc(pending.afterPeriod || '-') + '</div><div class="codex-percent-sub">关电脑也继续记</div></div>' +
+      posBoxes + '</div>' +
+      '<div class="codex-percent-row"><span class="codex-pill wait">待验证：' + exclusionsText(pending.exclusions) + '</span><span class="codex-pill">随机基准：单位置90.00%，四位65.61%</span></div>' +
+      '<div class="codex-percent-table-wrap"><table class="codex-percent-table"><thead><tr><th>验证期号</th><th>开奖号</th><th>千位</th><th>百位</th><th>十位</th><th>个位</th><th>整体</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+  function load() {
+    var old = document.getElementById("codex-percent-state-js");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var script = document.createElement("script");
+    script.id = "codex-percent-state-js";
+    script.src = "/codex-percent-state.js?_=" + Date.now();
+    script.onerror = function () {
+      ensurePanel();
+      var body = document.getElementById("codex-percent-panel-body");
+      if (body) body.innerHTML = '<div class="codex-percent-row"><span class="codex-pill bad">服务器百分比接口读取失败</span></div>';
+    };
+    document.head.appendChild(script);
+  }
+  window.__CODEX_RENDER_SERVER_PERCENT__ = render;
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", load); else load();
+  setInterval(load, 30000);
+})();
+</script>
+<!-- CODEX_SERVER_PERCENT_PANEL_0400_END -->
+
+</body>
+</html>
