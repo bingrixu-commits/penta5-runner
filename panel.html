@@ -4761,7 +4761,7 @@ safeOrderRows();
   var practiceLastCelebrationKey = "";
   var practiceSnapshotStore = {};
   var dailyStreakReportCache = {};
-var PANEL_UI_VERSION = "20260716_brother_full_attack_v301";
+var PANEL_UI_VERSION = "20260716_three_ding_pos_kill_v302";
 var PANEL_SNAPSHOT_VERSIONS = {
     autoTop6:"backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit",
     recommend2:"backend-recommend2-snapshot-v15-formal-anytwo5",
@@ -8134,18 +8134,27 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(picked<1)return "";
     // 定位排除看板（positionKills 正式双码）写入千/百/十，避免只挑1位时千/百仍是全码
     var data=opts.data||window.__penta5TxtState||state||{};
-    var pk=((data.currentPrediction)||{}).positionKills||{};
+    var prediction=(data&&data.currentPrediction)||(state&&state.currentPrediction)||{};
+    var pk=(prediction&&prediction.positionKills)||{};
     var labelToState={千:"wan",百:"qian",十:"bai"};
     order.forEach(function(label){
-      var digits=typeof positionFormalKillDigits==="function"
-        ?positionFormalKillDigits(pk[labelToState[label]]||{})
-        :[];
+      var entry=pk[labelToState[label]]||{};
+      var digits=[];
+      if(typeof positionFormalKillDigits==="function"){
+        digits=positionFormalKillDigits(entry)||[];
+      }else if(Array.isArray(entry.killDigits)){
+        digits=entry.killDigits.map(function(d){return String(d==null?"":d).replace(/\D/g,"").charAt(0);}).filter(Boolean).slice(0,2);
+      }
+      if(!digits.length){
+        var main=String(entry.recommendDigit!=null?entry.recommendDigit:(entry.selectedDigit!=null?entry.selectedDigit:(entry.main!=null?entry.main:""))).replace(/\D/g,"").charAt(0);
+        if(main)digits=[main];
+      }
       if(!digits.length)return;
       var base=keepByLabel[label]||"1234567890";
       digits.forEach(function(digit){
         base=String(base).split(String(digit)).join("");
       });
-      if(base)keepByLabel[label]=base;
+      keepByLabel[label]=base||keepByLabel[label]||"1234567890";
     });
     var head=order.map(function(label){return label+(keepByLabel[label]||"1234567890");}).join("");
     var full="";
