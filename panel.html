@@ -6405,7 +6405,10 @@ var PANEL_SNAPSHOT_VERSIONS = {
         if(!position)return null;
         copy.stateKey=position.stateKey;
         copy.key=position.key;
-        copy.name=position.label+String(copy.name||"模型").replace(/^(?:千位|百位|十位|个位)/,"");
+        // 定位项语义是排除码；展示统一用「排除」，避免「推荐」误导
+        var posTail=String(copy.name||"模型").replace(/^(?:千位|百位|十位|个位)/,"").replace(/推荐$/,"排除").replace(/备用$/,"排除").replace(/主攻$/,"排除");
+        if(!posTail||posTail==="模型")posTail="排除";
+        copy.name=position.label+posTail;
       }
       copy.rank=index+1;
       copy.side=copy.side||"recommend";
@@ -8104,10 +8107,11 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(tail.indexOf("四定")!==0)tail="四定"+tail.replace(/^三定/,"");
     return head+tail;
   }
-  function buildThreeDingFrameworkAttackText(items){
+  function buildThreeDingFrameworkAttackText(items,options){
     var list=frameworkAttackItems(items);
     if(!list.length)return "";
-    // 三定系列攻击语必须写明千/百/十三个位置：挑中的位除码，未挑中的位保留全码；不含个位
+    var opts=options&&typeof options==="object"?options:{};
+    // 三定系列攻击语必须写明千/百/十三个位置：框架挑中位除码 + 定位看板排除码写入各位；不含个位
     var order=["千","百","十"];
     var keepByLabel={};
     var picked=0;
@@ -8128,6 +8132,21 @@ var PANEL_SNAPSHOT_VERSIONS = {
     });
     // 至少要有1个定位排除（B=1 / A=2 / 原三定=3），否则攻击语无意义
     if(picked<1)return "";
+    // 定位排除看板（positionKills 正式双码）写入千/百/十，避免只挑1位时千/百仍是全码
+    var data=opts.data||window.__penta5TxtState||state||{};
+    var pk=((data.currentPrediction)||{}).positionKills||{};
+    var labelToState={千:"wan",百:"qian",十:"bai"};
+    order.forEach(function(label){
+      var digits=typeof positionFormalKillDigits==="function"
+        ?positionFormalKillDigits(pk[labelToState[label]]||{})
+        :[];
+      if(!digits.length)return;
+      var base=keepByLabel[label]||"1234567890";
+      digits.forEach(function(digit){
+        base=String(base).split(String(digit)).join("");
+      });
+      if(base)keepByLabel[label]=base;
+    });
     var head=order.map(function(label){return label+(keepByLabel[label]||"1234567890");}).join("");
     var full="";
     try{
@@ -8146,7 +8165,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
     try{
       if(opts.threeDing===true){
         // 三定系列禁止回退成四定全位攻击语（A/B 定位不足3时曾整段错成千百十个+四定）
-        return buildThreeDingFrameworkAttackText(list) || "";
+        if(opts.data==null)opts.data=window.__penta5TxtState||state||{};
+        return buildThreeDingFrameworkAttackText(list,opts) || "";
       }
       var shot=buildPracticeModel(DEFAULT_PRACTICE_MODEL,list,{addReversePositionShapes:false});
       return ensurePracticeShotGeTail(shot);
@@ -9147,7 +9167,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #c4b5fd;border-radius:12px;padding:12px;background:#f5f3ff;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
       +frameworkPositionBoardHtml(data)
-      +frameworkAttackTextHtml("三定框架",top,"frameworkAttackCompact",{threeDing:true})
+      +frameworkAttackTextHtml("三定框架",top,"frameworkAttackCompact",{threeDing:true,data:data})
       +latestHtml
       +(repair.length?'<div style="margin-top:8px;border:1px solid #ddd6fe;background:#faf5ff;color:#6b21a8;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
         +'<b>三定框架报告：</b>'+repair.slice(0,4).map(function(text){return '<div>'+esc(text)+'</div>';}).join("")
@@ -9184,7 +9204,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
       +panelCollapseBodyOpen('threeDingTwoFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #f9a8d4;border-radius:12px;padding:12px;background:#fdf2f8;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkAttackTextHtml("三定框架A",top,"frameworkAttackThreeDingTwo",{threeDing:true})
+      +frameworkPositionBoardHtml(data)
+      +frameworkAttackTextHtml("三定框架A",top,"frameworkAttackThreeDingTwo",{threeDing:true,data:data})
       +latestHtml
       +(repair.length?'<div style="margin-top:8px;border:1px solid #fbcfe8;background:#fce7f3;color:#9d174d;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
         +'<b>三定框架A报告：</b>'+repair.slice(0,4).map(function(t){return '<div>'+esc(t)+'</div>';}).join("")
@@ -9221,7 +9242,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
       +panelCollapseBodyOpen('threeDingOneFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #fda4af;border-radius:12px;padding:12px;background:#fff1f2;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkAttackTextHtml("三定框架B",top,"frameworkAttackThreeDingOne",{threeDing:true})
+      +frameworkPositionBoardHtml(data)
+      +frameworkAttackTextHtml("三定框架B",top,"frameworkAttackThreeDingOne",{threeDing:true,data:data})
       +latestHtml
       +(repair.length?'<div style="margin-top:8px;border:1px solid #fecdd3;background:#ffe4e6;color:#9f1239;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
         +'<b>三定框架B报告：</b>'+repair.slice(0,4).map(function(t){return '<div>'+esc(t)+'</div>';}).join("")
