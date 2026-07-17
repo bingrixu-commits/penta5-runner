@@ -219,13 +219,17 @@ button.gray{background:#4b5563}
     <table class="table">
       <tr><td>合尾综合排除</td><td id="killTotalHewei">--</td></tr>
       <tr><td>三四字合尾杀码</td><td id="killThreeFour">--</td></tr>
-      <tr><td>前三位合尾避开码</td><td id="killWanQianBai">--</td></tr>
-      <tr><td>中三位合尾避开码</td><td id="killQianBaiShi">--</td></tr>
-      <tr><td>前四位合尾避开码</td><td id="killWanQianBaiShi">--</td></tr>
+      <tr><td>千百十合尾避开码</td><td id="killWanQianBai">--</td></tr>
+      <tr><td>百十个合尾避开码</td><td id="killQianBaiShi">--</td></tr>
+      <tr><td>千百十个合尾避开码</td><td id="killWanQianBaiShi">--</td></tr>
       <tr><td>更稳排除单码</td><td id="stableMathDigits">--</td></tr>
       <tr><td>更稳排除形态</td><td id="stableMathShapes">--</td></tr>
       <tr><td>更稳排除跨度</td><td id="stableMathSpans">--</td></tr>
       <tr><td>更稳排除和值</td><td id="stableMathSums">--</td></tr>
+      <tr><td>更稳排除重号</td><td id="stableMathRepeats">--</td></tr>
+      <tr><td>更稳排除连号</td><td id="stableMathConsecutives">--</td></tr>
+      <tr><td>更稳排除奇偶比</td><td id="stableMathParity">--</td></tr>
+      <tr><td>更稳排除大小比</td><td id="stableMathSize">--</td></tr>
 
       <tr><td>千位排除</td><td id="wan">--</td></tr>
       <tr><td>百位排除</td><td id="qian">--</td></tr>
@@ -266,6 +270,12 @@ function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"--":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function ball(n,cls){return '<span class="ball '+(cls||'')+'">'+esc(n)+'</span>'}
 function tag(t){return '<span class="tag">'+esc(t)+'</span>'}
+function heweiConfidenceTag(meta){
+  if(!meta||typeof meta!=="object")return "";
+  if(meta.recommendable===false||meta.confidence==="low")return tag("低置信");
+  if(meta.confidence==="normal")return "";
+  return "";
+}
 function setHtml(target,html){
   if(!target)return;
   var parsed=new DOMParser().parseFromString("<!doctype html><html><body>"+String(html==null?"":html)+"</body></html>","text/html");
@@ -1045,9 +1055,16 @@ function txtDisplayGroup(code,width){
   return code.slice(0,width)+txtPlaceholderFill(4-width);
 }
 function txtRecords(data){
-  return (Array.isArray(data&&data.history)?data.history:[]).filter(function(row){
+  var fromState=(Array.isArray(data&&data.history)?data.history:[]).filter(function(row){
     return row&&Array.isArray(row.numbers)&&row.numbers.length>=4;
   });
+  // /state 为防卡顿只带近百期；三定回删150需要更长共享历史，优先用 /history 扩展缓存
+  var cached=Array.isArray(window.__penta5HistoryCache)?window.__penta5HistoryCache:[];
+  var fromCache=cached.filter(function(row){
+    return row&&Array.isArray(row.numbers)&&row.numbers.length>=4;
+  });
+  if(fromCache.length>fromState.length)return fromCache;
+  return fromState;
 }
 function txtDateKeyFromValue(value){
   var text=String(value==null?"":value).trim();
@@ -1907,8 +1924,9 @@ function txtPositionModelFrameItemFromRows(rows,size,day,positions,data,excludeT
     :TXT_POSITION_DISPLAY_TODAY_LIMIT;
   var current=isLite?null:txtPositionRemainSnapshotFromRows(rows,size,positions,modelTarget);
   var todayStats=txtPositionBacktestStats(txtPositionBacktestRowsForPositionsFromRows(rows,size,positions,todayLimit,true,day,modelTarget));
-  var recentStats=txtPositionBacktestStats(txtPositionBacktestRowsForPositionsFromRows(rows,size,positions,recentLimit,false,day,modelTarget));
-  var latestRows=txtPositionBacktestRowsForPositionsFromRows(rows,size,positions,1,false,day,modelTarget);
+  var recentRows=txtPositionBacktestRowsForPositionsFromRows(rows,size,positions,recentLimit,false,day,modelTarget);
+  var recentStats=txtPositionBacktestStats(recentRows);
+  var latestRows=recentRows.length?recentRows.slice(0,1):txtPositionBacktestRowsForPositionsFromRows(rows,size,positions,1,false,day,modelTarget);
   var comboName=txtPositionComboName(positions);
   return {
     name:isLite?(comboName+" · 回删"+txtPositionRemainLabel(size,modelTarget)):(comboName+"回删剩"+modelTarget),
@@ -1928,6 +1946,7 @@ function txtPositionModelFrameItemFromRows(rows,size,day,positions,data,excludeT
     scanned:current?current.scanned:null,
     today:todayStats,
     recent:recentStats,
+    recentRows:recentRows,
     latest:latestRows[0]||{}
   };
 }
@@ -2111,15 +2130,26 @@ function txtThreeRemainTopHtmlFromComputed(threeByTarget,threeSystemStatsByTarge
     var ok=item.latest&&typeof item.latest.success==="boolean"?item.latest.success:null;
     var color=ok===true?"#dcfce7":ok===false?"#fee2e2":"#f1f5f9";
     var fg=ok===true?"#166534":ok===false?"#991b1b":"#64748b";
-    return '<div style="border:1px solid #fdba74;border-radius:10px;background:white;padding:10px 12px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">'
+    var chips=(Array.isArray(item.recentRows)?item.recentRows:[]).slice(0,item.recentLimit||12).map(function(row){
+      var hit=row&&typeof row.success==="boolean"?row.success:null;
+      var bg=hit===true?"#dcfce7":hit===false?"#fee2e2":"#e2e8f0";
+      var tc=hit===true?"#166534":hit===false?"#991b1b":"#64748b";
+      var label=hit===true?"中":hit===false?"不中":"--";
+      return '<span title="'+txtEsc((row&&row.period)||"")+' '+(row&&row.code||"")+'" style="border-radius:999px;padding:2px 7px;background:'+bg+';color:'+tc+';font-weight:800;font-size:12px;">'
+        +txtEsc(String((row&&row.period)||"--").slice(-3))+label+'</span>';
+    }).join("");
+    return '<div style="border:1px solid #fdba74;border-radius:10px;background:white;padding:10px 12px;display:grid;gap:8px;">'
+      +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">'
       +'<b style="font-size:15px;color:#9a3412;">'+txtEsc(item.name)+'</b>'
       +'<span style="border-radius:999px;padding:3px 10px;background:'+color+';color:'+fg+';font-weight:900;">最新 '+(ok===true?"中":ok===false?"不中":"--")+'</span>'
       +'<span style="color:#64748b;">今日</span><b>'+txtEsc(txtPositionRateText(item.today))+'</b>'
       +'<span style="color:#64748b;">近'+txtEsc(item.recentLimit)+'</span><b>'+txtEsc(txtPositionRateText(item.recent))+'</b>'
+      +'</div>'
+      +(chips?('<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;"><span style="color:#9a3412;font-weight:800;font-size:12px;">近'+txtEsc(item.recentLimit)+'期中/不中</span>'+chips+'</div>'):'')
       +'</div>';
   }).join("");
   return ''
-    +'<div style="margin-top:6px;font-size:12px;color:#9a3412;">按真实旧号回删回算；已精简核对项，只保留命中率。</div>'
+    +'<div style="margin-top:6px;font-size:12px;color:#9a3412;">中/不中：看「最新」徽章，以及下方近N期逐期芯片（绿=中，红=不中）。今日/近N是命中率汇总。</div>'
     +'<div style="margin-top:8px;display:grid;gap:8px;">'+rows+'</div>'
     +'<button type="button" data-txt-position-run-detail="1" style="margin-top:8px;border:0;border-radius:8px;padding:7px 12px;background:#ea580c;color:white;font-weight:900;cursor:pointer;font-size:13px;">重新计算三定回删</button>';
 }
@@ -2436,7 +2466,7 @@ function txtUpdatePositionFrameworkInfo(data){
   var rows=txtRecords(data||{});
   var twoInfo=txtPositionInfoEl("two");
   var threeInfo=txtPositionInfoEl("three");
-  var shared="共享历史 "+rows.length+" 期；纯旧码回删不加排除码；点按钮才算命中率，避免开奖后卡死。";
+  var shared="数据库共享历史 "+rows.length+" 期（非整页 /state 的近120期）；纯旧码回删；点「重新计算」用整库回算中/不中。";
   if(twoInfo)twoInfo.textContent="二定回删已下线。";
   if(threeInfo)threeInfo.textContent=shared+" 三定千百十：回删150剩850。";
   // 不再自动分段回算：开奖窗每4秒刷新会反复占满主线程，表现为网页卡、结算慢
@@ -2627,12 +2657,29 @@ function txtRunPositionDetailRender(){
   var threeBox=TXT_POSITION_THREE_LITE_MODE?null:txtPositionModelBoxEl("three");
   window.__txtPositionProgressiveKey=null;
   txtPositionDetailHtmlCache={};
-  if(twoBox){
-    twoBox.setAttribute("data-txt-position-filled","1");
-    setHtml(twoBox,txtPositionQuickModelFrameHtml(data||{},"two"));
+  var threeContent=$("txtThreeRemainContent");
+  if(threeContent){
+    setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">正在从数据库拉取共享历史（约两千期）…</div>');
   }
-  txtStartPositionProgressiveRender(data||{},twoBox,threeBox);
-  txtSetStatus("已开始分段计算：三定千百十回删150剩850；期间页面应仍可滚动。");
+  // 库内 shared history 两千+期；回删150必须用整库，不能只用 /state 近120期
+  var wantHistory=Math.max(2000,Number((data&&data.historyCount)||0)||0);
+  var ensure=typeof window.__penta5EnsureHistoryCache==="function"
+    ?window.__penta5EnsureHistoryCache(wantHistory)
+    :Promise.resolve([]);
+  Promise.resolve(ensure).then(function(){
+    if(twoBox){
+      twoBox.setAttribute("data-txt-position-filled","1");
+      setHtml(twoBox,txtPositionQuickModelFrameHtml(data||{},"two"));
+    }
+    txtStartPositionProgressiveRender(data||{},twoBox,threeBox);
+    var rows=txtRecords(data||{});
+    txtSetStatus("已开始分段计算：三定千百十回删150剩850（数据库共享历史 "+rows.length+" 期）；中/不中在「最新」徽章与近N期芯片。");
+  }).catch(function(err){
+    if(threeContent){
+      setHtml(threeContent,'<div style="color:#b91c1c;">拉取共享历史失败：'+txtEsc(err&&err.message?err.message:err)+'。请刷新后再点重新计算。</div>');
+    }
+    txtSetStatus("拉取共享历史失败，无法计算三定回删命中率。");
+  });
 }
 function txtSchedulePositionDetailRender(data,twoBox,threeBox){
   if(!TXT_POSITION_TWO_LITE_MODE)twoBox=twoBox||txtPositionModelBoxEl("two");
@@ -2655,7 +2702,7 @@ function txtSchedulePositionDetailRender(data,twoBox,threeBox){
   }
   var twoContent=$("txtTwoRemainContent");
   var threeContent=$("txtThreeRemainContent");
-  if(TXT_POSITION_TWO_LITE_MODE&&twoContent&&!twoBox)setHtml(twoContent,'<div data-txt-two-progress="1" style="margin-top:6px;color:#6d28d9;font-weight:700;">二定回删已下线</div>');
+  if(TXT_POSITION_TWO_LITE_MODE&&twoContent&&!twoBox)setHtml(twoContent,'<div data-txt-two-progress="1" style="margin-top:6px;color:#6d28d9;font-weight:700;">二定命中率计算中…</div>');
   if(TXT_POSITION_THREE_LITE_MODE&&threeContent&&!threeBox)setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">三定命中率计算中…</div>');
   txtStartPositionProgressiveRender(data||{},twoBox,threeBox);
 }
@@ -3183,8 +3230,8 @@ function txtFixedHeweiItems(data){
   }
   var recommend2=(typeof backendRecommend2Items==="function"?backendRecommend2Items(data):null)||[];
   recommend2.forEach(add);
-  add(txtFixedHeweiItemFromExtra(data,"anyTwoHeweiHit","全码池二数合尾5码命中"));
-  add(txtFixedHeweiItemFromExtra(data,"anyThreeHeweiHit","全码池三数合尾5码命中"));
+  add(txtFixedHeweiItemFromExtra(data,"anyTwoHeweiHit","二数合尾宽命中（高基线参考）"));
+  add(txtFixedHeweiItemFromExtra(data,"anyThreeHeweiHit","三数合尾宽命中（高基线参考）"));
   return out.filter(function(item){return item.key==="anyTwoHeweiHit"||item.key==="anyThreeHeweiHit";});
 }
 function txtFixedHeweiInfoText(data){
@@ -3318,7 +3365,7 @@ function txtFixedHeweiExcludeItemsFromInput(raw){
   collect(/含对数(\d{2,3})/g,function(match){
     var digits=String(match[1]||"").replace(/\D/g,"");
     if(digits.length>=3)return {kind:"extra",key:"threeDigitHit",name:"三数共现命中",code:digits.slice(0,3)};
-    if(digits.length===2)return {kind:"extra",key:"twoDigitHit",name:"两数共现",code:digits,mode:"avoid"};
+    if(digits.length===2)return {kind:"extra",key:"twoDigitHit",name:"两数共现除对数",code:digits,mode:"avoid"};
     return null;
   });
   collect(/除(?:和值|值)(\d+)(?:到|至|-)(\d+)/g,function(match){
@@ -3605,8 +3652,14 @@ function txtApplyShortShotExclusions(raw,rule){
   return rule;
 }
 function txtShotExcludeShapes(text){
-  var out=[],match,regex=/除([大小单双]{4})/g;
-  while((match=regex.exec(text))){
+  var out=[],match;
+  // 四定形态4字；三定千百十形态3字（除大大小 / 除大大大）
+  var regex4=/除([大小单双]{4})/g;
+  while((match=regex4.exec(text))){
+    if(out.indexOf(match[1])<0)out.push(match[1]);
+  }
+  var regex3=/除([大小单双]{3})(?![大小单双])/g;
+  while((match=regex3.exec(text))){
     if(out.indexOf(match[1])<0)out.push(match[1]);
   }
   return out;
@@ -3683,7 +3736,14 @@ function txtShotExcludeRecentExactWindows(text){
 function txtRecentExactCodeList(limit){
   var data=window.__penta5TxtState||{};
   var historyRows=Array.isArray(data&&data.history)?data.history:[];
-  var rows=historyRows.slice(0,recentExactCodeWindowIsMax(limit)?historyRows.length:Math.max(1,Number(limit||300)));
+  var want=recentExactCodeWindowIsMax(limit)?Math.max(historyRows.length,1500):Math.max(1,Number(limit||300));
+  if(window.__penta5HistoryCache&&window.__penta5HistoryCache.length>historyRows.length){
+    historyRows=window.__penta5HistoryCache;
+  }
+  if(historyRows.length<want&&typeof window.__penta5EnsureHistoryCache==="function"){
+    window.__penta5EnsureHistoryCache(want);
+  }
+  var rows=historyRows.slice(0,recentExactCodeWindowIsMax(limit)?historyRows.length:want);
   var seen={},out=[];
   rows.forEach(function(row){
     var nums=Array.isArray(row&&row.numbers)?row.numbers.slice(0,4):[];
@@ -3803,9 +3863,16 @@ function txtShotDigitShape(digit,token){
 function txtShotCodeMatchesShape(code,shape){
   code=String(code||"");
   shape=String(shape||"");
+  if(shape.length===3){
+    if(code.length<3)return false;
+    for(var i=0;i<3;i++){
+      if(txtShotDigitShape(code.charAt(i),shape.charAt(i))!==shape.charAt(i))return false;
+    }
+    return true;
+  }
   if(code.length!==4||shape.length!==4)return false;
-  for(var i=0;i<4;i++){
-    if(txtShotDigitShape(code.charAt(i),shape.charAt(i))!==shape.charAt(i))return false;
+  for(var j=0;j<4;j++){
+    if(txtShotDigitShape(code.charAt(j),shape.charAt(j))!==shape.charAt(j))return false;
   }
   return true;
 }
@@ -4350,9 +4417,9 @@ function posHtml(p){
 }
 function buildHeweiReport(data){
   var stat={
-    wanQianBai:{label:"前三位合尾",total:0,match:0},
-    qianBaiShi:{label:"中三位合尾",total:0,match:0},
-    wanQianBaiShi:{label:"前四位合尾",total:0,match:0},
+    wanQianBai:{label:"千百十合尾",total:0,match:0},
+    qianBaiShi:{label:"百十个合尾",total:0,match:0},
+    wanQianBaiShi:{label:"千百十个合尾",total:0,match:0},
     total:{label:"三个合尾统一避开码",total:0,match:0}
   };
 
@@ -4618,27 +4685,27 @@ function render(data){
   var m=r.metrics||{};
   setHtml($("totalHewei"),(m.totalHewei!=null)?ball(m.totalHewei,"blue")+" 总和："+esc(m.totalSum):"--");
   setHtml($("subHewei"),
-    tag("前三位："+(m.wanQianBaiHewei||"--"))+
-    tag("中三位："+(m.qianBaiShiHewei||"--"))+
-    tag("前四位："+(m.wanQianBaiShiHewei||"--")));
+    tag("千百十："+(m.wanQianBaiHewei||"--"))+
+    tag("百十个："+(m.qianBaiShiHewei||"--"))+
+    tag("千百十个："+(m.wanQianBaiShiHewei||"--")));
 
   setHtml($("meta"),
     "最后同步："+esc(data.lastSync&&data.lastSync.text)+"<br>"+
     "硬盘文件："+esc(data.stateFile));
 
   var p=data.currentPrediction||{};
-  setHtml($("killTotalHewei"),ball(p.totalHeweiKill||"--","dark")+((window.penta5RealModelStatsHtml&&typeof window.penta5RealModelStatsHtml==="function")?window.penta5RealModelStatsHtml(data,"totalHewei"):""));
-  setHtml($("killThreeFour"),ball(p.threeFourHeweiKillDigit||"--","dark")+unifiedHeweiRateText(data));
+  setHtml($("killTotalHewei"),ball(p.totalHeweiKill||"--","dark")+heweiConfidenceTag(p.detail&&p.detail.totalHeweiKill)+((window.penta5RealModelStatsHtml&&typeof window.penta5RealModelStatsHtml==="function")?window.penta5RealModelStatsHtml(data,"totalHewei"):""));
+  setHtml($("killThreeFour"),ball(p.threeFourHeweiKillDigit||"--","dark")+heweiConfidenceTag(p.detail&&p.detail.threeFourHeweiKill)+unifiedHeweiRateText(data));
   var independentKills=p.independentHeweiKills||{};
   setHtml($("killWanQianBai"),ball(
     independentKills.wanQianBai ?
-    independentKills.wanQianBai.killDigit : "--","dark")+independentHeweiRateText(data,"wanQianBai",0));
+    independentKills.wanQianBai.killDigit : "--","dark")+heweiConfidenceTag(independentKills.wanQianBai)+independentHeweiRateText(data,"wanQianBai",0));
   setHtml($("killQianBaiShi"),ball(
     independentKills.qianBaiShi ?
-    independentKills.qianBaiShi.killDigit : "--","dark")+independentHeweiRateText(data,"qianBaiShi",1));
+    independentKills.qianBaiShi.killDigit : "--","dark")+heweiConfidenceTag(independentKills.qianBaiShi)+independentHeweiRateText(data,"qianBaiShi",1));
   setHtml($("killWanQianBaiShi"),ball(
     independentKills.wanQianBaiShi ?
-    independentKills.wanQianBaiShi.killDigit : "--","dark")+independentHeweiRateText(data,"wanQianBaiShi",2));
+    independentKills.wanQianBaiShi.killDigit : "--","dark")+heweiConfidenceTag(independentKills.wanQianBaiShi)+independentHeweiRateText(data,"wanQianBaiShi",2));
 
   var stableFilter=(p.stableMathFilter&&typeof p.stableMathFilter==="object")
     ?p.stableMathFilter
@@ -4647,10 +4714,19 @@ function render(data){
   var stableShapes=stableFilter&&Array.isArray(stableFilter.exclude_shapes)?stableFilter.exclude_shapes:[];
   var stableSpans=stableFilter&&Array.isArray(stableFilter.exclude_spans)?stableFilter.exclude_spans:[];
   var stableSums=stableFilter&&Array.isArray(stableFilter.exclude_sum_ranges)?stableFilter.exclude_sum_ranges:[];
+  var fw=stableFilter&&stableFilter.framework&&typeof stableFilter.framework==="object"?stableFilter.framework:{};
+  var stableRepeats=stableFilter&&Array.isArray(stableFilter.exclude_repeats)?stableFilter.exclude_repeats:(Array.isArray(fw.repeatAvoid)?fw.repeatAvoid:[]);
+  var stableConsec=stableFilter&&Array.isArray(stableFilter.exclude_consecutives)?stableFilter.exclude_consecutives:(Array.isArray(fw.consecutiveAvoid)?fw.consecutiveAvoid:[]);
+  var stableParity=stableFilter&&Array.isArray(stableFilter.exclude_parity_ratios)?stableFilter.exclude_parity_ratios:(Array.isArray(fw.parityRatioAvoid)?fw.parityRatioAvoid:[]);
+  var stableSize=stableFilter&&Array.isArray(stableFilter.exclude_size_ratios)?stableFilter.exclude_size_ratios:(Array.isArray(fw.sizeRatioAvoid)?fw.sizeRatioAvoid:[]);
   setHtml($("stableMathDigits"),stableDigits.length?stableDigits.map(function(n){return ball(n,"dark");}).join(""):"--");
   setHtml($("stableMathShapes"),stableShapes.length?stableShapes.map(function(s){return tag(s);}).join(""):"--");
   setHtml($("stableMathSpans"),stableSpans.length?stableSpans.map(function(n){return ball(n,"dark");}).join(""):"--");
   setHtml($("stableMathSums"),stableSums.length?stableSums.map(function(s){return tag(s);}).join(""):"--");
+  setHtml($("stableMathRepeats"),stableRepeats.length?stableRepeats.map(function(s){return tag(s);}).join(""):"--");
+  setHtml($("stableMathConsecutives"),stableConsec.length?stableConsec.map(function(s){return tag(s);}).join(""):"--");
+  setHtml($("stableMathParity"),stableParity.length?stableParity.map(function(s){return tag(s);}).join(""):"--");
+  setHtml($("stableMathSize"),stableSize.length?stableSize.map(function(s){return tag(s);}).join(""):"--");
 
   var pk=p.positionKills||{};
   setHtml($("wan"),posHtml(pk.wan)+positionRateText(data,"wan",0));
@@ -4753,14 +4829,15 @@ safeOrderRows();
   var practiceLastCelebrationKey = "";
   var practiceSnapshotStore = {};
   var dailyStreakReportCache = {};
-var PANEL_UI_VERSION = "20260717_three_remain_850_v1";
+var PANEL_UI_VERSION = "20260717_three_ding_shape3_parity_size_v8";
 var PANEL_SNAPSHOT_VERSIONS = {
     autoTop6:"backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit",
     recommend2:"backend-recommend2-snapshot-v15-formal-anytwo5",
     killFramework:"backend-kill-framework-snapshot-v7-formal-anytwo5",
-    compactAttack:"backend-three-ding-framework-v5-qbs-fixed3-hewei-anytwo5-mixed",
-    threeDingTwo:"backend-three-ding-two-v5-hewei-first-2pos-anytwo5-qbs",
-    threeDingOne:"backend-three-ding-one-v5-hewei-first-2pos-anytwo5-alt",
+    // 必须与 penta5_backend_runner.js 中 COMPACT/THREE_DING_*_SNAPSHOT_VERSION 完全一致，否则真实回测会因版本错配被隐藏
+    compactAttack:"backend-three-ding-framework-v7-structural-anytwo",
+    threeDingTwo:"backend-three-ding-two-v8-structural-anytwo",
+    threeDingOne:"backend-three-ding-one-v7-structural-anytwo",
     sideStable:"backend-side-stable-snapshot-v4-1pos-2hewei-2digit-sum-anytwo5-three5-old1300",
     coldFramework:"backend-cold-framework-snapshot-v5-anytwo5",
     dingKill:"backend-ding-kill-snapshot-v3-anytwo5",
@@ -4790,7 +4867,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }
   }catch(e){}
   var PANEL_REFRESH_MS = 20000;
-  var PANEL_REFRESH_DRAW_MS = 4000;
+  var PANEL_REFRESH_DRAW_MS = 10000;
   var PANEL_AUTO_SYNC_MIN_MS = 30000;
   var PANEL_SYNC_STALE_MS = 60000;
   var PANEL_SYNC_DRAW_STALE_MS = 12000;
@@ -4953,13 +5030,13 @@ var PANEL_SNAPSHOT_VERSIONS = {
   ];
   var RECENT_EXACT_CODE_WINDOWS = [300,500,800,1000,"max"];
   var EXTRAS = [
-    {id:"sumAvoid",key:"sumAvoid",label:"前四位和值避开",kind:"sum"},
-    {id:"sumRangeAvoid",key:"sumRangeAvoid",label:"前四位和值区间避开",kind:"sumRange"},
-    {id:"spanAvoid",key:"spanAvoid",label:"跨度排除",kind:"span"},
-    {id:"repeatAvoid",key:"repeatAvoid",label:"重号结构避开",kind:"repeat"},
-    {id:"consecutiveAvoid",key:"consecutiveAvoid",label:"连号结构避开",kind:"consecutive"},
-    {id:"parityRatioAvoid",key:"parityRatioAvoid",label:"奇偶比避开",kind:"parityRatio"},
-    {id:"sizeRatioAvoid",key:"sizeRatioAvoid",label:"大小比避开",kind:"sizeRatio"},
+    {id:"sumAvoid",key:"sumAvoid",label:"单点和值过滤（高基线）",kind:"sum",scoreClass:"structural-rare-avoid",baseline:97},
+    {id:"sumRangeAvoid",key:"sumRangeAvoid",label:"和值极端区间过滤（高基线）",kind:"sumRange",scoreClass:"structural-rare-avoid",baseline:99},
+    {id:"spanAvoid",key:"spanAvoid",label:"跨度极罕形态过滤（高基线）",kind:"span",scoreClass:"structural-rare-avoid",baseline:99.5},
+    {id:"repeatAvoid",key:"repeatAvoid",label:"重号极罕形态过滤（高基线）",kind:"repeat",scoreClass:"structural-rare-avoid",baseline:99.5},
+    {id:"consecutiveAvoid",key:"consecutiveAvoid",label:"连号极罕形态过滤（高基线）",kind:"consecutive",scoreClass:"structural-rare-avoid",baseline:99.5},
+    {id:"parityRatioAvoid",key:"parityRatioAvoid",label:"极端奇偶比过滤（高基线）",kind:"parityRatio",scoreClass:"structural-rare-avoid",baseline:93},
+    {id:"sizeRatioAvoid",key:"sizeRatioAvoid",label:"极端大小比过滤（高基线）",kind:"sizeRatio",scoreClass:"structural-rare-avoid",baseline:93},
     {id:"recentExactCodeAvoid300",key:"recentExactCodeAvoid300",label:"旧码原位置回删近300",kind:"recentExactCode"},
     {id:"recentExactCodeAvoid500",key:"recentExactCodeAvoid500",label:"旧码原位置回删近500",kind:"recentExactCode"},
     {id:"recentExactCodeAvoid800",key:"recentExactCodeAvoid800",label:"旧码原位置回删近800",kind:"recentExactCode"},
@@ -4969,11 +5046,33 @@ var PANEL_SNAPSHOT_VERSIONS = {
     {id:"twoDigitAvoid",key:"twoDigitAvoid",label:"对数避开1组",kind:"twoDigits"},
     {id:"twoDigitAvoid2",key:"twoDigitAvoid2",label:"对数避开2组",kind:"twoDigits"},
     {id:"twoDigitAvoid3",key:"twoDigitAvoid3",label:"对数避开3组",kind:"twoDigits"},
-    {id:"twoDigitHit",key:"twoDigitHit",label:"两数共现",kind:"twoDigits",mode:"avoid"},
+    {id:"twoDigitHit",key:"twoDigitHit",label:"两数共现除对数（基线参考）",kind:"twoDigits",mode:"avoid",scoreClass:"pair-avoid-baseline",baseline:90},
     {id:"threeDigitHit",key:"threeDigitHit",label:"三数共现命中",kind:"threeDigits",mode:"hit"},
-    {id:"anyTwoHeweiHit",key:"anyTwoHeweiHit",label:"全码池二数合尾5码命中",kind:"twoHeweiTails",mode:"hit"},
-    {id:"anyThreeHeweiHit",key:"anyThreeHeweiHit",label:"全码池三数合尾5码命中",kind:"threeHeweiTails",mode:"hit"}
+    {id:"anyTwoHeweiHit",key:"anyTwoHeweiHit",label:"二数合尾宽命中（高基线参考）",kind:"twoHeweiTails",mode:"hit",scoreClass:"wide-hit-baseline",baseline:99},
+    {id:"anyThreeHeweiHit",key:"anyThreeHeweiHit",label:"三数合尾宽命中（高基线参考）",kind:"threeHeweiTails",mode:"hit",scoreClass:"wide-hit-baseline",baseline:95}
   ];
+  var HIGH_BASELINE_SCORE_META={
+    spanAvoid:{scoreClass:"structural-rare-avoid",baseline:99.5,hint:"极罕形态过滤"},
+    repeatAvoid:{scoreClass:"structural-rare-avoid",baseline:99.5,hint:"极罕形态过滤"},
+    consecutiveAvoid:{scoreClass:"structural-rare-avoid",baseline:99.5,hint:"极罕形态过滤"},
+    sumRangeAvoid:{scoreClass:"structural-rare-avoid",baseline:99,hint:"极端区间过滤"},
+    sumAvoid:{scoreClass:"structural-rare-avoid",baseline:97,hint:"单点和值过滤"},
+    parityRatioAvoid:{scoreClass:"structural-rare-avoid",baseline:93,hint:"极端奇偶比过滤"},
+    sizeRatioAvoid:{scoreClass:"structural-rare-avoid",baseline:93,hint:"极端大小比过滤"},
+    anyTwoHeweiHit:{scoreClass:"wide-hit-baseline",baseline:99,hint:"宽命中参考"},
+    anyThreeHeweiHit:{scoreClass:"wide-hit-baseline",baseline:95,hint:"宽命中参考"},
+    twoDigitHit:{scoreClass:"pair-avoid-baseline",baseline:90,hint:"除对数（非共现命中）"}
+  };
+  function highBaselineScoreMeta(key){
+    var clean=String(key||"").replace(/^extra\./,"");
+    if(HIGH_BASELINE_SCORE_META[clean])return HIGH_BASELINE_SCORE_META[clean];
+    var fromGuide=(state&&state.highBaselineScoreGuide)||[];
+    for(var i=0;i<fromGuide.length;i++){
+      if(fromGuide[i]&&fromGuide[i].key===clean)return fromGuide[i];
+    }
+    return null;
+  }
+  function isHighBaselineScoreKey(key){return !!highBaselineScoreMeta(key);}
 
   function esc(v){
     return String(v == null ? "" : v).replace(/[&<>\"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});
@@ -4997,12 +5096,46 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(stats.rate!==null&&stats.rate!==undefined&&isFinite(Number(stats.rate)))return Number(stats.rate);
     return Number(stats.match)*100/Number(stats.total);
   }
-  function storedStatsText(label,stats){
+  function truthRecordFromBackend(data,key){
+    if(!key)return null;
+    var details=data&&data.rateDetails&&data.rateDetails[key];
+    if(details&&typeof details==="object"&&Number(details.total)>0)return details;
+    var counter=data&&data.counters&&data.counters[key];
+    if(counter&&typeof counter==="object"&&Number(counter.total)>0){
+      return {
+        key:key,
+        total:Number(counter.total||0),
+        match:Number(counter.match||0),
+        rate:counter.rate!=null&&isFinite(Number(counter.rate))?Number(counter.rate):(Number(counter.total)>0?Number(counter.match||0)*100/Number(counter.total):null),
+        randomBaseline:counter.randomBaseline,
+        edgeOverBaseline:counter.edgeOverBaseline,
+        predictivePower:counter.predictivePower!==false&&!isHighBaselineScoreKey(key),
+        scoreClass:counter.scoreClass||"",
+        scoreHint:counter.scoreHint||"",
+        truthDisplay:counter.truthDisplay||(isHighBaselineScoreKey(key)?"structural-baseline":"predictive"),
+        truthSource:counter.truthSource||"official-counter-truth-eligible-only"
+      };
+    }
+    return null;
+  }
+  function storedStatsText(label,stats,modelKey){
     if(!validStoredStats(stats))return "";
     if(Number(stats.total)<MODEL_MIN_SAMPLE){
       return label+"样本 "+Number(stats.total)+"，数据不足";
     }
-    var text=label+"命中 "+Number(stats.match)+"/"+Number(stats.total)+"，命中率 "+storedStatsRate(stats).toFixed(2)+"%";
+    var rate=storedStatsRate(stats);
+    var meta=highBaselineScoreMeta(modelKey);
+    var predictive=stats.predictivePower!==false&&!meta;
+    if(meta||stats.truthDisplay==="structural-baseline"||predictive===false){
+      var baseline=stats.randomBaseline!=null?Number(stats.randomBaseline):(meta?Number(meta.baseline):null);
+      var edge=stats.edgeOverBaseline!=null&&isFinite(Number(stats.edgeOverBaseline))
+        ?Number(stats.edgeOverBaseline)
+        :(baseline!=null?rate-baseline:null);
+      var edgeText=edge===null?"":((edge>=0?"+":"")+edge.toFixed(2)+"pp");
+      var hint=(stats.scoreHint||(meta&&meta.hint)||"高基线")+(String(stats.scoreHint||"").indexOf("非预测力")>=0?"":"，非预测力");
+      return label+"结构通过 "+Number(stats.match)+"/"+Number(stats.total)+"，"+rate.toFixed(2)+"%"+(edgeText?"｜相对基线"+edgeText:"")+"（"+hint+"）";
+    }
+    var text=label+"命中 "+Number(stats.match)+"/"+Number(stats.total)+"，命中率 "+rate.toFixed(2)+"%";
     if(typeof stats.lastSuccess==="boolean")text+="，"+(stats.lastSuccess?"最近命中":"最近失败");
     return text;
   }
@@ -5020,10 +5153,28 @@ var PANEL_SNAPSHOT_VERSIONS = {
       recent=prediction.independentHeweiKills&&prediction.independentHeweiKills[key]&&prediction.independentHeweiKills[key].performance;
     }else if(key==="threeDuishu"){
       recent=null;
-    }else if(counters[key]){
+    }else if(counters[key]||(data&&data.rateDetails&&data.rateDetails[key])){
       counterKey=key;
     }
-    return {recent:validStoredStats(recent)?recent:null,total:validStoredStats(counters[counterKey])?counters[counterKey]:null};
+    // 前端冲能优先吃后端结构化真相账本（rateDetails / counters），避免自算虚高
+    var truth=truthRecordFromBackend(data,counterKey);
+    return {
+      recent:validStoredStats(recent)?recent:null,
+      total:truth?truth:(validStoredStats(counters[counterKey])?counters[counterKey]:null)
+    };
+  }
+  function realModelStatsHtml(data,key){
+    var stats=realModelStats(data,key),parts=[];
+    var recent=storedStatsText("近30",stats.recent,key);
+    var total=storedStatsText("累计",stats.total,key);
+    if(recent)parts.push(recent);
+    if(total)parts.push(total);
+    if(!parts.length)return '<span style="font-size:12px;color:#9a3412;">暂无真实回测</span>';
+    var truth=stats.total||{};
+    if(isHighBaselineScoreKey(key)||truth.predictivePower===false||truth.truthDisplay==="structural-baseline"){
+      return '<span style="font-size:12px;color:#64748b;font-weight:600;">结构参考（非预测力）：'+esc(parts.join(" ｜ "))+'</span>';
+    }
+    return '<span style="font-size:12px;color:#166534;font-weight:700;">真实回测：'+esc(parts.join(" ｜ "))+'</span>';
   }
   function realModelStatsKey(item){
     if(!item)return "";
@@ -5038,21 +5189,19 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(item.kind==="extra"&&item.key)return item.key;
     return "";
   }
-  function realModelStatsHtml(data,key){
-    var stats=realModelStats(data,key),parts=[];
-    var recent=storedStatsText("近30",stats.recent);
-    var total=storedStatsText("累计",stats.total);
-    if(recent)parts.push(recent);
-    if(total)parts.push(total);
-    if(!parts.length)return '<span style="font-size:12px;color:#9a3412;">暂无真实回测</span>';
-    return '<span style="font-size:12px;color:#166534;font-weight:700;">真实回测：'+esc(parts.join(" ｜ "))+'</span>';
-  }
   function sealedItemRateText(data,item,limit,label){
     var rows=evalRows(data).slice(0,Math.max(1,Number(limit||30)));
     var vals=rows.map(function(row){return itemSuccess(data,item,row);}).filter(function(x){return typeof x==="boolean";});
     if(!vals.length)return "";
     if(vals.length<MODEL_MIN_SAMPLE)return label+"样本 "+vals.length+"，数据不足";
     var rate=vals.filter(Boolean).length*100/vals.length;
+    var modelKey=realModelStatsKey(item)||(item&&item.key)||"";
+    var meta=highBaselineScoreMeta(modelKey);
+    if(meta){
+      var edge=rate-Number(meta.baseline||0);
+      var edgeText=(edge>=0?"+":"")+edge.toFixed(2)+"pp";
+      return label+"结构通过 "+vals.filter(Boolean).length+"/"+vals.length+"，"+Number(rate).toFixed(2)+"%｜相对基线"+edgeText+"（非预测力）";
+    }
     return label+"命中 "+vals.filter(Boolean).length+"/"+vals.length+"，命中率 "+Number(rate).toFixed(2)+"%";
   }
   function storedItemStatsHtml(data,item){
@@ -5060,7 +5209,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(modelKey)return realModelStatsHtml(data,modelKey);
     var parts=[];
     var performance=item&&item.performance;
-    var performanceText=storedStatsText("",performance);
+    var performanceText=storedStatsText("",performance,item&&item.key);
     if(performanceText)parts.push(performanceText);
     // 只展示封存评价命中率；选码分/硬度分绝不冒充“命中率”
     var sealed30=sealedItemRateText(data,item,30,"近30封存");
@@ -5073,6 +5222,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
         return '<span style="font-size:12px;color:#64748b;">选码分 '+esc(Number(score).toFixed(2))+'（非命中率，待封存后显示真实回测）</span>';
       }
       return '<span style="font-size:12px;color:#9a3412;">暂无封存样本，不显示命中率</span>';
+    }
+    if(isHighBaselineScoreKey(item&&item.key)){
+      return '<span style="font-size:12px;color:#64748b;font-weight:600;">结构参考（非预测力）：'+esc(parts.join(" ｜ "))+'</span>';
     }
     return '<span style="font-size:12px;color:#166534;font-weight:700;">真实回测：'+esc(parts.join(" ｜ "))+'</span>';
   }
@@ -5199,9 +5351,32 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return a.localeCompare(b,"zh-CN");
     })[0]||code;
   }
+  function threeDingShapeAttackCode(code){
+    code=String(code||"").replace(/\s+/g,"");
+    if(/^[大小单双]{4}$/.test(code))return code.slice(0,3);
+    if(/^[大小单双]{3}$/.test(code))return code;
+    return code;
+  }
+  function shapeMatchesQbs(record, shapeKey, candidate){
+    var code=String(candidate||"");
+    if(!/^[大小单双]{3}$/.test(code))return false;
+    var nums=(record&&record.numbers||[]).slice(0,3);
+    if(nums.length<3)return false;
+    for(var i=0;i<3;i++){
+      var token=code.charAt(i);
+      if(shapeKey==="shapeParity"){
+        if((Number(nums[i])%2?"单":"双")!==token)return false;
+      }else if(shapeKey==="shapeSize"){
+        if((Number(nums[i])>=5?"大":"小")!==token)return false;
+      }else if(!propertyMatches(nums[i],token))return false;
+    }
+    return true;
+  }
   function shapeMatches(record, shapeKey, candidate){
+    var code=String(candidate||"");
+    if(/^[大小单双]{3}$/.test(code))return shapeMatchesQbs(record,shapeKey,code);
     if(shapeKey==="shapeParity"||shapeKey==="shapeSize") return patternOf(record,shapeKey)===candidate;
-    var chars=String(candidate).split("");
+    var chars=code.split("");
     var nums=(record&&record.numbers||[]).slice(0,4);
     if(nums.length<4||chars.length<4) return false;
     for(var i=0;i<4;i++) if(!propertyMatches(nums[i],chars[i])) return false;
@@ -5805,6 +5980,11 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }
     if(item.kind==="derivedReverseShape"){
       var reverseShapeKey=item.shapeKey||(item.key==="reverseSize"?"shapeSize":"shapeParity");
+      if(Number(item.shapeScopeLength||0)===3){
+        var qbsCode=threeDingShapeAttackCode(code);
+        if(!/^[大小单双]{3}$/.test(qbsCode))return null;
+        return !shapeMatchesQbs(row,reverseShapeKey,qbsCode);
+      }
       if(!/^[大小单双]{4}$/.test(code))return null;
       return !shapeMatches(row,reverseShapeKey,code);
     }
@@ -5924,10 +6104,20 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }
     var safety=itemSafetyRate(data,item);
     item.safetyRate=safety;
+    if(item.kind==="extra"&&isHighBaselineScoreKey(item.key)){
+      var meta=highBaselineScoreMeta(item.key);
+      var floor=Number(meta&&meta.baseline||0)-3;
+      item.lowConfidence=safety!==null&&safety<floor;
+      item.scoreClass=(meta&&meta.scoreClass)||item.scoreClass||"";
+      item.predictivePower=false;
+      return item;
+    }
     item.lowConfidence=safety!==null&&safety<MODEL_SAFE_RATE;
     return item;
   }
   function backendExtraRate(data,key){
+    var truth=truthRecordFromBackend(data,key);
+    if(truth&&truth.rate!==null&&truth.rate!==undefined&&isFinite(Number(truth.rate)))return Number(truth.rate);
     var extra=data&&data.currentPrediction&&data.currentPrediction.extraKills&&data.currentPrediction.extraKills[key];
     var rate=extra&&extra.performance&&extra.performance.rate;
     if(rate!==null&&rate!==undefined&&isFinite(Number(rate)))return Number(rate);
@@ -5935,8 +6125,11 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(counter&&Number(counter.total)>0)return Number(counter.match||0)*100/Number(counter.total||1);
     var raw=data&&data.rates&&data.rates[key];
     if(raw!==null&&raw!==undefined){
-      var parsed=Number(String(raw).replace("%",""));
-      if(isFinite(parsed))return parsed;
+      var m=String(raw).match(/(-?\d+(?:\.\d+)?)\s*%/);
+      if(m){
+        var parsed=Number(m[1]);
+        if(isFinite(parsed))return parsed;
+      }
     }
     return null;
   }
@@ -6118,6 +6311,13 @@ var PANEL_SNAPSHOT_VERSIONS = {
     function isHealthy(item){
       if(!item)return false;
       markItemConfidence(data,item);
+      // 高基线模型禁止用原始高通过率冒充「健康强预测」
+      if(item.kind==="extra"&&isHighBaselineScoreKey(item.key)){
+        var meta=highBaselineScoreMeta(item.key);
+        var safety=item.safetyRate;
+        if(safety===null||safety===undefined||!isFinite(Number(safety)))return !item.lowConfidence;
+        return !item.lowConfidence&&Number(safety)>=(Number(meta&&meta.baseline||0)-3);
+      }
       var safety=item.safetyRate;
       return !item.lowConfidence&&(safety===null||safety===undefined||!isFinite(Number(safety))||Number(safety)>=MODEL_REPAIR_RATE);
     }
@@ -6164,7 +6364,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         if(sb!==sa)return sb-sa;
         return order(a,b);
       })[0];
-      cooccur.name="两数共现";
+      cooccur.name="两数共现除对数";
       cooccur.mode="avoid";
       var cooccurId=itemId(cooccur);
       if(!used[cooccurId]){
@@ -6204,8 +6404,15 @@ var PANEL_SNAPSHOT_VERSIONS = {
 /* PENTA5_V28_STABLE_TOP_END */
 
   function panelExternalModelName(item,fallback){
-    if(item&&item.key==="anyTwoHeweiHit")return "全码池二数合尾5码命中";
-    if(item&&item.key==="anyThreeHeweiHit")return "全码池三数合尾5码命中";
+    if(item&&item.key==="anyTwoHeweiHit")return "二数合尾宽命中（高基线参考）";
+    if(item&&item.key==="anyThreeHeweiHit")return "三数合尾宽命中（高基线参考）";
+    if(item&&item.kind==="derivedReverseShape"){
+      var attackCode=threeDingShapeAttackCode(String(item.code||""));
+      return String(item.name||"排除形态")+" · "+attackCode;
+    }
+    if(item&&item.kind==="extra"&&["twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3"].indexOf(String(item.key||""))>=0){
+      return String(item.name||"一对数避开");
+    }
     return String(item&&item.name||fallback||"模型");
   }
   function panelPredictionBaseIsCurrent(data,prediction){
@@ -6326,12 +6533,14 @@ var PANEL_SNAPSHOT_VERSIONS = {
       formalTd2.forEach(function(item){
         if(item&&item.kind==="position"&&item.key&&["wan","qian","bai"].indexOf(String(item.key))>=0)td2PosKeys[String(item.key)]=true;
       });
-      return items.length===4
-        &&formalTd2.length===4
-        &&formalTd2Count(function(item){return item&&item.kind==="position"&&["wan","qian","bai"].indexOf(String(item.key))>=0;})===2
-        &&Object.keys(td2PosKeys).length===2
+      return items.length===5
+        &&formalTd2.length===5
+        &&formalTd2Count(function(item){return item&&item.kind==="position"&&["wan","qian","bai"].indexOf(String(item.key))>=0;})===1
+        &&Object.keys(td2PosKeys).length===1
         &&formalTd2Count(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai"&&/^\d$/.test(String(item.code||""));})===1
-        &&formalTd2Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1;
+        &&formalTd2Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
+        &&formalTd2Count(function(item){return item&&item.kind==="derivedReverseShape"&&/^[大小单双]{4}$/.test(String(item.code||""));})===1
+        &&formalTd2Count(function(item){return item&&item.kind==="extra"&&["twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3"].indexOf(String(item.key))>=0&&/^\d{2}$/.test(String(item.code||""));})===1;
     }
     if(storeName==="threeDingOne"){
       var formalTd1=items.filter(function(item){return item&&item.side!=="backup";});
@@ -6364,7 +6573,11 @@ var PANEL_SNAPSHOT_VERSIONS = {
         &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="sumAvoid";})===1
         &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
         &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
-        &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="recentExactCodeAvoid1300"&&String(item.code||"")==="1300"&&Number(item.codeCount||0)>=1000&&Array.isArray(item.codes)&&item.codes.length>=1000&&isFinite(Number(item.generatedGroupCount));})===1;
+        &&formalSideCount(function(item){
+          if(!(item&&item.kind==="extra"&&item.key==="recentExactCodeAvoid1300"&&String(item.code||"")==="1300"&&Number(item.codeCount||0)>=1000&&isFinite(Number(item.generatedGroupCount))))return false;
+          if(item.codesOmitted===true)return true;
+          return Array.isArray(item.codes)&&item.codes.length>=1000;
+        })===1;
     }
     if(storeName==="coldFramework"){
       var txt=snapshot.txtSelection||{};
@@ -6675,7 +6888,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       var simOnly=frameworkSimRefHtml(combo);
       if(ledgerOnly&&Number(ledgerOnly.total||0)>0){
         return '<div style="margin-top:9px;padding-top:8px;border-top:1px solid #bfdbfe;font-size:13px;font-weight:800;">'
-          +esc(label)+'真实回测：暂无开奖前封存样本，已隐藏胜率、容错率和连中连败'
+          +esc(label)+'真实回测：暂无开奖前封存样本，已隐藏胜率与容错率'
           +'<div style="margin-top:3px;font-size:12px;color:#475569;">今日最高连中 '+esc(ledgerOnly.maxWin)+'手 ｜ 今日最高连败 '+esc(ledgerOnly.maxMiss)+'手 ｜ 当前连中 '+esc(ledgerOnly.currentWin)+'手 ｜ 当前连败 '+esc(ledgerOnly.currentMiss)+'手 <span style="color:#64748b;">（阿里账本）</span></div>'
           +simOnly
           +'</div>';
@@ -7022,7 +7235,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
   function reorderRows(){
     var first=rowById("wan");if(!first||!first.parentElement)return;
     var parent=first.parentElement;
-    ["wan","qian","bai","shi","killWanQianBai","killQianBaiShi","killWanQianBaiShi","killThreeFour","stableMathDigits","stableMathShapes","stableMathSpans","stableMathSums","spanAvoid","shapeParity","shapeSize","shapeMixed","sumAvoid","sumRangeAvoid","repeatAvoid","consecutiveAvoid","parityRatioAvoid","sizeRatioAvoid","threeDigitAvoid","twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3","twoDigitHit","threeDigitHit","anyTwoHeweiHit","anyThreeHeweiHit"].forEach(function(id){var r=rowById(id);if(r)parent.appendChild(r);});
+    ["wan","qian","bai","shi","killWanQianBai","killQianBaiShi","killWanQianBaiShi","killThreeFour","stableMathDigits","stableMathShapes","stableMathSpans","stableMathSums","stableMathRepeats","stableMathConsecutives","stableMathParity","stableMathSize","spanAvoid","shapeParity","shapeSize","shapeMixed","sumAvoid","sumRangeAvoid","repeatAvoid","consecutiveAvoid","parityRatioAvoid","sizeRatioAvoid","threeDigitAvoid","twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3","twoDigitHit","threeDigitHit","anyTwoHeweiHit","anyThreeHeweiHit"].forEach(function(id){var r=rowById(id);if(r)parent.appendChild(r);});
   }
   function renderLatest(data,top){
     var latest=data&&data.latestRecord||{}, nums=Array.isArray(latest.numbers)?latest.numbers:[];
@@ -7078,9 +7291,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var sub=document.getElementById("subHewei"),m=latest.metrics||{};
     if(sub){
       setLabel("subHewei","分项合尾");
-      var html='<span class="tag">前三位：'+esc(m.wanQianBaiHewei||"--")+'</span> '
-        +'<span class="tag">中三位：'+esc(m.qianBaiShiHewei||"--")+'</span> '
-        +'<span class="tag">前四位：'+esc(m.wanQianBaiShiHewei||"--")+'</span>';
+      var html='<span class="tag">千百十：'+esc(m.wanQianBaiHewei||"--")+'</span> '
+        +'<span class="tag">百十个：'+esc(m.qianBaiShiHewei||"--")+'</span> '
+        +'<span class="tag">千百十个：'+esc(m.wanQianBaiShiHewei||"--")+'</span>';
       setHtml(sub,html);
     }
     renderRecommend2BelowSubHewei(data);
@@ -7222,7 +7435,21 @@ var PANEL_SNAPSHOT_VERSIONS = {
       setRowVisible(extra.id,visible);
       if(visible){
         markItemConfidence(data,item);
-        setHtml(cell,circle(item.code)+'<span style="color:#475569;">近30期命中率 '+pct(item.rate)+'</span>');
+        setLabel(extra.id,extra.label);
+        var meta=highBaselineScoreMeta(extra.key);
+        var rateNum=modelRateNumber(item.rate);
+        var rateLabel;
+        if(meta){
+          if(rateNum===null)rateLabel="近30期结构通过率 暂无（高基线参考，非预测力）";
+          else{
+            var edge=rateNum-Number(meta.baseline||0);
+            rateLabel="近30期结构通过率 "+pct(rateNum)+"（相对基线"+(edge>=0?"+":"")+edge.toFixed(1)+"pp，非预测力）";
+          }
+        }else{
+          rateLabel="近30期命中率 "+pct(item.rate);
+        }
+        var rateColor=meta?"#64748b":"#475569";
+        setHtml(cell,circle(item.code)+'<span style="color:'+rateColor+';">'+rateLabel+'</span>'+realModelStatsHtml(data,extra.key));
       }
     });
     if(typeof renderBoardLatestEvalMount==="function")renderBoardLatestEvalMount(data);
@@ -7906,7 +8133,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     return latestFrameworkEvaluation(data,"compactAttack",{version:PANEL_SNAPSHOT_VERSIONS.compactAttack,total:5});
   }
   function latestThreeDingTwoEvaluation(data){
-    return latestFrameworkEvaluation(data,"threeDingTwo",{versionPrefix:"backend-three-ding-two-",total:4});
+    return latestFrameworkEvaluation(data,"threeDingTwo",{versionPrefix:"backend-three-ding-two-",total:5});
   }
   function latestThreeDingOneEvaluation(data){
     return latestFrameworkEvaluation(data,"threeDingOne",{versionPrefix:"backend-three-ding-one-",total:5});
@@ -8123,6 +8350,11 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(tail.indexOf("四定")!==0)tail="四定"+tail.replace(/^三定/,"");
     return head+tail;
   }
+  function threeDingShapeTailText(tail){
+    return String(tail||"").replace(/除([大小单双]{4})/g,function(_m,shape){
+      return "除"+shape.slice(0,3);
+    });
+  }
   function buildThreeDingFrameworkAttackText(items,options){
     var list=frameworkAttackItems(items);
     if(!list.length)return "";
@@ -8146,17 +8378,17 @@ var PANEL_SNAPSHOT_VERSIONS = {
         return keep.indexOf(digit)>=0;
       }).join("");
     });
-    // 至少要有1个定位排除（B=2 / A=2 / 原三定=3），否则攻击语无意义
+    // 至少要有1个定位排除（A=1 / B=2 / 原三定=3），否则攻击语无意义
     if(picked<1)return "";
     var head=order.map(function(label){return label+(keepByLabel[label]||"1234567890");}).join("");
     var full="";
     try{
-      full=String(buildPracticeModel(DEFAULT_PRACTICE_MODEL,list,{addReversePositionShapes:false})||"");
+      full=String(buildPracticeModel(DEFAULT_PRACTICE_MODEL,list,{addReversePositionShapes:false,threeDingShapeAttack:true})||"");
     }catch(e){
       full="";
     }
     var idx=full.indexOf("四定");
-    var tail=idx>=0?full.slice(idx+2).replace(/各+$/,""):"";
+    var tail=idx>=0?threeDingShapeTailText(full.slice(idx+2).replace(/各+$/,"")):"";
     return ensurePracticeShotGeTail(head+"三定"+tail);
   }
   function frameworkAttackTextFromItems(items,options){
@@ -8688,6 +8920,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     return true;
   }
   function buildPracticeModel(base,top,options){
+    var opts=options&&typeof options==="object"?options:{};
     var text=String(base||"").replace(/\s+/g,"");
     text=stripPracticeSeedSegments(text);
     var list=Array.isArray(top)?top:[];
@@ -8817,14 +9050,16 @@ var PANEL_SNAPSHOT_VERSIONS = {
       }else if(item.kind==="shape"){
         var shapeCode=forceThreeWithOneShape(item.code,item.key);
         if(!/^[大小单双]{4}$/.test(shapeCode))return;
-        key="shape."+(item.key||"")+"."+shapeCode;
-        token="除"+shapeCode;
+        var shapeAttack=opts.threeDingShapeAttack===true?threeDingShapeAttackCode(shapeCode):shapeCode;
+        key="shape."+(item.key||"")+"."+shapeAttack;
+        token="除"+shapeAttack;
       }else if(item.kind==="derivedReverseShape"){
         var reverseShapeKey=item.shapeKey||(item.key==="reverseSize"?"shapeSize":"shapeParity");
         var reverseShapeCode=forceThreeWithOneShape(item.code,reverseShapeKey);
         if(!/^[大小单双]{4}$/.test(reverseShapeCode))return;
-        key="derivedReverseShape."+(item.key||"")+"."+reverseShapeCode;
-        token="除"+reverseShapeCode;
+        var reverseAttack=opts.threeDingShapeAttack===true?threeDingShapeAttackCode(reverseShapeCode):reverseShapeCode;
+        key="derivedReverseShape."+(item.key||"")+"."+reverseAttack;
+        token="除"+reverseAttack;
       }else if(item.kind!=="position"&&item.kind!=="hewei"){
         key="other."+practiceItemId(item)+"."+item.code;
         token="除"+item.code;
@@ -9191,7 +9426,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="threeDingTwoFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #f9a8d4;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架A</b><div class="small">等待模型就绪</div>','threeDingTwoFramework',true)
         +panelCollapseBodyOpen('threeDingTwoFramework')
-        +'<div style="border:1px solid #f9a8d4;border-radius:10px;padding:10px;background:#fdf2f8;color:#475569;font-size:13px;">三定框架A：只从千百十挑2个位置，各排除1个数字（各算各的）+ 千百十合尾排除1码 + 二数合（千百十三个数两两合尾，5码命中）；共4项全过才算中。</div>'
+        +'<div style="border:1px solid #f9a8d4;border-radius:10px;padding:10px;background:#fdf2f8;color:#475569;font-size:13px;">三定框架A：定位千百十，挑1个位置排除1码 + 千百十合尾 + 二数合 + 排除形态1（千百十三字：除大大小/除单单双等，大小单双均可）+ 一对数；共5项全过才算中。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9199,24 +9434,25 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var repair=(top&&top.repairReport)||[];
     var latestHtml=frameworkLatestEvalHtml(latestThreeDingTwoEvaluation(data),"三定框架A");
     var rows=frameworkFormalItems(top).map(function(item,index){
+      var displayCode=item&&item.kind==="derivedReverseShape"?threeDingShapeAttackCode(item.code):item.code;
       return '<div style="display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap;margin:4px 0;">'
         +'<span style="width:18px;color:#be185d;font-weight:800;">'+esc(index+1)+'.</span>'
         +'<span style="min-width:112px;font-weight:800;">'+esc(panelExternalModelName(item,item.name))+'</span>'
-        +normalizePredictionItems(item.code).map(function(code){return '<span class="prediction-chip">'+esc(code)+'</span>';}).join("")
+        +normalizePredictionItems(displayCode).map(function(code){return '<span class="prediction-chip">'+esc(code)+'</span>';}).join("")
         +frameworkItemTruthHtml(combo,item,data)
         +frameworkItemBackupRefHtml(data,item)
         +'</div>';
     }).join("");
     return '<div id="threeDingTwoFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #f9a8d4;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架A</b><div class="small">千百十挑2位（优先备用算法码）+ 千百十合尾 + 二数合(千百十三数两两·5码)；与原三定/B分框错开，同框禁同码；共4项全过才算中</div>','threeDingTwoFramework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架A</b><div class="small">千百十挑1位 + 合尾 + 二数合 + 排除形态(千百十三字·大小/单双) + 一对数；共5项全过才算中</div>','threeDingTwoFramework',true)
       +panelCollapseBodyOpen('threeDingTwoFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #f9a8d4;border-radius:12px;padding:12px;background:#fdf2f8;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
       +frameworkAttackTextHtml("三定框架A",top,"frameworkAttackThreeDingTwo",{threeDing:true,data:data})
       +latestHtml
       +(repair.length?'<div style="margin-top:8px;border:1px solid #fbcfe8;background:#fce7f3;color:#9d174d;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
-        +'<b>三定框架A报告：</b>'+repair.slice(0,4).map(function(t){return '<div>'+esc(t)+'</div>';}).join("")
-        +(repair.length>4?'<div>其余 '+esc(repair.length-4)+' 条已折叠。</div>':"")+'</div>':"")
+        +'<b>三定框架A报告：</b>'+repair.slice(0,5).map(function(t){return '<div>'+esc(t)+'</div>';}).join("")
+        +(repair.length>5?'<div>其余 '+esc(repair.length-5)+' 条已折叠。</div>':"")+'</div>':"")
       +frameworkTruthSummaryHtml(combo,"三定框架A","threeDingTwo")
       +'</div>'
       +panelCollapseBodyClose()
@@ -9776,7 +10012,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       var brotherChoice=brotherMatch[1]||"有";
       add("取二兄弟脚本",brotherChoice,brotherActual===brotherChoice);
     }
-    var shapeRegex=/除([大小单双]{4})/g,shapeMatch;
+    var shapeRegex=/除([大小单双]{4}|[大小单双]{3})(?![大小单双])/g,shapeMatch;
     while((shapeMatch=shapeRegex.exec(text))){
       var code=shapeMatch[1];
       add("形态脚本",code,!txtShotCodeMatchesShape(actual.join(""),code));
@@ -9812,6 +10048,10 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }
     if(item.kind==="derivedReverseShape"){
       var reverseShapeKey=item.shapeKey||(item.key==="reverseSize"?"shapeSize":"shapeParity");
+      if(Number(item.shapeScopeLength||0)===3){
+        var qbsCode=threeDingShapeAttackCode(code);
+        return /^[大小单双]{3}$/.test(qbsCode)?!shapeMatchesQbs({numbers:actual},reverseShapeKey,qbsCode):null;
+      }
       return /^[大小单双]{4}$/.test(code)?!shapeMatches({numbers:actual},reverseShapeKey,forceThreeWithOneShape(code,reverseShapeKey)):null;
     }
     if(item.kind==="extra"){
@@ -10387,9 +10627,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var sub=document.getElementById("subHewei"),m=latest.metrics||{};
     if(sub){
       setLabel("subHewei","分项合尾");
-      setHtml(sub,'<span class="tag">前三位：'+esc(m.wanQianBaiHewei||"--")+'</span> '
-        +'<span class="tag">中三位：'+esc(m.qianBaiShiHewei||"--")+'</span> '
-        +'<span class="tag">前四位：'+esc(m.wanQianBaiShiHewei||"--")+'</span>');
+      setHtml(sub,'<span class="tag">千百十：'+esc(m.wanQianBaiHewei||"--")+'</span> '
+        +'<span class="tag">百十个：'+esc(m.qianBaiShiHewei||"--")+'</span> '
+        +'<span class="tag">千百十个：'+esc(m.wanQianBaiShiHewei||"--")+'</span>');
     }
   }
   function renderRecentHistory(data){
@@ -10699,6 +10939,27 @@ var PANEL_SNAPSHOT_VERSIONS = {
       refresh(forceRender===true,{source:source||"auto"});
     },280);
   }
+  function ensureExtendedHistoryCache(minCount){
+    var need=Math.max(1500,Number(minCount||1500)||1500);
+    // 后端 /history 上限 5000；尽量拉满内存里的共享历史（当前约两千多期）
+    var limit=Math.min(5000,Math.max(need,2000));
+    if(window.__penta5HistoryCache&&window.__penta5HistoryCache.length>=need)return Promise.resolve(window.__penta5HistoryCache);
+    if(window.__penta5HistoryCachePromise)return window.__penta5HistoryCachePromise;
+    window.__penta5HistoryCachePromise=panelFetch("/history?limit="+limit,{cache:"no-store"})
+      .then(function(res){return res.json();})
+      .then(function(payload){
+        var rows=Array.isArray(payload&&payload.history)?payload.history:[];
+        if(rows.length)window.__penta5HistoryCache=rows;
+        return rows;
+      })
+      .catch(function(err){
+        console.warn("extended history cache failed",err);
+        return window.__penta5HistoryCache||[];
+      })
+      .finally(function(){window.__penta5HistoryCachePromise=null;});
+    return window.__penta5HistoryCachePromise;
+  }
+  window.__penta5EnsureHistoryCache=ensureExtendedHistoryCache;
   function startPanelLoop(){
     if(panelLoopStarted)return;
     panelLoopStarted=true;
@@ -10706,6 +10967,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     initPanelChrome();
     paintPanelWarmSnapshot();
     initTxtConverter();
+    try{ensureExtendedHistoryCache(Math.max(2500,Number((state&&state.historyCount)||0)||2500));}catch(e){}
     if(typeof initTxtPositionDocumentClicks==="function")initTxtPositionDocumentClicks();
     window.__penta5PanelRefresh=refresh;
     window.loadState=function(){return refresh(true,{source:"user"});};
@@ -10794,7 +11056,10 @@ var PANEL_SNAPSHOT_VERSIONS = {
       syncEl.title=syncText;
     }
     var histEl=document.getElementById("summaryHistory");
-    if(histEl)histEl.textContent=Array.isArray(data&&data.history)?String(data.history.length)+"期":"--";
+    if(histEl){
+      var hc=data&&data.historyCount!=null?Number(data.historyCount):(Array.isArray(data&&data.history)?data.history.length:null);
+      histEl.textContent=(hc!=null&&isFinite(hc))?(hc+"期"):"--";
+    }
     var storm=data&&data.stormMode||{};
     var stormBanner=document.getElementById("stormBanner");
     if(stormBanner){

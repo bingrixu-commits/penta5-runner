@@ -495,17 +495,17 @@ var DIGIT_POOL = window.DIGIT_POOL;
   <script>
     const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     const POSITIONS = [
-      { key: "qian", name: "千" },
-      { key: "bai", name: "百" },
-      { key: "shi", name: "十" },
-      { key: "ge", name: "个" }
+      { key: "wan", name: "千" },
+      { key: "qian", name: "百" },
+      { key: "bai", name: "十" },
+      { key: "shi", name: "个" }
     ];
 
     const defaultModels = [
-      { id: "codex_default_qian", name: "Codex千位主排", scope: "qian", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" },
-      { id: "codex_default_bai", name: "Codex百位主排", scope: "bai", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" },
-      { id: "codex_default_shi", name: "Codex十位主排", scope: "shi", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" },
-      { id: "codex_default_ge", name: "Codex个位主排", scope: "ge", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" }
+      { id: "codex_default_wan", name: "Codex千位主排", scope: "wan", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" },
+      { id: "codex_default_qian", name: "Codex百位主排", scope: "qian", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" },
+      { id: "codex_default_bai", name: "Codex十位主排", scope: "bai", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" },
+      { id: "codex_default_shi", name: "Codex个位主排", scope: "shi", mode: "drop", digit: 0, hitRate: 0.8800, recommended: true, strict: true, note: "启动占位，后台读取后自动更新" }
     ];let state = {};
     let autoFetchRunning = false;
     let models = defaultModels.map((item) => ({ ...item, enabled: item.recommended }));
@@ -659,10 +659,11 @@ var DIGIT_POOL = window.DIGIT_POOL;
         scope: uiScope,
         mode: "drop",
         digit,
-        hitRate: performanceRate(source.performance, 86),
+        hitRate: performanceRate(source.performance, source.codexStableRate != null ? source.codexStableRate * 100 : 86),
         recommended: !!recommended,
         strict: !!strict,
-        enabled: !!recommended
+        enabled: !!recommended,
+        note: source.codexStableRuleLabel ? `后端Codex稳排 ${source.codexStableRuleLabel}` : ""
       });
     }
 
@@ -675,14 +676,30 @@ var DIGIT_POOL = window.DIGIT_POOL;
       const out = [];
       const positionKills = prediction.positionKills || {};
       const positionMap = [
-        { backend: "wan", ui: "qian", label: "千位" },
-        { backend: "qian", ui: "bai", label: "百位" },
-        { backend: "bai", ui: "shi", label: "十位" },
-        { backend: "shi", ui: "ge", label: "个位" }
+        { backend: "wan", ui: "wan", label: "千位" },
+        { backend: "qian", ui: "qian", label: "百位" },
+        { backend: "bai", ui: "bai", label: "十位" },
+        { backend: "shi", ui: "shi", label: "个位" }
       ];
 
       positionMap.forEach((item) => {
         const source = positionKills[item.backend] || {};
+        const codexDigit = source.codexStableDigit;
+        const codexRecommended = source.codexStableRecommended === true;
+        if (codexRecommended && codexDigit !== undefined && codexDigit !== null && /^\d$/.test(String(codexDigit))) {
+          out.push({
+            id: `codex_backend_${item.ui}_${codexDigit}`,
+            name: `Codex${item.label}稳排 ${codexDigit} ${source.codexStableRate != null ? (Number(source.codexStableRate) * 100).toFixed(2) : "--"}%`,
+            scope: item.ui,
+            mode: "drop",
+            digit: Number(codexDigit),
+            hitRate: source.codexStableRate != null ? Math.min(0.97, Math.max(0.8, Number(source.codexStableRate))) : 0.86,
+            recommended: true,
+            strict: source.codexStableStrict === true,
+            enabled: true,
+            note: source.codexStableRuleLabel ? `${source.codexStableRuleLabel}（后端已写入positionKills）` : "后端Codex稳排"
+          });
+        }
         pushDigitModel(out, source, item.ui, `${item.label}主攻`, "main", true, true);
         pushDigitModel(out, source, item.ui, `${item.label}备用`, "backup", false, false);
       });
@@ -758,7 +775,17 @@ var DIGIT_POOL = window.DIGIT_POOL;
       }
       models = out;
       renderModels();
-      return true;
+      return positionMap.some((item) => {
+        const src = positionKills[item.backend] || {};
+        return src.codexStableRecommended === true && /^\d$/.test(String(src.codexStableDigit || ""));
+      });
+    }
+
+    function hydrateModelsFromPayload(payload) {
+      const hasBackendCodex = updateModelsFromState(payload);
+      if (!hasBackendCodex) {
+        buildOwnPositionModels(payload);
+      }
     }
 
     function recordDigit(record, backendKey, index) {
@@ -792,10 +819,10 @@ var DIGIT_POOL = window.DIGIT_POOL;
       if (records.length < 18) return false;
 
       const positionMap = [
-        { backend: "wan", ui: "qian", label: "千位", index: 0 },
-        { backend: "qian", ui: "bai", label: "百位", index: 1 },
-        { backend: "bai", ui: "shi", label: "十位", index: 2 },
-        { backend: "shi", ui: "ge", label: "个位", index: 3 }
+        { backend: "wan", ui: "wan", label: "千位", index: 0 },
+        { backend: "qian", ui: "qian", label: "百位", index: 1 },
+        { backend: "bai", ui: "bai", label: "十位", index: 2 },
+        { backend: "shi", ui: "shi", label: "个位", index: 3 }
       ];
 
       // CODEX_DIGIT_POOL_FIX_0205: keep digit pool local to the stable model.
@@ -1155,7 +1182,7 @@ var DIGIT_POOL = window.DIGIT_POOL;
         if (window.__PENTA5_BOOTSTRAP_STATE__) {
           state = window.__PENTA5_BOOTSTRAP_STATE__;
           window.__PENTA5_BOOTSTRAP_STATE__ = null;
-          buildOwnPositionModels(state);
+          hydrateModelsFromPayload(state);
           el("jsonInput").value = JSON.stringify(state, null, 2);
           recalc();
           el("status").textContent = "已使用服务器直注数据，浏览器拦截不影响。";
@@ -1175,7 +1202,7 @@ var DIGIT_POOL = window.DIGIT_POOL;
           try {
             state = await requestJson(url);
             el("sourceUrl").value = url;
-            buildOwnPositionModels(state);
+            hydrateModelsFromPayload(state);
             el("jsonInput").value = JSON.stringify(state, null, 2);
             recalc();
             return;
@@ -1283,7 +1310,7 @@ var DIGIT_POOL = window.DIGIT_POOL;
         return;
       }
       state = payload;
-      buildOwnPositionModels(state);
+      hydrateModelsFromPayload(state);
       el("jsonInput").value = JSON.stringify(state, null, 2);
       recalc();
       el("status").textContent = "已无刷新同步服务器最新数据。";
@@ -1438,10 +1465,10 @@ var DIGIT_POOL = window.DIGIT_POOL;
   var VERSION = "CODEX_PERCENT_PANEL_0300";
   var STORE_KEY = "codex_percent_compare_panel_v0300";
   var POSITIONS = [
-    { key: "qian", label: "千位", index: 0 },
-    { key: "bai", label: "百位", index: 1 },
-    { key: "shi", label: "十位", index: 2 },
-    { key: "ge", label: "个位", index: 3 }
+    { key: "wan", label: "千位", index: 0 },
+    { key: "qian", label: "百位", index: 1 },
+    { key: "bai", label: "十位", index: 2 },
+    { key: "shi", label: "个位", index: 3 }
   ];
   var memoryStore = { pending: null, history: [] };
 
@@ -1736,10 +1763,10 @@ var DIGIT_POOL = window.DIGIT_POOL;
 (function () {
   "use strict";
   var POSITIONS = [
-    { key: "qian", label: "千位" },
-    { key: "bai", label: "百位" },
-    { key: "shi", label: "十位" },
-    { key: "ge", label: "个位" }
+    { key: "wan", label: "千位" },
+    { key: "qian", label: "百位" },
+    { key: "bai", label: "十位" },
+    { key: "shi", label: "个位" }
   ];
   function pct(value) {
     if (!isFinite(value)) return "-";

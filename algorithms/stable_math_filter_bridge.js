@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Node 桥接：异步调用 algorithms/run.py（五维更稳数学排除）。
+ * Node 桥接：异步调用 algorithms/run.py（更稳数学排除 v3，九条规则）。
  * 禁止 spawnSync，避免堵死 penta5-runner 事件循环。
  */
 
@@ -15,12 +15,15 @@ const DEFAULT_OUT = path.join(ROOT, "data", "stable_math_filter.json");
 
 function buildHistoryPayload(history) {
   const list = Array.isArray(history) ? history : [];
+  // 五维过滤只需近窗统计；限制 stdin 体积，避免父进程每次拼出全量 5000 期 JSON
+  const maxRows = Math.max(200, Number(process.env.STABLE_MATH_HISTORY_LIMIT || 1200));
+  const clipped = list.length > maxRows ? list.slice(0, maxRows) : list;
   return {
     latest_period: list[0] && list[0].period ? String(list[0].period) : null,
-    history: list.map((row) => ({
+    history: clipped.map((row) => ({
       period: row && row.period != null ? String(row.period) : "",
       numbers: Array.isArray(row && row.numbers)
-        ? row.numbers.slice(0, 5).map((n) => Number(n))
+        ? row.numbers.slice(0, 4).map((n) => Number(n))
         : []
     }))
   };
@@ -34,6 +37,33 @@ function readCachedFilter(outPath) {
   } catch (_) {
     return null;
   }
+}
+
+/** 摘要版：供 state / prediction 持久化；完整 rules.details 仅保留在 data/stable_math_filter.json */
+function slimStableMathFilter(filter) {
+  if (!filter || typeof filter !== "object") return null;
+  if (filter.slim === true && !filter.rules) return filter;
+  return {
+    slim: true,
+    version: filter.version || "stable-math-filter-v3",
+    algorithm: filter.algorithm || null,
+    ball_count: filter.ball_count != null ? filter.ball_count : 4,
+    ball5_excluded_from_model: filter.ball5_excluded_from_model !== false,
+    history_count: filter.history_count != null ? filter.history_count : null,
+    latest_period: filter.latest_period || null,
+    latest_draw: Array.isArray(filter.latest_draw) ? filter.latest_draw.slice(0, 4) : null,
+    exclude_digits: Array.isArray(filter.exclude_digits) ? filter.exclude_digits.slice() : [],
+    exclude_shapes: Array.isArray(filter.exclude_shapes) ? filter.exclude_shapes.slice() : [],
+    exclude_spans: Array.isArray(filter.exclude_spans) ? filter.exclude_spans.slice() : [],
+    exclude_sum_ranges: Array.isArray(filter.exclude_sum_ranges) ? filter.exclude_sum_ranges.slice() : [],
+    exclude_repeats: Array.isArray(filter.exclude_repeats) ? filter.exclude_repeats.slice() : [],
+    exclude_consecutives: Array.isArray(filter.exclude_consecutives) ? filter.exclude_consecutives.slice() : [],
+    exclude_parity_ratios: Array.isArray(filter.exclude_parity_ratios) ? filter.exclude_parity_ratios.slice() : [],
+    exclude_size_ratios: Array.isArray(filter.exclude_size_ratios) ? filter.exclude_size_ratios.slice() : [],
+    summary: filter.summary && typeof filter.summary === "object" ? filter.summary : null,
+    framework: filter.framework && typeof filter.framework === "object" ? filter.framework : null,
+    source: filter.source || null
+  };
 }
 
 function runStableMathFilterAsync(history, options) {
@@ -126,18 +156,11 @@ function attachStableMathFilter(prediction, history, options) {
   if (!prediction || typeof prediction !== "object") return { ok: false, error: "no-prediction" };
   const cached = readCachedFilter((options || {}).outPath || DEFAULT_OUT);
   if (cached) {
-    prediction.stableMathFilter = cached;
+    const slim = slimStableMathFilter(cached);
+    prediction.stableMathFilter = slim;
     if (!prediction.detail || typeof prediction.detail !== "object") prediction.detail = {};
-    prediction.detail.stableMathFilter = {
-      version: cached.version,
-      exclude_digits: cached.exclude_digits,
-      exclude_shapes: cached.exclude_shapes,
-      exclude_spans: cached.exclude_spans,
-      exclude_sum_ranges: cached.exclude_sum_ranges,
-      summary: cached.summary,
-      framework: cached.framework
-    };
-    return { ok: true, result: cached, cached: true };
+    prediction.detail.stableMathFilter = slim;
+    return { ok: true, result: slim, cached: true };
   }
   return { ok: false, error: "cache-miss", result: null };
 }
@@ -145,6 +168,7 @@ function attachStableMathFilter(prediction, history, options) {
 module.exports = {
   DEFAULT_OUT,
   readCachedFilter,
+  slimStableMathFilter,
   runStableMathFilter,
   runStableMathFilterAsync,
   attachStableMathFilter,

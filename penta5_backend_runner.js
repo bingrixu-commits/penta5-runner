@@ -15,6 +15,7 @@ const zlib = require("zlib");
 const v8 = require("v8");
 const { spawn } = require("child_process");
 const stableMathFilterBridge = require("./algorithms/stable_math_filter_bridge");
+const codexStablePosition = require("./algorithms/codex_stable_position");
 
 // 启动时读阿里 /root/penta5-runner/.env（不覆盖已有 process.env，便于 pm2 注入）
 (function loadLocalEnvFile() {
@@ -61,7 +62,8 @@ const MAX_HISTORY = Number(process.env.MAX_HISTORY || 5000);
 const MAX_PREDICTION_LOG = Number(process.env.MAX_PREDICTION_LOG || 1000);
 const PANEL_PREDICTION_LIMIT = Number(process.env.PANEL_PREDICTION_LIMIT || 300);
 const PANEL_STATE_PREDICTION_LIMIT = Number(process.env.PANEL_STATE_PREDICTION_LIMIT || 30);
-const PANEL_HISTORY_LIMIT = Number(process.env.PANEL_HISTORY_LIMIT || 1000);
+// 面板展示/冷热只需近百期；旧码大窗可走 GET /history。过大 history 会让前端 JSON.parse+重绘卡顿。
+const PANEL_HISTORY_LIMIT = Number(process.env.PANEL_HISTORY_LIMIT || 120);
 const PANEL_STATE_CACHE_TTL_MS = Number(process.env.PANEL_STATE_CACHE_TTL_MS || 30 * 1000);
 const PANEL_LOG_LIMIT = Number(process.env.PANEL_LOG_LIMIT || 20);
 const SERVER_REQUEST_TIMEOUT = Number(process.env.SERVER_REQUEST_TIMEOUT || 15000);
@@ -72,7 +74,7 @@ const PANEL_SESSION_COOKIE = "penta5_panel_session";
 const PANEL_SESSION_MAX_AGE_MS = Number(process.env.PANEL_SESSION_MAX_AGE_MS || 12 * 60 * 60 * 1000);
 
 const DIGIT_POOL = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
-const BACKEND_STATE_VERSION = "backend-truth-audit-v79";
+const BACKEND_STATE_VERSION = "backend-truth-audit-v80";
 const FRAMEWORK_SNAPSHOT_STORE_KEYS = [
   "autoTop6",
   "recommend2",
@@ -85,7 +87,7 @@ const FRAMEWORK_SNAPSHOT_STORE_KEYS = [
   "dingKill",
   "pick5000"
 ];
-const MODEL_VERSION = "adaptive-independent-v65-two-hewei-4digit";
+const MODEL_VERSION = "adaptive-independent-v68-all-exclusions-4digit";
 const THREE_DUISHU_SNAPSHOT_VERSION = "backend-three-duishu-snapshot-v1";
 const STORM_ENTER_AUTO_TOP6_MISS = Math.max(1, Number(process.env.STORM_ENTER_AUTO_TOP6_MISS || 4));
 const STORM_ENTER_THREE_DUISHU_MISS = Math.max(1, Number(process.env.STORM_ENTER_THREE_DUISHU_MISS || 5));
@@ -116,6 +118,28 @@ const FRAMEWORK_BACKFILL_GAP_MS = Math.max(1500, Number(process.env.FRAMEWORK_BA
 const PENTA5_PERIODS_PER_DAY = Math.max(1, Math.trunc(Number(process.env.PENTA5_PERIODS_PER_DAY || process.env.ROUNDS_PER_DAY || 288)));
 const MODEL_MIN_SAMPLE = Number(process.env.MODEL_MIN_SAMPLE || 8);
 const MODEL_LOW_HIT_RATE = Number(process.env.MODEL_LOW_HIT_RATE || 85);
+// 高基线模型：原始通过率天然很高，禁止当成「强预测力」展示/评级
+const HIGH_BASELINE_SCORE_META = {
+  spanAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.5, hint: "极罕形态过滤" },
+  repeatAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.5, hint: "极罕形态过滤" },
+  consecutiveAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.5, hint: "极罕形态过滤" },
+  sumRangeAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.0, hint: "极端区间过滤" },
+  sumAvoid: { scoreClass: "structural-rare-avoid", baseline: 97.0, hint: "单点和值过滤" },
+  parityRatioAvoid: { scoreClass: "structural-rare-avoid", baseline: 93.0, hint: "极端奇偶比过滤" },
+  sizeRatioAvoid: { scoreClass: "structural-rare-avoid", baseline: 93.0, hint: "极端大小比过滤" },
+  anyTwoHeweiHit: { scoreClass: "wide-hit-baseline", baseline: 99.0, hint: "宽命中参考" },
+  anyThreeHeweiHit: { scoreClass: "wide-hit-baseline", baseline: 95.0, hint: "宽命中参考" },
+  twoDigitHit: { scoreClass: "pair-avoid-baseline", baseline: 90.0, hint: "除对数（非共现命中）" }
+};
+
+function highBaselineScoreMeta(key) {
+  const clean = String(key || "").replace(/^extra\./, "");
+  return HIGH_BASELINE_SCORE_META[clean] || null;
+}
+
+function isHighBaselineScoreKey(key) {
+  return !!highBaselineScoreMeta(key);
+}
 const POSITION_BLOCK_WINDOW = Number(process.env.POSITION_BLOCK_WINDOW || 120);
 const POSITION_BLOCK_SIZE = Number(process.env.POSITION_BLOCK_SIZE || 20);
 const POSITION_BLOCK_FLOOR = Number(process.env.POSITION_BLOCK_FLOOR || 65);
@@ -244,9 +268,12 @@ function omitRecentExactCodesOnEntry(entry) {
   return true;
 }
 
-function compactRecentExactCodesOnPrediction(prediction) {
+function compactRecentExactCodesOnPrediction(prediction, options) {
   if (!prediction || typeof prediction !== "object") return 0;
-  if (!prediction.evaluated) return 0;
+  const opts = options && typeof options === "object" ? options : {};
+  // 默认：已核算，或已封存的 tip（封存后不再需要 codes 数组，结算时按 baseUid+lookback 从 history 重建）
+  const allowUnevaluated = opts.force === true || prediction.evaluated || prediction.allSnapshotsSealed === true || prediction.snapshotsSealedAt;
+  if (!allowUnevaluated) return 0;
   let changed = 0;
   const extraKills = prediction.extraKills;
   if (extraKills && typeof extraKills === "object") {
@@ -255,18 +282,30 @@ function compactRecentExactCodesOnPrediction(prediction) {
       if (omitRecentExactCodesOnEntry(extraKills[key])) changed += 1;
     });
   }
+  if (prediction.detail && prediction.detail.extraKills && typeof prediction.detail.extraKills === "object") {
+    Object.keys(prediction.detail.extraKills).forEach((key) => {
+      if (!isRecentExactCodeKey(key)) return;
+      if (omitRecentExactCodesOnEntry(prediction.detail.extraKills[key])) changed += 1;
+    });
+  }
   ["autoTop6", "recommend2", "killFramework", "coldFramework", "compactAttack", "threeDingTwo", "threeDingOne", "sideStable", "dingKill", "pick5000"].forEach((storeName) => {
     const snapshot = prediction[storeName];
-    if (!snapshot || typeof snapshot !== "object" || !Array.isArray(snapshot.items)) return;
+    const aliasItems = prediction[`${storeName}Items`];
+    const itemLists = [];
+    if (snapshot && typeof snapshot === "object" && Array.isArray(snapshot.items)) itemLists.push(snapshot.items);
+    // *Items 常是独立副本（非同一引用），必须同步 omit，否则封存后仍双倍占内存
+    if (Array.isArray(aliasItems) && aliasItems !== (snapshot && snapshot.items)) itemLists.push(aliasItems);
     let itemChanged = false;
-    snapshot.items.forEach((item) => {
-      if (!item || !isRecentExactCodeKey(item.key)) return;
-      if (omitRecentExactCodesOnEntry(item)) {
-        changed += 1;
-        itemChanged = true;
-      }
+    itemLists.forEach((items) => {
+      items.forEach((item) => {
+        if (!item || !isRecentExactCodeKey(item.key)) return;
+        if (omitRecentExactCodesOnEntry(item)) {
+          changed += 1;
+          itemChanged = true;
+        }
+      });
     });
-    if (itemChanged && snapshot.sealed === true) {
+    if (itemChanged && snapshot && snapshot.sealed === true) {
       snapshot.codesCompacted = true;
       snapshot.sealHash = snapshotSealHash(snapshot, prediction);
     }
@@ -274,15 +313,42 @@ function compactRecentExactCodesOnPrediction(prediction) {
   return changed;
 }
 
+function historyRowsFromBaseUid(history, baseUid, basePeriod) {
+  const rows = Array.isArray(history) ? history : [];
+  const uid = String(baseUid || "");
+  const period = String(basePeriod || "").replace(/^period:/, "");
+  if (!uid && !period) return rows;
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (!row) continue;
+    if (uid && String(row.uid || "") === uid) return rows.slice(index);
+    const rowPeriod = String(row.period || "").replace(/^period:/, "");
+    if (period && rowPeriod && rowPeriod === period) return rows.slice(index);
+  }
+  return rows;
+}
+
+function resolveRecentExactCodeSet(entry, history, baseUid, basePeriod) {
+  if (entry && Array.isArray(entry.codes) && entry.codes.length) {
+    return new Set(entry.codes.map(String).filter((value) => /^\d{4}$/.test(value)));
+  }
+  const lookback = recentExactCodeWindowFromKey(
+    entry && entry.key,
+    entry && (entry.value || entry.code || entry.primary || entry.backup || entry.lookback)
+  );
+  const rows = historyRowsFromBaseUid(history, baseUid, basePeriod);
+  return recentExactCodeSet(rows, lookback);
+}
+
 function compactRecentExactCodesInState(target) {
   if (!target || typeof target !== "object") return 0;
   let changed = 0;
   if (Array.isArray(target.predictions)) {
     target.predictions.forEach((prediction) => {
-      changed += compactRecentExactCodesOnPrediction(prediction);
+      changed += compactRecentExactCodesOnPrediction(prediction, { force: true });
     });
   }
-  changed += compactRecentExactCodesOnPrediction(target.currentPrediction);
+  changed += compactRecentExactCodesOnPrediction(target.currentPrediction, { force: true });
   return changed;
 }
 
@@ -299,13 +365,70 @@ function calcRate(total, match) {
   return ((match / total) * 100).toFixed(2);
 }
 
-function counterRateText(counter) {
+function calcRateNumber(total, match) {
+  if (!total) return null;
+  return Number(((match / total) * 100).toFixed(2));
+}
+
+function decorateTruthScoreFields(target, key, rate) {
+  const out = target && typeof target === "object" ? target : {};
+  const meta = highBaselineScoreMeta(key);
+  const rateNum = rate === null || rate === undefined || !Number.isFinite(Number(rate)) ? null : Number(rate);
+  if (meta) {
+    out.scoreClass = meta.scoreClass;
+    out.randomBaseline = Number(meta.baseline);
+    out.scoreHint = `${meta.hint}，非预测力`;
+    out.predictivePower = false;
+    out.edgeOverBaseline = rateNum === null ? null : Number((rateNum - Number(meta.baseline)).toFixed(2));
+    out.truthDisplay = "structural-baseline";
+  } else {
+    out.scoreClass = out.scoreClass || "predictive";
+    out.randomBaseline = null;
+    out.scoreHint = "";
+    out.predictivePower = true;
+    out.edgeOverBaseline = null;
+    out.truthDisplay = "predictive";
+  }
+  return out;
+}
+
+function buildCounterTruthRecord(counter, key) {
+  const total = Number(counter && counter.total || 0);
+  const match = Number(counter && counter.match || 0);
+  const rate = calcRateNumber(total, match);
+  const record = {
+    key,
+    label: (counter && counter.label) || key,
+    total,
+    match,
+    rate,
+    mainMatch: counter && counter.mainMatch !== undefined ? Number(counter.mainMatch || 0) : undefined,
+    sampleOk: total >= MODEL_MIN_SAMPLE,
+    truthSource: "official-counter-truth-eligible-only"
+  };
+  decorateTruthScoreFields(record, key, rate);
+  if (record.predictivePower === false && rate !== null && total >= MODEL_MIN_SAMPLE) {
+    record.low = rate < (Number(record.randomBaseline || 0) - 3);
+  } else if (rate !== null && total >= MODEL_MIN_SAMPLE) {
+    record.low = rate < MODEL_LOW_HIT_RATE;
+  } else {
+    record.low = false;
+  }
+  return record;
+}
+
+function counterRateText(counter, key) {
   const total = Number(counter && counter.total || 0);
   const match = Number(counter && counter.match || 0);
   if (!total) return "暂无命中记录";
   if (total < MODEL_MIN_SAMPLE) return "数据不足";
   const value = calcRate(total, match);
-  return value === null ? "数据不足" : `${value}%`;
+  if (value === null) return "数据不足";
+  const meta = highBaselineScoreMeta(key);
+  if (!meta) return `${value}%`;
+  const edge = Number(value) - Number(meta.baseline);
+  const edgeText = `${edge >= 0 ? "+" : ""}${edge.toFixed(2)}pp`;
+  return `${value}%｜相对基线${edgeText}（${meta.hint}，非预测力）`;
 }
 
 function recentExactCodeWindowFromKey(key, fallback) {
@@ -338,21 +461,21 @@ function createDefaultCounters() {
     qianBaiShi: { label: "百十个合尾", total: 0, match: 0 },
     wanQianBaiShi: { label: "千百十个合尾", total: 0, match: 0 },
     threeDuishu: { label: "三对数排除", total: 0, match: 0 },
-    sumAvoid: { label: "前四位和值避开", total: 0, match: 0 },
+    sumAvoid: { label: "单点和值过滤（高基线）", total: 0, match: 0 },
     threeDigitAvoid: { label: "对数共现避开", total: 0, match: 0 },
     twoDigitAvoid: { label: "对数避开1组", total: 0, match: 0 },
     twoDigitAvoid2: { label: "对数避开2组", total: 0, match: 0 },
     twoDigitAvoid3: { label: "对数避开3组", total: 0, match: 0 },
-    twoDigitHit: { label: "两数共现", total: 0, match: 0 },
+    twoDigitHit: { label: "两数共现除对数（基线参考）", total: 0, match: 0 },
     threeDigitHit: { label: "三数共现命中", total: 0, match: 0 },
-    anyTwoHeweiHit: { label: "全码池二数合尾5码命中", total: 0, match: 0 },
-    anyThreeHeweiHit: { label: "全码池三数合尾5码命中", total: 0, match: 0 },
-    sumRangeAvoid: { label: "前四位和值区间避开", total: 0, match: 0 },
-    spanAvoid: { label: "跨度排除", total: 0, match: 0 },
-    repeatAvoid: { label: "重号结构避开", total: 0, match: 0 },
-    consecutiveAvoid: { label: "连号结构避开", total: 0, match: 0 },
-    parityRatioAvoid: { label: "奇偶比避开", total: 0, match: 0 },
-    sizeRatioAvoid: { label: "大小比避开", total: 0, match: 0 },
+    anyTwoHeweiHit: { label: "二数合尾宽命中（高基线参考）", total: 0, match: 0 },
+    anyThreeHeweiHit: { label: "三数合尾宽命中（高基线参考）", total: 0, match: 0 },
+    sumRangeAvoid: { label: "和值极端区间过滤（高基线）", total: 0, match: 0 },
+    spanAvoid: { label: "跨度极罕形态过滤（高基线）", total: 0, match: 0 },
+    repeatAvoid: { label: "重号极罕形态过滤（高基线）", total: 0, match: 0 },
+    consecutiveAvoid: { label: "连号极罕形态过滤（高基线）", total: 0, match: 0 },
+    parityRatioAvoid: { label: "极端奇偶比过滤（高基线）", total: 0, match: 0 },
+    sizeRatioAvoid: { label: "极端大小比过滤（高基线）", total: 0, match: 0 },
     recentExactCodeAvoid300: { label: "近300重复四码避开", total: 0, match: 0 },
     recentExactCodeAvoid500: { label: "近500重复四码避开", total: 0, match: 0 },
     recentExactCodeAvoid800: { label: "近800重复四码避开", total: 0, match: 0 },
@@ -375,10 +498,30 @@ function normalizeCounters(input) {
     if (["wan", "qian", "bai", "shi"].includes(key)) {
       counters[key].mainMatch = Number(counters[key].mainMatch || 0);
     }
+    const rate = calcRateNumber(counters[key].total, counters[key].match);
+    counters[key].rate = rate;
+    decorateTruthScoreFields(counters[key], key, rate);
+    counters[key].truthSource = "official-counter-truth-eligible-only";
+    if (counters[key].predictivePower === false) {
+      counters[key].low = counters[key].total >= MODEL_MIN_SAMPLE && rate !== null && rate < (Number(counters[key].randomBaseline || 0) - 3);
+    } else {
+      counters[key].low = counters[key].total >= MODEL_MIN_SAMPLE && rate !== null && rate < MODEL_LOW_HIT_RATE;
+    }
   });
-  counters.version = 8;
+  counters.version = 9;
   counters.updatedAt = counters.updatedAt || "";
   return counters;
+}
+
+function buildRateDetailsFromCounters(counters) {
+  const c = normalizeCounters(counters);
+  const details = {};
+  Object.keys(c).forEach((key) => {
+    if (key === "version" || key === "updatedAt") return;
+    if (!c[key] || typeof c[key] !== "object") return;
+    details[key] = buildCounterTruthRecord(c[key], key);
+  });
+  return details;
 }
 
 function createDefaultModelWatchdog() {
@@ -1195,6 +1338,8 @@ function loadState() {
       state.predictions.forEach((prediction) => restoreFrameworkItemAliases(prediction));
     }
     rebuildMissingModelCountersFromPredictions();
+    compactRecentExactCodesInState(merged);
+    normalizeStableMathFiltersInState(merged);
     return state;
   } catch (err) {
     const brokenName = path.join(BACKUP_DIR, `broken-state-${Date.now()}.json`);
@@ -1627,10 +1772,22 @@ function slimExtraKillForPersist(entry, keepCodes) {
     "maxMissLong",
     "lower120",
     "stage",
-    "codeCount"
+    "confidence",
+    "recommendable",
+    "preferOverlap",
+    "codeCount",
+    "lookback",
+    "maxHistoryWindow",
+    "codesOmitted"
   ].forEach((key) => {
     if (entry[key] !== undefined) out[key] = entry[key];
   });
+  // recentExactCode 的 codes 永不落盘/常驻：结算可按 lookback 重建；其它条目仍可按需保留短 codes
+  if (isRecentExactCodeKey(entry.key || out.key)) {
+    out.codesOmitted = true;
+    if (out.codeCount == null && Array.isArray(entry.codes)) out.codeCount = entry.codes.length;
+    return out;
+  }
   if (keepCodes && Array.isArray(entry.codes)) {
     out.codes = entry.codes.slice(0, recentExactCodeCodeLimit(entry));
   }
@@ -1695,7 +1852,9 @@ function slimPredictionForDisk(prediction, keepRich) {
     if (prediction.detail) out.detail = slimThreeFourDetail(prediction.detail, true);
     if (prediction.tipStructurePerfect !== undefined) out.tipStructurePerfect = prediction.tipStructurePerfect;
     if (prediction.tipReady !== undefined) out.tipReady = prediction.tipReady;
-    if (prediction.stableMathFilter) out.stableMathFilter = prediction.stableMathFilter;
+    if (prediction.stableMathFilter) {
+      out.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(prediction.stableMathFilter);
+    }
   } else if (prediction.threeDuishu) {
     out.threeDuishu = slimThreeDuishuSnapshot(prediction.threeDuishu);
   }
@@ -1724,6 +1883,9 @@ function buildPersistedStateForDisk(source) {
       predictionKeepRichForPersist(prediction, currentId, currentUid)
     ));
   disk.currentPrediction = slimPredictionForDisk(sourceState.currentPrediction, true);
+  if (disk.stableMathFilter) {
+    disk.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(disk.stableMathFilter);
+  }
   // 参考回测只在内存/RDS 共享 history 上 walk，禁止落盘重复样本
   delete disk.frameworkSimLedger;
   delete disk.frameworkSimHistoryBackfill;
@@ -2214,7 +2376,8 @@ function parseLotteryJsonToRecord(json) {
   const metrics = calculateMetrics(numbers);
   const positions = buildPositions(numbers);
   const uid = buildRecordUid(period, opentime || "--", numbers);
-  return { uid, period, opentime: opentime || "--", numbers, positions, metrics, rawJson: json, capturedAt: isoNow() };
+  // 不把完整源站 JSON 挂到每条 history：5000 期会把常驻堆撑爆；调试用 raw 只保留在 state.rawJson（最新一期）
+  return { uid, period, opentime: opentime || "--", numbers, positions, metrics, rawJson: null, capturedAt: isoNow() };
 }
 
 function getDigitMissingByGetter(history, getter) {
@@ -2269,7 +2432,13 @@ function finalizeModelStats(stats) {
     if (key === "extraPair") return;
     const item = stats[key];
     item.rate = item.total ? Number(((item.match / item.total) * 100).toFixed(2)) : null;
-    item.low = item.total >= MODEL_MIN_SAMPLE && item.rate !== null && item.rate < MODEL_LOW_HIT_RATE;
+    decorateTruthScoreFields(item, key, item.rate);
+    if (item.predictivePower === false) {
+      // 高基线：相对基线下滑才算弱，禁止用 85% 原始通过率误判
+      item.low = item.total >= MODEL_MIN_SAMPLE && item.rate !== null && item.rate < (Number(item.randomBaseline || 0) - 3);
+    } else {
+      item.low = item.total >= MODEL_MIN_SAMPLE && item.rate !== null && item.rate < MODEL_LOW_HIT_RATE;
+    }
   });
   return stats;
 }
@@ -2739,17 +2908,22 @@ function scoreThreeDuishuCandidatesCacheKey(history) {
   const rows = (Array.isArray(history) ? history : []).filter((record) => firstFourNumbers(record).length >= 4);
   const head = rows[0];
   const tail = rows[rows.length - 1];
+  const recentPeriods = rows.slice(0, 3).map((row) => (row && row.period != null ? String(row.period) : "")).join(",");
+  const stableSig = Array.from(getStableMathExcludeDigitSet()).sort().join("");
   return [
     rows.length,
     head && head.uid ? head.uid : "",
     head && Array.isArray(head.numbers) ? head.numbers.slice(0, 4).join("") : "",
     tail && tail.uid ? tail.uid : "",
-    tail && Array.isArray(tail.numbers) ? tail.numbers.slice(0, 4).join("") : ""
+    tail && Array.isArray(tail.numbers) ? tail.numbers.slice(0, 4).join("") : "",
+    recentPeriods,
+    stableSig
   ].join("|");
 }
 
 function scoreThreeDuishuCandidatesCore(history) {
   const candidates = [];
+  const stableExclude = getStableMathExcludeDigitSet();
   for (let a = 0; a < THREE_DUISHU_PAIRS.length - 2; a += 1) {
     for (let b = a + 1; b < THREE_DUISHU_PAIRS.length - 1; b += 1) {
       for (let c = b + 1; c < THREE_DUISHU_PAIRS.length; c += 1) {
@@ -2780,6 +2954,7 @@ function scoreThreeDuishuCandidatesCore(history) {
         );
         const displayDigits = pairs.map((pair) => chooseThreeDuishuDisplayCode(history, pair)).sort((left, right) => Number(left) - Number(right));
         const code = displayDigits.join("");
+        const stableMathOverlap = displayDigits.reduce((count, digit) => count + (stableExclude.has(String(digit)) ? 1 : 0), 0);
         const recentFailPenalty = Number((r40.fail != null ? r40.fail : r30.fail) || 0) * 0.28 + Math.max(0, 3 - Number((r40.streak != null ? r40.streak : r30.streak) || 0)) * 0.6;
         const weakBlockPenalty = Number(block.weakBlocks || 0) * 0.9;
         const score =
@@ -2795,6 +2970,7 @@ function scoreThreeDuishuCandidatesCore(history) {
           Number(block.variance || 0) * 0.03 -
           recentFailPenalty -
           weakBlockPenalty +
+          stableMathOverlap * 1.25 +
           Math.min(Number((r40.streak != null ? r40.streak : r30.streak) || 0), 10) * 0.1;
         const pairKey = pairs.map((pair) => pair.key).join("|");
         candidates.push({
@@ -2825,6 +3001,7 @@ function scoreThreeDuishuCandidatesCore(history) {
           instability: Number(instability.toFixed(2)),
           block,
           pairHealth,
+          stableMathOverlap,
           recentFailPenalty: Number(recentFailPenalty.toFixed(2)),
           weakBlockPenalty: Number(weakBlockPenalty.toFixed(2)),
           score: Number(score.toFixed(4))
@@ -2891,6 +3068,8 @@ function walkForwardThreeDuishu(history) {
   }
   const total = hit + fail;
   const insufficient = total < MODEL_MIN_SAMPLE;
+  // walk-forward 会按不同 train 长度灌满 LRU；算完立刻清掉，避免跨请求残留大候选数组
+  try { scoreThreeDuishuCandidatesLru.clear(); } catch (_) {}
   return {
     total,
     hit,
@@ -2901,7 +3080,7 @@ function walkForwardThreeDuishu(history) {
     streak,
     minTrain: THREE_DUISHU_MIN_TRAIN,
     window: THREE_DUISHU_WALK_WINDOW,
-    recent,
+    recent: recent.slice(0, 40),
     sampleInsufficient: insufficient
   };
 }
@@ -3013,6 +3192,8 @@ function buildThreeDuishuRecommendationPayload(history, period) {
   }
   const walkForward = walkForwardThreeDuishu(history);
   const quality = threeDuishuQualityLabel(best, walkForward);
+  const recommendable = quality !== "观察";
+  const confidence = quality === "稳固" ? "high" : (quality === "可用" ? "normal" : "low");
   return {
     ok: true,
     period,
@@ -3047,6 +3228,9 @@ function buildThreeDuishuRecommendationPayload(history, period) {
     score: best.score,
     walkForward,
     quality,
+    confidence,
+    recommendable,
+    stableMathOverlap: Number(best.stableMathOverlap || 0),
     candidates: candidates.slice(0, 5).map(publicThreeDuishuCandidate)
   };
 }
@@ -3112,12 +3296,15 @@ function buildThreeDuishuSnapshot(prediction) {
     pairs,
     pairCodes: (Array.isArray(rec.pairCodes) ? rec.pairCodes : pairs.slice()).map(String).slice(0, 3),
     quality: rec.quality || "",
+    confidence: rec.confidence || "normal",
+    recommendable: rec.recommendable !== false,
     rate30: rec.rate30,
     rate40: rec.rate40,
     rate120: rec.rate120,
     rate300: rec.rate300,
     sample40: rec.sample40,
     walkForwardRate: rec.walkForward && rec.walkForward.rate,
+    stableMathOverlap: Number(rec.stableMathOverlap || 0),
     selectedReason: rec.selectedReason || "",
     selectedLocked: !!rec.selectedLocked,
     sealed: false
@@ -3256,26 +3443,38 @@ function calculateModelPerformance(predictions) {
 }
 
 function getModelStat(performance, key) {
-  return performance && performance[key] ? performance[key] : { total: 0, match: 0, rate: null, low: false, lastSuccess: null };
+  const raw = performance && performance[key] ? performance[key] : { total: 0, match: 0, rate: null, low: false, lastSuccess: null };
+  const out = Object.assign({ key }, raw);
+  decorateTruthScoreFields(out, key, out.rate);
+  return out;
 }
 
 function shouldUseBackupAlgorithm(performance, key) {
   // 三数共现命中天然低通过率，若按 85% 阈值切 backup 会每期换码；两数共现已改为除对数，走普通避开阈值
   if (/^extra\.threeDigitHit$/.test(String(key || ""))) return false;
+  // 高基线模型不按「原始高通过率=强」切主备
+  if (isHighBaselineScoreKey(key)) return false;
   const stat = getModelStat(performance, key);
   return !!stat.low;
 }
 
 function modelPerformanceSummary(performance, key) {
   const stat = getModelStat(performance, key);
+  const meta = highBaselineScoreMeta(key);
   return {
     key,
     total: Number(stat.total || 0),
     match: Number(stat.match || 0),
     rate: stat.rate,
     low: !!stat.low,
-    threshold: MODEL_LOW_HIT_RATE,
-    minSample: MODEL_MIN_SAMPLE
+    threshold: meta ? Number(meta.baseline) - 3 : MODEL_LOW_HIT_RATE,
+    minSample: MODEL_MIN_SAMPLE,
+    scoreClass: stat.scoreClass || "",
+    randomBaseline: stat.randomBaseline,
+    edgeOverBaseline: stat.edgeOverBaseline,
+    predictivePower: stat.predictivePower !== false,
+    scoreHint: stat.scoreHint || "",
+    truthDisplay: stat.truthDisplay || "predictive"
   };
 }
 
@@ -3290,13 +3489,13 @@ function modelKeyLabel(key) {
     "hewei.wanQianBai": "千百十合尾",
     "hewei.qianBaiShi": "百十个合尾",
     "hewei.wanQianBaiShi": "千百十个合尾",
-    "extra.sumAvoid": "前四位和值避开",
-    "extra.sumRangeAvoid": "前四位和值区间避开",
-    "extra.spanAvoid": "跨度排除",
-    "extra.repeatAvoid": "重号结构避开",
-    "extra.consecutiveAvoid": "连号结构避开",
-    "extra.parityRatioAvoid": "奇偶比避开",
-    "extra.sizeRatioAvoid": "大小比避开",
+    "extra.sumAvoid": "单点和值过滤（高基线）",
+    "extra.sumRangeAvoid": "和值极端区间过滤（高基线）",
+    "extra.spanAvoid": "跨度极罕形态过滤（高基线）",
+    "extra.repeatAvoid": "重号极罕形态过滤（高基线）",
+    "extra.consecutiveAvoid": "连号极罕形态过滤（高基线）",
+    "extra.parityRatioAvoid": "极端奇偶比过滤（高基线）",
+    "extra.sizeRatioAvoid": "极端大小比过滤（高基线）",
     "extra.recentExactCodeAvoid300": "近300重复四码避开",
     "extra.recentExactCodeAvoid500": "近500重复四码避开",
     "extra.recentExactCodeAvoid800": "近800重复四码避开",
@@ -3306,10 +3505,10 @@ function modelKeyLabel(key) {
     "extra.twoDigitAvoid": "对数避开1组",
     "extra.twoDigitAvoid2": "对数避开2组",
     "extra.twoDigitAvoid3": "对数避开3组",
-    "extra.twoDigitHit": "两数共现",
+    "extra.twoDigitHit": "两数共现除对数（基线参考）",
     "extra.threeDigitHit": "三数共现命中",
-    "extra.anyTwoHeweiHit": "全码池二数合尾5码命中",
-    "extra.anyThreeHeweiHit": "全码池三数合尾5码命中"
+    "extra.anyTwoHeweiHit": "二数合尾宽命中（高基线参考）",
+    "extra.anyThreeHeweiHit": "三数合尾宽命中（高基线参考）"
   };
   return labels[key] || key;
 }
@@ -3337,8 +3536,8 @@ function collectPerformanceIssues(performance) {
     const total = Number(stat.total || 0);
     const rate = stat.rate === null || stat.rate === undefined ? null : Number(stat.rate);
     if (total >= MODEL_WATCHDOG_MIN_SAMPLE && rate !== null && Number.isFinite(rate) && rate < threshold) {
-      // 三数共现/合尾命中天然低通过率，不能因低分反复清锁重建；两数共现已改为除对数，走普通清锁
-      const observeOnly = /^extra\.(threeDigitHit|anyTwoHeweiHit|anyThreeHeweiHit)$/.test(key);
+      // 高基线 / 宽命中 / 三数共现：只观察，禁止因原始通过率触发「强预测力」式清锁重建
+      const observeOnly = isHighBaselineScoreKey(key) || /^extra\.(threeDigitHit|anyTwoHeweiHit|anyThreeHeweiHit)$/.test(key);
       issues.push({
         type: "low-performance",
         key,
@@ -3346,6 +3545,7 @@ function collectPerformanceIssues(performance) {
         total,
         rate: Number(rate.toFixed(2)),
         threshold,
+        scoreClass: (highBaselineScoreMeta(key) && highBaselineScoreMeta(key).scoreClass) || "",
         action: observeOnly ? "observe-only" : "clear-lock-and-regenerate"
       });
     }
@@ -3678,6 +3878,18 @@ function trimRuntimeCaches(actions) {
   const keepLogs = stormActive ? 80 : 120;
   state.predictions = Array.isArray(state.predictions) ? state.predictions.slice(0, keepPredictions) : [];
   state.logs = Array.isArray(state.logs) ? state.logs.slice(0, keepLogs) : [];
+  // 压力场景下必须清算法 LRU；否则候选大对象会跨期残留
+  try { scoreThreeDuishuCandidatesLru.clear(); } catch (_) {}
+  try { buildStableHeweiCandidatesLru.clear(); } catch (_) {}
+  if (Array.isArray(state.history)) {
+    state.history.forEach((row) => {
+      if (row && row.rawJson != null) row.rawJson = null;
+    });
+  }
+  compactRecentExactCodesInState(state);
+  if (typeof global.gc === "function") {
+    try { global.gc(); } catch (_) {}
+  }
   invalidatePanelStateCache();
   actions.push({
     type: "trim-runtime-cache",
@@ -3685,7 +3897,8 @@ function trimRuntimeCaches(actions) {
     predictionsBefore: beforePredictions,
     predictionsAfter: state.predictions.length,
     logsBefore: beforeLogs,
-    logsAfter: state.logs.length
+    logsAfter: state.logs.length,
+    clearedAlgorithmLru: true
   });
 }
 
@@ -4081,11 +4294,15 @@ function buildStableHeweiCandidatesCacheKey(records, getterId, options) {
   const rows = Array.isArray(records) ? records : [];
   const first = rows[0];
   const opts = options && typeof options === "object" ? options : {};
+  const recentPeriods = rows.slice(0, 3).map((row) => (row && row.period != null ? String(row.period) : "")).join(",");
+  const excludeSig = Array.isArray(opts.excludeDigits) ? opts.excludeDigits.slice().sort().join("") : "";
   return [
     String(getterId || "default"),
     rows.length,
     first && first.uid ? first.uid : "",
     first && Array.isArray(first.numbers) ? first.numbers.slice(0, 5).join("") : "",
+    recentPeriods,
+    excludeSig,
     Number(opts.floor || HEWEI_BLOCK_FLOOR),
     Number(opts.blockWindow || HEWEI_BLOCK_WINDOW),
     Number(opts.blockSize || HEWEI_BLOCK_SIZE)
@@ -4096,9 +4313,15 @@ function buildStableHeweiCandidatesCore(records, actualGetter, options) {
   const opts = options && typeof options === "object" ? options : {};
   const floor = Number(opts.floor || HEWEI_BLOCK_FLOOR);
   const missPenalty = Number(opts.missPenalty || 2.5);
+  const excludeSet = new Set(
+    (Array.isArray(opts.excludeDigits) ? opts.excludeDigits : [])
+      .map((digit) => String(digit))
+      .filter((digit) => /^\d$/.test(digit))
+  );
   const heweiWindows = [30, 60, 120, MODEL_STABLE_WINDOW, MODEL_LONG_WINDOW];
   const series = preprocessHeweiActualSeries(records, actualGetter, MODEL_LONG_WINDOW);
   const candidates = DIGIT_POOL.map((digit) => {
+    const digitText = String(digit);
     const rateWindows = avoidDigitRateMultiWindowFromSeries(series, digit, heweiWindows);
     const rLong = rateWindows[MODEL_LONG_WINDOW];
     const r300 = rateWindows[MODEL_STABLE_WINDOW];
@@ -4116,6 +4339,7 @@ function buildStableHeweiCandidatesCore(records, actualGetter, options) {
     const recentPenalty = Number(r30.missStreak || 0) * 1.45;
     const weakPenalty = Number(block.weakBlocks || 0) * 2.2;
     const variancePenalty = Number(block.variance || 0) * 0.08;
+    const stableMathPenalty = excludeSet.has(digitText) ? 120 : 0;
     const score = (
       weighted.score * 0.55 +
       lower120 * 0.13 +
@@ -4124,10 +4348,11 @@ function buildStableHeweiCandidatesCore(records, actualGetter, options) {
       Number(block.avgRate || 0) * 0.08 -
       recentPenalty -
       weakPenalty -
-      variancePenalty
+      variancePenalty -
+      stableMathPenalty
     );
     return {
-      digit: String(digit),
+      digit: digitText,
       rLong,
       r300,
       r120,
@@ -4142,7 +4367,8 @@ function buildStableHeweiCandidatesCore(records, actualGetter, options) {
         recentMiss: Number(r30.missStreak || 0),
         weakBlocks: Number(block.weakBlocks || 0),
         blockMinRate: Number(block.minRate || 0),
-        lower120: Number(lower120.toFixed(2))
+        lower120: Number(lower120.toFixed(2)),
+        stableMathExcluded: stableMathPenalty > 0
       }
     };
   });
@@ -4151,7 +4377,11 @@ function buildStableHeweiCandidatesCore(records, actualGetter, options) {
 }
 
 function buildStableHeweiCandidates(records, actualGetter, options) {
-  const opts = options && typeof options === "object" ? options : {};
+  const opts = Object.assign({}, options && typeof options === "object" ? options : {});
+  if (!Array.isArray(opts.excludeDigits) || !opts.excludeDigits.length) {
+    const stableExclude = getStableMathExcludeDigitSet();
+    if (stableExclude.size) opts.excludeDigits = Array.from(stableExclude);
+  }
   const cacheKey = buildStableHeweiCandidatesCacheKey(records, opts.getterId || "default", opts);
   if (buildStableHeweiCandidatesLru.has(cacheKey)) {
     return buildStableHeweiCandidatesLru.get(cacheKey);
@@ -4761,11 +4991,36 @@ function calculateExtraAvoidKills(history, performance) {
     const opts = options && typeof options === "object" ? options : {};
     const hitMode = mode === "hit";
     const blockedValues = new Set((Array.isArray(opts.excludeValues) ? opts.excludeValues : []).map((value) => String(value)));
+    const preferDigits = new Set((Array.isArray(opts.preferDigits) ? opts.preferDigits : []).map((digit) => String(digit)).filter((digit) => /^\d$/.test(digit)));
+    const overlapCount = (value) => {
+      if (!preferDigits.size) return 0;
+      const text = String(value == null ? "" : value).replace(/\D/g, "");
+      if (!text) return 0;
+      let n = 0;
+      const seen = new Set();
+      for (const ch of text) {
+        if (seen.has(ch)) continue;
+        seen.add(ch);
+        if (preferDigits.has(ch)) n += 1;
+      }
+      return n;
+    };
     let scored = hitMode ? scoreHitCandidates(history, candidates, matcher, prior) : scoreAvoidCandidates(history, candidates, matcher, prior);
     if (blockedValues.size) {
       scored = scored.filter((item) => !blockedValues.has(String(item && item.value !== undefined ? item.value : "")));
     }
     scored = scored.filter((item) => Number(item && item.sampleTotal || 0) > 0);
+    if (preferDigits.size) {
+      scored = scored.map((item) => {
+        const overlap = overlapCount(item && item.value);
+        const bonus = hitMode ? overlap * 0.22 : overlap * 0.85;
+        return Object.assign({}, item, {
+          preferOverlap: overlap,
+          score: Number((Number(item.score || 0) + bonus).toFixed(4))
+        });
+      });
+      scored.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    }
     if (!scored.length) {
       return {
         key,
@@ -4792,7 +5047,10 @@ function calculateExtraAvoidKills(history, performance) {
         rotationIndex: null,
         rotationMaxGap: null,
         performance: null,
-        truthAvailable: false
+        truthAvailable: false,
+        confidence: null,
+        recommendable: false,
+        preferOverlap: 0
       };
     }
     const low = shouldUseBackupAlgorithm(performance, `extra.${key}`);
@@ -4836,6 +5094,11 @@ function calculateExtraAvoidKills(history, performance) {
     const selectedValue = String(selected.value !== undefined ? selected.value : (selected.candidate !== undefined ? selected.candidate : ""));
     const primaryValue = String(primary.value !== undefined ? primary.value : (primary.candidate !== undefined ? primary.candidate : selectedValue));
     const backupValue = String(backup.value !== undefined ? backup.value : (backup.candidate !== undefined ? backup.candidate : primaryValue));
+    const baselineMeta = highBaselineScoreMeta(key);
+    const recommendThreshold = hitMode ? 52 : 78;
+    const recommendable = Number(selected.rate120 || selected.rate60 || selected.rate30 || 0) >= recommendThreshold
+      && Number(selected.lower120 || 0) >= (hitMode ? 45 : 65);
+    const confidence = recommendable ? "normal" : "low";
     return {
       key,
       label,
@@ -4855,45 +5118,53 @@ function calculateExtraAvoidKills(history, performance) {
       stage: selected.stage,
       hitMode,
       matchMode: key === "anyTwoHeweiHit" ? "hit-if-any-two-hewei-tail-in-selected-five" : (key === "anyThreeHeweiHit" ? "hit-if-any-three-hewei-tail-in-selected-five" : (hitMode ? "hit-if-all-digits-in-first-four" : "avoid-if-not-matched")),
+      scoreClass: baselineMeta ? baselineMeta.scoreClass : (hitMode ? "predictive-hit" : "predictive-avoid"),
+      randomBaseline: baselineMeta ? baselineMeta.baseline : null,
+      scoreHint: baselineMeta ? `${baselineMeta.hint}，非预测力` : "",
+      predictivePower: !baselineMeta,
       jointSwitchAllowed: false,
       dynamicEveryPrediction: true,
       rotationPool,
       rotationIndex,
       rotationMaxGap,
-      performance: getModelStat(performance, `extra.${key}`) || null
+      performance: getModelStat(performance, `extra.${key}`) || null,
+      confidence,
+      recommendable,
+      preferOverlap: Number(selected.preferOverlap || 0)
     };
   }
 
+  const stablePreferDigits = Array.from(getStableMathExcludeDigitSet());
   const twoAvoidCandidates = twoDigitAvoidCandidates();
   const twoAvoidPicked = [];
   const twoAvoidRankOptions = { poolSize: 8, keepGap: 10, unlockGap: 16, backupKeepGap: 8, minHold: 12 };
   const hitRankOptions = { poolSize: 5, keepGap: 18, unlockGap: 28, backupKeepGap: 40, minHold: 12 };
-  const twoAvoid1 = calculateOne("twoDigitAvoid", "对数避开1组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions });
+  const twoAvoid1 = calculateOne("twoDigitAvoid", "对数避开1组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
   if (twoAvoid1.value) twoAvoidPicked.push(twoAvoid1.value);
-  const twoAvoid2 = calculateOne("twoDigitAvoid2", "对数避开2组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions });
+  const twoAvoid2 = calculateOne("twoDigitAvoid2", "对数避开2组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
   if (twoAvoid2.value) twoAvoidPicked.push(twoAvoid2.value);
-  const twoAvoid3 = calculateOne("twoDigitAvoid3", "对数避开3组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions });
+  const twoAvoid3 = calculateOne("twoDigitAvoid3", "对数避开3组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
   return {
-    sumAvoid: calculateOne("sumAvoid", "前四位和值避开", sumAvoidCandidates(), (record, value) => firstFourSum(record) === Number(value), 0.8),
-    sumRangeAvoid: calculateOne("sumRangeAvoid", "前四位和值区间避开", sumRangeAvoidCandidates(), (record, value) => firstFourSumInRange(record, value), 0.55),
-    spanAvoid: calculateOne("spanAvoid", "跨度排除", spanAvoidCandidates(), (record, value) => extraStructureMatched(record, "spanAvoid", value), 0.55),
-    repeatAvoid: calculateOne("repeatAvoid", "重号结构避开", repeatAvoidCandidates(), (record, value) => extraStructureMatched(record, "repeatAvoid", value), 0.55),
-    consecutiveAvoid: calculateOne("consecutiveAvoid", "连号结构避开", consecutiveAvoidCandidates(), (record, value) => extraStructureMatched(record, "consecutiveAvoid", value), 0.55),
-    parityRatioAvoid: calculateOne("parityRatioAvoid", "奇偶比避开", parityRatioCandidates(), (record, value) => extraStructureMatched(record, "parityRatioAvoid", value), 0.55),
-    sizeRatioAvoid: calculateOne("sizeRatioAvoid", "大小比避开", sizeRatioCandidates(), (record, value) => extraStructureMatched(record, "sizeRatioAvoid", value), 0.55),
+    sumAvoid: calculateOne("sumAvoid", "单点和值过滤（高基线）", sumAvoidCandidates(), (record, value) => firstFourSum(record) === Number(value), 0.8),
+    sumRangeAvoid: calculateOne("sumRangeAvoid", "和值极端区间过滤（高基线）", sumRangeAvoidCandidates(), (record, value) => firstFourSumInRange(record, value), 0.55),
+    spanAvoid: calculateOne("spanAvoid", "跨度极罕形态过滤（高基线）", spanAvoidCandidates(), (record, value) => extraStructureMatched(record, "spanAvoid", value), 0.55),
+    repeatAvoid: calculateOne("repeatAvoid", "重号极罕形态过滤（高基线）", repeatAvoidCandidates(), (record, value) => extraStructureMatched(record, "repeatAvoid", value), 0.55),
+    consecutiveAvoid: calculateOne("consecutiveAvoid", "连号极罕形态过滤（高基线）", consecutiveAvoidCandidates(), (record, value) => extraStructureMatched(record, "consecutiveAvoid", value), 0.55),
+    parityRatioAvoid: calculateOne("parityRatioAvoid", "极端奇偶比过滤（高基线）", parityRatioCandidates(), (record, value) => extraStructureMatched(record, "parityRatioAvoid", value), 0.55),
+    sizeRatioAvoid: calculateOne("sizeRatioAvoid", "极端大小比过滤（高基线）", sizeRatioCandidates(), (record, value) => extraStructureMatched(record, "sizeRatioAvoid", value), 0.55),
     recentExactCodeAvoid300: recentExactCodeCandidate(300, history),
     recentExactCodeAvoid500: recentExactCodeCandidate(500, history),
     recentExactCodeAvoid800: recentExactCodeCandidate(800, history),
     recentExactCodeAvoid1000: recentExactCodeCandidate(1000, history),
     recentExactCodeAvoidMax: recentExactCodeCandidate("max", history),
-    threeDigitAvoid: calculateOne("threeDigitAvoid", "对数共现避开", threeDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.25),
+    threeDigitAvoid: calculateOne("threeDigitAvoid", "对数共现避开", threeDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.25, null, { preferDigits: stablePreferDigits }),
     twoDigitAvoid: twoAvoid1,
     twoDigitAvoid2: twoAvoid2,
     twoDigitAvoid3: twoAvoid3,
-    twoDigitHit: calculateOne("twoDigitHit", "两数共现", twoDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.45, null, { rankOptions: twoAvoidRankOptions }),
+    twoDigitHit: calculateOne("twoDigitHit", "两数共现除对数（基线参考）", twoDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.45, null, { rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits }),
     threeDigitHit: calculateOne("threeDigitHit", "三数共现命中", threeDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.25, "hit", { rankOptions: hitRankOptions }),
-    anyTwoHeweiHit: calculateOne("anyTwoHeweiHit", "全码池二数合尾5码命中", digitSetCandidatesMixedParity(5), (record, value) => anyHeweiCombinationHit(record, value, 2, 1), 0.55, "hit"),
-    anyThreeHeweiHit: calculateOne("anyThreeHeweiHit", "全码池三数合尾5码命中", digitSetCandidatesMixedParity(5), (record, value) => anyHeweiCombinationHit(record, value, 3, 1), 0.62, "hit")
+    anyTwoHeweiHit: calculateOne("anyTwoHeweiHit", "二数合尾宽命中（高基线参考）", digitSetCandidatesMixedParity(5), (record, value) => anyHeweiCombinationHit(record, value, 2, 1), 0.55, "hit"),
+    anyThreeHeweiHit: calculateOne("anyThreeHeweiHit", "三数合尾宽命中（高基线参考）", digitSetCandidatesMixedParity(5), (record, value) => anyHeweiCombinationHit(record, value, 3, 1), 0.62, "hit")
   };
 }
 
@@ -4904,19 +5175,20 @@ const AUTO_TOP6_POSITIONS = [
   { key: "shi", label: "个位", index: 3 }
 ];
 const AUTO_TOP6_HEWEI = [
+  { key: "total", label: "总合尾综合", index: -2 },
   { key: "wanQianBai", label: "千百十合尾", index: 0 },
   { key: "qianBaiShi", label: "百十个合尾", index: 1 },
   { key: "wanQianBaiShi", label: "千百十个合尾", index: 2 },
   { key: "unified", label: "三个合尾统一", index: -1 }
 ];
 const AUTO_TOP6_EXTRAS = [
-  { key: "sumAvoid", label: "前四位和值避开", mode: "avoid", kind: "sum" },
-  { key: "sumRangeAvoid", label: "前四位和值区间避开", mode: "avoid", kind: "sumRange" },
-  { key: "spanAvoid", label: "跨度排除", mode: "avoid", kind: "span" },
-  { key: "repeatAvoid", label: "重号结构避开", mode: "avoid", kind: "structure" },
-  { key: "consecutiveAvoid", label: "连号结构避开", mode: "avoid", kind: "structure" },
-  { key: "parityRatioAvoid", label: "奇偶比避开", mode: "avoid", kind: "ratio" },
-  { key: "sizeRatioAvoid", label: "大小比避开", mode: "avoid", kind: "ratio" },
+  { key: "sumAvoid", label: "单点和值过滤（高基线）", mode: "avoid", kind: "sum", scoreClass: "structural-rare-avoid" },
+  { key: "sumRangeAvoid", label: "和值极端区间过滤（高基线）", mode: "avoid", kind: "sumRange", scoreClass: "structural-rare-avoid" },
+  { key: "spanAvoid", label: "跨度极罕形态过滤（高基线）", mode: "avoid", kind: "span", scoreClass: "structural-rare-avoid" },
+  { key: "repeatAvoid", label: "重号极罕形态过滤（高基线）", mode: "avoid", kind: "structure", scoreClass: "structural-rare-avoid" },
+  { key: "consecutiveAvoid", label: "连号极罕形态过滤（高基线）", mode: "avoid", kind: "structure", scoreClass: "structural-rare-avoid" },
+  { key: "parityRatioAvoid", label: "极端奇偶比过滤（高基线）", mode: "avoid", kind: "ratio", scoreClass: "structural-rare-avoid" },
+  { key: "sizeRatioAvoid", label: "极端大小比过滤（高基线）", mode: "avoid", kind: "ratio", scoreClass: "structural-rare-avoid" },
   { key: "recentExactCodeAvoid300", label: "近300重复四码避开", mode: "avoid", kind: "recentExactCode" },
   { key: "recentExactCodeAvoid500", label: "近500重复四码避开", mode: "avoid", kind: "recentExactCode" },
   { key: "recentExactCodeAvoid800", label: "近800重复四码避开", mode: "avoid", kind: "recentExactCode" },
@@ -4926,10 +5198,10 @@ const AUTO_TOP6_EXTRAS = [
   { key: "twoDigitAvoid", label: "对数避开1组", mode: "avoid", kind: "digits" },
   { key: "twoDigitAvoid2", label: "对数避开2组", mode: "avoid", kind: "digits" },
   { key: "twoDigitAvoid3", label: "对数避开3组", mode: "avoid", kind: "digits" },
-  { key: "twoDigitHit", label: "两数共现", mode: "avoid", kind: "digits" },
+  { key: "twoDigitHit", label: "两数共现除对数（基线参考）", mode: "avoid", kind: "digits", scoreClass: "pair-avoid-baseline" },
   { key: "threeDigitHit", label: "三数共现命中", mode: "hit", kind: "digits" },
-  { key: "anyTwoHeweiHit", label: "全码池二数合尾5码命中", mode: "hit", kind: "heweiTails" },
-  { key: "anyThreeHeweiHit", label: "全码池三数合尾5码命中", mode: "hit", kind: "heweiTails" }
+  { key: "anyTwoHeweiHit", label: "二数合尾宽命中（高基线参考）", mode: "hit", kind: "heweiTails", scoreClass: "wide-hit-baseline" },
+  { key: "anyThreeHeweiHit", label: "三数合尾宽命中（高基线参考）", mode: "hit", kind: "heweiTails", scoreClass: "wide-hit-baseline" }
 ];
 
 function finiteNumberOrNull(value) {
@@ -4940,7 +5212,13 @@ function finiteNumberOrNull(value) {
 function autoTop6SafetyThreshold(item) {
   const key = String(item && item.key || "");
   if (item && item.kind === "hewei" && key === "unified") return HEWEI_UNIFIED_GUARD_RATE;
+  if (item && item.kind === "hewei") return HEWEI_GUARD_RATE;
   if (item && item.kind === "extra" && key === "threeDigitHit") return 5;
+  // 高基线模型不用 85% 原始通过率冒充「健康/强预测」
+  if (item && item.kind === "extra" && isHighBaselineScoreKey(key)) {
+    const meta = highBaselineScoreMeta(key);
+    return Math.max(0, Number(meta && meta.baseline || 0) - 3);
+  }
   return MODEL_LOW_HIT_RATE;
 }
 
@@ -5192,11 +5470,20 @@ function autoTop6RecordSuccess(item, record) {
     ) return !extraStructureMatched(record, item.key, code);
     if (/^recentExactCodeAvoid(?:\d+|Max)$/.test(String(item.key || ""))) {
       const actualCode = firstFourCode(record);
-      const codes = (Array.isArray(item.codes) ? item.codes : [])
-        .map(String)
-        .filter((value) => /^\d{4}$/.test(value));
-      if (!/^\d{4}$/.test(actualCode) || !codes.length) return null;
-      return !new Set(codes).has(actualCode);
+      if (!/^\d{4}$/.test(actualCode)) return null;
+      // 优先用 tip 内冻结 codes；已 omit 时按条目 lookback 对「该历史行之前」的窗口重建（回测）
+      let codeSet = null;
+      if (Array.isArray(item.codes) && item.codes.length) {
+        codeSet = new Set(item.codes.map(String).filter((value) => /^\d{4}$/.test(value)));
+      } else if (item.codesOmitted || Number(item.codeCount || 0) > 0 || item.lookback != null) {
+        const lookback = recentExactCodeWindowFromKey(item.key, item.value || item.code || item.lookback);
+        const history = (typeof state !== "undefined" && state && Array.isArray(state.history)) ? state.history : [];
+        const idx = history.indexOf(record);
+        const previousRows = idx >= 0 ? history.slice(idx + 1) : history;
+        codeSet = recentExactCodeSet(previousRows, lookback);
+      }
+      if (!codeSet || !codeSet.size) return null;
+      return !codeSet.has(actualCode);
     }
     let matched = false;
     if (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") {
@@ -5225,6 +5512,9 @@ function autoTop6RecordSuccess(item, record) {
     if (!/^[大小单双]{4}$/.test(code)) return null;
     const actualShape = autoTop6PatternOf(record, shapeKey);
     if (!actualShape) return null;
+    if (Number(item.shapeScopeLength || 0) === 3) {
+      return actualShape.slice(0, 3) !== code.slice(0, 3);
+    }
     return actualShape !== code;
   }
   if (item.kind === "brotherNumber") {
@@ -5293,6 +5583,48 @@ function autoTop6RateStatsMultiWindow(history, item, limits) {
   return out;
 }
 
+function resolveHeweiAlgorithmMeta(prediction, heweiKey) {
+  const detail = prediction && prediction.detail && typeof prediction.detail === "object" ? prediction.detail : {};
+  if (heweiKey === "unified") {
+    const src = detail.threeFourHeweiKill || {};
+    return {
+      recommend: prediction && prediction.threeFourHeweiKillDigit || src.killDigit || "",
+      main: src.primaryDigit || prediction && prediction.threeFourHeweiKillDigit || src.killDigit || "",
+      backup: prediction && prediction.threeFourHeweiBackupDigit || src.backupDigit || "",
+      stability: src.stability || null,
+      confidence: src.confidence || null,
+      recommendable: src.recommendable,
+      reason: src.reason || "",
+      algorithm: src.algorithm || ""
+    };
+  }
+  if (heweiKey === "total" || heweiKey === "totalHewei") {
+    const src = detail.totalHeweiKill || {};
+    return {
+      recommend: prediction && prediction.totalHeweiKill || src.killHewei || "",
+      main: src.primaryDigit || prediction && prediction.totalHeweiKill || src.killHewei || "",
+      backup: prediction && prediction.totalHeweiBackupDigit || src.backupDigit || "",
+      stability: src.stability || null,
+      confidence: src.confidence || null,
+      recommendable: src.recommendable,
+      reason: src.reason || "",
+      algorithm: src.algorithm || ""
+    };
+  }
+  const item = ((prediction && prediction.independentHeweiKills) || {})[heweiKey] || {};
+  const detailItem = ((detail.independentHeweiKills) || {})[heweiKey] || item;
+  return {
+    recommend: item.killDigit || detailItem.killDigit || "",
+    main: item.primaryDigit || detailItem.primaryDigit || item.killDigit || "",
+    backup: item.backupDigit || detailItem.backupDigit || "",
+    stability: detailItem.stability || item.stability || null,
+    confidence: detailItem.confidence || item.confidence || null,
+    recommendable: detailItem.recommendable !== undefined ? detailItem.recommendable : item.recommendable,
+    reason: detailItem.reason || item.reason || "",
+    algorithm: detailItem.algorithm || item.algorithm || ""
+  };
+}
+
 function autoTop6DecorateItem(history, item, evaluatedCount) {
   const stats = autoTop6RateStatsMultiWindow(history, item, [30, 60, 120, MODEL_STABLE_WINDOW]);
   const s30 = stats[30];
@@ -5324,6 +5656,26 @@ function autoTop6DecorateItem(history, item, evaluatedCount) {
   if (s30.missStreak >= AUTO_TOP6_RECENT_MISS_LIMIT) stableReasons.push(`当前连错${s30.missStreak}手`);
   if (s120.total >= 80 && s120.maxMissStreak >= 5) stableReasons.push(`120期最大连错${s120.maxMissStreak}手`);
   if (s300.total >= 300 && s300.maxMissStreak >= 7) stableReasons.push(`1000期最大连错${s300.maxMissStreak}手`);
+
+  // 合尾：优先对齐算法层 block stability / recommendable，避免「算法稳定、框架观察」分叉
+  const algoStability = item && item.algorithmStability && typeof item.algorithmStability === "object"
+    ? item.algorithmStability
+    : null;
+  if (item && item.kind === "hewei" && algoStability) {
+    const block = algoStability.block || {};
+    const floor = Number(block.floor || (item.key === "unified" ? HEWEI_UNIFIED_BLOCK_FLOOR : HEWEI_BLOCK_FLOOR));
+    if (Number(block.weakBlocks || 0) > 0) stableReasons.push(`算法弱块${Number(block.weakBlocks)}个`);
+    if (block.minRate != null && Number(block.minRate) < floor) {
+      stableReasons.push(`算法块最低${Number(block.minRate).toFixed(2)}低于${floor}`);
+    }
+    if (algoStability.lower120 != null && Number(algoStability.lower120) < Number(algoStability.guardRate || threshold) - 13) {
+      stableReasons.push(`算法下界${Number(algoStability.lower120).toFixed(2)}不足`);
+    }
+  }
+  if (item && item.kind === "hewei" && item.recommendable === false) {
+    stableReasons.push("算法标记低置信合尾");
+  }
+
   const stableGate = stableReasons.length === 0;
   return Object.assign({}, item, {
     code: cleanAutoTop6Code(item.code),
@@ -5374,23 +5726,20 @@ function autoTop6CandidateItems(prediction) {
 
   const independentHeweiKills = prediction && prediction.independentHeweiKills || {};
   AUTO_TOP6_HEWEI.forEach((hewei) => {
-    let recommend = "";
-    let main = "";
-    let backup = "";
-    if (hewei.key === "unified") {
-      const detail = prediction && prediction.detail && prediction.detail.threeFourHeweiKill || {};
-      recommend = prediction.threeFourHeweiKillDigit || detail.killDigit || "";
-      main = detail.primaryDigit || recommend;
-      backup = prediction.threeFourHeweiBackupDigit || detail.backupDigit || "";
-    } else {
-      const item = independentHeweiKills[hewei.key] || {};
-      recommend = item.killDigit || "";
-      main = item.primaryDigit || recommend;
-      backup = item.backupDigit || "";
-    }
-    add({ kind: "hewei", key: hewei.key, side: "recommend", name: `${hewei.label}推荐`, code: recommend });
-    add({ kind: "hewei", key: hewei.key, side: "main", name: `${hewei.label}主攻`, code: main });
-    add({ kind: "hewei", key: hewei.key, side: "backup", name: `${hewei.label}备用`, code: backup });
+    const meta = resolveHeweiAlgorithmMeta(prediction, hewei.key);
+    const recommend = meta.recommend;
+    const main = meta.main;
+    const backup = meta.backup;
+    const shared = {
+      algorithmStability: meta.stability || null,
+      confidence: meta.confidence || null,
+      recommendable: meta.recommendable,
+      algorithmReason: meta.reason || "",
+      algorithm: meta.algorithm || ""
+    };
+    add(Object.assign({ kind: "hewei", key: hewei.key, side: "recommend", name: `${hewei.label}推荐`, code: recommend }, shared));
+    add(Object.assign({ kind: "hewei", key: hewei.key, side: "main", name: `${hewei.label}主攻`, code: main }, shared));
+    add(Object.assign({ kind: "hewei", key: hewei.key, side: "backup", name: `${hewei.label}备用`, code: backup }, shared));
   });
 
   const extraKills = prediction && prediction.extraKills || {};
@@ -5646,13 +5995,13 @@ const AUTO_TOP6_SNAPSHOT_VERSION = "backend-auto-top6-snapshot-v10-formal6-uniqu
 const RECOMMEND2_SNAPSHOT_VERSION = "backend-recommend2-snapshot-v15-formal-anytwo5";
 const KILL_FRAMEWORK_SNAPSHOT_VERSION = "backend-kill-framework-snapshot-v7-formal-anytwo5";
 const KILL_FRAMEWORK_ITEM_COUNT = 8;
-const COMPACT_ATTACK_SNAPSHOT_VERSION = "backend-three-ding-framework-v5-qbs-fixed3-hewei-anytwo5-mixed";
-const COMPACT_ATTACK_ITEM_COUNT = 5;
+const COMPACT_ATTACK_SNAPSHOT_VERSION = "backend-three-ding-framework-v7-structural-anytwo";
+const COMPACT_ATTACK_ITEM_COUNT = 6;
 const THREE_DING_QBS_KEYS = new Set(["wan", "qian", "bai"]);
-const THREE_DING_TWO_SNAPSHOT_VERSION = "backend-three-ding-two-v5-hewei-first-2pos-anytwo5-qbs";
-const THREE_DING_TWO_ITEM_COUNT = 4;
-const THREE_DING_ONE_SNAPSHOT_VERSION = "backend-three-ding-one-v5-hewei-first-2pos-anytwo5-alt";
-const THREE_DING_ONE_ITEM_COUNT = 5;
+const THREE_DING_TWO_SNAPSHOT_VERSION = "backend-three-ding-two-v8-structural-anytwo";
+const THREE_DING_TWO_ITEM_COUNT = 5;
+const THREE_DING_ONE_SNAPSHOT_VERSION = "backend-three-ding-one-v7-structural-anytwo";
+const THREE_DING_ONE_ITEM_COUNT = 6;
 const SIDE_STABLE_SNAPSHOT_VERSION = "backend-side-stable-snapshot-v4-1pos-2hewei-2digit-sum-anytwo5-three5-old1300";
 const SIDE_STABLE_ITEM_COUNT = 8;
 const SIDE_STABLE_TARGET_MIN = 4900;
@@ -5758,6 +6107,7 @@ function compactAttackSnapshotIsComplete(snapshot) {
     const code = String(item.code || "");
     return /^\d{5}$/.test(code) && new Set(code.split("")).size === 5 && !isUniformParityDigitSet(code);
   }).length;
+  const shapeCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小单双]{3,4}$/.test(String(item.code || ""))).length;
   const uniquePositionKeys = new Set(positions.map((item) => String(item.key || "")));
   return !!(
     snapshot &&
@@ -5768,7 +6118,8 @@ function compactAttackSnapshotIsComplete(snapshot) {
     uniquePositionKeys.size === 3 &&
     ["wan", "qian", "bai"].every((key) => uniquePositionKeys.has(key)) &&
     heweiCount === 1 &&
-    anyTwoCount === 1
+    anyTwoCount === 1 &&
+    shapeCount === 1
   );
 }
 
@@ -5779,15 +6130,19 @@ function threeDingTwoSnapshotIsComplete(snapshot) {
   const uniquePositionKeys = new Set(positions.map((item) => String(item.key || "")));
   const heweiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai" && /^\d$/.test(String(item.code || ""))).length;
   const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
+  const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小单双]{3,4}$/.test(String(item.code || ""))).length;
+  const pairCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(String(item.key || "")) && /^\d{2}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
     snapshot.version === THREE_DING_TWO_SNAPSHOT_VERSION &&
     formal.length === THREE_DING_TWO_ITEM_COUNT &&
     items.length === THREE_DING_TWO_ITEM_COUNT &&
-    positions.length === 2 &&
-    uniquePositionKeys.size === 2 &&
+    positions.length === 1 &&
+    uniquePositionKeys.size === 1 &&
     heweiCount === 1 &&
-    anyTwoCount === 1
+    anyTwoCount === 1 &&
+    reverseCount === 1 &&
+    pairCount === 1
   );
 }
 
@@ -5798,6 +6153,7 @@ function threeDingOneSnapshotIsComplete(snapshot) {
   const uniquePositionKeys = new Set(positions.map((item) => String(item.key || "")));
   const heweiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai" && /^\d$/.test(String(item.code || ""))).length;
   const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
+  const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小单双]{3,4}$/.test(String(item.code || ""))).length;
   const pairCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(String(item.key || "")) && /^\d{2}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
@@ -5808,6 +6164,7 @@ function threeDingOneSnapshotIsComplete(snapshot) {
     uniquePositionKeys.size === 2 &&
     heweiCount === 1 &&
     anyTwoCount === 1 &&
+    reverseCount === 1 &&
     pairCount === 1
   );
 }
@@ -5822,14 +6179,16 @@ function sideStableSnapshotIsComplete(snapshot) {
   const sumAvoidCount = formal.filter((item) => item && item.kind === "extra" && item.key === "sumAvoid").length;
   const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
-  const recentCount = formal.filter((item) => item
-    && item.kind === "extra"
-    && item.key === "recentExactCodeAvoid1300"
-    && String(item.code || "") === "1300"
-    && Number(item.codeCount || 0) >= 1000
-    && Array.isArray(item.codes)
-    && item.codes.length >= 1000
-    && isFinite(Number(item.generatedGroupCount))).length;
+  // 封存后 compactRecentExactCodesOnPrediction 会省略 codes；与 extraModelIntegrityReason 一致：
+  // codesOmitted + codeCount>=1000 即视为完整，避免 tip 门闩永久 incomplete→反复重生堵死事件循环。
+  const recentCount = formal.filter((item) => {
+    if (!item || item.kind !== "extra" || item.key !== "recentExactCodeAvoid1300") return false;
+    if (String(item.code || "") !== "1300") return false;
+    if (Number(item.codeCount || 0) < 1000) return false;
+    if (!isFinite(Number(item.generatedGroupCount))) return false;
+    if (item.codesOmitted === true) return true;
+    return Array.isArray(item.codes) && item.codes.length >= 1000;
+  }).length;
   const txt = snapshot && snapshot.txtSelection || {};
   const rawCount = Number(txt.rawCount || 0);
   const selectedCount = Number(txt.selectedCount || 0);
@@ -6132,6 +6491,8 @@ function sealPredictionSnapshots(prediction, latest) {
     prediction.snapshotsSealedAt = isoNow();
     prediction.snapshotsSealedBaseUid = String(prediction.baseUid || "");
     prediction.allSnapshotsSealed = allSealed;
+    // 封存完成后立刻丢掉 recentExactCode 的 codes 大数组（单 tip 可达数千×5 份副本）
+    compactRecentExactCodesOnPrediction(prediction, { force: true });
   } else {
     prediction.allSnapshotsSealed = false;
   }
@@ -6573,25 +6934,22 @@ function buildKillFrameworkSnapshot(prediction, history, options) {
     repairReport.push("杀码框架反向形态不足2个，等待定位项稳定后自动恢复。");
   }
 
-  ["anyTwoHeweiHit"].forEach((extraKey) => {
-    const pool = candidates.filter((item) => item && item.kind === "extra" && item.key === extraKey).sort((a, b) => {
-      if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
-      return order(a, b);
-    });
-    const picked = pool[0] || null;
-    if (!picked) {
-      repairReport.push(`杀码框架固定模型缺失：${extraKey}`);
-      return;
-    }
-    if (picked.lowConfidence) {
-      const rate = picked.safetyRate === null ? "样本不足" : `${Number(picked.safetyRate).toFixed(2)}%`;
-      repairReport.push(`杀码框架固定加入观察项：${picked.name} ${picked.code}，安全率 ${rate}${picked.stabilityReason ? "，原因 " + picked.stabilityReason : ""}`);
-    }
-    if (!used.has(autoTop6ItemId(picked))) {
-      used.add(autoTop6ItemId(picked));
-      chosen.push(picked);
-    }
-  });
+  const killAnyTwo = pickStructuralAnyTwoHeweiHit(
+    safeHistory,
+    evaluatedCount,
+    heweiScopeIndexesFromItems(chosen),
+    chosen,
+    prediction,
+    new Set(),
+    resolveStableMathAssist(prediction)
+  );
+  if (!killAnyTwo) {
+    repairReport.push("杀码框架固定模型缺失：anyTwoHeweiHit");
+  } else if (!used.has(autoTop6ItemId(killAnyTwo))) {
+    repairReport.push(`杀码框架二数合结构对齐：${killAnyTwo.code}`);
+    used.add(autoTop6ItemId(killAnyTwo));
+    chosen.push(killAnyTwo);
+  }
 
   const killFrameworkAnyThree = digitSetCandidatesMixedParity(5)
     .map((code) => autoTop6DecorateItem(safeHistory, {
@@ -6768,14 +7126,15 @@ function buildCompactAttackSnapshot(prediction, history, options) {
   }
 
   function positionStrengthScore(item) {
-    // 定位加强：健康门 + 硬度 + 更稳排除码优先 + 近窗命中
+    // 定位加强：健康门 + 硬度 + 更稳排除码优先 + 近窗命中 + 无动态单码时形态/跨度优先
     const digit = frameworkSingleExcludeDigitToken(item);
     const gateBoost = item && item.stabilityGate ? 12000 : 0;
     const hardnessBoost = Number(item && item.hardnessScore || 0) * 40;
     const preferBoost = digit && preferExcludeDigits.has(digit) ? 18000 : 0;
+    const stableBoost = stableMathAssistPickBoost(assist, item);
     const safetyBoost = Number(item && item.safetyRate || 0) * 20;
     const missPenalty = Number(item && item.recentMissStreak || 0) * 80;
-    return gateBoost + hardnessBoost + preferBoost + safetyBoost - missPenalty;
+    return gateBoost + hardnessBoost + preferBoost + stableBoost + safetyBoost - missPenalty;
   }
 
   function noteLow(pool, label) {
@@ -6863,6 +7222,8 @@ function buildCompactAttackSnapshot(prediction, history, options) {
   const sideOrder = ["backup", "main", "recommend"];
   if (preferExcludeDigits.size) {
     repairReport.push(`三定框架定位加强：更稳排除码优先 ${Array.from(preferExcludeDigits).join("")}`);
+  } else if ((assist.excludeShapes || []).length || (assist.excludeSpans || []).length) {
+    repairReport.push(`三定框架定位加强：更稳形态/跨度辅助（单码空：形态${(assist.excludeShapes || []).slice(0, 2).join("、") || "无"}，跨度${(assist.excludeSpans || []).slice(0, 3).join("、") || "无"}）`);
   } else {
     repairReport.push("三定框架定位加强：优先备用/主攻算法侧与硬度分");
   }
@@ -6937,29 +7298,33 @@ function buildCompactAttackSnapshot(prediction, history, options) {
     repairReport.push(`三定框架三项定位已固定落到千百十（加强选码：${sidesUsed.join("/")}）。`);
   }
 
-  // 3) 二数合5码：禁全单/全双
+  // 3) 二数合5码：结构对齐合尾/定位/Codex，禁全单/全双
   const scopeForRank = heweiScopeIndexesFromItems(chosen);
-  let picked = pickRankedAnyTwoHeweiHit(safeHistory, evaluatedCount, scopeForRank, candidates, new Set());
+  let picked = pickStructuralAnyTwoHeweiHit(safeHistory, evaluatedCount, scopeForRank, chosen, prediction, new Set(), assist);
   if (picked && isUniformParityDigitSet(String(picked.code || ""))) {
     repairReport.push(`三定框架二数合拒绝全单/全双：${picked.code}`);
     picked = null;
   }
   if (!picked) {
-    // 兜底：从混合奇偶池再取最高分
-    const pool = rankAnyTwoHeweiHitPool(safeHistory, evaluatedCount, scopeForRank, candidates)
-      .filter((item) => item && /^\d{5}$/.test(String(item.code || "")) && !isUniformParityDigitSet(String(item.code || "")));
-    picked = pool[0] || null;
-  }
-  if (!picked) {
     repairReport.push("三定框架固定模型缺失：anyTwoHeweiHit");
   } else {
-    if (picked.lowConfidence) {
-      const rate = picked.safetyRate === null ? "样本不足" : `${Number(picked.safetyRate).toFixed(2)}%`;
-      repairReport.push(`三定框架固定加入观察项：${picked.name} ${picked.code}，安全率 ${rate}${picked.stabilityReason ? "，原因 " + picked.stabilityReason : ""}`);
-    } else {
-      repairReport.push(`三定框架二数合（禁全单全双）：${picked.code}`);
-    }
+    repairReport.push(`三定框架二数合结构对齐：${picked.code}`);
     commitItem(picked);
+  }
+
+  const stableShape = pickStableMathShapeCandidate(assist, safeHistory, evaluatedCount, 3);
+  if (stableShape) {
+    if (commitItem(stableShape)) {
+      repairReport.push(`三定框架更稳排除形态：${stableShape.name} ${String(stableShape.code || "").slice(0, 3)}`);
+    }
+  } else if ((assist.excludeSpans || []).length) {
+    const spanRaw = stableMathSpanFrameworkItem(assist.excludeSpans[0]);
+    if (spanRaw) {
+      const spanItem = autoTop6DecorateItem(safeHistory, spanRaw, evaluatedCount);
+      if (commitItem(spanItem)) {
+        repairReport.push(`三定框架更稳排除跨度：${spanItem.code}`);
+      }
+    }
   }
 
   const heweiScopeIndexes = heweiScopeIndexesFromItems(chosen);
@@ -6991,10 +7356,10 @@ function buildCompactAttackSnapshot(prediction, history, options) {
     framework: {
       positionCount: 3,
       heweiComboCount: 1,
-      shapeParityCount: 0,
+      shapeParityCount: chosen.some((item) => item && item.kind === "derivedReverseShape") ? 1 : 0,
       heweiCount: 1,
       pool: "qianBaiShi",
-      pickOrder: ["hewei.wanQianBai", "positionx3-strengthened", "anyTwoHeweiHit-mixedParity"],
+      pickOrder: ["hewei.wanQianBai", "positionx3-strengthened", "anyTwoHeweiHit-mixedParity", "stableMathShapeOrSpan"],
       positionSidePreference: sideOrder.slice(),
       heweiScopeIndexes: heweiScopeIndexes.length >= 2 ? heweiScopeIndexes.slice() : undefined
     },
@@ -7040,10 +7405,14 @@ function buildCompactAttackSnapshot(prediction, history, options) {
 
 function ensurePredictionCompactAttackSnapshot(prediction, history) {
   if (!prediction || typeof prediction !== "object") return null;
-  if (compactAttackSnapshotIsComplete(prediction.compactAttack) && prediction.compactAttack.stableMathAssist) {
+  const assist = resolveStableMathAssist(prediction);
+  if (
+    compactAttackSnapshotIsComplete(prediction.compactAttack)
+    && prediction.compactAttack.stableMathAssist
+    && !snapshotNeedsStableMathAssistRefresh(prediction.compactAttack, assist)
+  ) {
     return prediction.compactAttack;
   }
-  const assist = resolveStableMathAssist(prediction);
   prediction.compactAttack = buildCompactAttackSnapshot(prediction, history);
   attachStableMathAssistToSnapshot(prediction.compactAttack, assist, "三定框架");
   prediction.compactAttackItems = prediction.compactAttack.items;
@@ -7084,6 +7453,7 @@ function mapFrameworkSnapshotItems(chosen, heweiScopeIndexes, itemCount) {
     codeCount: item.codeCount,
     codes: Array.isArray(item.codes) ? item.codes.slice(0, recentExactCodeCodeLimit(item)) : undefined,
     shapeKey: item.shapeKey || "",
+    shapeScopeLength: item.shapeScopeLength || undefined,
     derivedFrom: item.derivedFrom || "",
     heweiScopeIndexes: (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") && Array.isArray(heweiScopeIndexes) && heweiScopeIndexes.length >= 2
       ? heweiScopeIndexes.slice()
@@ -7098,6 +7468,17 @@ function frameworkAnyTwoCodesFromItems(items) {
     const code = String(item.code || "");
     // 全码池二数合固定 5 码；旧 4 码残留不得进入分框错开集合
     if (/^\d{5}$/.test(code) && new Set(code.split("")).size === 5) out.add(code);
+  });
+  return out;
+}
+
+function frameworkTwoDigitCodesFromItems(items) {
+  const out = new Set();
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    if (!item || item.kind !== "extra") return;
+    if (!["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(String(item.key || ""))) return;
+    const code = String(item.code || "");
+    if (/^\d{2}$/.test(code)) out.add(code);
   });
   return out;
 }
@@ -7174,6 +7555,89 @@ function pickRankedAnyTwoHeweiHit(history, evaluatedCount, scopeIndexes, baseCan
   return pool.find((item) => item && /^\d{5}$/.test(String(item.code || ""))) || null;
 }
 
+function structuralAnyTwoAlignment(chosenItems, prediction, assist) {
+  const kills = new Set(frameworkSingleExcludeDigits(chosenItems));
+  const keep = new Set(DIGIT_POOL.filter((digit) => !kills.has(digit)));
+  const prefer = new Set();
+  const pk = prediction && prediction.positionKills ? prediction.positionKills : {};
+  ["wan", "qian", "bai", "shi"].forEach((key) => {
+    const row = pk[key] || {};
+    if (row.codexStableRecommended && /^\d$/.test(String(row.codexStableDigit || ""))) {
+      const digit = String(row.codexStableDigit);
+      if (!kills.has(digit)) prefer.add(digit);
+    }
+    if (/^\d$/.test(String(row.backup || ""))) {
+      const digit = String(row.backup);
+      if (!kills.has(digit)) prefer.add(digit);
+    }
+    if (/^\d$/.test(String(row.main || ""))) kills.add(String(row.main));
+    (Array.isArray(row.killDigits) ? row.killDigits : []).forEach((digit) => {
+      if (/^\d$/.test(String(digit))) kills.add(String(digit));
+    });
+  });
+  if (assist && assist.ok) {
+    (assist.excludeDigits || []).forEach((digit) => {
+      if (/^\d$/.test(String(digit))) kills.add(String(digit));
+    });
+  }
+  DIGIT_POOL.forEach((digit) => {
+    if (!kills.has(digit)) keep.add(digit);
+  });
+  return { keep, prefer, kills };
+}
+
+function scoreStructuralAnyTwoCode(code, alignment) {
+  const digits = String(code || "").split("");
+  const { keep, prefer, kills } = alignment;
+  let score = 0;
+  digits.forEach((digit) => {
+    if (keep.has(digit)) score += 14;
+    else if (kills.has(digit)) score -= 100;
+    if (prefer.has(digit)) score += 30;
+  });
+  score += digits.filter((digit) => keep.has(digit)).length * 3;
+  score -= digits.filter((digit) => kills.has(digit)).length * 40;
+  return score;
+}
+
+function pickStructuralAnyTwoHeweiHit(history, evaluatedCount, scopeIndexes, chosenItems, prediction, avoidCodes, assist) {
+  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
+  const avoid = avoidCodes instanceof Set ? avoidCodes : new Set(Array.isArray(avoidCodes) ? avoidCodes : []);
+  const alignment = structuralAnyTwoAlignment(chosenItems, prediction, assist || resolveStableMathAssist(prediction));
+  const codes = digitSetCandidatesMixedParity(5);
+  let bestCode = null;
+  let bestScore = -Infinity;
+  codes.forEach((code) => {
+    if (avoid.has(code)) return;
+    const score = scoreStructuralAnyTwoCode(code, alignment);
+    if (score > bestScore || (score === bestScore && bestCode && code.localeCompare(bestCode) < 0)) {
+      bestScore = score;
+      bestCode = code;
+    }
+  });
+  if (!bestCode) bestCode = codes.find((code) => !avoid.has(code)) || "02468";
+  let item = {
+    kind: "extra",
+    key: "anyTwoHeweiHit",
+    side: "recommend",
+    name: "全码池二数合尾5码命中",
+    code: bestCode,
+    mode: "hit",
+    derivedFrom: "structural-align-position-hewei",
+    structuralPick: true,
+    algorithm: "structural-any-two-hewei-5",
+    hitMode: true,
+    matchMode: "hit-if-any-two-hewei-tail-in-selected-five",
+    dynamicEveryPrediction: true
+  };
+  if (Array.isArray(scopeIndexes) && scopeIndexes.length >= 2) item.heweiScopeIndexes = scopeIndexes.slice();
+  item = autoTop6DecorateItem(safeHistory, item, evaluatedCount);
+  item.structuralPick = true;
+  item.derivedFrom = "structural-align-position-hewei";
+  if (Array.isArray(scopeIndexes) && scopeIndexes.length >= 2) item.heweiScopeIndexes = scopeIndexes.slice();
+  return item;
+}
+
 function buildThreeDingVariantHelpers(prediction, history, options) {
   const opts = options && typeof options === "object" ? options : {};
   const comboWindow = Math.max(30, Math.min(MODEL_STABLE_WINDOW, Number(opts.comboWindow || MODEL_STABLE_WINDOW)));
@@ -7188,6 +7652,9 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
   const avoidAnyTwoCodes = opts.avoidAnyTwoCodes instanceof Set
     ? opts.avoidAnyTwoCodes
     : new Set(Array.isArray(opts.avoidAnyTwoCodes) ? opts.avoidAnyTwoCodes : []);
+  const avoidTwoDigitCodes = opts.avoidTwoDigitCodes instanceof Set
+    ? opts.avoidTwoDigitCodes
+    : new Set(Array.isArray(opts.avoidTwoDigitCodes) ? opts.avoidTwoDigitCodes : []);
   const preferredPositionSides = Array.isArray(opts.preferredPositionSides) && opts.preferredPositionSides.length
     ? opts.preferredPositionSides.slice()
     : ["recommend", "main", "backup"];
@@ -7350,21 +7817,23 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
   }
 
   function pickAnyTwo(label, scopeIndexes) {
-    const picked = pickRankedAnyTwoHeweiHit(safeHistory, evaluatedCount, scopeIndexes, candidates, avoidAnyTwoCodes);
+    const picked = pickStructuralAnyTwoHeweiHit(
+      safeHistory,
+      evaluatedCount,
+      scopeIndexes,
+      chosen,
+      prediction,
+      avoidAnyTwoCodes,
+      resolveStableMathAssist(prediction)
+    );
     if (!picked) {
       repairReport.push(`${label}固定模型缺失：anyTwoHeweiHit`);
       return;
     }
-    if (picked.lowConfidence) {
-      const rate = picked.safetyRate === null ? "样本不足" : `${Number(picked.safetyRate).toFixed(2)}%`;
-      repairReport.push(`${label}二数合观察项：${picked.name} ${picked.code}，安全率 ${rate}`);
-    }
     if (avoidAnyTwoCodes.has(String(picked.code || ""))) {
       repairReport.push(`${label}二数合无可错开候选，回退 ${picked.code}`);
-    } else if (String(picked.derivedFrom || "") === "anyTwo-alt-rank") {
-      repairReport.push(`${label}二数合分框候选：${picked.code}`);
     } else {
-      repairReport.push(`${label}二数合：${picked.code}`);
+      repairReport.push(`${label}二数合结构对齐：${picked.code}`);
     }
     const id = autoTop6ItemId(picked);
     if (!used.has(id)) {
@@ -7386,16 +7855,31 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
     let picked = null;
     for (let index = 0; index < pool.length; index += 1) {
       const item = pool[index];
-      const digits = String(item.code || "").split("");
+      const code = String(item.code || "");
+      if (avoidTwoDigitCodes.has(code)) continue;
+      const digits = code.split("");
       const overlap = digits.filter((digit) => avoidDigits.has(digit)).length;
       if (overlap >= 2) continue;
       picked = item;
       break;
     }
+    if (!picked) {
+      for (let index = 0; index < pool.length; index += 1) {
+        const item = pool[index];
+        const digits = String(item.code || "").split("");
+        const overlap = digits.filter((digit) => avoidDigits.has(digit)).length;
+        if (overlap >= 2) continue;
+        picked = item;
+        break;
+      }
+    }
     if (!picked) picked = pool[0] || null;
     if (!picked) {
       repairReport.push(`${label}固定模型缺失：twoDigitAvoid`);
       return;
+    }
+    if (avoidTwoDigitCodes.has(String(picked.code || ""))) {
+      repairReport.push(`${label}对数无可错开候选，回退 ${picked.code}`);
     }
     if (picked.lowConfidence) {
       const rate = picked.safetyRate === null ? "样本不足" : `${Number(picked.safetyRate).toFixed(2)}%`;
@@ -7411,6 +7895,8 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
         name: "对数避开1组",
         derivedFrom: picked.derivedFrom || originalKey
       });
+    } else {
+      repairReport.push(`${label}一对数：${picked.code}`);
     }
     const id = autoTop6ItemId(picked);
     if (!used.has(id)) {
@@ -7419,32 +7905,80 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
     }
   }
 
-  return { chosen, repairReport, pickPositions, pickWanQianBai, pickAnyTwo, pickTwoDigitAvoid };
+  function pickReverseShape(label) {
+    const assist = resolveStableMathAssist(prediction);
+    const scopeLen = 3;
+    const stableFirst = pickStableMathShapeCandidate(assist, safeHistory, evaluatedCount, scopeLen);
+    if (stableFirst) {
+      const id = autoTop6ItemId(stableFirst);
+      if (!used.has(id)) {
+        used.add(id);
+        chosen.push(stableFirst);
+        repairReport.push(`${label}更稳排除形态：${stableFirst.name} ${String(stableFirst.code || "").slice(0, scopeLen)}`);
+        return;
+      }
+    }
+    const reverseBase = chosen.filter((item) => item && item.kind === "position");
+    const reversePool = autoTop6ReverseShapeCandidatesFromPositions(reverseBase, safeHistory)
+      .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
+      .sort(order);
+    noteLow(reversePool, `${label}反向形态池`);
+    const reverseHealthy = reversePool.filter((item) => item && item.stabilityGate === true);
+    const source = reverseHealthy.length ? reverseHealthy : reversePool;
+    let reversePicked = source.slice().sort((a, b) => {
+      const delta = comboPickScore(b) - comboPickScore(a);
+      return delta || order(a, b);
+    })[0] || null;
+    if (!reversePicked) {
+      repairReport.push(`${label}排除形态暂缺，等待定位项稳定后自动恢复。`);
+      return;
+    }
+    if (!reversePicked.stabilityGate) {
+      reversePicked.repairedIntoTop = true;
+      repairReport.push(`${label}排除形态未达安全阈值，暂用最优观察项：${reversePicked.name} ${reversePicked.code}。`);
+    } else {
+      const attackShape = String(reversePicked.code || "").slice(0, 3);
+      repairReport.push(`${label}排除形态：${reversePicked.name} ${attackShape}（千百十三字攻击语，含大小/单双）`);
+    }
+    const id = autoTop6ItemId(reversePicked);
+    if (!used.has(id)) {
+      used.add(id);
+      chosen.push(reversePicked);
+    }
+  }
+
+  return { chosen, repairReport, pickPositions, pickWanQianBai, pickAnyTwo, pickTwoDigitAvoid, pickReverseShape };
 }
 
 function buildThreeDingTwoSnapshot(prediction, history, options) {
-  // 三定框架A：先定千百十合尾，再从千百十挑2位（优先备用算法码，避开合尾同码）
-  // 二数合固定按千百十三个数两两求合尾（与用户口径/原三定/B一致），不缩成仅2定位
+  // 三定框架A：千百十合尾 + 千百十挑1位除1码 + 二数合(千百十) + 排除形态1 + 一对数避开
   const ctx = buildThreeDingVariantHelpers(prediction, history, Object.assign({
     preferredPositionSides: ["backup", "main", "recommend"]
   }, options || {}));
   ctx.pickWanQianBai("三定框架A", ["recommend", "main", "backup"]);
-  // 合尾入框后再选定位，避免备用定位码占满合尾可用码导致缺第4项
-  ctx.pickPositions(2, "三定框架A");
+  // 合尾入框后再选定位，避免备用定位码占满合尾可用码
+  ctx.pickPositions(1, "三定框架A");
+  ctx.pickReverseShape("三定框架A");
+  ctx.chosen.forEach((item) => {
+    if (item && item.kind === "derivedReverseShape") item.shapeScopeLength = 3;
+  });
   const heweiScopeIndexes = [0, 1, 2];
   ctx.repairReport.push("三定框架A二数合作用位：千百十");
   ctx.pickAnyTwo("三定框架A", heweiScopeIndexes);
+  ctx.pickTwoDigitAvoid("三定框架A");
   return {
     version: THREE_DING_TWO_SNAPSHOT_VERSION,
     generatedAt: isoNow(),
     basePeriod: prediction && prediction.basePeriod || "",
     itemCount: Math.min(ctx.chosen.length, THREE_DING_TWO_ITEM_COUNT),
     framework: {
-      positionCount: 2,
+      positionCount: 1,
       heweiCount: 1,
       heweiComboCount: 1,
+      reverseShapeCount: 1,
+      pairAvoidCount: 1,
       pool: "qianBaiShi",
-      pickOrder: ["hewei.wanQianBai", "positionx2", "anyTwoHeweiHit"],
+      pickOrder: ["hewei.wanQianBai", "positionx1", "derivedReverseShape", "anyTwoHeweiHit", "twoDigitAvoid"],
       positionSidePreference: ["backup", "main", "recommend"],
       heweiScopeIndexes: heweiScopeIndexes.slice()
     },
@@ -7461,6 +7995,10 @@ function buildThreeDingOneSnapshot(prediction, history, options) {
   }, options || {}));
   ctx.pickWanQianBai("三定框架B", ["backup", "main", "recommend"]);
   ctx.pickPositions(2, "三定框架B");
+  ctx.pickReverseShape("三定框架B");
+  ctx.chosen.forEach((item) => {
+    if (item && item.kind === "derivedReverseShape") item.shapeScopeLength = 3;
+  });
   const heweiScopeIndexes = [0, 1, 2];
   ctx.repairReport.push("三定框架B二数合作用位：千百十");
   ctx.pickAnyTwo("三定框架B", heweiScopeIndexes);
@@ -7474,9 +8012,10 @@ function buildThreeDingOneSnapshot(prediction, history, options) {
       positionCount: 2,
       heweiCount: 1,
       heweiComboCount: 1,
+      reverseShapeCount: 1,
       pairAvoidCount: 1,
       pool: "qianBaiShi",
-      pickOrder: ["hewei.wanQianBai", "positionx2", "anyTwoHeweiHit", "twoDigitAvoid"],
+      pickOrder: ["hewei.wanQianBai", "positionx2", "derivedReverseShape", "anyTwoHeweiHit", "twoDigitAvoid"],
       heweiSidePreference: ["backup", "main", "recommend"],
       heweiScopeIndexes: heweiScopeIndexes.slice()
     },
@@ -7486,20 +8025,37 @@ function buildThreeDingOneSnapshot(prediction, history, options) {
   };
 }
 
+function normalizeStableMathFilterOnPrediction(prediction) {
+  if (!prediction || typeof prediction !== "object") return prediction;
+  if (prediction.stableMathFilter) {
+    prediction.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(prediction.stableMathFilter);
+  }
+  if (prediction.detail && prediction.detail.stableMathFilter) {
+    prediction.detail.stableMathFilter = prediction.stableMathFilter
+      || stableMathFilterBridge.slimStableMathFilter(prediction.detail.stableMathFilter);
+  }
+  return prediction;
+}
+
+function normalizeStableMathFiltersInState(stateObj) {
+  if (!stateObj || typeof stateObj !== "object") return stateObj;
+  if (stateObj.stableMathFilter) {
+    stateObj.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(stateObj.stableMathFilter);
+  }
+  if (stateObj.currentPrediction) normalizeStableMathFilterOnPrediction(stateObj.currentPrediction);
+  if (Array.isArray(stateObj.predictions)) {
+    stateObj.predictions.forEach((prediction) => normalizeStableMathFilterOnPrediction(prediction));
+  }
+  return stateObj;
+}
+
 function applyStableMathFilterToPrediction(prediction, filter) {
   if (!prediction || typeof prediction !== "object" || !filter || typeof filter !== "object") return prediction;
-  prediction.stableMathFilter = filter;
+  const slim = stableMathFilterBridge.slimStableMathFilter(filter);
+  if (!slim) return prediction;
+  prediction.stableMathFilter = slim;
   if (!prediction.detail || typeof prediction.detail !== "object") prediction.detail = {};
-  prediction.detail.stableMathFilter = {
-    version: filter.version,
-    latest_period: filter.latest_period || null,
-    exclude_digits: filter.exclude_digits,
-    exclude_shapes: filter.exclude_shapes,
-    exclude_spans: filter.exclude_spans,
-    exclude_sum_ranges: filter.exclude_sum_ranges,
-    summary: filter.summary,
-    framework: filter.framework
-  };
+  prediction.detail.stableMathFilter = slim;
   return prediction;
 }
 
@@ -7529,8 +8085,11 @@ function scheduleStableMathFilterRefresh(reason) {
       .then((outcome) => {
         const filter = outcome && outcome.result ? outcome.result : null;
         if (filter && typeof filter === "object") {
-          state.stableMathFilter = filter;
-          if (state.currentPrediction) applyStableMathFilterToPrediction(state.currentPrediction, filter);
+          state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(filter);
+          if (state.currentPrediction) {
+            applyStableMathFilterToPrediction(state.currentPrediction, filter);
+            ensurePredictionFrameworkSnapshots(state.currentPrediction, history);
+          }
           invalidatePanelStateCache();
           addLog("更稳数学排除已刷新", {
             trigger,
@@ -7563,12 +8122,14 @@ function scheduleStableMathFilterRefresh(reason) {
 async function handleStableMathFilterRequest(req, res, parsedUrl) {
   const refresh = parsedUrl.searchParams.get("refresh") === "1"
     || parsedUrl.searchParams.get("refresh") === "true";
+  const wantFull = parsedUrl.searchParams.get("full") === "1"
+    || parsedUrl.searchParams.get("full") === "true";
   if (refresh) {
     const history = state && Array.isArray(state.history) ? state.history : [];
     const outcome = await stableMathFilterBridge.runStableMathFilterAsync(history, { timeoutMs: 25000 });
     const filter = outcome && outcome.result ? outcome.result : null;
     if (filter && typeof filter === "object") {
-      state.stableMathFilter = filter;
+      state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(filter);
       if (state.currentPrediction) applyStableMathFilterToPrediction(state.currentPrediction, filter);
       invalidatePanelStateCache();
     }
@@ -7576,13 +8137,15 @@ async function handleStableMathFilterRequest(req, res, parsedUrl) {
       ok: !!(outcome && outcome.ok),
       refreshed: true,
       error: outcome && outcome.ok ? null : String((outcome && outcome.error) || "refresh-failed"),
-      filter: filter || null
+      filter: wantFull ? (filter || state.stableMathFilter || null) : (state.stableMathFilter || stableMathFilterBridge.slimStableMathFilter(filter))
     });
     return;
   }
-  const filter = (state && state.stableMathFilter)
-    || stableMathFilterBridge.readCachedFilter()
-    || null;
+  const filter = wantFull
+    ? (stableMathFilterBridge.readCachedFilter() || state.stableMathFilter || null)
+    : (state.stableMathFilter
+      || stableMathFilterBridge.slimStableMathFilter(stableMathFilterBridge.readCachedFilter())
+      || null);
   sendJson(res, filter ? 200 : 404, {
     ok: !!filter,
     refreshed: false,
@@ -7591,11 +8154,144 @@ async function handleStableMathFilterRequest(req, res, parsedUrl) {
   });
 }
 
+function buildExclusionModelPayload(prediction, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const includeFullFilter = opts.includeFullFilter === true;
+  const p = prediction && typeof prediction === "object"
+    ? prediction
+    : (state && state.currentPrediction && typeof state.currentPrediction === "object" ? state.currentPrediction : {});
+  const filterRaw = includeFullFilter
+    ? (stableMathFilterBridge.readCachedFilter() || p.stableMathFilter || state.stableMathFilter || null)
+    : (p.stableMathFilter
+      || state.stableMathFilter
+      || stableMathFilterBridge.slimStableMathFilter(stableMathFilterBridge.readCachedFilter())
+      || null);
+  const assist = resolveStableMathAssist(p);
+  const independent = p.independentHeweiKills && typeof p.independentHeweiKills === "object" ? p.independentHeweiKills : {};
+  return {
+    model: "Exclusion Model",
+    version: "exclusion-model-v1",
+    generatedAt: isoNow(),
+    basePeriod: p.basePeriod || "",
+    latestPeriod: assist.latestPeriod || p.basePeriod || "",
+    source: {
+      stableMath: assist.source || "cache",
+      predictionId: p.id || ""
+    },
+    exclusions: {
+      stableMath: {
+        excludeDigits: assist.excludeDigits || [],
+        excludeShapes: assist.excludeShapes || [],
+        excludeSpans: assist.excludeSpans || [],
+        excludeSumRanges: assist.excludeSumRanges || [],
+        excludeRepeats: assist.excludeRepeats || [],
+        excludeConsecutives: assist.excludeConsecutives || [],
+        excludeParityRatios: assist.excludeParityRatios || [],
+        excludeSizeRatios: assist.excludeSizeRatios || [],
+        summary: assist.summary || null
+      },
+      hewei: {
+        total: String(p.totalHeweiKill == null ? "" : p.totalHeweiKill),
+        unified: String(p.threeFourHeweiKillDigit == null ? "" : p.threeFourHeweiKillDigit),
+        wanQianBai: independent.wanQianBai ? String(independent.wanQianBai.killDigit == null ? "" : independent.wanQianBai.killDigit) : "",
+        qianBaiShi: independent.qianBaiShi ? String(independent.qianBaiShi.killDigit == null ? "" : independent.qianBaiShi.killDigit) : "",
+        wanQianBaiShi: independent.wanQianBaiShi ? String(independent.wanQianBaiShi.killDigit == null ? "" : independent.wanQianBaiShi.killDigit) : "",
+        reconcileNotes: (p.detail && Array.isArray(p.detail.heweiReconcileNotes)) ? p.detail.heweiReconcileNotes.slice(0, 20) : []
+      },
+      position: {
+        wan: p.positionKills && p.positionKills.wan ? String(p.positionKills.wan.main == null ? "" : p.positionKills.wan.main) : "",
+        qian: p.positionKills && p.positionKills.qian ? String(p.positionKills.qian.main == null ? "" : p.positionKills.qian.main) : "",
+        bai: p.positionKills && p.positionKills.bai ? String(p.positionKills.bai.main == null ? "" : p.positionKills.bai.main) : "",
+        shi: p.positionKills && p.positionKills.shi ? String(p.positionKills.shi.main == null ? "" : p.positionKills.shi.main) : ""
+      }
+    },
+    stableMathFilter: filterRaw
+  };
+}
+
+async function handleExclusionModelRequest(req, res, parsedUrl) {
+  const refresh = parsedUrl.searchParams.get("refresh") === "1"
+    || parsedUrl.searchParams.get("refresh") === "true";
+  const wantFull = parsedUrl.searchParams.get("full") === "1"
+    || parsedUrl.searchParams.get("full") === "true";
+
+  if (refresh) {
+    const history = state && Array.isArray(state.history) ? state.history : [];
+    const outcome = await stableMathFilterBridge.runStableMathFilterAsync(history, { timeoutMs: 25000 });
+    const filter = outcome && outcome.result ? outcome.result : null;
+    if (filter && typeof filter === "object") {
+      state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(filter);
+      if (state.currentPrediction) {
+        applyStableMathFilterToPrediction(state.currentPrediction, filter);
+        ensurePredictionFrameworkSnapshots(state.currentPrediction, state.history);
+      }
+      invalidatePanelStateCache();
+    }
+    const payload = buildExclusionModelPayload(state && state.currentPrediction, {
+      includeFullFilter: wantFull
+    });
+    sendJson(res, outcome && outcome.ok ? 200 : 500, {
+      ok: !!(outcome && outcome.ok),
+      refreshed: true,
+      running: stableMathFilterRunning,
+      error: outcome && outcome.ok ? null : String((outcome && outcome.error) || "refresh-failed"),
+      model: payload
+    });
+    return;
+  }
+
+  const payload = buildExclusionModelPayload(state && state.currentPrediction, {
+    includeFullFilter: wantFull
+  });
+  sendJson(res, 200, {
+    ok: true,
+    refreshed: false,
+    running: stableMathFilterRunning,
+    model: payload
+  });
+}
+
+function stableMathAssistSignature(assist) {
+  if (!assist || typeof assist !== "object" || !assist.ok) return "";
+  const join = (arr) => (Array.isArray(arr) ? arr.slice().map(String).sort().join("|") : "");
+  return [
+    assist.version || "",
+    assist.latestPeriod || "",
+    join(assist.excludeDigits),
+    join(assist.excludeShapes),
+    join(assist.excludeSpans),
+    join(assist.excludeSumRanges),
+    join(assist.excludeRepeats),
+    join(assist.excludeConsecutives),
+    join(assist.excludeParityRatios),
+    join(assist.excludeSizeRatios)
+  ].join(";");
+}
+
+function snapshotNeedsStableMathAssistRefresh(snapshot, assist) {
+  if (!snapshot || typeof snapshot !== "object" || !snapshot.stableMathAssist) return true;
+  const cached = snapshot.stableMathAssist;
+  const cachedAssist = {
+    ok: true,
+    version: cached.version,
+    latestPeriod: cached.latestPeriod,
+    excludeDigits: cached.excludeDigits,
+    excludeShapes: cached.excludeShapes,
+    excludeSpans: cached.excludeSpans,
+    excludeSumRanges: cached.excludeSumRanges,
+    excludeRepeats: cached.excludeRepeats,
+    excludeConsecutives: cached.excludeConsecutives,
+    excludeParityRatios: cached.excludeParityRatios,
+    excludeSizeRatios: cached.excludeSizeRatios
+  };
+  return stableMathAssistSignature(cachedAssist) !== stableMathAssistSignature(assist);
+}
+
 function resolveStableMathAssist(prediction) {
   const raw = (prediction && prediction.stableMathFilter)
     || (prediction && prediction.detail && prediction.detail.stableMathFilter)
     || (state && state.stableMathFilter)
-    || stableMathFilterBridge.readCachedFilter()
+    || stableMathFilterBridge.slimStableMathFilter(stableMathFilterBridge.readCachedFilter())
     || null;
   if (!raw || typeof raw !== "object") {
     return {
@@ -7604,6 +8300,10 @@ function resolveStableMathAssist(prediction) {
       excludeShapes: [],
       excludeSpans: [],
       excludeSumRanges: [],
+      excludeRepeats: [],
+      excludeConsecutives: [],
+      excludeParityRatios: [],
+      excludeSizeRatios: [],
       summary: null,
       source: "missing"
     };
@@ -7614,12 +8314,29 @@ function resolveStableMathAssist(prediction) {
   const shapes = Array.isArray(raw.exclude_shapes) ? raw.exclude_shapes.map(String) : [];
   const spans = Array.isArray(raw.exclude_spans) ? raw.exclude_spans.map(Number).filter((n) => Number.isFinite(n)) : [];
   const sums = Array.isArray(raw.exclude_sum_ranges) ? raw.exclude_sum_ranges.map(String) : [];
+  const fw = raw.framework && typeof raw.framework === "object" ? raw.framework : {};
+  const repeats = Array.isArray(raw.exclude_repeats)
+    ? raw.exclude_repeats.map(String)
+    : (Array.isArray(fw.repeatAvoid) ? fw.repeatAvoid.map(String) : []);
+  const consecutives = Array.isArray(raw.exclude_consecutives)
+    ? raw.exclude_consecutives.map(String)
+    : (Array.isArray(fw.consecutiveAvoid) ? fw.consecutiveAvoid.map(String) : []);
+  const parityRatios = Array.isArray(raw.exclude_parity_ratios)
+    ? raw.exclude_parity_ratios.map(String)
+    : (Array.isArray(fw.parityRatioAvoid) ? fw.parityRatioAvoid.map(String) : []);
+  const sizeRatios = Array.isArray(raw.exclude_size_ratios)
+    ? raw.exclude_size_ratios.map(String)
+    : (Array.isArray(fw.sizeRatioAvoid) ? fw.sizeRatioAvoid.map(String) : []);
   return {
     ok: true,
     excludeDigits: digits,
     excludeShapes: shapes,
     excludeSpans: spans,
     excludeSumRanges: sums,
+    excludeRepeats: repeats,
+    excludeConsecutives: consecutives,
+    excludeParityRatios: parityRatios,
+    excludeSizeRatios: sizeRatios,
     summary: raw.summary || null,
     framework: raw.framework || null,
     latestPeriod: raw.latest_period || null,
@@ -7644,6 +8361,10 @@ function attachStableMathAssistToSnapshot(snapshot, assist, label) {
   if ((assist.excludeShapes || []).length) lines.push(`${label}挂载更稳排除形态：${assist.excludeShapes.join("、")}`);
   if ((assist.excludeSpans || []).length) lines.push(`${label}挂载更稳排除跨度：${assist.excludeSpans.join("、")}`);
   if ((assist.excludeSumRanges || []).length) lines.push(`${label}挂载更稳排除和值：${assist.excludeSumRanges.join("、")}`);
+  if ((assist.excludeRepeats || []).length) lines.push(`${label}挂载更稳排除重号：${assist.excludeRepeats.join("、")}`);
+  if ((assist.excludeConsecutives || []).length) lines.push(`${label}挂载更稳排除连号：${assist.excludeConsecutives.join("、")}`);
+  if ((assist.excludeParityRatios || []).length) lines.push(`${label}挂载更稳排除奇偶比：${assist.excludeParityRatios.join("、")}`);
+  if ((assist.excludeSizeRatios || []).length) lines.push(`${label}挂载更稳排除大小比：${assist.excludeSizeRatios.join("、")}`);
   snapshot.stableMathAssist = {
     version: assist.version,
     latestPeriod: assist.latestPeriod,
@@ -7652,6 +8373,10 @@ function attachStableMathAssistToSnapshot(snapshot, assist, label) {
     excludeShapes: assist.excludeShapes.slice(),
     excludeSpans: assist.excludeSpans.slice(),
     excludeSumRanges: assist.excludeSumRanges.slice(),
+    excludeRepeats: (assist.excludeRepeats || []).slice(),
+    excludeConsecutives: (assist.excludeConsecutives || []).slice(),
+    excludeParityRatios: (assist.excludeParityRatios || []).slice(),
+    excludeSizeRatios: (assist.excludeSizeRatios || []).slice(),
     summary: assist.summary
   };
   if (!Array.isArray(snapshot.repairReport)) snapshot.repairReport = [];
@@ -7660,16 +8385,90 @@ function attachStableMathAssistToSnapshot(snapshot, assist, label) {
   });
   if (!snapshot.framework || typeof snapshot.framework !== "object") snapshot.framework = {};
   snapshot.framework.stableMathAssist = true;
-  snapshot.framework.excludeAlgorithm = "five-dim-stable-exclude";
+  snapshot.framework.excludeAlgorithm = "model-aligned-stable-exclude";
   return snapshot;
+}
+
+const STABLE_MATH_SHAPE_CODE_MAP = {
+  "全奇": "单单单单",
+  "全偶": "双双双双",
+  "全大": "大大大大",
+  "全小": "小小小小",
+  "全0路": "小小小小",
+  "全1路": "单单单单",
+  "全2路": "双双双双"
+};
+
+function stableMathShapeFrameworkItem(shapeLabel, scopeLength) {
+  const full = STABLE_MATH_SHAPE_CODE_MAP[String(shapeLabel || "").trim()];
+  if (!full) return null;
+  const len = Math.max(3, Math.min(4, Number(scopeLength || 3)));
+  const code = len >= 4 ? full : full.slice(0, len);
+  if (!/^[大小单双]{3,4}$/.test(code)) return null;
+  return {
+    kind: "derivedReverseShape",
+    key: "stableMathShape",
+    side: "recommend",
+    name: `更稳排除形态(${shapeLabel})`,
+    code,
+    shapeScopeLength: len,
+    mode: "avoid",
+    derivedFrom: "stable-math-filter"
+  };
+}
+
+function stableMathSpanFrameworkItem(span) {
+  const value = Number(span);
+  if (!Number.isFinite(value)) return null;
+  return {
+    kind: "extra",
+    key: "spanAvoid",
+    side: "recommend",
+    name: "更稳排除跨度",
+    code: String(value),
+    mode: "avoid",
+    derivedFrom: "stable-math-filter"
+  };
+}
+
+function stableMathAssistPickBoost(assist, item) {
+  if (!assist || !assist.ok || !item) return 0;
+  let boost = 0;
+  const digit = frameworkSingleExcludeDigitToken(item);
+  if (digit && (assist.excludeDigits || []).includes(String(digit))) boost += 18000;
+  const noDynamicDigits = !(assist.excludeDigits || []).length;
+  if (noDynamicDigits) {
+    if ((assist.excludeShapes || []).length && item.kind === "derivedReverseShape") boost += 15000;
+    if ((assist.excludeSpans || []).length && item.key === "spanAvoid") boost += 12000;
+    if ((assist.excludeSumRanges || []).length && item.key === "sumRangeAvoid") boost += 10000;
+    if (item.derivedFrom === "stable-math-filter") boost += 8000;
+  }
+  return boost;
+}
+
+function pickStableMathShapeCandidate(assist, history, evaluatedCount, scopeLength) {
+  if (!assist || !assist.ok || !(assist.excludeShapes || []).length) return null;
+  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
+  for (let i = 0; i < assist.excludeShapes.length; i += 1) {
+    const raw = stableMathShapeFrameworkItem(assist.excludeShapes[i], scopeLength);
+    if (!raw) continue;
+    const item = autoTop6DecorateItem(safeHistory, raw, evaluatedCount);
+    item.shapeScopeLength = scopeLength || 3;
+    return item;
+  }
+  return null;
 }
 
 function ensurePredictionThreeDingTwoSnapshot(prediction, history) {
   if (!prediction || typeof prediction !== "object") return null;
-  if (threeDingTwoSnapshotIsComplete(prediction.threeDingTwo) && prediction.threeDingTwo.stableMathAssist) {
+  const assist = resolveStableMathAssist(prediction);
+  if (
+    threeDingTwoSnapshotIsComplete(prediction.threeDingTwo)
+    && prediction.threeDingTwo.stableMathAssist
+    && !snapshotNeedsStableMathAssistRefresh(prediction.threeDingTwo, assist)
+  ) {
     return prediction.threeDingTwo;
   }
-  const assist = resolveStableMathAssist(prediction);
   // A 与原三定/更稳算法独立选码：避开原三定已选单码 + 更稳排除单码
   const avoidDigits = mergeStableMathAvoidDigits(
     frameworkSingleExcludeDigits(prediction.compactAttack && prediction.compactAttack.items),
@@ -7687,10 +8486,14 @@ function ensurePredictionThreeDingTwoSnapshot(prediction, history) {
 
 function ensurePredictionThreeDingOneSnapshot(prediction, history) {
   if (!prediction || typeof prediction !== "object") return null;
-  if (threeDingOneSnapshotIsComplete(prediction.threeDingOne) && prediction.threeDingOne.stableMathAssist) {
+  const assist = resolveStableMathAssist(prediction);
+  if (
+    threeDingOneSnapshotIsComplete(prediction.threeDingOne)
+    && prediction.threeDingOne.stableMathAssist
+    && !snapshotNeedsStableMathAssistRefresh(prediction.threeDingOne, assist)
+  ) {
     return prediction.threeDingOne;
   }
-  const assist = resolveStableMathAssist(prediction);
   // B 与 A/原三定/更稳算法独立选码：尽量错开已选单码 + 更稳排除单码
   const avoidDigits = mergeStableMathAvoidDigits(new Set([
     ...frameworkSingleExcludeDigits(prediction.compactAttack && prediction.compactAttack.items),
@@ -7700,7 +8503,8 @@ function ensurePredictionThreeDingOneSnapshot(prediction, history) {
     ...frameworkAnyTwoCodesFromItems(prediction.compactAttack && prediction.compactAttack.items),
     ...frameworkAnyTwoCodesFromItems(prediction.threeDingTwo && prediction.threeDingTwo.items)
   ]);
-  prediction.threeDingOne = buildThreeDingOneSnapshot(prediction, history, { avoidDigits, avoidAnyTwoCodes });
+  const avoidTwoDigitCodes = frameworkTwoDigitCodesFromItems(prediction.threeDingTwo && prediction.threeDingTwo.items);
+  prediction.threeDingOne = buildThreeDingOneSnapshot(prediction, history, { avoidDigits, avoidAnyTwoCodes, avoidTwoDigitCodes });
   attachStableMathAssistToSnapshot(prediction.threeDingOne, assist, "三定框架B");
   prediction.threeDingOneItems = prediction.threeDingOne.items;
   prediction.threeDingOneRepairReport = prediction.threeDingOne.repairReport;
@@ -7773,14 +8577,20 @@ function buildSideStableSnapshot(prediction, history) {
     repairReport.push("旁路稳筛定位正式项不足1个");
   }
 
-  const totalCode = cleanAutoTop6Code(prediction && prediction.totalHeweiKill);
+  const totalMeta = resolveHeweiAlgorithmMeta(prediction, "total");
+  const totalCode = cleanAutoTop6Code(totalMeta.recommend || (prediction && prediction.totalHeweiKill));
   const totalItem = autoTop6DecorateItem(safeHistory, {
     kind: "hewei",
     key: "total",
     side: "recommend",
     name: "总合尾综合排除",
     code: totalCode,
-    mode: "avoid"
+    mode: "avoid",
+    algorithmStability: totalMeta.stability || null,
+    confidence: totalMeta.confidence || null,
+    recommendable: totalMeta.recommendable,
+    algorithmReason: totalMeta.reason || "",
+    algorithm: totalMeta.algorithm || ""
   }, evaluatedCount);
   if (totalItem && totalItem.lowConfidence) {
     totalItem.repairedIntoTop = true;
@@ -7809,7 +8619,21 @@ function buildSideStableSnapshot(prediction, history) {
   }
 
   pickFixedExtra("sumAvoid", "前四位和值避开");
-  pickFixedExtra("anyTwoHeweiHit", "全码池二数合尾5码命中");
+  const sideAnyTwo = pickStructuralAnyTwoHeweiHit(
+    safeHistory,
+    evaluatedCount,
+    heweiScopeIndexesFromItems(chosen),
+    chosen,
+    prediction,
+    new Set(),
+    resolveStableMathAssist(prediction)
+  );
+  if (sideAnyTwo) {
+    repairReport.push(`旁路稳筛二数合结构对齐：${sideAnyTwo.code}`);
+    pushItem(sideAnyTwo, "全码池二数合尾5码命中");
+  } else {
+    repairReport.push("旁路稳筛缺少：全码池二数合尾5码命中");
+  }
 
   const sideStableAnyThree = digitSetCandidatesMixedParity(5)
     .map((code) => autoTop6DecorateItem(safeHistory, {
@@ -8363,11 +9187,15 @@ function backfillThreeDingEvaluations(storeName, options) {
         ...frameworkAnyTwoCodesFromItems(prediction.compactAttack && prediction.compactAttack.items),
         ...(isTwo ? [] : [...frameworkAnyTwoCodesFromItems(prediction.threeDingTwo && prediction.threeDingTwo.items)])
       ]);
+      const avoidTwoDigitCodes = isTwo
+        ? new Set()
+        : frameworkTwoDigitCodesFromItems(prediction.threeDingTwo && prediction.threeDingTwo.items);
       const snapshot = buildFn(prediction, trainHistory, {
         comboWindow,
         allowUnhealthy: true,
         avoidDigits,
-        avoidAnyTwoCodes
+        avoidAnyTwoCodes,
+        avoidTwoDigitCodes
       });
       if (!isComplete(snapshot)) {
         failed += 1;
@@ -8660,7 +9488,8 @@ function backfillFrameworkSimFromHistory(options) {
         comboWindow,
         allowUnhealthy: true,
         avoidDigits: avoid && avoid.digits,
-        avoidAnyTwoCodes: avoid && avoid.anyTwo
+        avoidAnyTwoCodes: avoid && avoid.anyTwo,
+        avoidTwoDigitCodes: avoid && avoid.twoDigit
       }),
       evaluate: evaluateThreeDingOneSnapshot,
       forceSeal: forceSealThreeDingSnapshot
@@ -8714,7 +9543,8 @@ function backfillFrameworkSimFromHistory(options) {
           anyTwo: new Set([
             ...frameworkAnyTwoCodesFromItems(compactItems),
             ...(store.name === "threeDingOne" ? frameworkAnyTwoCodesFromItems(twoItems) : [])
-          ])
+          ]),
+          twoDigit: store.name === "threeDingOne" ? frameworkTwoDigitCodesFromItems(twoItems) : new Set()
         };
         const snapshot = store.build(prediction, trainHistory, avoid);
         if (!store.isComplete(snapshot)) {
@@ -8960,15 +9790,35 @@ function coldFrameworkExtraCandidate(prediction, history, evaluatedCount, key) {
 }
 
 function coldFrameworkRecentExactRollingStats(history, lookbackLimit, sampleLimit) {
+  // 滑动窗口计数，避免每个 sample 都 slice + 新建 Set（冷框架选型时会放大成 OOM 尖峰）
   const rows = (Array.isArray(history) ? history : []).filter((record) => /^\d{4}$/.test(firstFourCode(record)));
   const lookback = Math.max(1, Number(lookbackLimit || 500));
   const sample = Math.max(1, Number(sampleLimit || MODEL_RATE_WINDOW));
+  const maxRows = Math.min(sample, rows.length);
+  const codes = rows.slice(0, Math.min(rows.length, maxRows + lookback)).map((record) => firstFourCode(record));
+  const windowCounts = new Map();
+  const addToWindow = (idx) => {
+    if (idx < 0 || idx >= codes.length) return;
+    const code = codes[idx];
+    windowCounts.set(code, (windowCounts.get(code) || 0) + 1);
+  };
+  const removeFromWindow = (idx) => {
+    if (idx < 0 || idx >= codes.length) return;
+    const code = codes[idx];
+    const next = (windowCounts.get(code) || 0) - 1;
+    if (next <= 0) windowCounts.delete(code);
+    else windowCounts.set(code, next);
+  };
+  for (let j = 1; j <= lookback && j < codes.length; j += 1) addToWindow(j);
   const vals = [];
-  for (let index = 0; index < Math.min(sample, rows.length); index += 1) {
-    const code = firstFourCode(rows[index]);
-    const previousRows = rows.slice(index + 1, index + 1 + lookback);
-    if (!/^\d{4}$/.test(code) || previousRows.length < 1) continue;
-    vals.push(!recentExactCodeSet(previousRows, lookback).has(code));
+  for (let index = 0; index < maxRows; index += 1) {
+    const code = codes[index];
+    const previousCount = Math.min(lookback, Math.max(0, codes.length - index - 1));
+    if (/^\d{4}$/.test(code) && previousCount >= 1) {
+      vals.push(!windowCounts.has(code));
+    }
+    removeFromWindow(index + 1);
+    addToWindow(index + 1 + lookback);
   }
   let missStreak = 0;
   let currentRun = 0;
@@ -9257,8 +10107,16 @@ function buildPick5000Snapshot(prediction, history) {
   const reversePicked = reversePool.filter((item) => item && item.stabilityGate === true)[0] || reversePool[0] || null;
 
   const coldAnyTwoCodes = frameworkAnyTwoCodesFromItems(prediction && prediction.coldFramework && prediction.coldFramework.items);
-  const anyTwo = pickRankedAnyTwoHeweiHit(safeHistory, evaluatedCount, null, autoTop6CandidateItems(prediction), coldAnyTwoCodes)
-    || coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, "anyTwoHeweiHit");
+  const coldChosen = positionItems.concat(heweiItems);
+  const anyTwo = pickStructuralAnyTwoHeweiHit(
+    safeHistory,
+    evaluatedCount,
+    null,
+    coldChosen,
+    prediction,
+    coldAnyTwoCodes,
+    resolveStableMathAssist(prediction)
+  ) || coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, "anyTwoHeweiHit");
   if (anyTwo && coldAnyTwoCodes.size && !coldAnyTwoCodes.has(String(anyTwo.code || ""))) {
     repairReport.push(`看好5000二数合与冷门框错开：${anyTwo.code}`);
   }
@@ -9846,9 +10704,12 @@ function evaluateScopedThreeDingSnapshot(prediction, actualRecord, storeName, is
     heweiScopeIndexes = snapshot.heweiScopeIndexes.map(Number).filter((value) => Number.isInteger(value) && value >= 0 && value <= 3);
   }
   const items = snapshot.items.map((item) => {
-    const evaluateItem = (item && (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") && heweiScopeIndexes.length >= 2)
-      ? Object.assign({}, item, { heweiScopeIndexes })
-      : item;
+    let evaluateItem = item;
+    if (item && (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") && heweiScopeIndexes.length >= 2) {
+      evaluateItem = Object.assign({}, item, { heweiScopeIndexes });
+    } else if (item && item.kind === "derivedReverseShape") {
+      evaluateItem = Object.assign({}, item, { shapeScopeLength: 3 });
+    }
     const success = autoTop6RecordSuccess(evaluateItem, actualRecord);
     return {
       rank: item.rank,
@@ -10014,6 +10875,156 @@ function evaluatePick5000Snapshot(prediction, actualRecord) {
   };
 }
 
+function getStableMathExcludeDigitSet() {
+  const slim = (typeof state !== "undefined" && state && state.stableMathFilter)
+    || stableMathFilterBridge.slimStableMathFilter(stableMathFilterBridge.readCachedFilter())
+    || null;
+  if (!slim || typeof slim !== "object") return new Set();
+  return new Set(
+    (Array.isArray(slim.exclude_digits) ? slim.exclude_digits : [])
+      .map((digit) => String(digit))
+      .filter((digit) => /^\d$/.test(digit))
+  );
+}
+
+function heweiPrimaryDigit(obj, preferField) {
+  if (!obj || typeof obj !== "object") return "";
+  if (preferField && obj[preferField] != null && obj[preferField] !== "") return String(obj[preferField]);
+  if (obj.killHewei != null && obj.killHewei !== "") return String(obj.killHewei);
+  if (obj.killDigit != null && obj.killDigit !== "") return String(obj.killDigit);
+  if (obj.primaryDigit != null && obj.primaryDigit !== "") return String(obj.primaryDigit);
+  return "";
+}
+
+function pickAlternateHeweiDigit(heweiResult, avoidDigits, preferField) {
+  if (!heweiResult || typeof heweiResult !== "object") return null;
+  const avoid = avoidDigits instanceof Set ? avoidDigits : new Set((avoidDigits || []).map(String));
+  const current = heweiPrimaryDigit(heweiResult, preferField);
+  if (current && !avoid.has(current)) return null;
+  const detail = Array.isArray(heweiResult.detail) ? heweiResult.detail : [];
+  for (let i = 0; i < detail.length; i += 1) {
+    const digit = String(detail[i].digit || "");
+    if (/^\d$/.test(digit) && !avoid.has(digit)) return digit;
+  }
+  const backup = String(heweiResult.backupDigit || "");
+  if (/^\d$/.test(backup) && !avoid.has(backup)) return backup;
+  for (let i = 0; i <= 9; i += 1) {
+    const digit = String(i);
+    if (!avoid.has(digit)) return digit;
+  }
+  return current || null;
+}
+
+function applyHeweiConfidenceFields(selected, picked, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const guardRate = Number(opts.guardRate || HEWEI_GUARD_RATE);
+  const recommendable = Number(selected.r30 && selected.r30.rate || 0) >= MODEL_LOW_HIT_RATE
+    || Number(selected.r60 && selected.r60.rate || 0) >= MODEL_LOW_HIT_RATE
+    || Number(selected.r120 && selected.r120.rate || 0) >= guardRate - 8;
+  const confidence = recommendable ? "normal" : "low";
+  let reason = picked && picked.reason ? picked.reason : "best-stability-window";
+  if (!recommendable && reason === "best-stability-window") reason = "low-confidence-hewei";
+  return { recommendable, confidence, reason };
+}
+
+function reconcileHeweiKillBundle(bundle) {
+  const total = bundle && bundle.totalHeweiKill;
+  const unified = bundle && bundle.threeFourKill;
+  const independent = bundle && bundle.independentHeweiKills;
+  const notes = [];
+  if (!total || !independent || typeof independent !== "object") {
+    return { notes };
+  }
+
+  const wqbs = independent.wanQianBaiShi;
+  const totalDigit = heweiPrimaryDigit(total, "killHewei");
+  if (wqbs && /^\d$/.test(totalDigit) && heweiPrimaryDigit(wqbs, "killDigit") !== totalDigit) {
+    wqbs.killDigit = totalDigit;
+    wqbs.primaryDigit = total.primaryDigit || totalDigit;
+    wqbs.backupDigit = total.backupDigit || wqbs.backupDigit;
+    wqbs.reason = `aligned-with-total-hewei:${String(total.reason || "sync")}`;
+    notes.push(`wanQianBaiShi->${totalDigit}`);
+    if (typeof state !== "undefined" && state) {
+      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+      const totalLock = state.stable120Locks["v43:hewei:total"];
+      if (totalLock) state.stable120Locks["v43:hewei:wanQianBaiShi"] = Object.assign({}, totalLock);
+    }
+  }
+
+  const used = new Set();
+  const slots = [
+    {
+      name: "total",
+      result: total,
+      preferField: "killHewei",
+      backupField: "backupDigit",
+      getDigit: () => heweiPrimaryDigit(total, "killHewei"),
+      setDigit: (digit, backup) => {
+        total.killHewei = digit;
+        total.primaryDigit = digit;
+        if (backup) total.backupDigit = backup;
+      }
+    },
+    {
+      name: "unified",
+      result: unified,
+      preferField: "killDigit",
+      backupField: "backupDigit",
+      getDigit: () => heweiPrimaryDigit(unified, "killDigit"),
+      setDigit: (digit, backup) => {
+        if (!unified) return;
+        unified.killDigit = digit;
+        unified.primaryDigit = digit;
+        if (backup) unified.backupDigit = backup;
+      }
+    },
+    {
+      name: "wanQianBai",
+      result: independent.wanQianBai,
+      preferField: "killDigit",
+      backupField: "backupDigit",
+      getDigit: () => heweiPrimaryDigit(independent.wanQianBai, "killDigit"),
+      setDigit: (digit, backup) => {
+        independent.wanQianBai.killDigit = digit;
+        independent.wanQianBai.primaryDigit = digit;
+        if (backup) independent.wanQianBai.backupDigit = backup;
+      }
+    },
+    {
+      name: "qianBaiShi",
+      result: independent.qianBaiShi,
+      preferField: "killDigit",
+      backupField: "backupDigit",
+      getDigit: () => heweiPrimaryDigit(independent.qianBaiShi, "killDigit"),
+      setDigit: (digit, backup) => {
+        independent.qianBaiShi.killDigit = digit;
+        independent.qianBaiShi.primaryDigit = digit;
+        if (backup) independent.qianBaiShi.backupDigit = backup;
+      }
+    }
+  ];
+
+  slots.forEach((slot) => {
+    if (!slot.result) return;
+    let digit = slot.getDigit();
+    if (!/^\d$/.test(digit)) return;
+    if (!used.has(digit)) {
+      used.add(digit);
+      return;
+    }
+    const alt = pickAlternateHeweiDigit(slot.result, used, slot.preferField);
+    if (alt && alt !== digit) {
+      slot.setDigit(alt, slot.result[slot.backupField]);
+      slot.result.reason = `dedup-shift:${digit}->${alt}`;
+      notes.push(`${slot.name}:${digit}->${alt}`);
+      digit = alt;
+    }
+    used.add(digit);
+  });
+
+  return { notes };
+}
+
 function calculateTotalHeweiKill(history, performance) {
   const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers) && record.numbers.length >= 4) : [];
   function actual(record) {
@@ -10033,6 +11044,9 @@ function calculateTotalHeweiKill(history, performance) {
   });
   const selected = picked.selected;
   const backup = picked.backup;
+  const confidenceMeta = applyHeweiConfidenceFields(selected, picked, {
+    guardRate: HEWEI_GUARD_RATE
+  });
   return {
     killHewei: selected.digit,
     primaryDigit: selected.digit,
@@ -10042,7 +11056,9 @@ function calculateTotalHeweiKill(history, performance) {
     detail: stableHeweiDetail(candidates),
     stage: selected.stage,
     stability: stableHeweiStability(selected, { floor: HEWEI_BLOCK_FLOOR, guardRate: HEWEI_GUARD_RATE }),
-    reason: picked.reason
+    confidence: confidenceMeta.confidence,
+    recommendable: confidenceMeta.recommendable,
+    reason: confidenceMeta.reason
   };
 }
 function calculateThreeFourHeweiKillDigit(history, performance) {
@@ -10062,9 +11078,12 @@ function calculateThreeFourHeweiKillDigit(history, performance) {
   });
   const selected = picked.selected;
   const backup = picked.backup;
-  const recommendable = selected.r30.rate >= MODEL_LOW_HIT_RATE || selected.r60.rate >= MODEL_LOW_HIT_RATE;
-  const confidence = recommendable ? "normal" : "low";
-  const reason = !recommendable && picked.reason === "best-stability-window" ? "low-confidence-unified-hewei" : picked.reason;
+  const confidenceMeta = applyHeweiConfidenceFields(selected, picked, {
+    guardRate: HEWEI_UNIFIED_GUARD_RATE
+  });
+  const reason = !confidenceMeta.recommendable && picked.reason === "best-stability-window"
+    ? "low-confidence-unified-hewei"
+    : confidenceMeta.reason;
   return {
     killDigit: selected.digit,
     primaryDigit: selected.digit,
@@ -10073,8 +11092,8 @@ function calculateThreeFourHeweiKillDigit(history, performance) {
     performance: modelPerformanceSummary(performance, "hewei.unified"),
     detail: stableHeweiDetail(candidates),
     currentCompositeHeweiGroup: safeHistory[0] ? group(safeHistory[0]) : [],
-    confidence,
-    recommendable,
+    confidence: confidenceMeta.confidence,
+    recommendable: confidenceMeta.recommendable,
     stage: selected.stage,
     stability: stableHeweiStability(selected, { floor: HEWEI_UNIFIED_BLOCK_FLOOR, guardRate: HEWEI_UNIFIED_GUARD_RATE }),
     reason
@@ -10102,6 +11121,9 @@ function calculateIndependentHeweiKills(history, performance) {
     });
     const selected = picked.selected;
     const backup = picked.backup;
+    const confidenceMeta = applyHeweiConfidenceFields(selected, picked, {
+      guardRate: HEWEI_GUARD_RATE
+    });
     return {
       label,
       key,
@@ -10113,7 +11135,9 @@ function calculateIndependentHeweiKills(history, performance) {
       detail: stableHeweiDetail(candidates),
       stage: selected.stage,
       stability: stableHeweiStability(selected, { floor: HEWEI_BLOCK_FLOOR, guardRate: HEWEI_GUARD_RATE }),
-      reason: picked.reason
+      confidence: confidenceMeta.confidence,
+      recommendable: confidenceMeta.recommendable,
+      reason: confidenceMeta.reason
     };
   }
   return {
@@ -10589,6 +11613,10 @@ function generateBigDataPrediction(history) {
   const totalHeweiKill = calculateTotalHeweiKill(safeHistory, modelPerformance);
   const threeFourKill = calculateThreeFourHeweiKillDigit(safeHistory, modelPerformance);
   const independentHeweiKills = calculateIndependentHeweiKills(safeHistory, modelPerformance);
+  const heweiReconcile = reconcileHeweiKillBundle({ totalHeweiKill, threeFourKill, independentHeweiKills });
+  if (heweiReconcile && Array.isArray(heweiReconcile.notes) && heweiReconcile.notes.length) {
+    addLog("合尾排除已协调去重", { notes: heweiReconcile.notes });
+  }
   const extraKills = calculateExtraAvoidKills(safeHistory, modelPerformance);
   const positionKills = {};
   POSITION_LIST.slice(0, 4).forEach((position) => {
@@ -10611,6 +11639,7 @@ function generateBigDataPrediction(history) {
       detail: calculated.detail
     };
   });
+  codexStablePosition.applyCodexStablePositionOverlay(positionKills, safeHistory);
   const recommendationMeta = {
     targetCount: TOP_RECOMMEND_COUNT,
     targetRate: MODEL_LOW_HIT_RATE,
@@ -10650,7 +11679,9 @@ function generateBigDataPrediction(history) {
       totalHeweiKill,
       threeFourHeweiKill: threeFourKill,
       independentHeweiKills,
-      extraKills,
+      heweiReconcileNotes: Array.isArray(heweiReconcile && heweiReconcile.notes) ? heweiReconcile.notes : [],
+      // 禁止把带 codes 的 extraKills 再复制一份进 detail（否则单 tip 双倍常驻）
+      extraKills: slimExtraKillsForPersist(extraKills, false),
       positionKills: {},
       modelPerformance,
       recommendationMeta,
@@ -10663,8 +11694,10 @@ function fillPredictionDetail(prediction, history) {
   if (!prediction.detail) prediction.detail = {};
   if (prediction.positionKills && typeof prediction.positionKills === "object" && Object.keys(prediction.positionKills).length) {
     prediction.detail.positionKills = prediction.positionKills;
+    codexStablePosition.applyCodexStablePositionOverlay(prediction.positionKills, safeHistory);
   } else if (prediction.detail.positionKills && typeof prediction.detail.positionKills === "object" && Object.keys(prediction.detail.positionKills).length) {
     prediction.positionKills = prediction.detail.positionKills;
+    codexStablePosition.applyCodexStablePositionOverlay(prediction.positionKills, safeHistory);
   } else {
     const detailPositionKills = {};
     const performance = calculateModelPerformance(state && Array.isArray(state.predictions) ? state.predictions : []);
@@ -10673,6 +11706,7 @@ function fillPredictionDetail(prediction, history) {
     });
     prediction.positionKills = detailPositionKills;
     prediction.detail.positionKills = detailPositionKills;
+    codexStablePosition.applyCodexStablePositionOverlay(prediction.positionKills, safeHistory);
   }
   attachCachedStableMathFilter(prediction);
   return prediction;
@@ -10766,7 +11800,16 @@ function evaluatePrediction(prediction, actualRecord) {
   const recentExactCodeAvoidMaxValue = extraValue("recentExactCodeAvoidMax");
   function extraCodeSet(key) {
     const item = predictedExtras[key];
-    return item && Array.isArray(item.codes) ? new Set(item.codes.map(String).filter((value) => /^\d{4}$/.test(value))) : new Set();
+    if (item && Array.isArray(item.codes) && item.codes.length) {
+      return new Set(item.codes.map(String).filter((value) => /^\d{4}$/.test(value)));
+    }
+    // codes 已 omit：按 tip 生成时的 baseUid + lookback 从共享 history 重建，避免常驻数千码数组
+    return resolveRecentExactCodeSet(
+      Object.assign({ key }, item || {}),
+      (typeof state !== "undefined" && state && Array.isArray(state.history)) ? state.history : [],
+      prediction.baseUid,
+      prediction.basePeriod
+    );
   }
   const recentExactCode300Set = extraCodeSet("recentExactCodeAvoid300");
   const recentExactCode500Set = extraCodeSet("recentExactCodeAvoid500");
@@ -11324,6 +12367,28 @@ function alignTipPredictionAfterHydrate(reason) {
   let currentPrediction = (Array.isArray(state.predictions) ? state.predictions : [])
     .find((item) => item && item.baseUid === latest.uid && item.modelVersion === MODEL_VERSION);
   let created = false;
+  if (
+    isPredictionCompatible(currentPrediction, latest)
+    && (state.tipReady === true || (currentPrediction && currentPrediction.tipStructurePerfect === true))
+  ) {
+    state.currentPrediction = currentPrediction;
+    addLog("灌注后已对齐当前预测 tip", {
+      reason: reason || "hydrate-align-tip",
+      latestPeriod: latest.period || "",
+      baseUid: currentPrediction && currentPrediction.baseUid || "",
+      created: false,
+      tipReady: true,
+      skippedHeavy: true
+    });
+    return {
+      ok: true,
+      created: false,
+      tipReady: true,
+      skippedHeavy: true,
+      latestPeriod: latest.period || "",
+      baseUid: currentPrediction && currentPrediction.baseUid || ""
+    };
+  }
   if (!isPredictionCompatible(currentPrediction, latest)) {
     currentPrediction = fillPredictionDetail(generateBigDataPrediction(history), history);
     state.predictions = [currentPrediction].concat(Array.isArray(state.predictions) ? state.predictions : []);
@@ -11345,7 +12410,7 @@ function alignTipPredictionAfterHydrate(reason) {
   const tipGate = ensureTipStructurePerfect({
     trigger: "hydrate-align-tip",
     fromSync: true,
-    allowRegenerate: true,
+    allowRegenerate: created || !(state.tipReady === true),
     log: true
   });
   addLog("灌注后已对齐当前预测 tip", {
@@ -11405,7 +12470,7 @@ function integrateNewDrawRecordEarly(record) {
     state.history = dedupeHistory(state.history);
     didAddNewRecord = true;
   } else {
-    state.history = state.history.map((item) => isSameRecord(item, record) ? Object.assign({}, item, { rawJson: record.rawJson, capturedAt: record.capturedAt }) : item);
+    state.history = state.history.map((item) => isSameRecord(item, record) ? Object.assign({}, item, { capturedAt: record.capturedAt }) : item);
   }
 
   const catchup = settleMissedPredictionEvaluations({ reason: exists ? "integrate-existing-catchup" : "integrate-new-catchup", save: false });
@@ -11435,6 +12500,25 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
   const early = earlyResult && typeof earlyResult === "object" ? earlyResult : {};
   const latest = state.history[0] || record;
   let currentPrediction = state.predictions.find((item) => item && item.baseUid === latest.uid && item.modelVersion === MODEL_VERSION);
+  const tipAlreadyReady = !!(
+    currentPrediction
+    && isPredictionCompatible(currentPrediction, latest)
+    && (state.tipReady === true || currentPrediction.tipStructurePerfect === true)
+  );
+  // 开奖窗有多个 offset 同步：无新期且 tip 已就绪时跳过整包快照/门闩，避免反复打满事件循环导致面板假死。
+  if (!early.didAddNewRecord && !early.didEvaluate && tipAlreadyReady) {
+    state.latestRecord = latest;
+    state.currentPrediction = currentPrediction;
+    return {
+      currentPrediction: state.currentPrediction,
+      didAddNewRecord: false,
+      didEvaluate: false,
+      didApplyCounters: !!early.didApplyCounters,
+      evaluatedPrediction: early.evaluatedPrediction || null,
+      tipReady: true,
+      skippedHeavy: true
+    };
+  }
   if (!isPredictionCompatible(currentPrediction, latest)) {
     currentPrediction = fillPredictionDetail(generateBigDataPrediction(state.history), state.history);
     state.predictions.unshift(currentPrediction);
@@ -11462,7 +12546,7 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
   const tipGate = ensureTipStructurePerfect({
     trigger: "integrate-record",
     fromSync: true,
-    allowRegenerate: true,
+    allowRegenerate: !!early.didAddNewRecord || !!early.didEvaluate,
     log: !!early.didAddNewRecord
   });
   return {
@@ -11486,34 +12570,45 @@ function buildSummary() {
   const memory = process.memoryUsage();
   const heapStats = v8.getHeapStatistics();
   const rates = {
-    positionTotal: counterRateText(c.positionTotal),
-    wan: counterRateText(c.wan),
+    positionTotal: counterRateText(c.positionTotal, "positionTotal"),
+    wan: counterRateText(c.wan, "wan"),
     wanMain: c.wan.total ? `${calcRate(c.wan.total, c.wan.mainMatch)}%` : "暂无命中记录",
-    qian: counterRateText(c.qian),
+    qian: counterRateText(c.qian, "qian"),
     qianMain: c.qian.total ? `${calcRate(c.qian.total, c.qian.mainMatch)}%` : "暂无命中记录",
-    bai: counterRateText(c.bai),
+    bai: counterRateText(c.bai, "bai"),
     baiMain: c.bai.total ? `${calcRate(c.bai.total, c.bai.mainMatch)}%` : "暂无命中记录",
-    shi: counterRateText(c.shi),
+    shi: counterRateText(c.shi, "shi"),
     shiMain: c.shi.total ? `${calcRate(c.shi.total, c.shi.mainMatch)}%` : "暂无命中记录",
-    totalHewei: counterRateText(c.totalHewei),
-    threeFour: counterRateText(c.threeFour),
-    wanQianBai: counterRateText(c.wanQianBai),
-    qianBaiShi: counterRateText(c.qianBaiShi),
-    wanQianBaiShi: counterRateText(c.wanQianBaiShi),
-    threeDuishu: counterRateText(c.threeDuishu),
-    sumAvoid: counterRateText(c.sumAvoid),
-    threeDigitAvoid: counterRateText(c.threeDigitAvoid),
-    twoDigitAvoid: counterRateText(c.twoDigitAvoid),
-    twoDigitAvoid2: counterRateText(c.twoDigitAvoid2),
-    twoDigitAvoid3: counterRateText(c.twoDigitAvoid3),
-    twoDigitHit: counterRateText(c.twoDigitHit),
-    threeDigitHit: counterRateText(c.threeDigitHit),
-    anyTwoHeweiHit: counterRateText(c.anyTwoHeweiHit),
-    anyThreeHeweiHit: counterRateText(c.anyThreeHeweiHit)
+    totalHewei: counterRateText(c.totalHewei, "totalHewei"),
+    threeFour: counterRateText(c.threeFour, "threeFour"),
+    wanQianBai: counterRateText(c.wanQianBai, "wanQianBai"),
+    qianBaiShi: counterRateText(c.qianBaiShi, "qianBaiShi"),
+    wanQianBaiShi: counterRateText(c.wanQianBaiShi, "wanQianBaiShi"),
+    threeDuishu: counterRateText(c.threeDuishu, "threeDuishu"),
+    sumAvoid: counterRateText(c.sumAvoid, "sumAvoid"),
+    threeDigitAvoid: counterRateText(c.threeDigitAvoid, "threeDigitAvoid"),
+    twoDigitAvoid: counterRateText(c.twoDigitAvoid, "twoDigitAvoid"),
+    twoDigitAvoid2: counterRateText(c.twoDigitAvoid2, "twoDigitAvoid2"),
+    twoDigitAvoid3: counterRateText(c.twoDigitAvoid3, "twoDigitAvoid3"),
+    twoDigitHit: counterRateText(c.twoDigitHit, "twoDigitHit"),
+    threeDigitHit: counterRateText(c.threeDigitHit, "threeDigitHit"),
+    anyTwoHeweiHit: counterRateText(c.anyTwoHeweiHit, "anyTwoHeweiHit"),
+    anyThreeHeweiHit: counterRateText(c.anyThreeHeweiHit, "anyThreeHeweiHit")
   };
   REQUIRED_EXTRA_KILL_KEYS.forEach((key) => {
     const counter = c[key];
-    rates[key] = counterRateText(counter);
+    rates[key] = counterRateText(counter, key);
+  });
+  const rateDetails = buildRateDetailsFromCounters(c);
+  const highBaselineScoreGuide = Object.keys(HIGH_BASELINE_SCORE_META).map((key) => {
+    const meta = HIGH_BASELINE_SCORE_META[key];
+    return {
+      key,
+      scoreClass: meta.scoreClass,
+      baseline: meta.baseline,
+      hint: meta.hint,
+      note: "原始通过率含高基线，禁止解读为强预测力；请看相对基线超额"
+    };
   });
   const modelAudit = getModelAuditSummaryCached();
   const stormMode = normalizeStormMode(state.stormMode);
@@ -11548,9 +12643,13 @@ function buildSummary() {
     rdsReadOnly: !!state.rdsReadOnly,
     rdsLag: state.rdsLag || null,
     pendingOfficialDrawCount: Array.isArray(state.pendingOfficialDraws) ? state.pendingOfficialDraws.length : 0,
-    stableMathFilter: state.stableMathFilter || stableMathFilterBridge.readCachedFilter() || null,
+    stableMathFilter: stableMathFilterBridge.slimStableMathFilter(
+      state.stableMathFilter || stableMathFilterBridge.readCachedFilter()
+    ) || null,
     modelAudit,
     rates,
+    rateDetails,
+    highBaselineScoreGuide,
     historyCount: Array.isArray(state.history) ? state.history.length : 0,
     maxHistory: MAX_HISTORY,
     predictionCount: Array.isArray(state.predictions) ? state.predictions.length : 0,
@@ -11856,9 +12955,25 @@ function getPanelHtmlText() {
 function slimPerformance(performance) {
   if (!performance || typeof performance !== "object") return performance || null;
   const out = {};
-  ["key", "total", "match", "rate", "lastSuccess", "low", "threshold", "minSample"].forEach((key) => {
+  [
+    "key",
+    "total",
+    "match",
+    "rate",
+    "lastSuccess",
+    "low",
+    "threshold",
+    "minSample",
+    "scoreClass",
+    "randomBaseline",
+    "edgeOverBaseline",
+    "predictivePower",
+    "scoreHint",
+    "truthDisplay"
+  ].forEach((key) => {
     if (performance[key] !== undefined) out[key] = performance[key];
   });
+  decorateTruthScoreFields(out, performance.key || out.key, out.rate);
   return out;
 }
 
@@ -11880,6 +12995,20 @@ function slimPositionKill(entry, includeMeta) {
     if (entry[key] !== undefined) out[key] = entry[key];
   });
   if (Array.isArray(entry.killDigits)) out.killDigits = entry.killDigits.slice(0, 2);
+  [
+    "codexStableDigit",
+    "codexStableRate",
+    "codexStableTotal",
+    "codexStableHit",
+    "codexStableRule",
+    "codexStableRuleLabel",
+    "codexStableRecommended",
+    "codexStableStrict",
+    "stabilityBlocksMain",
+    "stabilityBlocksBackup"
+  ].forEach((key) => {
+    if (entry[key] !== undefined) out[key] = entry[key];
+  });
   if (includeMeta && entry.algorithm !== undefined) out.algorithm = entry.algorithm;
   if (includeMeta && entry.reason !== undefined) out.reason = entry.reason;
   if (includeMeta && entry.stage !== undefined) out.stage = entry.stage;
@@ -11943,13 +13072,30 @@ function slimExtraKill(entry) {
     "maxMiss120",
     "maxMissLong",
     "lower120",
-    "stage"
+    "stage",
+    "scoreClass",
+    "randomBaseline",
+    "scoreHint",
+    "predictivePower"
   ].forEach((key) => {
     if (entry[key] !== undefined) out[key] = entry[key];
   });
   if (entry.codeCount !== undefined) out.codeCount = entry.codeCount;
-  if (Array.isArray(entry.codes)) out.codes = entry.codes.slice(0, recentExactCodeCodeLimit(entry));
+  else if (Array.isArray(entry.codes)) out.codeCount = entry.codes.length;
+  if (entry.confidence !== undefined) out.confidence = entry.confidence;
+  if (entry.recommendable !== undefined) out.recommendable = entry.recommendable;
+  if (entry.preferOverlap !== undefined) out.preferOverlap = entry.preferOverlap;
+  // 面板从不需要 codes 大数组（可达上千），统一省略，避免 /state 膨胀与前端卡顿
+  if (entry.codesOmitted === true || (Array.isArray(entry.codes) && entry.codes.length)) out.codesOmitted = true;
   if (entry.performance) out.performance = slimPerformance(entry.performance);
+  // 高基线元数据：即使旧 tip 缺字段，也按 key 补齐，避免面板把高通过率当成强预测
+  const baselineMeta = highBaselineScoreMeta(entry.key || out.key);
+  if (baselineMeta) {
+    out.scoreClass = out.scoreClass || baselineMeta.scoreClass;
+    out.randomBaseline = out.randomBaseline != null ? out.randomBaseline : baselineMeta.baseline;
+    out.scoreHint = out.scoreHint || `${baselineMeta.hint}，非预测力`;
+    out.predictivePower = false;
+  }
   return out;
 }
 
@@ -11957,7 +13103,7 @@ function slimExtraKills(extraKills) {
   if (!extraKills || typeof extraKills !== "object") return {};
   const out = {};
   ["sumAvoid", "sumRangeAvoid", "spanAvoid", "repeatAvoid", "consecutiveAvoid", "parityRatioAvoid", "sizeRatioAvoid", ...RECENT_EXACT_CODE_KEYS, "threeDigitAvoid", "twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit", "threeDigitHit", "anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((key) => {
-    if (extraKills[key]) out[key] = slimExtraKill(extraKills[key]);
+    if (extraKills[key]) out[key] = slimExtraKill(Object.assign({ key }, extraKills[key]));
   });
   return out;
 }
@@ -11967,7 +13113,7 @@ function slimThreeFourDetail(detail, includeMeta) {
   const total = detail && detail.totalHeweiKill;
   if (total && typeof total === "object") {
     const totalOut = {};
-    ["killHewei", "primaryDigit", "backupDigit", "stage"].forEach((key) => {
+    ["killHewei", "primaryDigit", "backupDigit", "confidence", "recommendable", "stage"].forEach((key) => {
       if (total[key] !== undefined) totalOut[key] = total[key];
     });
     if (includeMeta && total.algorithm !== undefined) totalOut.algorithm = total.algorithm;
@@ -11988,6 +13134,16 @@ function slimThreeFourDetail(detail, includeMeta) {
     if (includeMeta && src.stability !== undefined) threeFourOut.stability = src.stability;
     if (includeMeta && src.performance) threeFourOut.performance = slimPerformance(src.performance);
     out.threeFourHeweiKill = threeFourOut;
+  }
+
+  if (detail && detail.independentHeweiKills && typeof detail.independentHeweiKills === "object") {
+    out.independentHeweiKills = slimHeweiKills(detail.independentHeweiKills, !!includeMeta);
+  }
+  if (Array.isArray(detail && detail.heweiReconcileNotes)) {
+    out.heweiReconcileNotes = detail.heweiReconcileNotes.slice(0, 20);
+  }
+  if (detail && detail.stableMathFilter) {
+    out.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(detail.stableMathFilter);
   }
   return out;
 }
@@ -12069,39 +13225,14 @@ function slimPredictionForPanel(prediction, includeMeta) {
   if (prediction.independentHeweiKills) out.independentHeweiKills = slimHeweiKills(prediction.independentHeweiKills, !!includeMeta);
   if (includeMeta && prediction.recommendationMeta) out.recommendationMeta = prediction.recommendationMeta;
   if (includeMeta && prediction.extraKills) out.extraKills = slimExtraKills(prediction.extraKills);
-  // 历史 predictions 只给核算真相；框架明细只挂在 currentPrediction，避免 /state 膨胀到数 MB
+  // 历史 predictions 只给核算真相；框架只下发 snapshot（面板读 prediction[storeName].items），不再重复 *Items/*RepairReport
   if (includeMeta) {
-    if (prediction.autoTop6Items) out.autoTop6Items = prediction.autoTop6Items;
-    if (prediction.autoTop6RepairReport) out.autoTop6RepairReport = prediction.autoTop6RepairReport;
-    if (prediction.autoTop6) out.autoTop6 = prediction.autoTop6;
-    if (prediction.recommend2Items) out.recommend2Items = prediction.recommend2Items;
-    if (prediction.recommend2RepairReport) out.recommend2RepairReport = prediction.recommend2RepairReport;
-    if (prediction.recommend2) out.recommend2 = prediction.recommend2;
-    if (prediction.killFrameworkItems) out.killFrameworkItems = prediction.killFrameworkItems;
-    if (prediction.killFrameworkRepairReport) out.killFrameworkRepairReport = prediction.killFrameworkRepairReport;
-    if (prediction.killFramework) out.killFramework = prediction.killFramework;
-    if (prediction.compactAttackItems) out.compactAttackItems = prediction.compactAttackItems;
-    if (prediction.compactAttackRepairReport) out.compactAttackRepairReport = prediction.compactAttackRepairReport;
-    if (prediction.compactAttack) out.compactAttack = prediction.compactAttack;
-    if (prediction.threeDingTwoItems) out.threeDingTwoItems = prediction.threeDingTwoItems;
-    if (prediction.threeDingTwoRepairReport) out.threeDingTwoRepairReport = prediction.threeDingTwoRepairReport;
-    if (prediction.threeDingTwo) out.threeDingTwo = prediction.threeDingTwo;
-    if (prediction.threeDingOneItems) out.threeDingOneItems = prediction.threeDingOneItems;
-    if (prediction.threeDingOneRepairReport) out.threeDingOneRepairReport = prediction.threeDingOneRepairReport;
-    if (prediction.threeDingOne) out.threeDingOne = prediction.threeDingOne;
-    if (prediction.sideStableItems) out.sideStableItems = prediction.sideStableItems;
-    if (prediction.sideStableRepairReport) out.sideStableRepairReport = prediction.sideStableRepairReport;
-    if (prediction.sideStable) out.sideStable = prediction.sideStable;
-    if (prediction.coldFrameworkItems) out.coldFrameworkItems = prediction.coldFrameworkItems;
-    if (prediction.coldFrameworkRepairReport) out.coldFrameworkRepairReport = prediction.coldFrameworkRepairReport;
-    if (prediction.coldFramework) out.coldFramework = prediction.coldFramework;
-    if (prediction.dingKillItems) out.dingKillItems = prediction.dingKillItems;
-    if (prediction.dingKillRepairReport) out.dingKillRepairReport = prediction.dingKillRepairReport;
-    if (prediction.dingKill) out.dingKill = prediction.dingKill;
-    if (prediction.pick5000Items) out.pick5000Items = prediction.pick5000Items;
-    if (prediction.pick5000RepairReport) out.pick5000RepairReport = prediction.pick5000RepairReport;
-    if (prediction.pick5000) out.pick5000 = prediction.pick5000;
-    if (prediction.stableMathFilter) out.stableMathFilter = prediction.stableMathFilter;
+    FRAMEWORK_SNAPSHOT_STORE_KEYS.forEach((storeName) => {
+      if (prediction[storeName]) out[storeName] = slimFrameworkSnapshotForPanel(prediction[storeName]);
+    });
+    if (prediction.stableMathFilter) {
+      out.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(prediction.stableMathFilter);
+    }
     if (prediction.detail) out.detail = slimThreeFourDetail(prediction.detail, true);
   } else if (prediction.detail && prediction.detail.threeFourHeweiKill) {
     out.detail = {
@@ -12137,7 +13268,10 @@ function slimThreeDuishuSnapshot(snapshot) {
     "rate30",
     "rate40",
     "rate300",
-    "quality"
+    "quality",
+    "confidence",
+    "recommendable",
+    "stableMathOverlap"
   ].forEach((key) => {
     if (snapshot[key] !== undefined) out[key] = snapshot[key];
   });
@@ -12147,9 +13281,31 @@ function slimThreeDuishuSnapshot(snapshot) {
 function slimHistoryRecord(record) {
   if (!record || typeof record !== "object") return record || null;
   const out = {};
-  ["uid", "period", "opentime", "numbers", "positions", "metrics", "capturedAt"].forEach((key) => {
+  ["uid", "period", "opentime", "numbers"].forEach((key) => {
     if (record[key] !== undefined) out[key] = record[key];
   });
+  // metrics/positions/capturedAt 面板冷热与展示用不上，省略以减 /state 体积
+  return out;
+}
+
+function slimFrameworkSnapshotForPanel(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return snapshot || null;
+  const out = Object.assign({}, snapshot);
+  if (Array.isArray(snapshot.items)) {
+    out.items = snapshot.items.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const copy = Object.assign({}, item);
+      if (Array.isArray(copy.codes)) {
+        if (copy.codeCount == null) copy.codeCount = copy.codes.length;
+        copy.codesOmitted = true;
+        delete copy.codes;
+      }
+      return copy;
+    });
+  }
+  if (Array.isArray(out.repairReport) && out.repairReport.length > 12) {
+    out.repairReport = out.repairReport.slice(0, 12);
+  }
   return out;
 }
 
@@ -12803,6 +13959,7 @@ function isViewerAllowedRequest(method, pathname) {
     || pathname === "/history"
     || pathname === "/health"
     || pathname === "/stable-math-filter"
+    || pathname === "/exclusion-model"
   );
 }
 
@@ -13003,6 +14160,10 @@ async function handleRequest(req, res) {
       await handleStableMathFilterRequest(req, res, parsedUrl);
       return;
     }
+    if (req.method === "GET" && pathname === "/exclusion-model") {
+      await handleExclusionModelRequest(req, res, parsedUrl);
+      return;
+    }
     if (req.method === "GET" && pathname === "/backup") {
       const file = makeBackup();
       sendJson(res, 200, { ok: true, backupFile: file, state });
@@ -13056,7 +14217,7 @@ async function handleRequest(req, res) {
       sendPanelHtml(req, res);
       return;
     }
-    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /history", "GET /stable-math-filter", "POST /sync", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "GET /backup"] });
+    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /history", "GET /stable-math-filter", "GET /exclusion-model", "POST /sync", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "GET /backup"] });
   } catch (err) {
     sendJson(res, 500, { ok: false, error: err.message || String(err) });
   }
@@ -13507,7 +14668,13 @@ server.listen(PORT, "0.0.0.0", () => {
           if (scrubbed > 0) addLog("已清除回填样本的 truth 标记", { scrubbed });
           // 启动后先挂缓存，再异步按最新 history 刷新更稳排除
           if (state.currentPrediction) attachCachedStableMathFilter(state.currentPrediction);
-          state.stableMathFilter = state.stableMathFilter || stableMathFilterBridge.readCachedFilter() || null;
+          if (state.currentPrediction && Array.isArray(state.history) && state.history.length) {
+            fillPredictionDetail(state.currentPrediction, state.history);
+            ensurePredictionFrameworkSnapshots(state.currentPrediction, state.history);
+          }
+          state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(
+            state.stableMathFilter || stableMathFilterBridge.readCachedFilter()
+          ) || null;
           saveState();
           scheduleStableMathFilterRefresh("startup-hydrate");
         } catch (err) {
