@@ -16,6 +16,10 @@ const v8 = require("v8");
 const { spawn } = require("child_process");
 const stableMathFilterBridge = require("./algorithms/stable_math_filter_bridge");
 const codexStablePosition = require("./algorithms/codex_stable_position");
+const algorithmProjectIsolation = require("./algorithms/project_isolation");
+const l0Orchestrator = require("./algorithms/orchestrate_l0");
+const l1Orchestrator = require("./algorithms/orchestrate_l1");
+const frameworkItems = require("./algorithms/_shared/framework_items");
 
 // 启动时读阿里 /root/penta5-runner/.env（不覆盖已有 process.env，便于 pm2 注入）
 (function loadLocalEnvFile() {
@@ -34,7 +38,9 @@ const codexStablePosition = require("./algorithms/codex_stable_position");
       }
       if (process.env[key] === undefined) process.env[key] = value;
     }
-  } catch (_) {}
+  } catch (err) {
+    console.error("[env] failed to parse env file", err && err.message);
+  }
 })();
 
 const PORT = Number(process.env.PORT || 3001);
@@ -67,14 +73,22 @@ const PANEL_HISTORY_LIMIT = Number(process.env.PANEL_HISTORY_LIMIT || 120);
 const PANEL_STATE_CACHE_TTL_MS = Number(process.env.PANEL_STATE_CACHE_TTL_MS || 30 * 1000);
 const PANEL_LOG_LIMIT = Number(process.env.PANEL_LOG_LIMIT || 20);
 const SERVER_REQUEST_TIMEOUT = Number(process.env.SERVER_REQUEST_TIMEOUT || 15000);
+// /sync 会串行抓代理 + 结算 + hydrate，15s 会被掐断 → 监督报 Remote end closed
+const SYNC_REQUEST_TIMEOUT = Number(process.env.SYNC_REQUEST_TIMEOUT || Math.max(SERVER_REQUEST_TIMEOUT, 120000));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 const BACKUP_DIR = path.join(DATA_DIR, "backup");
+const BIND_HOST = String(process.env.PENTA5_BIND_HOST || "0.0.0.0").trim() || "0.0.0.0";
 const PANEL_SESSION_COOKIE = "penta5_panel_session";
 const PANEL_SESSION_MAX_AGE_MS = Number(process.env.PANEL_SESSION_MAX_AGE_MS || 12 * 60 * 60 * 1000);
+const LOGIN_RATE_WINDOW_MS = Math.max(60 * 1000, Number(process.env.PENTA5_LOGIN_RATE_WINDOW_MS || 15 * 60 * 1000));
+const LOGIN_RATE_MAX_FAILURES = Math.max(3, Number(process.env.PENTA5_LOGIN_MAX_FAILURES || 8));
 
 const DIGIT_POOL = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
-const BACKEND_STATE_VERSION = "backend-truth-audit-v80";
+// 二数合统一规则：仅从 02468 中挑 4 个，等价于固定排除其中 1 个。
+const ANY_TWO_HEWEI_SOURCE_DIGITS = "02468";
+const ANY_TWO_HEWEI_CODE_SIZE = 4;
+const BACKEND_STATE_VERSION = "backend-truth-audit-v85-smart-robot-sync";
 const FRAMEWORK_SNAPSHOT_STORE_KEYS = [
   "autoTop6",
   "recommend2",
@@ -87,7 +101,7 @@ const FRAMEWORK_SNAPSHOT_STORE_KEYS = [
   "dingKill",
   "pick5000"
 ];
-const MODEL_VERSION = "adaptive-independent-v68-all-exclusions-4digit";
+const MODEL_VERSION = "adaptive-independent-v69-isolated-projects-4digit";
 const THREE_DUISHU_SNAPSHOT_VERSION = "backend-three-duishu-snapshot-v1";
 const STORM_ENTER_AUTO_TOP6_MISS = Math.max(1, Number(process.env.STORM_ENTER_AUTO_TOP6_MISS || 4));
 const STORM_ENTER_THREE_DUISHU_MISS = Math.max(1, Number(process.env.STORM_ENTER_THREE_DUISHU_MISS || 5));
@@ -230,6 +244,8 @@ let syncRunning = false;
 let predictionBuildRunning = false;
 let stableMathFilterRunning = false;
 let stableMathFilterQueued = false;
+let algorithmProjectSyncQueued = false;
+const loginFailureBuckets = new Map();
 
 function isoNow() {
   return new Date().toISOString();
@@ -249,6 +265,144 @@ function safeJsonStringify(value) {
   } catch (err) {
     return String(value);
   }
+}
+
+const CORE_PREDICTION_ISSUE_TYPES = new Set([
+  "prediction-missing",
+  "prediction-base-mismatch",
+  "prediction-version-mismatch"
+]);
+
+function isCorePredictionIssue(issue) {
+  return !!(issue && CORE_PREDICTION_ISSUE_TYPES.has(String(issue.type || "")));
+}
+
+function normalizeAlgorithmProjectHealth(input) {
+  const source = input && typeof input === "object" ? input : {};
+  const normalized = {};
+  algorithmProjectIsolation.PROJECTS.forEach((project) => {
+    const raw = source[project.id] && typeof source[project.id] === "object" ? source[project.id] : {};
+    normalized[project.id] = {
+      status: raw.status === "degraded" ? "degraded" : "ok",
+      issueCount: Math.max(0, Number(raw.issueCount || 0) || 0),
+      lastIssue: raw.lastIssue && typeof raw.lastIssue === "object" ? raw.lastIssue : null,
+      signature: String(raw.signature || ""),
+      updatedAt: String(raw.updatedAt || ""),
+      baseUid: String(raw.baseUid || ""),
+      basePeriod: String(raw.basePeriod || "")
+    };
+  });
+  return normalized;
+}
+
+function summarizeAlgorithmProjectHealth(input) {
+  const health = normalizeAlgorithmProjectHealth(input);
+  const degraded = Object.entries(health)
+    .filter(([, value]) => value && value.status === "degraded")
+    .map(([projectId, value]) => ({
+      projectId,
+      issueCount: Math.max(0, Number(value && value.issueCount || 0) || 0)
+    }));
+  return {
+    degradedProjectCount: degraded.length,
+    degradedIssueCount: degraded.reduce((total, item) => total + item.issueCount, 0),
+    degradedProjectIds: degraded.map((item) => item.projectId)
+  };
+}
+
+function resetAlgorithmProjectHealthForPrediction(prediction) {
+  if (!state || typeof state !== "object") return;
+  const baseUid = String(prediction && prediction.baseUid || "");
+  const basePeriod = String(prediction && prediction.basePeriod || "");
+  state.algorithmProjectHealth = normalizeAlgorithmProjectHealth({});
+  Object.keys(state.algorithmProjectHealth).forEach((projectId) => {
+    state.algorithmProjectHealth[projectId].baseUid = baseUid;
+    state.algorithmProjectHealth[projectId].basePeriod = basePeriod;
+    state.algorithmProjectHealth[projectId].updatedAt = isoNow();
+  });
+}
+
+function markAlgorithmProjectIssue(issue) {
+  if (!state || typeof state !== "object") return { changed: false, projectId: "core-runner" };
+  state.algorithmProjectHealth = normalizeAlgorithmProjectHealth(state.algorithmProjectHealth);
+  const projectId = algorithmProjectIsolation.projectIdForIssue(issue);
+  const entry = state.algorithmProjectHealth[projectId] || {
+    status: "ok",
+    issueCount: 0,
+    lastIssue: null,
+    signature: "",
+    updatedAt: "",
+    baseUid: "",
+    basePeriod: ""
+  };
+  const prediction = state.currentPrediction && typeof state.currentPrediction === "object" ? state.currentPrediction : null;
+  const signature = safeJsonStringify({
+    type: issue && issue.type || "",
+    key: issue && issue.key || "",
+    reason: issue && issue.reason || "",
+    baseUid: prediction && prediction.baseUid || ""
+  });
+  if (entry.status === "degraded" && entry.signature === signature) {
+    return { changed: false, projectId };
+  }
+  entry.status = "degraded";
+  entry.issueCount = Math.max(0, Number(entry.issueCount || 0) || 0) + 1;
+  entry.lastIssue = issue && typeof issue === "object" ? Object.assign({}, issue) : null;
+  entry.signature = signature;
+  entry.updatedAt = isoNow();
+  entry.baseUid = String(prediction && prediction.baseUid || "");
+  entry.basePeriod = String(prediction && prediction.basePeriod || "");
+  state.algorithmProjectHealth[projectId] = entry;
+  try {
+    algorithmProjectIsolation.recordProjectIssue(DATA_DIR, issue, prediction);
+  } catch (error) {
+    console.error("[AlgorithmProject] issue record failed", projectId, error && error.message ? error.message : error);
+  }
+  invalidateModelAuditCache();
+  invalidatePanelStateCache();
+  return { changed: true, projectId };
+}
+
+function markAlgorithmProjectIssues(issues, actions) {
+  const changed = [];
+  (Array.isArray(issues) ? issues : []).forEach((issue) => {
+    if (isCorePredictionIssue(issue)) return;
+    const result = markAlgorithmProjectIssue(issue);
+    if (!result.changed) return;
+    const action = {
+      type: "isolate-algorithm-project",
+      projectId: result.projectId,
+      issueType: String(issue && issue.type || ""),
+      key: String(issue && issue.key || "")
+    };
+    changed.push(action);
+    if (Array.isArray(actions)) actions.push(action);
+  });
+  return changed;
+}
+
+function scheduleAlgorithmProjectStateSync(reason) {
+  if (algorithmProjectSyncQueued) return;
+  algorithmProjectSyncQueued = true;
+  setImmediate(() => {
+    algorithmProjectSyncQueued = false;
+    try {
+      if (!state || typeof state !== "object") return;
+      state.algorithmProjectHealth = normalizeAlgorithmProjectHealth(state.algorithmProjectHealth);
+      algorithmProjectIsolation.syncProjectStates({
+        dataDir: DATA_DIR,
+        currentPrediction: state.currentPrediction,
+        predictions: state.predictions,
+        latestRecord: state.latestRecord,
+        modelVersion: MODEL_VERSION,
+        projectHealth: state.algorithmProjectHealth,
+        historyLimit: 120,
+        reason: String(reason || "state-save")
+      });
+    } catch (error) {
+      console.error("[AlgorithmProject] state sync failed", error && error.message ? error.message : error);
+    }
+  });
 }
 
 function isRecentExactCodeKey(key) {
@@ -468,7 +622,7 @@ function createDefaultCounters() {
     twoDigitAvoid3: { label: "对数避开3组", total: 0, match: 0 },
     twoDigitHit: { label: "两数共现除对数（基线参考）", total: 0, match: 0 },
     threeDigitHit: { label: "三数共现命中", total: 0, match: 0 },
-    anyTwoHeweiHit: { label: "二数合尾宽命中（高基线参考）", total: 0, match: 0 },
+    anyTwoHeweiHit: { label: "二数合尾02468排1码命中（高基线参考）", total: 0, match: 0 },
     anyThreeHeweiHit: { label: "三数合尾宽命中（高基线参考）", total: 0, match: 0 },
     sumRangeAvoid: { label: "和值极端区间过滤（高基线）", total: 0, match: 0 },
     spanAvoid: { label: "跨度极罕形态过滤（高基线）", total: 0, match: 0 },
@@ -902,12 +1056,18 @@ function mergeDailyStreakStats(storeName, day, stats, source) {
   const isPanelSource = /^panel/i.test(incomingSource);
   const existingSource = String(existing.source || "");
   const existingIsBackend = existingSource.indexOf("backend-") === 0 || existingSource === "backend-evaluation";
-  const incomingSnapshot = incomingSource.indexOf("backend-auto-top6-snapshot") === 0 || incomingSource.indexOf("backend-recommend2-snapshot") === 0 || incomingSource.indexOf("backend-cold-framework-snapshot") === 0 || incomingSource.indexOf("backend-pick5000-snapshot") === 0;
-  const existingSnapshot = existingSource.indexOf("backend-auto-top6-snapshot") === 0 || existingSource.indexOf("backend-recommend2-snapshot") === 0 || existingSource.indexOf("backend-cold-framework-snapshot") === 0 || existingSource.indexOf("backend-pick5000-snapshot") === 0;
-  const snapshotVersionChanged = (name === "autoTop6" || name === "recommend2" || name === "coldFramework" || name === "pick5000") && incomingSnapshot && existingSnapshot && incomingSource !== existingSource;
-  const replaceAutoTop6Snapshot = (name === "autoTop6" || name === "recommend2" || name === "coldFramework" || name === "pick5000") && incomingSnapshot && (snapshotVersionChanged || !existingSnapshot || incoming.total >= existing.total || existing.total === 0);
-  let canUseIncomingTotals = replaceAutoTop6Snapshot || (incomingCoherent && (incoming.total >= existing.total || !existingCoherent));
-  let useIncomingCurrent = replaceAutoTop6Snapshot || (incoming.lastPeriod &&
+  const incomingSnapshot = incomingSource.indexOf("backend-auto-top6-snapshot") === 0 || incomingSource.indexOf("backend-recommend2-snapshot") === 0 || incomingSource.indexOf("backend-cold-framework-snapshot") === 0 || incomingSource.indexOf("backend-pick5000-snapshot") === 0 || incomingSource.indexOf("backend-three-ding-framework") === 0 || incomingSource.indexOf("backend-three-ding-two") === 0 || incomingSource.indexOf("backend-three-ding-one") === 0;
+  const existingSnapshot = existingSource.indexOf("backend-auto-top6-snapshot") === 0 || existingSource.indexOf("backend-recommend2-snapshot") === 0 || existingSource.indexOf("backend-cold-framework-snapshot") === 0 || existingSource.indexOf("backend-pick5000-snapshot") === 0 || existingSource.indexOf("backend-three-ding-framework") === 0 || existingSource.indexOf("backend-three-ding-two") === 0 || existingSource.indexOf("backend-three-ding-one") === 0;
+  const threeDingStore = name === "compactAttack" || name === "threeDingTwo" || name === "threeDingOne";
+  const snapshotVersionChanged = (name === "autoTop6" || name === "recommend2" || name === "coldFramework" || name === "pick5000" || threeDingStore) && incomingSnapshot && existingSnapshot && incomingSource !== existingSource;
+  const replaceAutoTop6Snapshot = (name === "autoTop6" || name === "recommend2" || name === "coldFramework" || name === "pick5000" || threeDingStore) && incomingSnapshot && (snapshotVersionChanged || !existingSnapshot || incoming.total >= existing.total || existing.total === 0);
+  // A backend rebuild is calculated from sealed predictions for this exact
+  // day. It must be able to replace a previously over-counted day ledger.
+  const replaceBackendDailyRebuild = !isPanelSource && incomingCoherent && incoming.total > 0 && incoming.lastPeriod &&
+    periodMatchesDay(cleanDay, incoming.lastPeriod) &&
+    (!existing.lastPeriod || String(incoming.lastPeriod) >= String(existing.lastPeriod));
+  let canUseIncomingTotals = replaceAutoTop6Snapshot || replaceBackendDailyRebuild || (incomingCoherent && (incoming.total >= existing.total || !existingCoherent));
+  let useIncomingCurrent = replaceAutoTop6Snapshot || replaceBackendDailyRebuild || (incoming.lastPeriod &&
     incomingCoherent &&
     (!existing.lastPeriod || String(incoming.lastPeriod) >= String(existing.lastPeriod)));
   // 面板回写不能覆盖后端账本，也不能抬高今日峰值
@@ -922,8 +1082,8 @@ function mergeDailyStreakStats(storeName, day, stats, source) {
     rate: canUseIncomingTotals ? incoming.rate : existing.rate,
     currentWin: useIncomingCurrent ? incoming.currentWin : existing.currentWin,
     currentMiss: useIncomingCurrent ? incoming.currentMiss : existing.currentMiss,
-    maxWin: isPanelSource ? existing.maxWin : Math.max(existing.maxWin, incoming.maxWin),
-    maxMiss: isPanelSource ? existing.maxMiss : Math.max(existing.maxMiss, incoming.maxMiss),
+    maxWin: isPanelSource ? existing.maxWin : (replaceBackendDailyRebuild ? incoming.maxWin : Math.max(existing.maxWin, incoming.maxWin)),
+    maxMiss: isPanelSource ? existing.maxMiss : (replaceBackendDailyRebuild ? incoming.maxMiss : Math.max(existing.maxMiss, incoming.maxMiss)),
     lastPeriod: useIncomingCurrent ? incoming.lastPeriod : existing.lastPeriod,
     updatedAt: isoNow(),
     source: (isPanelSource && existingIsBackend && existingSource) ? existingSource : incomingSource
@@ -1072,6 +1232,7 @@ function refreshBackendDailyStreaks() {
     mergeDailyStreakStats("compactAttack", day, streakStatsFromResults(day, compactAttackRows), COMPACT_ATTACK_SNAPSHOT_VERSION);
   }
   const threeDingTwoRows = state.predictions
+    .filter((item) => item && item.evaluated && item.evaluation && predictionDateKey(item) === day)
     .map((item) => {
       const ev = item && item.evaluation || {};
       const rec = ev.threeDingTwo || {};
@@ -1085,11 +1246,13 @@ function refreshBackendDailyStreaks() {
         success: rec.success
       };
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => String(a.period).localeCompare(String(b.period)));
   if (threeDingTwoRows.length || (state.currentPrediction && state.currentPrediction.threeDingTwo)) {
     mergeDailyStreakStats("threeDingTwo", day, streakStatsFromResults(day, threeDingTwoRows), THREE_DING_TWO_SNAPSHOT_VERSION);
   }
   const threeDingOneRows = state.predictions
+    .filter((item) => item && item.evaluated && item.evaluation && predictionDateKey(item) === day)
     .map((item) => {
       const ev = item && item.evaluation || {};
       const rec = ev.threeDingOne || {};
@@ -1103,7 +1266,8 @@ function refreshBackendDailyStreaks() {
         success: rec.success
       };
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => String(a.period).localeCompare(String(b.period)));
   if (threeDingOneRows.length || (state.currentPrediction && state.currentPrediction.threeDingOne)) {
     mergeDailyStreakStats("threeDingOne", day, streakStatsFromResults(day, threeDingOneRows), THREE_DING_ONE_SNAPSHOT_VERSION);
   }
@@ -1293,6 +1457,7 @@ function createDefaultState() {
     counters: createDefaultCounters(),
     modelWatchdog: createDefaultModelWatchdog(),
     stormMode: createDefaultStormMode(),
+    algorithmProjectHealth: normalizeAlgorithmProjectHealth({}),
     dailyStreakLedger: {},
     pendingOfficialDraws: [],
     rdsReadOnly: false,
@@ -1327,6 +1492,7 @@ function loadState() {
     merged.counters = normalizeCounters(merged.counters);
     merged.modelWatchdog = normalizeModelWatchdog(merged.modelWatchdog);
     merged.stormMode = normalizeStormMode(merged.stormMode);
+    merged.algorithmProjectHealth = normalizeAlgorithmProjectHealth(merged.algorithmProjectHealth);
     merged.dailyStreakLedger = normalizeDailyStreakLedger(merged.dailyStreakLedger);
     merged.pendingOfficialDraws = normalizePendingOfficialDraws(merged.pendingOfficialDraws);
     merged.rdsReadOnly = !!merged.rdsReadOnly;
@@ -1553,7 +1719,9 @@ async function flushPendingOfficialDrawsToRds(reason) {
       addLog("RDS 待写入开奖已追平", { flushed, reason: reason || "catchup", pending: (state && state.pendingOfficialDraws || []).length });
       try {
         await hydrateSharedHistoryFromRds(state);
-      } catch (_) {}
+      } catch (err) {
+        addLog("RDS 追平后历史回填失败", { error: err && err.message });
+      }
     }
     return { ok: !hitReadOnly, flushed, pending: remain.length, readOnly: hitReadOnly };
   } finally {
@@ -1832,7 +2000,14 @@ function slimPredictionForDisk(prediction, keepRich) {
     evaluated: !!prediction.evaluated,
     counterApplied: !!prediction.counterApplied,
     counterSkipped: !!prediction.counterSkipped,
-    counterSkipReason: prediction.counterSkipReason || ""
+    counterSkipReason: prediction.counterSkipReason || "",
+    // The aggregate seal is evidence, not a presentation-only flag.  This
+    // function is used both for disk serialization and in-memory compaction;
+    // dropping these fields made a perfectly sealed tip appear mutable after
+    // every save and allowed later refresh work to touch the current period.
+    snapshotsSealedAt: prediction.snapshotsSealedAt || "",
+    snapshotsSealedBaseUid: prediction.snapshotsSealedBaseUid || "",
+    allSnapshotsSealed: prediction.allSnapshotsSealed === true
   };
   if (prediction.evaluation) out.evaluation = slimEvaluationForPersist(prediction.evaluation);
   out.positionKills = slimPositionKills(prediction.positionKills, !!keepRich);
@@ -1914,12 +2089,16 @@ function saveState(options) {
   try {
     fs.writeFileSync(tmp, safeJsonStringify(buildPersistedStateForDisk(state)));
     fs.renameSync(tmp, STATE_FILE);
+    scheduleAlgorithmProjectStateSync("save-state");
     if (opts.skipMemoryCompact !== true) {
       try { compactPredictionsInMemory(); } catch (compactErr) {
         console.error("[saveState] compact memory failed", compactErr && compactErr.message ? compactErr.message : compactErr);
       }
     }
-    invalidatePanelStateCache();
+    // A periodic sync writes a new timestamp even when the current prediction
+    // and its evaluated history have not changed.  Keep the expensive audit
+    // cache in that case; its key below is based on actual audit inputs.
+    invalidatePanelStateCache({ invalidateModelAudit: false });
     if (opts.skipMirror !== true) scheduleRdsMirrorAfterSave();
   } catch (err) {
     try {
@@ -3281,48 +3460,11 @@ function threeDuishuSnapshotIsComplete(snapshot) {
 }
 
 function buildThreeDuishuSnapshot(prediction) {
-  const rec = getThreeDuishuRecommendation();
-  if (!rec || !rec.ok || !rec.code) return null;
-  const pairs = (Array.isArray(rec.pairs) ? rec.pairs : []).map(String).filter((key) => /^\d{2}$/.test(key)).slice(0, 3);
-  if (pairs.length !== 3) return null;
-  return {
-    version: THREE_DUISHU_SNAPSHOT_VERSION,
-    kind: "threeDuishu",
-    key: "threeDuishu",
-    side: "recommend",
-    name: "三对数排除",
-    code: String(rec.code || ""),
-    shot: threeDuishuShotText(pairs),
-    pairs,
-    pairCodes: (Array.isArray(rec.pairCodes) ? rec.pairCodes : pairs.slice()).map(String).slice(0, 3),
-    quality: rec.quality || "",
-    confidence: rec.confidence || "normal",
-    recommendable: rec.recommendable !== false,
-    rate30: rec.rate30,
-    rate40: rec.rate40,
-    rate120: rec.rate120,
-    rate300: rec.rate300,
-    sample40: rec.sample40,
-    walkForwardRate: rec.walkForward && rec.walkForward.rate,
-    stableMathOverlap: Number(rec.stableMathOverlap || 0),
-    selectedReason: rec.selectedReason || "",
-    selectedLocked: !!rec.selectedLocked,
-    sealed: false
-  };
+  return frameworkItems.buildThreeDuishuSnapshot(prediction);
 }
 
 function ensurePredictionThreeDuishuSnapshot(prediction) {
-  if (!prediction || typeof prediction !== "object") return null;
-  // 一旦三对数码生成完整就冻结：只允许后续 seal，禁止未封存时被重算覆盖
-  if (threeDuishuSnapshotIsComplete(prediction.threeDuishu)) {
-    return prediction.threeDuishu;
-  }
-  const snapshot = buildThreeDuishuSnapshot(prediction);
-  if (!snapshot) return prediction.threeDuishu || null;
-  prediction.threeDuishu = snapshot;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.threeDuishuSnapshotVersion = THREE_DUISHU_SNAPSHOT_VERSION;
-  return prediction.threeDuishu;
+  return frameworkItems.ensurePredictionThreeDuishuSnapshot(prediction);
 }
 
 function evaluateThreeDuishuSnapshot(prediction, actualRecord) {
@@ -3507,7 +3649,7 @@ function modelKeyLabel(key) {
     "extra.twoDigitAvoid3": "对数避开3组",
     "extra.twoDigitHit": "两数共现除对数（基线参考）",
     "extra.threeDigitHit": "三数共现命中",
-    "extra.anyTwoHeweiHit": "二数合尾宽命中（高基线参考）",
+    "extra.anyTwoHeweiHit": "二数合尾02468排1码命中（高基线参考）",
     "extra.anyThreeHeweiHit": "三数合尾宽命中（高基线参考）"
   };
   return labels[key] || key;
@@ -3643,9 +3785,7 @@ function extraModelIntegrityReason(key, item) {
     if (!/^\d{3}$/.test(value) || new Set(value.split("")).size !== 3) return "invalid-three-digit-code";
   }
   if (key === "anyTwoHeweiHit") {
-    // 全码池：三个数两两求合尾，选 5 码，沾上任意一个合尾即命中；禁全单/全双
-    if (!/^\d{5}$/.test(value) || new Set(value.split("")).size !== 5) return "invalid-two-hewei-code";
-    if (isUniformParityDigitSet(value)) return "invalid-two-hewei-uniform-parity";
+    if (!isAnyTwoHeweiCode(value)) return "invalid-two-hewei-code";
   }
   if (key === "anyThreeHeweiHit") {
     if (!/^\d{5}$/.test(value) || new Set(value.split("")).size !== 5) return "invalid-three-hewei-code";
@@ -3720,7 +3860,7 @@ function collectPredictionIntegrityIssues(prediction, latest) {
         type: "position-model-missing",
         key: `position.${key}.dual`,
         label: modelKeyLabel(`position.${key}.dual`),
-        action: "regenerate-current-prediction"
+        action: "isolate-algorithm-project"
       });
     }
   });
@@ -3734,17 +3874,17 @@ function collectPredictionIntegrityIssues(prediction, latest) {
         type: "hewei-model-missing",
         key: `hewei.${key}`,
         label: modelKeyLabel(`hewei.${key}`),
-        action: "regenerate-current-prediction"
+        action: "isolate-algorithm-project"
       });
     }
   });
   const totalHeweiValue = String(current.totalHeweiKill == null ? "" : current.totalHeweiKill);
   const unifiedHeweiValue = String(current.threeFourHeweiKillDigit == null ? "" : current.threeFourHeweiKillDigit);
   if (!/^\d$/.test(totalHeweiValue)) {
-    issues.push({ type: "hewei-model-missing", key: "hewei.total", label: "四位总合尾", action: "regenerate-current-prediction" });
+    issues.push({ type: "hewei-model-missing", key: "hewei.total", label: "四位总合尾", action: "isolate-algorithm-project" });
   }
   if (!/^\d$/.test(unifiedHeweiValue)) {
-    issues.push({ type: "hewei-model-missing", key: "hewei.unified", label: "三个合尾统一", action: "regenerate-current-prediction" });
+    issues.push({ type: "hewei-model-missing", key: "hewei.unified", label: "三个合尾统一", action: "isolate-algorithm-project" });
   }
 
   const extraKills = current.extraKills || (current.detail && current.detail.extraKills) || {};
@@ -3757,7 +3897,7 @@ function collectPredictionIntegrityIssues(prediction, latest) {
         key: `extra.${key}`,
         label: modelKeyLabel(`extra.${key}`),
         reason,
-        action: "regenerate-current-prediction"
+        action: "isolate-algorithm-project"
       });
     }
   });
@@ -3784,7 +3924,7 @@ function collectPredictionIntegrityIssues(prediction, latest) {
         key: `snapshot.${name}.seal`,
         label: `${label}开奖前封存`,
         sealed: !!(snapshot && snapshot.sealed),
-        action: "regenerate-current-prediction"
+        action: "isolate-algorithm-project"
       });
     }
   });
@@ -3798,16 +3938,34 @@ function tipStructureIsPerfect(prediction, latest) {
 
 function applyTipReadyState(prediction, latest, issues) {
   const list = Array.isArray(issues) ? issues : collectPredictionIntegrityIssues(prediction, latest);
-  const ok = list.length === 0;
+  const coreIssues = list.filter(isCorePredictionIssue);
+  const projectIssues = list.filter((issue) => !isCorePredictionIssue(issue));
+  const projectHealthSummary = summarizeAlgorithmProjectHealth(state && state.algorithmProjectHealth);
+  // A degraded algorithm is visible in its own project state, but must not
+  // revoke the valid output of independent algorithms or stop the whole runner.
+  const ok = coreIssues.length === 0;
   if (prediction && typeof prediction === "object") {
     prediction.tipStructurePerfect = ok;
     prediction.tipReady = ok;
+    prediction.algorithmProjectIssueCount = projectIssues.length;
+    prediction.algorithmProjectIssues = projectIssues.slice(0, 40);
+    prediction.algorithmProjectDegradedCount = projectHealthSummary.degradedProjectCount;
+    prediction.algorithmProjectDegradedIssueCount = projectHealthSummary.degradedIssueCount;
+    prediction.algorithmProjectDegradedIds = projectHealthSummary.degradedProjectIds;
   }
   if (state) {
     state.tipReady = ok;
     state.tipReadyCheckedAt = isoNow();
-    state.tipReadyIssueCount = list.length;
-    state.tipReadyIssues = list.slice(0, 40);
+    state.tipReadyIssueCount = coreIssues.length;
+    state.tipReadyIssues = coreIssues.slice(0, 40);
+    state.algorithmProjectIssueCount = projectIssues.length;
+    state.algorithmProjectIssues = projectIssues.slice(0, 80);
+    // Keep this separate from algorithmProjectIssueCount: that field is for
+    // current prediction-integrity issues, whereas this summarizes persistent
+    // isolated-project health across the current base period.
+    state.algorithmProjectDegradedCount = projectHealthSummary.degradedProjectCount;
+    state.algorithmProjectDegradedIssueCount = projectHealthSummary.degradedIssueCount;
+    state.algorithmProjectDegradedIds = projectHealthSummary.degradedProjectIds;
     if (ok) state.tipReadyFailedAt = "";
     else if (!state.tipReadyFailedAt) state.tipReadyFailedAt = isoNow();
   }
@@ -3919,6 +4077,7 @@ function regenerateCurrentPredictionForWatchdog(actions) {
       })
     ].slice(0, MAX_PREDICTION_LOG);
     state.currentPrediction = regenerated;
+    resetAlgorithmProjectHealthForPrediction(regenerated);
     ensurePredictionAutoTop6Snapshot(regenerated, state.history);
     ensurePredictionRecommend2Snapshot(regenerated, state.history);
     ensurePredictionKillFrameworkSnapshot(regenerated, state.history);
@@ -3969,6 +4128,12 @@ function runModelWatchdog(trigger, options) {
   const runtimeIssues = collectRuntimeIssues();
   const issues = [...integrityIssues, ...qualityIssues, ...runtimeIssues];
   const actions = [];
+  const coreIntegrityIssues = integrityIssues.filter(isCorePredictionIssue);
+  const projectIntegrityIssues = integrityIssues.filter((issue) => !isCorePredictionIssue(issue));
+  // Quality and per-algorithm integrity failures are isolated in their own
+  // project state.  They are observed and repaired independently; they never
+  // clear shared locks or regenerate every other algorithm's prediction.
+  markAlgorithmProjectIssues([...projectIntegrityIssues, ...qualityIssues], actions);
   const storm = normalizeStormMode(state.stormMode);
   const triggerText = String(trigger || "");
   const syncOwned = triggerText.indexOf("sync") >= 0 || triggerText === "manual-sync";
@@ -3982,26 +4147,15 @@ function runModelWatchdog(trigger, options) {
     ""
   );
   const qualityRepairAlreadyHandled = !!baseUid && state.modelWatchdog.lastQualityRepairBaseUid === baseUid;
-  // 风暴模式：冻结质量清锁换码，只允许完整性重建与内存裁剪
-  const effectiveQualityIssues = (qualityRepairAlreadyHandled || storm.active || deferSettleSafe) ? [] : qualityIssues;
-  if (storm.active && qualityIssues.length) {
-    actions.push({
-      type: "storm-lock-freeze",
-      skippedQualityIssues: qualityIssues.length,
-      reason: storm.reason || "storm-active"
-    });
-  }
-  if (deferSettleSafe && qualityIssues.length) {
-    actions.push({
-      type: "defer-quality-observe-only",
-      skippedQualityIssues: qualityIssues.length,
-      reason: "settle-safe-integrity-only",
-      trigger: triggerText
-    });
-  }
-  const repairableIssues = [...integrityIssues, ...effectiveQualityIssues, ...runtimeIssues]
+  // A quality repair only releases locks owned by the affected algorithm.
+  // It deliberately does not rebuild the shared current prediction: that
+  // output is sealed for this draw and other algorithms remain independent.
+  const effectiveQualityIssues = !deferSettleSafe && !qualityRepairAlreadyHandled
+    ? qualityIssues.filter((issue) => issue && issue.action && issue.action !== "observe-only")
+    : [];
+  const repairableIssues = [...coreIntegrityIssues, ...runtimeIssues, ...effectiveQualityIssues]
     .filter((issue) => issue && issue.action && issue.action !== "observe-only");
-  const urgentPeriodRepair = integrityIssues.length > 0 || effectiveQualityIssues.length > 0;
+  const urgentPeriodRepair = coreIntegrityIssues.length > 0;
   const lastRepairMs = state.modelWatchdog.lastRepairAt ? Date.parse(state.modelWatchdog.lastRepairAt) : 0;
   const cooldownMs = Number(state.modelWatchdog.repairCooldownMs || MODEL_WATCHDOG_REPAIR_COOLDOWN);
   const inCooldown = repairableIssues.length > 0 &&
@@ -4019,8 +4173,10 @@ function runModelWatchdog(trigger, options) {
     });
 
     const clearedModelLock = actions.some((action) => action && action.type === "delete-lock");
-    const forcedRegenerate = repairableIssues.some((issue) => issue && issue.action === "regenerate-current-prediction");
-    const needsRegenerate = forcedRegenerate || (clearedModelLock && repairableIssues.some((issue) => issue.type !== "memory-pressure"));
+    const forcedRegenerate = coreIntegrityIssues.some((issue) => issue && issue.action === "regenerate-current-prediction");
+    const needsRegenerate = forcedRegenerate || (clearedModelLock && repairableIssues.some((issue) => {
+      return issue.type !== "memory-pressure" && !effectiveQualityIssues.includes(issue);
+    }));
     if (needsRegenerate) {
       if (syncRunning && !syncOwned) {
         actions.push({ type: "regenerate-skip", reason: "sync-running" });
@@ -4032,10 +4188,16 @@ function runModelWatchdog(trigger, options) {
     }
   }
 
-  const qualityRepairAttempted = !qualityRepairAlreadyHandled && !storm.active && qualityIssues.length > 0 && !inCooldown;
+  const qualityRepairAttempted = effectiveQualityIssues.length > 0;
   if (qualityRepairAttempted) {
     state.modelWatchdog.lastQualityRepairBaseUid = baseUid;
     state.modelWatchdog.lastQualityRepairAt = isoNow();
+    actions.push({
+      type: "quality-lock-release",
+      baseUid,
+      issueKeys: effectiveQualityIssues.map((issue) => String(issue.key || "")).filter(Boolean),
+      nextPredictionOnly: true
+    });
   }
 
   state.modelWatchdog.totalChecks += 1;
@@ -4058,13 +4220,19 @@ function runModelWatchdog(trigger, options) {
       lastQualityRepairAt: state.modelWatchdog.lastQualityRepairAt
     }];
   }
-  if (actions.length) {
+  const actualRepairActions = actions.filter((action) => action && [
+    "delete-lock",
+    "trim-runtime-cache",
+    "regenerate-current-prediction",
+    "quality-lock-release"
+  ].includes(action.type));
+  if (actualRepairActions.length) {
     state.modelWatchdog.totalRepairs += 1;
     state.modelWatchdog.lastRepairAt = isoNow();
     addLog("模型巡检已自动处理", {
       trigger,
       issueCount: issues.length,
-      actionCount: actions.length,
+      actionCount: actualRepairActions.length,
       issues: issues.slice(0, 20),
       actions: actions.slice(0, 20)
     });
@@ -4835,6 +5003,17 @@ function digitSetCandidatesFromDigits(sourceDigits, size) {
   return out;
 }
 
+function anyTwoHeweiCandidates() {
+  return digitSetCandidatesFromDigits(ANY_TWO_HEWEI_SOURCE_DIGITS, ANY_TWO_HEWEI_CODE_SIZE);
+}
+
+function isAnyTwoHeweiCode(value) {
+  const code = String(value || "").replace(/\D/g, "");
+  if (code.length !== ANY_TWO_HEWEI_CODE_SIZE) return false;
+  if (new Set(code.split("")).size !== ANY_TWO_HEWEI_CODE_SIZE) return false;
+  return code.split("").every((digit) => ANY_TWO_HEWEI_SOURCE_DIGITS.includes(digit));
+}
+
 function compareCandidateValue(left, right) {
   const a = String(left && left.value !== undefined ? left.value : left);
   const b = String(right && right.value !== undefined ? right.value : right);
@@ -4978,194 +5157,22 @@ function scoreHitCandidates(history, candidates, matcher, prior) {
 }
 
 function calculateExtraAvoidKills(history, performance) {
-  function stableDynamicIndex(records, size) {
-    if (!size) return 0;
-    const latest = records && records[0] ? records[0] : {};
-    const periodTail = Number(String(latest.period || latest.uid || "0").replace(/\D/g, "").slice(-4) || 0);
-    const nums = Array.isArray(latest.numbers) ? latest.numbers : [];
-    const numberSeed = nums.reduce((sum, n, index) => sum + Number(n || 0) * (index + 3), 0);
-    return Math.abs(periodTail + numberSeed) % size;
-  }
-
-  function calculateOne(key, label, candidates, matcher, prior, mode, options) {
-    const opts = options && typeof options === "object" ? options : {};
-    const hitMode = mode === "hit";
-    const blockedValues = new Set((Array.isArray(opts.excludeValues) ? opts.excludeValues : []).map((value) => String(value)));
-    const preferDigits = new Set((Array.isArray(opts.preferDigits) ? opts.preferDigits : []).map((digit) => String(digit)).filter((digit) => /^\d$/.test(digit)));
-    const overlapCount = (value) => {
-      if (!preferDigits.size) return 0;
-      const text = String(value == null ? "" : value).replace(/\D/g, "");
-      if (!text) return 0;
-      let n = 0;
-      const seen = new Set();
-      for (const ch of text) {
-        if (seen.has(ch)) continue;
-        seen.add(ch);
-        if (preferDigits.has(ch)) n += 1;
-      }
-      return n;
-    };
-    let scored = hitMode ? scoreHitCandidates(history, candidates, matcher, prior) : scoreAvoidCandidates(history, candidates, matcher, prior);
-    if (blockedValues.size) {
-      scored = scored.filter((item) => !blockedValues.has(String(item && item.value !== undefined ? item.value : "")));
-    }
-    scored = scored.filter((item) => Number(item && item.sampleTotal || 0) > 0);
-    if (preferDigits.size) {
-      scored = scored.map((item) => {
-        const overlap = overlapCount(item && item.value);
-        const bonus = hitMode ? overlap * 0.22 : overlap * 0.85;
-        return Object.assign({}, item, {
-          preferOverlap: overlap,
-          score: Number((Number(item.score || 0) + bonus).toFixed(4))
-        });
-      });
-      scored.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
-    }
-    if (!scored.length) {
-      return {
-        key,
-        label,
-        value: "",
-        code: "",
-        primary: "",
-        backup: "",
-        algorithm: "unavailable-no-real-sample",
-        hardnessScore: null,
-        rate30: null,
-        rate60: null,
-        rate120: null,
-        rate300: null,
-        maxMiss120: null,
-        maxMissLong: null,
-        lower120: null,
-        stage: "暂无真实样本",
-        hitMode,
-        matchMode: "unavailable",
-        jointSwitchAllowed: false,
-        dynamicEveryPrediction: false,
-        rotationPool: [],
-        rotationIndex: null,
-        rotationMaxGap: null,
-        performance: null,
-        truthAvailable: false,
-        confidence: null,
-        recommendable: false,
-        preferOverlap: 0
-      };
-    }
-    const low = shouldUseBackupAlgorithm(performance, `extra.${key}`);
-    let picked = pickByRank(scored, low, `extra.${key}`, opts.rankOptions || null);
-    const firstRealCandidate = scored[0];
-    let selected = picked.selected || firstRealCandidate;
-    let primary = picked.primary || firstRealCandidate;
-    let backup = picked.backup || primary;
-    let algorithm = hitMode ? (low ? "dynamic-cooccur-hit-backup-low-hit-rate" : "dynamic-cooccur-hit-primary") : (key === "sumAvoid" ? (low ? "dynamic-practical-sum-backup" : "dynamic-practical-sum-rotation") : (low ? "independent-backup-low-hit-rate" : "dynamic-big-data-primary"));
-    let rotationPool = [];
-    let rotationIndex = null;
-    let rotationMaxGap = null;
-    if (!hitMode && key === "sumAvoid" && scored.length) {
-      const dynamicPool = scored.slice(0, Math.min(6, scored.length));
-      const dynamicPick = dynamicPool[stableDynamicIndex(history, dynamicPool.length)] || selected;
-      selected = low ? (dynamicPool[1] || dynamicPick) : dynamicPick;
-      primary = dynamicPool[0] || primary;
-      backup = dynamicPool[1] || primary;
-    }
-  if (hitMode && (key === "anyTwoHeweiHit" || key === "anyThreeHeweiHit") && scored.length) {
-      // 二数合：全码池 C(10,5) 前列轮换，避免长期钉死 Top1。
-      // 三数合：恢复分差池轮换，同样不再钉死 Top1。
-      const isTwo = key === "anyTwoHeweiHit";
-      const poolLimit = isTwo ? 10 : 10;
-      const maxGap = isTwo ? Number.POSITIVE_INFINITY : 1.0;
-      const bestScore = Number(scored[0] && scored[0].score !== undefined ? scored[0].score : 0);
-      let dynamicPool = scored.filter((item) => {
-        const itemScore = Number(item && item.score !== undefined ? item.score : 0);
-        return Number.isFinite(itemScore) && Number.isFinite(bestScore) && (bestScore - itemScore) <= maxGap;
-      }).slice(0, Math.min(poolLimit, scored.length));
-      if (!dynamicPool.length) dynamicPool = scored.slice(0, Math.min(poolLimit, scored.length));
-      rotationIndex = stableDynamicIndex(history, dynamicPool.length);
-      const dynamicPick = dynamicPool[rotationIndex] || dynamicPool[0] || selected;
-      selected = low ? (dynamicPool[1] || dynamicPick) : dynamicPick;
-      primary = dynamicPool[0] || primary;
-      backup = dynamicPool[1] || primary;
-      rotationPool = dynamicPool.map((item) => String(item && item.value !== undefined ? item.value : (item && item.candidate !== undefined ? item.candidate : ""))).filter(Boolean);
-      rotationMaxGap = isTwo ? null : maxGap;
-      algorithm = isTwo ? "dynamic-full-pool-two-hewei-rotate" : "dynamic-hewei-hit-rotate";
-    }
-    const selectedValue = String(selected.value !== undefined ? selected.value : (selected.candidate !== undefined ? selected.candidate : ""));
-    const primaryValue = String(primary.value !== undefined ? primary.value : (primary.candidate !== undefined ? primary.candidate : selectedValue));
-    const backupValue = String(backup.value !== undefined ? backup.value : (backup.candidate !== undefined ? backup.candidate : primaryValue));
-    const baselineMeta = highBaselineScoreMeta(key);
-    const recommendThreshold = hitMode ? 52 : 78;
-    const recommendable = Number(selected.rate120 || selected.rate60 || selected.rate30 || 0) >= recommendThreshold
-      && Number(selected.lower120 || 0) >= (hitMode ? 45 : 65);
-    const confidence = recommendable ? "normal" : "low";
-    return {
-      key,
-      label,
-      value: selectedValue,
-      code: selectedValue,
-      primary: primaryValue,
-      backup: backupValue,
-      algorithm,
-      hardnessScore: Number(selected.score || 0),
-      rate30: selected.rate30,
-      rate60: selected.rate60,
-      rate120: selected.rate120,
-      rate300: selected.rate300,
-      maxMiss120: selected.maxMiss120,
-      maxMissLong: selected.maxMissLong,
-      lower120: selected.lower120,
-      stage: selected.stage,
-      hitMode,
-      matchMode: key === "anyTwoHeweiHit" ? "hit-if-any-two-hewei-tail-in-selected-five" : (key === "anyThreeHeweiHit" ? "hit-if-any-three-hewei-tail-in-selected-five" : (hitMode ? "hit-if-all-digits-in-first-four" : "avoid-if-not-matched")),
-      scoreClass: baselineMeta ? baselineMeta.scoreClass : (hitMode ? "predictive-hit" : "predictive-avoid"),
-      randomBaseline: baselineMeta ? baselineMeta.baseline : null,
-      scoreHint: baselineMeta ? `${baselineMeta.hint}，非预测力` : "",
-      predictivePower: !baselineMeta,
-      jointSwitchAllowed: false,
-      dynamicEveryPrediction: true,
-      rotationPool,
-      rotationIndex,
-      rotationMaxGap,
-      performance: getModelStat(performance, `extra.${key}`) || null,
-      confidence,
-      recommendable,
-      preferOverlap: Number(selected.preferOverlap || 0)
-    };
-  }
-
-  const stablePreferDigits = Array.from(getStableMathExcludeDigitSet());
-  const twoAvoidCandidates = twoDigitAvoidCandidates();
-  const twoAvoidPicked = [];
-  const twoAvoidRankOptions = { poolSize: 8, keepGap: 10, unlockGap: 16, backupKeepGap: 8, minHold: 12 };
-  const hitRankOptions = { poolSize: 5, keepGap: 18, unlockGap: 28, backupKeepGap: 40, minHold: 12 };
-  const twoAvoid1 = calculateOne("twoDigitAvoid", "对数避开1组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
-  if (twoAvoid1.value) twoAvoidPicked.push(twoAvoid1.value);
-  const twoAvoid2 = calculateOne("twoDigitAvoid2", "对数避开2组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
-  if (twoAvoid2.value) twoAvoidPicked.push(twoAvoid2.value);
-  const twoAvoid3 = calculateOne("twoDigitAvoid3", "对数避开3组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
-  return {
-    sumAvoid: calculateOne("sumAvoid", "单点和值过滤（高基线）", sumAvoidCandidates(), (record, value) => firstFourSum(record) === Number(value), 0.8),
-    sumRangeAvoid: calculateOne("sumRangeAvoid", "和值极端区间过滤（高基线）", sumRangeAvoidCandidates(), (record, value) => firstFourSumInRange(record, value), 0.55),
-    spanAvoid: calculateOne("spanAvoid", "跨度极罕形态过滤（高基线）", spanAvoidCandidates(), (record, value) => extraStructureMatched(record, "spanAvoid", value), 0.55),
-    repeatAvoid: calculateOne("repeatAvoid", "重号极罕形态过滤（高基线）", repeatAvoidCandidates(), (record, value) => extraStructureMatched(record, "repeatAvoid", value), 0.55),
-    consecutiveAvoid: calculateOne("consecutiveAvoid", "连号极罕形态过滤（高基线）", consecutiveAvoidCandidates(), (record, value) => extraStructureMatched(record, "consecutiveAvoid", value), 0.55),
-    parityRatioAvoid: calculateOne("parityRatioAvoid", "极端奇偶比过滤（高基线）", parityRatioCandidates(), (record, value) => extraStructureMatched(record, "parityRatioAvoid", value), 0.55),
-    sizeRatioAvoid: calculateOne("sizeRatioAvoid", "极端大小比过滤（高基线）", sizeRatioCandidates(), (record, value) => extraStructureMatched(record, "sizeRatioAvoid", value), 0.55),
-    recentExactCodeAvoid300: recentExactCodeCandidate(300, history),
-    recentExactCodeAvoid500: recentExactCodeCandidate(500, history),
-    recentExactCodeAvoid800: recentExactCodeCandidate(800, history),
-    recentExactCodeAvoid1000: recentExactCodeCandidate(1000, history),
-    recentExactCodeAvoidMax: recentExactCodeCandidate("max", history),
-    threeDigitAvoid: calculateOne("threeDigitAvoid", "对数共现避开", threeDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.25, null, { preferDigits: stablePreferDigits }),
-    twoDigitAvoid: twoAvoid1,
-    twoDigitAvoid2: twoAvoid2,
-    twoDigitAvoid3: twoAvoid3,
-    twoDigitHit: calculateOne("twoDigitHit", "两数共现除对数（基线参考）", twoDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.45, null, { rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits }),
-    threeDigitHit: calculateOne("threeDigitHit", "三数共现命中", threeDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.25, "hit", { rankOptions: hitRankOptions }),
-    anyTwoHeweiHit: calculateOne("anyTwoHeweiHit", "二数合尾宽命中（高基线参考）", digitSetCandidatesMixedParity(5), (record, value) => anyHeweiCombinationHit(record, value, 2, 1), 0.55, "hit"),
-    anyThreeHeweiHit: calculateOne("anyThreeHeweiHit", "三数合尾宽命中（高基线参考）", digitSetCandidatesMixedParity(5), (record, value) => anyHeweiCombinationHit(record, value, 3, 1), 0.62, "hit")
-  };
+  const formula = require("./algorithms/extra-kills/formula");
+  const heweiFormula = require("./algorithms/hewei/formula");
+  heweiFormula.bindRuntime({
+    getStable120Locks() {
+      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+      return state.stable120Locks;
+    },
+    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
+    getStableMathFilter() { return state && state.stableMathFilter || null; },
+    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
+  });
+  formula.bindRuntime({
+    getState() { return state; },
+    getStableMathExcludeDigitSet() { return heweiFormula.getStableMathExcludeDigitSet(); }
+  });
+  return formula.calculateExtraAvoidKills(history, performance);
 }
 
 const AUTO_TOP6_POSITIONS = [
@@ -5200,7 +5207,7 @@ const AUTO_TOP6_EXTRAS = [
   { key: "twoDigitAvoid3", label: "对数避开3组", mode: "avoid", kind: "digits" },
   { key: "twoDigitHit", label: "两数共现除对数（基线参考）", mode: "avoid", kind: "digits", scoreClass: "pair-avoid-baseline" },
   { key: "threeDigitHit", label: "三数共现命中", mode: "hit", kind: "digits" },
-  { key: "anyTwoHeweiHit", label: "二数合尾宽命中（高基线参考）", mode: "hit", kind: "heweiTails", scoreClass: "wide-hit-baseline" },
+  { key: "anyTwoHeweiHit", label: "二数合尾02468排1码命中（高基线参考）", mode: "hit", kind: "heweiTails", scoreClass: "wide-hit-baseline" },
   { key: "anyThreeHeweiHit", label: "三数合尾宽命中（高基线参考）", mode: "hit", kind: "heweiTails", scoreClass: "wide-hit-baseline" }
 ];
 
@@ -5371,7 +5378,7 @@ function autoTop6ReverseShapeCandidatesFromPositions(positionItems, history) {
     locks.shapeSize[pos.index] = digit >= 5 ? "小" : "大";
     changed = true;
   });
-  if (!changed) return null;
+  if (!changed) return [];
   const rows = (Array.isArray(history) ? history : []).filter((record) => record && Array.isArray(record.numbers)).slice(0, 120);
   function complete(shapeKey, fallback) {
     const pool = autoTop6ShapePool(shapeKey);
@@ -5488,8 +5495,10 @@ function autoTop6RecordSuccess(item, record) {
     let matched = false;
     if (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") {
       const size = item.key === "anyTwoHeweiHit" ? 2 : 3;
-      const needDigits = 5;
-      if (!/^\d{5}$/.test(code) || new Set(code.split("")).size !== needDigits) return null;
+      const isValidCode = item.key === "anyTwoHeweiHit"
+        ? isAnyTwoHeweiCode(code)
+        : (/^\d{5}$/.test(code) && new Set(code.split("")).size === 5);
+      if (!isValidCode) return null;
       const scope = (Array.isArray(item.heweiScopeIndexes) ? item.heweiScopeIndexes : [])
         .map((value) => Number(value))
         .filter((value) => Number.isInteger(value) && value >= 0 && value <= 3);
@@ -5509,13 +5518,19 @@ function autoTop6RecordSuccess(item, record) {
   }
   if (item.kind === "derivedReverseShape") {
     const shapeKey = item.shapeKey || (item.key === "reverseSize" ? "shapeSize" : "shapeParity");
-    if (!/^[大小单双]{4}$/.test(code)) return null;
+    const scopeLen = Number(item.shapeScopeLength || 0) === 3 ? 3 : 4;
+    const codeText = String(code || "");
+    if (scopeLen === 3) {
+      if (!/^[大小单双]{3,4}$/.test(codeText)) return null;
+    } else if (!/^[大小单双]{4}$/.test(codeText)) {
+      return null;
+    }
     const actualShape = autoTop6PatternOf(record, shapeKey);
     if (!actualShape) return null;
-    if (Number(item.shapeScopeLength || 0) === 3) {
-      return actualShape.slice(0, 3) !== code.slice(0, 3);
+    if (scopeLen === 3) {
+      return actualShape.slice(0, 3) !== codeText.slice(0, 3);
     }
-    return actualShape !== code;
+    return actualShape !== codeText;
   }
   if (item.kind === "brotherNumber") {
     const actualCode = firstFourCode(record) || firstFourNumbers(record).join("");
@@ -5757,265 +5772,35 @@ function autoTop6CandidateItems(prediction) {
 }
 
 function buildAutoTop6Snapshot(prediction, history) {
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
-  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
-  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
-  const chosen = [];
-  const used = new Set();
-  const repairReport = [];
-  const comboRows = safeHistory.slice(0, Math.min(MODEL_STABLE_WINDOW, safeHistory.length));
-  let targetItemCount = 6;
-
-  function order(a, b) {
-    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
-    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
-    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
-    if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);
-    return String(a.name || "").localeCompare(String(b.name || ""));
-  }
-
-  function comboStats(items) {
-    let total = 0;
-    let hit = 0;
-    let nearHit = 0;
-    let validChecks = 0;
-    let successChecks = 0;
-    comboRows.forEach((record) => {
-      const results = (items || []).map((item) => autoTop6RecordSuccess(item, record)).filter((value) => typeof value === "boolean");
-      if (results.length !== (items || []).length || !results.length) return;
-      total += 1;
-      const wins = results.filter(Boolean).length;
-      validChecks += results.length;
-      successChecks += wins;
-      if (wins === results.length) hit += 1;
-      if (results.length > 1 && wins >= results.length - 1) nearHit += 1;
-    });
-    return {
-      total,
-      hit,
-      nearHit,
-      rate: total ? hit * 100 / total : null,
-      nearRate: total ? nearHit * 100 / total : null,
-      avgRate: validChecks ? successChecks * 100 / validChecks : null
-    };
-  }
-
-  function comboPickScore(item) {
-    const stats = comboStats(chosen.concat([item]));
-    const full = stats.rate === null ? -1 : Number(stats.rate || 0);
-    const near = stats.nearRate === null ? full : Number(stats.nearRate || 0);
-    const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
-    return full * 10000 + near * 100 + avg + Number(item.stableScore || 0) / 100;
-  }
-
-  function pickBest(pool, maxPerSameModel, allowSameExcludeDigit) {
-    const modelCount = {};
-    chosen.forEach((item) => {
-      const modelKey = `${item.kind}:${item.key}`;
-      modelCount[modelKey] = Number(modelCount[modelKey] || 0) + 1;
-    });
-    let best = null;
-    let bestScore = -Infinity;
-    (pool || []).forEach((item) => {
-      const id = autoTop6ItemId(item);
-      const modelKey = `${item.kind}:${item.key}`;
-      if (used.has(id)) return;
-      if (Number(modelCount[modelKey] || 0) >= Number(maxPerSameModel || 2)) return;
-      if (frameworkConflictsSameHeweiDigit(chosen, item)) return;
-      // 定位/合尾单码同框禁止相碰；无替代时才允许放宽
-      if (!allowSameExcludeDigit && frameworkConflictsSameExcludeDigit(chosen, item)) return;
-      const score = comboPickScore(item);
-      if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
-        best = item;
-        bestScore = score;
-      }
-    });
-    if (!best) return false;
-    used.add(autoTop6ItemId(best));
-    chosen.push(best);
-    return true;
-  }
-
-  function noteLow(pool, label) {
-    (pool || []).forEach((item) => {
-      if (item.lowConfidence) {
-        const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
-        const reason = item.stabilityReason ? `，原因 ${item.stabilityReason}` : "";
-        repairReport.push(`${label}暂停低稳：${item.name} ${item.code}，安全率 ${rate}${reason}`);
-      }
-    });
-  }
-
-  const positionPool = candidates.filter((item) => item.kind === "position");
-  const heweiPool = candidates.filter((item) => item.kind === "hewei");
-  noteLow(positionPool, "定位池");
-  noteLow(heweiPool, "合尾池");
-
-  let before = chosen.length;
-  const formalPositionHealthy = healthy.filter((item) => item.kind === "position" && item.side !== "backup");
-  const formalPositionPool = positionPool.filter((item) => item.side !== "backup");
-  while (chosen.length - before < 3 && pickBest(formalPositionHealthy.slice().sort(order), 2, false)) {}
-  while (chosen.length - before < 3 && pickBest(formalPositionPool.slice().sort(order), 2, false)) {
-    const item = chosen[chosen.length - 1];
-    item.repairedIntoTop = true;
-    repairReport.push(`定位池安全阈值内不足，明确加入观察项：${item.name} ${item.code}。`);
-  }
-  while (chosen.length - before < 3 && pickBest(formalPositionPool.slice().sort(order), 2, true)) {
-    const item = chosen[chosen.length - 1];
-    item.repairedIntoTop = true;
-    repairReport.push(`定位池无错开同码替代，被迫保留同码：${item.name} ${item.code}。`);
-  }
-  if (chosen.length - before < 3) repairReport.push(`定位池结构不完整：需要3项正式排除（不含替补），实际${chosen.length - before}项。`);
-
-  const reversePool = autoTop6ReverseShapeCandidatesFromPositions(chosen.filter((item) => item.kind === "position"), safeHistory)
-    .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
-    .sort(order);
-  noteLow(reversePool, "反向形态池");
-  const healthyReverse = reversePool.filter((item) => item && item.stabilityGate === true);
-  if (healthyReverse.length) {
-    const picked = healthyReverse.slice().sort((a, b) => {
-      const delta = comboPickScore(b) - comboPickScore(a);
-      return delta || order(a, b);
-    })[0];
-    if (!used.has(autoTop6ItemId(picked))) {
-      // 反向形态只作参考（side=backup）：不进正式六项全过、不进攻击语；正式结构恒为 3+2+1=6
-      picked.side = "backup";
-      picked.name = String(picked.name || "反向形态") + "（参考）";
-      used.add(autoTop6ItemId(picked));
-      chosen.push(picked);
-      targetItemCount = 7;
-      repairReport.push(`反向形态作参考项保留：${picked.code}；不参与六项全过统计。`);
-    }
-  } else if (reversePool.length) {
-    repairReport.push("反向形态池两路均未达安全阈值，暂不计入本期自动推荐。");
-  }
-
-  before = chosen.length;
-  const formalHeweiHealthy = healthy.filter((item) => item.kind === "hewei" && item.side !== "backup");
-  const formalHeweiPool = heweiPool.filter((item) => item.side !== "backup");
-  while (chosen.length - before < 2 && pickBest(formalHeweiHealthy.slice().sort(order), 2, false)) {}
-  while (chosen.length - before < 2 && pickBest(formalHeweiPool.slice().sort(order), 2, false)) {
-    const item = chosen[chosen.length - 1];
-    item.repairedIntoTop = true;
-    repairReport.push(`合尾池安全阈值内不足，明确加入观察项：${item.name} ${item.code}。`);
-  }
-  while (chosen.length - before < 2 && pickBest(formalHeweiPool.slice().sort(order), 2, true)) {
-    const item = chosen[chosen.length - 1];
-    item.repairedIntoTop = true;
-    repairReport.push(`合尾与定位同码相碰无替代，被迫保留同码：${item.name} ${item.code}。`);
-  }
-  if (chosen.length - before < 2) repairReport.push(`合尾池结构不完整：需要2项正式排除（不含替补），实际${chosen.length - before}项。`);
-
-  // 第6项固定为两数共现除对数，绝不写成含对数；也不用对数避开1/2/3组冒充
-  const cooccur = candidates
-    .filter((item) => item.kind === "extra" && item.key === "twoDigitHit")
-    .sort(order);
-  noteLow(cooccur, "两数共现池");
-  const healthyCooccur = cooccur.filter((item) => item && item.stabilityGate === true);
-  if (cooccur.length) {
-    const source = healthyCooccur.length ? healthyCooccur : cooccur;
-    const picked = source.slice().sort((a, b) => {
-      const overlapDelta = frameworkTwoDigitOverlapWithSingles(chosen, a) - frameworkTwoDigitOverlapWithSingles(chosen, b);
-      if (overlapDelta) return overlapDelta;
-      const delta = comboPickScore(b) - comboPickScore(a);
-      return delta || order(a, b);
-    })[0];
-    picked.name = "两数共现";
-    picked.mode = "avoid";
-    const overlap = frameworkTwoDigitOverlapWithSingles(chosen, picked);
-    if (overlap > 0) {
-      repairReport.push(`两数共现 ${picked.code} 与已选单码重叠${overlap}位，候选池无更优错开项时保留。`);
-    }
-    if (!picked.stabilityGate) {
-      picked.repairedIntoTop = true;
-      repairReport.push(`两数共现未达安全阈值，仍保留第6项除对数：${picked.code}；不改写成含对数。`);
-    }
-    if (!used.has(autoTop6ItemId(picked))) {
-      used.add(autoTop6ItemId(picked));
-      chosen.push(picked);
-    }
-  } else {
-    repairReport.push("两数共现模型缺失，当前快照保持不完整并交由完整性巡检重建，不用对数避开1/2/3组冒充补位。");
-  }
-  if (chosen.length < targetItemCount) repairReport.push(`框架结构不足${targetItemCount}项，当前仅生成 ${chosen.length} 项；完整性巡检会拒绝并重建，不以无关模型补位。`);
-
-  return {
-    version: AUTO_TOP6_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(chosen.length, targetItemCount),
-    baseItemCount: 6,
-    reverseShapeCount: chosen.some((item) => item.kind === "derivedReverseShape") ? 1 : 0,
-    formalItemCount: 6,
-    framework: {
-      positionCount: 3,
-      heweiCount: 2,
-      pairHitCount: 1,
-      reverseShapeCount: chosen.some((item) => item.kind === "derivedReverseShape") ? 1 : 0,
-      semantics: "formal-6=3pos+2hewei+1cooccur-avoid; reverse-shape=backup-reference-only"
-    },
-    items: chosen.slice(0, targetItemCount).map((item, index) => ({
-      rank: index + 1,
-      kind: item.kind,
-      key: item.key,
-      side: item.side || "recommend",
-      name: item.name,
-      code: item.code,
-      mode: item.mode || "avoid",
-      rate: item.rate,
-      stableScore: item.stableScore,
-      rate30: item.rate30,
-      rate60: item.rate60,
-      rate120: item.rate120,
-      rate300: item.rate300,
-      safetyRate: item.safetyRate,
-      safetyThreshold: item.safetyThreshold,
-      longFloor: item.longFloor,
-      lower120: item.lower120,
-      recentMissStreak: item.recentMissStreak,
-      maxMissStreak120: item.maxMissStreak120,
-      maxMissStreak1000: item.maxMissStreak1000,
-      hardnessScore: item.hardnessScore,
-      stabilityGate: !!item.stabilityGate,
-      stabilityReason: item.stabilityReason || "",
-      stageLabel: item.stageLabel,
-      lowConfidence: !!item.lowConfidence,
-      repairedIntoTop: !!item.repairedIntoTop,
-      codeCount: item.codeCount,
-      codes: Array.isArray(item.codes) ? item.codes.slice(0, recentExactCodeCodeLimit(item)) : undefined,
-      shapeKey: item.shapeKey || "",
-      derivedFrom: item.derivedFrom || ""
-    })),
-    repairReport
-  };
+  return frameworkItems.buildAutoTop6Snapshot(prediction, history);
 }
 
 const AUTO_TOP6_SNAPSHOT_VERSION = "backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit";
-const RECOMMEND2_SNAPSHOT_VERSION = "backend-recommend2-snapshot-v15-formal-anytwo5";
-const KILL_FRAMEWORK_SNAPSHOT_VERSION = "backend-kill-framework-snapshot-v7-formal-anytwo5";
+const RECOMMEND2_SNAPSHOT_VERSION = "backend-recommend2-snapshot-v16-formal-anytwo4-pool02468-label-v2";
+const KILL_FRAMEWORK_SNAPSHOT_VERSION = "backend-kill-framework-snapshot-v8-formal-anytwo4-pool02468-label-v2";
 const KILL_FRAMEWORK_ITEM_COUNT = 8;
-const COMPACT_ATTACK_SNAPSHOT_VERSION = "backend-three-ding-framework-v7-structural-anytwo";
-const COMPACT_ATTACK_ITEM_COUNT = 6;
+const COMPACT_ATTACK_SNAPSHOT_VERSION = "backend-three-ding-framework-v9-no-shape-anytwo4-pool02468-label-v2";
+const COMPACT_ATTACK_ITEM_COUNT = 5;
 const THREE_DING_QBS_KEYS = new Set(["wan", "qian", "bai"]);
-const THREE_DING_TWO_SNAPSHOT_VERSION = "backend-three-ding-two-v8-structural-anytwo";
+const THREE_DING_TWO_SNAPSHOT_VERSION = "backend-three-ding-two-v12-force-unique-digit-anytwo4-pool02468-label-v3";
+const THREE_DING_TWO_ANY_TWO_SEED = ANY_TWO_HEWEI_SOURCE_DIGITS;
 const THREE_DING_TWO_ITEM_COUNT = 5;
-const THREE_DING_ONE_SNAPSHOT_VERSION = "backend-three-ding-one-v7-structural-anytwo";
+const THREE_DING_ONE_SNAPSHOT_VERSION = "backend-three-ding-one-v10-force-unique-digit-anytwo4-pool02468-label-v2";
 const THREE_DING_ONE_ITEM_COUNT = 6;
-const SIDE_STABLE_SNAPSHOT_VERSION = "backend-side-stable-snapshot-v4-1pos-2hewei-2digit-sum-anytwo5-three5-old1300";
+const SIDE_STABLE_SNAPSHOT_VERSION = "backend-side-stable-snapshot-v5-1pos-2hewei-2digit-sum-anytwo4-pool02468-three5-old1300-label-v2";
 const SIDE_STABLE_ITEM_COUNT = 8;
 const SIDE_STABLE_TARGET_MIN = 4900;
 const SIDE_STABLE_TARGET_MAX = 5000;
 const BROTHER_NUMBER_PAIRS = ["01", "12", "23", "34", "45", "56", "67", "78", "89", "09"];
-const COLD_FRAMEWORK_SNAPSHOT_VERSION = "backend-cold-framework-snapshot-v5-anytwo5";
+const COLD_FRAMEWORK_SNAPSHOT_VERSION = "backend-cold-framework-snapshot-v6-anytwo4-pool02468-label-v2";
 const COLD_FRAMEWORK_ITEM_COUNT = 8;
 const COLD_FRAMEWORK_COLD_WINDOW = Number(process.env.COLD_FRAMEWORK_COLD_WINDOW || 60);
 const COLD_FRAMEWORK_TARGET_GROUP_COUNT = 5000;
-const DING_KILL_SNAPSHOT_VERSION = "backend-ding-kill-snapshot-v3-anytwo5";
+const DING_KILL_SNAPSHOT_VERSION = "backend-ding-kill-snapshot-v4-anytwo4-pool02468-label-v2";
 const DING_KILL_ITEM_COUNT = 7;
 const DING_KILL_TARGET_MIN = 5000;
 const DING_KILL_TARGET_MAX = 5010;
-const PICK5000_SNAPSHOT_VERSION = "backend-pick5000-snapshot-v3-anytwo5-stagger";
+const PICK5000_SNAPSHOT_VERSION = "backend-pick5000-snapshot-v4-anytwo4-pool02468-stagger-label-v2";
 const PICK5000_ITEM_COUNT = 8;
 const PICK5000_TARGET_GROUP_COUNT = 5000;
 
@@ -6047,8 +5832,8 @@ function recommend2SnapshotIsComplete(snapshot) {
   const positionCount = formal.filter((item) => item && item.kind === "position").length;
   const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
-  // 三数合尾5码：code 必须是 5 位数字（与 digitSetCandidatesMixedParity(5) / 文案「5码命中」一致；禁全单全双）
+  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
+  // 二数合固定为 02468 中排除 1 个的 4 码；三数合仍为 5 码。
   const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   const pairAvoidCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(item.key)).length;
   return !!(
@@ -6072,7 +5857,7 @@ function killFrameworkSnapshotIsComplete(snapshot) {
   const positionCount = formal.filter((item) => item && item.kind === "position").length;
   const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
+  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
   const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
@@ -6104,10 +5889,8 @@ function compactAttackSnapshotIsComplete(snapshot) {
   const heweiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai" && /^\d$/.test(String(item.code || ""))).length;
   const anyTwoCount = formal.filter((item) => {
     if (!item || item.kind !== "extra" || item.key !== "anyTwoHeweiHit") return false;
-    const code = String(item.code || "");
-    return /^\d{5}$/.test(code) && new Set(code.split("")).size === 5 && !isUniformParityDigitSet(code);
+    return isAnyTwoHeweiCode(item.code);
   }).length;
-  const shapeCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小单双]{3,4}$/.test(String(item.code || ""))).length;
   const uniquePositionKeys = new Set(positions.map((item) => String(item.key || "")));
   return !!(
     snapshot &&
@@ -6119,7 +5902,8 @@ function compactAttackSnapshotIsComplete(snapshot) {
     ["wan", "qian", "bai"].every((key) => uniquePositionKeys.has(key)) &&
     heweiCount === 1 &&
     anyTwoCount === 1 &&
-    shapeCount === 1
+    formal.every((item) => !(item && item.kind === "derivedReverseShape")) &&
+    formal.every((item) => !(item && item.kind === "shape"))
   );
 }
 
@@ -6129,8 +5913,8 @@ function threeDingTwoSnapshotIsComplete(snapshot) {
   const positions = formal.filter((item) => item && item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || "")));
   const uniquePositionKeys = new Set(positions.map((item) => String(item.key || "")));
   const heweiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai" && /^\d$/.test(String(item.code || ""))).length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
-  const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小单双]{3,4}$/.test(String(item.code || ""))).length;
+  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
+  const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小]{3,4}$/.test(String(item.code || "")) && !/^[单双]{3,4}$/.test(String(item.code || ""))).length;
   const pairCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(String(item.key || "")) && /^\d{2}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
@@ -6152,8 +5936,8 @@ function threeDingOneSnapshotIsComplete(snapshot) {
   const positions = formal.filter((item) => item && item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || "")));
   const uniquePositionKeys = new Set(positions.map((item) => String(item.key || "")));
   const heweiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai" && /^\d$/.test(String(item.code || ""))).length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
-  const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小单双]{3,4}$/.test(String(item.code || ""))).length;
+  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
+  const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小]{3,4}$/.test(String(item.code || "")) && !/^[单双]{3,4}$/.test(String(item.code || ""))).length;
   const pairCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(String(item.key || "")) && /^\d{2}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
@@ -6177,17 +5961,20 @@ function sideStableSnapshotIsComplete(snapshot) {
   const wanQianBaiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai").length;
   const twoDigitAvoidCount = formal.filter((item) => item && item.kind === "extra" && item.key === "twoDigitAvoid" && /^\d{2}$/.test(String(item.code || ""))).length;
   const sumAvoidCount = formal.filter((item) => item && item.kind === "extra" && item.key === "sumAvoid").length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
+  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
   const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
-  // 封存后 compactRecentExactCodesOnPrediction 会省略 codes；与 extraModelIntegrityReason 一致：
-  // codesOmitted + codeCount>=1000 即视为完整，避免 tip 门闩永久 incomplete→反复重生堵死事件循环。
+  // 封存后 compactRecentExactCodesOnPrediction 会省略 codes。codeCount 是实际
+  // 命中的旧码条数，并不等于 1300 期窗口长度；用它作 >=1000 门槛会把有效的
+  // 4900~5000 组选型误判为不完整，进而使整个预测无法完成封存。
   const recentCount = formal.filter((item) => {
     if (!item || item.kind !== "extra" || item.key !== "recentExactCodeAvoid1300") return false;
     if (String(item.code || "") !== "1300") return false;
-    if (Number(item.codeCount || 0) < 1000) return false;
-    if (!isFinite(Number(item.generatedGroupCount))) return false;
+    const generatedGroupCount = Number(item.generatedGroupCount || 0);
+    const targetGroupCount = Number(item.targetGroupCount || 0);
+    if (!Number.isFinite(generatedGroupCount) || generatedGroupCount < SIDE_STABLE_TARGET_MIN) return false;
+    if (!Number.isFinite(targetGroupCount) || targetGroupCount < SIDE_STABLE_TARGET_MIN) return false;
     if (item.codesOmitted === true) return true;
-    return Array.isArray(item.codes) && item.codes.length >= 1000;
+    return Array.isArray(item.codes) && item.codes.length > 0;
   }).length;
   const txt = snapshot && snapshot.txtSelection || {};
   const rawCount = Number(txt.rawCount || 0);
@@ -6292,7 +6079,7 @@ function coldFrameworkSnapshotIsComplete(snapshot) {
   const coldHeweiCount = items.filter((item) => item && item.kind === "hewei" && item.side === "cold").length;
   const recentCount = items.filter((item) => item && item.kind === "extra" && ["recentExactCodeAvoid500", "recentExactCodeAvoid800"].includes(item.key)).length;
   const reverseCount = items.filter((item) => item && item.kind === "derivedReverseShape").length;
-  const anyTwoCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
+  const anyTwoCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
   const anyThreeCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
@@ -6313,7 +6100,7 @@ function dingKillSnapshotIsComplete(snapshot) {
   const positionCount = formal.filter((item) => item && item.kind === "position").length;
   const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
+  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
   const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   const recentCount = formal.filter((item) => item && item.kind === "extra" && /^recentExactCodeAvoid(?:\d+|Max)$/.test(String(item.key || "")) && Number.isFinite(Number(item.generatedGroupCount))).length;
   const txt = snapshot && snapshot.txtSelection ? snapshot.txtSelection : {};
@@ -6344,7 +6131,7 @@ function pick5000SnapshotIsComplete(snapshot) {
   const coldHeweiCount = items.filter((item) => item && item.kind === "hewei" && item.side === "cold").length;
   const recentCount = items.filter((item) => item && item.kind === "extra" && item.key === "recentExactCodeAvoid500" && Number.isFinite(Number(item.generatedGroupCount))).length;
   const reverseCount = items.filter((item) => item && item.kind === "derivedReverseShape").length;
-  const anyTwoCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
+  const anyTwoCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
   const anyThreeCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   const txt = snapshot && snapshot.txtSelection ? snapshot.txtSelection : {};
   const rawCount = Number(txt.rawCount || 0);
@@ -6419,10 +6206,20 @@ function snapshotSealHash(snapshot, prediction) {
   return crypto.createHash("sha256").update(JSON.stringify(snapshotSealPayload(snapshot, prediction))).digest("hex");
 }
 
+function predictionSnapshotsAreImmutable(prediction) {
+  return !!(
+    prediction &&
+    prediction.evaluated !== true &&
+    prediction.snapshotsSealedAt &&
+    prediction.snapshotsSealedBaseUid &&
+    String(prediction.snapshotsSealedBaseUid) === String(prediction.baseUid || "")
+  );
+}
+
 function sealSnapshot(snapshot, prediction) {
   if (!snapshot || !prediction || prediction.evaluated) return snapshot;
-  if (snapshot.sealed === true && snapshotSealIsValid(snapshot, prediction)) return snapshot;
-  // 失效封存先清再重封，避免“已封但坏哈希”死锁
+  // 已封存对象不可重签；哈希失效必须作为独立算法异常暴露，不能覆盖证据。
+  if (snapshot.sealed === true) return snapshot;
   snapshot.sealed = false;
   snapshot.sealedAt = isoNow();
   snapshot.predictionGeneratedAt = String(prediction.generatedAt || "");
@@ -6479,8 +6276,8 @@ function sealPredictionSnapshots(prediction, latest) {
   frameworkSeals.forEach(([key, isComplete]) => {
     const snapshot = prediction[key];
     if (!isComplete(snapshot)) return;
-    if (snapshot.sealed === true && snapshotSealIsValid(snapshot, prediction)) {
-      sealedCount += 1;
+    if (snapshot.sealed === true) {
+      if (snapshotSealIsValid(snapshot, prediction)) sealedCount += 1;
       return;
     }
     sealSnapshot(snapshot, prediction);
@@ -6500,545 +6297,23 @@ function sealPredictionSnapshots(prediction, latest) {
 }
 
 function ensurePredictionAutoTop6Snapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  if (autoTop6SnapshotIsComplete(prediction.autoTop6)) return prediction.autoTop6;
-  prediction.autoTop6 = buildAutoTop6Snapshot(prediction, history);
-  prediction.autoTop6Items = prediction.autoTop6.items;
-  prediction.autoTop6RepairReport = prediction.autoTop6.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.autoTop6SnapshotVersion = prediction.autoTop6.version;
-  return prediction.autoTop6;
+  return frameworkItems.ensurePredictionAutoTop6Snapshot(prediction, history);
 }
 
 function buildRecommend2Snapshot(prediction, history) {
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
-  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
-  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
-  const chosen = [];
-  const used = new Set();
-  const repairReport = [];
-  const comboRows = safeHistory.slice(0, Math.min(MODEL_STABLE_WINDOW, safeHistory.length));
-
-  function order(a, b) {
-    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
-    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
-    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
-    if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);
-    return String(a.name || "").localeCompare(String(b.name || ""));
-  }
-
-  function comboStats(items) {
-    let total = 0;
-    let hit = 0;
-    let validChecks = 0;
-    let successChecks = 0;
-    comboRows.forEach((record) => {
-      const results = (items || []).map((item) => autoTop6RecordSuccess(item, record)).filter((value) => typeof value === "boolean");
-      if (results.length !== (items || []).length || !results.length) return;
-      total += 1;
-      const wins = results.filter(Boolean).length;
-      validChecks += results.length;
-      successChecks += wins;
-      if (wins === results.length) hit += 1;
-    });
-    return {
-      total,
-      hit,
-      rate: total ? hit * 100 / total : null,
-      avgRate: validChecks ? successChecks * 100 / validChecks : null
-    };
-  }
-
-  function comboPickScore(item) {
-    const stats = comboStats(chosen.concat([item]));
-    const full = stats.rate === null ? -1 : Number(stats.rate || 0);
-    const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
-    return full * 10000 + avg * 100 + Number(item.stableScore || 0);
-  }
-
-  function pickBest(pool, maxPerSameModel, allowSameExcludeDigit) {
-    const modelCount = {};
-    chosen.forEach((item) => {
-      const modelKey = `${item.kind}:${item.key}`;
-      modelCount[modelKey] = Number(modelCount[modelKey] || 0) + 1;
-    });
-    let best = null;
-    let bestScore = -Infinity;
-    (pool || []).forEach((item) => {
-      const id = autoTop6ItemId(item);
-      const modelKey = `${item.kind}:${item.key}`;
-      if (used.has(id)) return;
-      if (Number(modelCount[modelKey] || 0) >= Number(maxPerSameModel || 1)) return;
-      if (frameworkConflictsSameHeweiDigit(chosen, item)) return;
-      if (!allowSameExcludeDigit && frameworkConflictsSameExcludeDigit(chosen, item)) return;
-      const score = comboPickScore(item);
-      if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
-        best = item;
-        bestScore = score;
-      }
-    });
-    if (!best) return false;
-    used.add(autoTop6ItemId(best));
-    chosen.push(best);
-    return true;
-  }
-
-  function noteLow(pool, label) {
-    (pool || []).forEach((item) => {
-      if (item.lowConfidence) {
-        const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
-        const reason = item.stabilityReason ? `，原因 ${item.stabilityReason}` : "";
-        repairReport.push(`${label}暂停低稳：${item.name} ${item.code}，安全率 ${rate}${reason}`);
-      }
-    });
-  }
-
-  const positionPool = candidates.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
-  const heweiPool = candidates.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
-  noteLow(positionPool, "推荐2定位池");
-  noteLow(heweiPool, "推荐2合尾池");
-
-  const positionHealthy = healthy.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
-  let before = chosen.length;
-  while (chosen.length - before < 2 && pickBest(positionHealthy, 1, false)) {}
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(positionHealthy, 2, false)) {}
-  }
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(positionPool, 2, false)) {
-      const item = chosen[chosen.length - 1];
-      item.repairedIntoTop = true;
-      repairReport.push(`推荐2定位健康项不足，已用正式观察项补齐：${item.name} ${item.code}。`);
-    }
-  }
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(positionPool, 2, true)) {
-      const item = chosen[chosen.length - 1];
-      item.repairedIntoTop = true;
-      repairReport.push(`推荐2定位同码相碰无替代，被迫保留：${item.name} ${item.code}。`);
-    }
-  }
-  if (chosen.length - before < 2) repairReport.push(`推荐2定位正式项不足2个（不含替补），当前定位启用 ${chosen.length - before} 个。`);
-
-  const heweiHealthy = healthy.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
-  before = chosen.length;
-  while (chosen.length - before < 2 && pickBest(heweiHealthy, 1, false)) {}
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(heweiHealthy, 2, false)) {}
-  }
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(heweiPool, 2, false)) {
-      const item = chosen[chosen.length - 1];
-      item.repairedIntoTop = true;
-      repairReport.push(`推荐2合尾健康项不足，已用正式观察项补齐：${item.name} ${item.code}。`);
-    }
-  }
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(heweiPool, 2, true)) {
-      const item = chosen[chosen.length - 1];
-      item.repairedIntoTop = true;
-      repairReport.push(`推荐2合尾与定位同码相碰无替代，被迫保留：${item.name} ${item.code}。`);
-    }
-  }
-  if (chosen.length - before < 2) repairReport.push(`推荐2合尾正式项不足2个（不含替补），当前合尾启用 ${chosen.length - before} 个。`);
-
-  const reverseBase = chosen.filter((item) => item.kind === "position");
-  const reversePool = autoTop6ReverseShapeCandidatesFromPositions(reverseBase, safeHistory)
-    .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
-    .sort(order);
-  noteLow(reversePool, "推荐2反向形态池");
-  const reverseHealthy = reversePool.filter((item) => item && item.stabilityGate === true);
-  let reversePicked = null;
-  if (reverseHealthy.length) {
-    reversePicked = reverseHealthy.slice().sort((a, b) => {
-      const delta = comboPickScore(b) - comboPickScore(a);
-      return delta || order(a, b);
-    })[0];
-  } else if (reversePool.length) {
-    reversePicked = reversePool.slice().sort((a, b) => {
-      const delta = comboPickScore(b) - comboPickScore(a);
-      return delta || order(a, b);
-    })[0];
-    if (reversePicked) {
-      reversePicked.repairedIntoTop = true;
-      repairReport.push(`推荐2反向形态未达安全阈值，暂用最优观察项：${reversePicked.name} ${reversePicked.code}。`);
-    }
-  }
-  if (reversePicked && !used.has(autoTop6ItemId(reversePicked))) {
-    used.add(autoTop6ItemId(reversePicked));
-    chosen.push(reversePicked);
-  } else if (!reversePicked) {
-    repairReport.push("推荐2反向形态暂缺，等待定位项稳定后自动恢复。");
-  }
-
-  ["anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((extraKey) => {
-    const pool = candidates.filter((item) => item && item.kind === "extra" && item.key === extraKey).sort((a, b) => {
-      if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
-      return order(a, b);
-    });
-    const picked = pool[0] || null;
-    if (!picked) {
-      repairReport.push(`推荐2固定模型缺失：${extraKey}`);
-      return;
-    }
-    if (picked.lowConfidence) {
-      const rate = picked.safetyRate === null ? "样本不足" : `${Number(picked.safetyRate).toFixed(2)}%`;
-      repairReport.push(`推荐2固定加入观察项：${picked.name} ${picked.code}，安全率 ${rate}${picked.stabilityReason ? "，原因 " + picked.stabilityReason : ""}`);
-    }
-    if (!used.has(autoTop6ItemId(picked))) {
-      used.add(autoTop6ItemId(picked));
-      chosen.push(picked);
-    }
-  });
-
-  const pairAvoidKeys = ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"];
-  const pairAvoidPool = candidates
-    .filter((item) => item && item.kind === "extra" && pairAvoidKeys.includes(item.key))
-    .sort((a, b) => {
-      if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
-      const delta = comboPickScore(b) - comboPickScore(a);
-      return delta || order(a, b);
-    });
-  const pairAvoidSource = pairAvoidPool[0] || null;
-  if (!pairAvoidSource) {
-    repairReport.push("推荐2固定模型缺失：对数2位避开");
-  } else {
-    const pairAvoidPicked = Object.assign({}, pairAvoidSource, { name: "对数2位避开" });
-    if (pairAvoidPicked.lowConfidence) {
-      const rate = pairAvoidPicked.safetyRate === null ? "样本不足" : `${Number(pairAvoidPicked.safetyRate).toFixed(2)}%`;
-      repairReport.push(`推荐2固定加入观察项：${pairAvoidPicked.name} ${pairAvoidPicked.code}，安全率 ${rate}${pairAvoidPicked.stabilityReason ? "，原因 " + pairAvoidPicked.stabilityReason : ""}`);
-    }
-    if (!used.has(autoTop6ItemId(pairAvoidPicked))) {
-      used.add(autoTop6ItemId(pairAvoidPicked));
-      chosen.push(pairAvoidPicked);
-    }
-  }
-
-  return {
-    version: RECOMMEND2_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(chosen.length, 8),
-    framework: {
-      positionCount: 2,
-      heweiCount: 2,
-      reverseShapeCount: 1,
-      heweiComboCount: 2,
-      pairAvoidCount: 1
-    },
-    items: chosen.slice(0, 8).map((item, index) => ({
-      rank: index + 1,
-      kind: item.kind,
-      key: item.key,
-      side: item.side || "recommend",
-      name: item.name,
-      code: item.code,
-      mode: item.mode || "avoid",
-      rate: item.rate,
-      stableScore: item.stableScore,
-      rate30: item.rate30,
-      rate60: item.rate60,
-      rate120: item.rate120,
-      rate300: item.rate300,
-      safetyRate: item.safetyRate,
-      safetyThreshold: item.safetyThreshold,
-      longFloor: item.longFloor,
-      lower120: item.lower120,
-      recentMissStreak: item.recentMissStreak,
-      maxMissStreak120: item.maxMissStreak120,
-      maxMissStreak1000: item.maxMissStreak1000,
-      hardnessScore: item.hardnessScore,
-      stabilityGate: !!item.stabilityGate,
-      stabilityReason: item.stabilityReason || "",
-      stageLabel: item.stageLabel,
-      lowConfidence: !!item.lowConfidence,
-      repairedIntoTop: !!item.repairedIntoTop,
-      codeCount: item.codeCount,
-      codes: Array.isArray(item.codes) ? item.codes.slice(0, recentExactCodeCodeLimit(item)) : undefined,
-      shapeKey: item.shapeKey || "",
-      derivedFrom: item.derivedFrom || ""
-    })),
-    repairReport
-  };
+  return frameworkItems.buildRecommend2Snapshot(prediction, history);
 }
 
 function ensurePredictionRecommend2Snapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  if (recommend2SnapshotIsComplete(prediction.recommend2)) return prediction.recommend2;
-  prediction.recommend2 = buildRecommend2Snapshot(prediction, history);
-  prediction.recommend2Items = prediction.recommend2.items;
-  prediction.recommend2RepairReport = prediction.recommend2.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.recommend2SnapshotVersion = prediction.recommend2.version;
-  return prediction.recommend2;
+  return frameworkItems.ensurePredictionRecommend2Snapshot(prediction, history);
 }
 
 function buildKillFrameworkSnapshot(prediction, history, options) {
-  // 杀码框架：2定位 + 2合尾 + 2反向形态 + 二数合5码 + 三数合5码（无对数避开）
-  const opts = options && typeof options === "object" ? options : {};
-  const comboWindow = Math.max(30, Math.min(MODEL_STABLE_WINDOW, Number(opts.comboWindow || MODEL_STABLE_WINDOW)));
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
-  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
-  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
-  const chosen = [];
-  const used = new Set();
-  const repairReport = [];
-  const comboRows = safeHistory.slice(0, Math.min(comboWindow, safeHistory.length));
-
-  function order(a, b) {
-    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
-    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
-    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
-    if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);
-    return String(a.name || "").localeCompare(String(b.name || ""));
-  }
-
-  function comboStats(items) {
-    let total = 0;
-    let hit = 0;
-    let validChecks = 0;
-    let successChecks = 0;
-    comboRows.forEach((record) => {
-      const results = (items || []).map((item) => autoTop6RecordSuccess(item, record)).filter((value) => typeof value === "boolean");
-      if (results.length !== (items || []).length || !results.length) return;
-      total += 1;
-      const wins = results.filter(Boolean).length;
-      validChecks += results.length;
-      successChecks += wins;
-      if (wins === results.length) hit += 1;
-    });
-    return {
-      total,
-      hit,
-      rate: total ? hit * 100 / total : null,
-      avgRate: validChecks ? successChecks * 100 / validChecks : null
-    };
-  }
-
-  function comboPickScore(item) {
-    const stats = comboStats(chosen.concat([item]));
-    const full = stats.rate === null ? -1 : Number(stats.rate || 0);
-    const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
-    return full * 10000 + avg * 100 + Number(item.stableScore || 0);
-  }
-
-  function pickBest(pool, maxPerSameModel, allowSameExcludeDigit) {
-    const modelCount = {};
-    chosen.forEach((item) => {
-      const modelKey = `${item.kind}:${item.key}`;
-      modelCount[modelKey] = Number(modelCount[modelKey] || 0) + 1;
-    });
-    let best = null;
-    let bestScore = -Infinity;
-    (pool || []).forEach((item) => {
-      const id = autoTop6ItemId(item);
-      const modelKey = `${item.kind}:${item.key}`;
-      if (used.has(id)) return;
-      if (Number(modelCount[modelKey] || 0) >= Number(maxPerSameModel || 1)) return;
-      if (frameworkConflictsSameHeweiDigit(chosen, item)) return;
-      if (!allowSameExcludeDigit && frameworkConflictsSameExcludeDigit(chosen, item)) return;
-      const score = comboPickScore(item);
-      if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
-        best = item;
-        bestScore = score;
-      }
-    });
-    if (!best) return false;
-    used.add(autoTop6ItemId(best));
-    chosen.push(best);
-    return true;
-  }
-
-  function noteLow(pool, label) {
-    (pool || []).forEach((item) => {
-      if (item.lowConfidence) {
-        const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
-        const reason = item.stabilityReason ? `，原因 ${item.stabilityReason}` : "";
-        repairReport.push(`${label}暂停低稳：${item.name} ${item.code}，安全率 ${rate}${reason}`);
-      }
-    });
-  }
-
-  const positionPool = candidates.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
-  const heweiPool = candidates.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
-  noteLow(positionPool, "杀码框架定位池");
-  noteLow(heweiPool, "杀码框架合尾池");
-
-  // 正式 2定位/2合尾：始终只从非 backup 池补齐；allowUnhealthy 仅影响是否允许观察项（已默认允许）
-  void opts.allowUnhealthy;
-  const positionHealthy = healthy.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
-  let before = chosen.length;
-  while (chosen.length - before < 2 && pickBest(positionHealthy, 1, false)) {}
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(positionHealthy, 2, false)) {}
-  }
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(positionPool, 2, false)) {
-      const item = chosen[chosen.length - 1];
-      item.repairedIntoTop = true;
-    }
-    if (chosen.length - before >= 2) repairReport.push("杀码框架定位健康项不足，已用正式观察项补齐（不含替补）。");
-  }
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(positionPool, 2, true)) {
-      chosen[chosen.length - 1].repairedIntoTop = true;
-      repairReport.push(`杀码框架定位同码相碰无替代，被迫保留：${chosen[chosen.length - 1].name} ${chosen[chosen.length - 1].code}。`);
-    }
-  }
-  if (chosen.length - before < 2) repairReport.push(`杀码框架定位正式项不足2个（不含替补），当前定位启用 ${chosen.length - before} 个。`);
-
-  const heweiHealthy = healthy.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
-  before = chosen.length;
-  while (chosen.length - before < 2 && pickBest(heweiHealthy, 1, false)) {}
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(heweiHealthy, 2, false)) {}
-  }
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(heweiPool, 2, false)) {
-      const item = chosen[chosen.length - 1];
-      item.repairedIntoTop = true;
-    }
-    if (chosen.length - before >= 2) repairReport.push("杀码框架合尾健康项不足，已用正式观察项补齐（不含替补）。");
-  }
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(heweiPool, 2, true)) {
-      chosen[chosen.length - 1].repairedIntoTop = true;
-      repairReport.push(`杀码框架合尾与定位同码相碰无替代，被迫保留：${chosen[chosen.length - 1].name} ${chosen[chosen.length - 1].code}。`);
-    }
-  }
-  if (chosen.length - before < 2) repairReport.push(`杀码框架合尾正式项不足2个（不含替补），当前合尾启用 ${chosen.length - before} 个。`);
-
-  const reverseBase = chosen.filter((item) => item.kind === "position");
-  const reversePool = autoTop6ReverseShapeCandidatesFromPositions(reverseBase, safeHistory)
-    .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
-    .sort(order);
-  noteLow(reversePool, "杀码框架反向形态池");
-  const reverseHealthy = reversePool.filter((item) => item && item.stabilityGate === true);
-  const reverseSource = reverseHealthy.length ? reverseHealthy : reversePool;
-  reverseSource.slice().sort((a, b) => {
-    const delta = comboPickScore(b) - comboPickScore(a);
-    return delta || order(a, b);
-  }).forEach((item) => {
-    if (chosen.filter((row) => row && row.kind === "derivedReverseShape").length >= 2) return;
-    if (!item || used.has(autoTop6ItemId(item))) return;
-    if (!item.stabilityGate) {
-      item.repairedIntoTop = true;
-      repairReport.push(`杀码框架反向形态未达安全阈值，暂用观察项：${item.name} ${item.code}。`);
-    }
-    used.add(autoTop6ItemId(item));
-    chosen.push(item);
-  });
-  if (chosen.filter((row) => row && row.kind === "derivedReverseShape").length < 2) {
-    repairReport.push("杀码框架反向形态不足2个，等待定位项稳定后自动恢复。");
-  }
-
-  const killAnyTwo = pickStructuralAnyTwoHeweiHit(
-    safeHistory,
-    evaluatedCount,
-    heweiScopeIndexesFromItems(chosen),
-    chosen,
-    prediction,
-    new Set(),
-    resolveStableMathAssist(prediction)
-  );
-  if (!killAnyTwo) {
-    repairReport.push("杀码框架固定模型缺失：anyTwoHeweiHit");
-  } else if (!used.has(autoTop6ItemId(killAnyTwo))) {
-    repairReport.push(`杀码框架二数合结构对齐：${killAnyTwo.code}`);
-    used.add(autoTop6ItemId(killAnyTwo));
-    chosen.push(killAnyTwo);
-  }
-
-  const killFrameworkAnyThree = digitSetCandidatesMixedParity(5)
-    .map((code) => autoTop6DecorateItem(safeHistory, {
-      kind: "extra",
-      key: "anyThreeHeweiHit",
-      side: "recommend",
-      name: "全码池三数合尾5码命中",
-      code,
-      mode: "hit",
-      algorithm: "kill-framework-any-three-hewei-selected-five",
-      hitMode: true,
-      matchMode: "hit-if-any-three-hewei-tail-in-selected-five",
-      dynamicEveryPrediction: true
-    }, evaluatedCount))
-    .sort((a, b) => {
-      if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
-      return order(a, b);
-    })[0] || null;
-  if (killFrameworkAnyThree) {
-    if (killFrameworkAnyThree.lowConfidence) {
-      const rate = killFrameworkAnyThree.safetyRate === null ? "样本不足" : `${Number(killFrameworkAnyThree.safetyRate).toFixed(2)}%`;
-      repairReport.push(`杀码框架三数合5码观察加入：${killFrameworkAnyThree.code}，安全率 ${rate}`);
-      killFrameworkAnyThree.repairedIntoTop = true;
-    }
-    if (!used.has(autoTop6ItemId(killFrameworkAnyThree))) {
-      used.add(autoTop6ItemId(killFrameworkAnyThree));
-      chosen.push(killFrameworkAnyThree);
-    }
-  } else {
-    repairReport.push("杀码框架固定模型缺失：anyThreeHeweiHit五码");
-  }
-
-  return {
-    version: KILL_FRAMEWORK_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(chosen.length, KILL_FRAMEWORK_ITEM_COUNT),
-    framework: {
-      positionCount: 2,
-      heweiCount: 2,
-      reverseShapeCount: 2,
-      heweiComboCount: 2,
-      pairAvoidCount: 0
-    },
-    items: chosen.slice(0, KILL_FRAMEWORK_ITEM_COUNT).map((item, index) => ({
-      rank: index + 1,
-      kind: item.kind,
-      key: item.key,
-      side: item.side || "recommend",
-      name: item.name,
-      code: item.code,
-      mode: item.mode || "avoid",
-      rate: item.rate,
-      stableScore: item.stableScore,
-      rate30: item.rate30,
-      rate60: item.rate60,
-      rate120: item.rate120,
-      rate300: item.rate300,
-      safetyRate: item.safetyRate,
-      safetyThreshold: item.safetyThreshold,
-      longFloor: item.longFloor,
-      lower120: item.lower120,
-      recentMissStreak: item.recentMissStreak,
-      maxMissStreak120: item.maxMissStreak120,
-      maxMissStreak1000: item.maxMissStreak1000,
-      hardnessScore: item.hardnessScore,
-      stabilityGate: !!item.stabilityGate,
-      stabilityReason: item.stabilityReason || "",
-      stageLabel: item.stageLabel,
-      lowConfidence: !!item.lowConfidence,
-      repairedIntoTop: !!item.repairedIntoTop,
-      codeCount: item.codeCount,
-      codes: Array.isArray(item.codes) ? item.codes.slice(0, recentExactCodeCodeLimit(item)) : undefined,
-      shapeKey: item.shapeKey || "",
-      derivedFrom: item.derivedFrom || ""
-    })),
-    repairReport
-  };
+  return frameworkItems.buildKillFrameworkSnapshot(prediction, history, options);
 }
 
 function ensurePredictionKillFrameworkSnapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  if (killFrameworkSnapshotIsComplete(prediction.killFramework)) return prediction.killFramework;
-  prediction.killFramework = buildKillFrameworkSnapshot(prediction, history);
-  prediction.killFrameworkItems = prediction.killFramework.items;
-  prediction.killFrameworkRepairReport = prediction.killFramework.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.killFrameworkSnapshotVersion = prediction.killFramework.version;
-  return prediction.killFramework;
+  return frameworkItems.ensurePredictionKillFrameworkSnapshot(prediction, history);
 }
 
 function compactAttackParityShapeItem(history) {
@@ -7073,353 +6348,11 @@ function compactAttackParityShapeItem(history) {
 }
 
 function buildCompactAttackSnapshot(prediction, history, options) {
-  // 三定框架 v5：千百十合尾1码 + 千/百/十各除1码（定位加强）+ 二数合5码（禁全单全双）；同框禁同码
-  const opts = options && typeof options === "object" ? options : {};
-  const comboWindow = Math.max(30, Math.min(MODEL_STABLE_WINDOW, Number(opts.comboWindow || MODEL_STABLE_WINDOW)));
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
-  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
-  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
-  const chosen = [];
-  const used = new Set();
-  const repairReport = [];
-  const comboRows = safeHistory.slice(0, Math.min(comboWindow, safeHistory.length));
-  const assist = resolveStableMathAssist(prediction);
-  const preferExcludeDigits = new Set((assist && assist.ok && Array.isArray(assist.excludeDigits)) ? assist.excludeDigits.map(String) : []);
-
-  function order(a, b) {
-    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
-    if (Number(b.hardnessScore || 0) !== Number(a.hardnessScore || 0)) return Number(b.hardnessScore || 0) - Number(a.hardnessScore || 0);
-    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
-    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
-    if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);
-    return String(a.name || "").localeCompare(String(b.name || ""));
-  }
-
-  function comboStats(items) {
-    let total = 0;
-    let hit = 0;
-    let validChecks = 0;
-    let successChecks = 0;
-    comboRows.forEach((record) => {
-      const results = (items || []).map((item) => autoTop6RecordSuccess(item, record)).filter((value) => typeof value === "boolean");
-      if (results.length !== (items || []).length || !results.length) return;
-      total += 1;
-      const wins = results.filter(Boolean).length;
-      validChecks += results.length;
-      successChecks += wins;
-      if (wins === results.length) hit += 1;
-    });
-    return {
-      total,
-      hit,
-      rate: total ? hit * 100 / total : null,
-      avgRate: validChecks ? successChecks * 100 / validChecks : null
-    };
-  }
-
-  function comboPickScore(item) {
-    const stats = comboStats(chosen.concat([item]));
-    const full = stats.rate === null ? -1 : Number(stats.rate || 0);
-    const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
-    return full * 10000 + avg * 100 + Number(item.stableScore || 0);
-  }
-
-  function positionStrengthScore(item) {
-    // 定位加强：健康门 + 硬度 + 更稳排除码优先 + 近窗命中 + 无动态单码时形态/跨度优先
-    const digit = frameworkSingleExcludeDigitToken(item);
-    const gateBoost = item && item.stabilityGate ? 12000 : 0;
-    const hardnessBoost = Number(item && item.hardnessScore || 0) * 40;
-    const preferBoost = digit && preferExcludeDigits.has(digit) ? 18000 : 0;
-    const stableBoost = stableMathAssistPickBoost(assist, item);
-    const safetyBoost = Number(item && item.safetyRate || 0) * 20;
-    const missPenalty = Number(item && item.recentMissStreak || 0) * 80;
-    return gateBoost + hardnessBoost + preferBoost + stableBoost + safetyBoost - missPenalty;
-  }
-
-  function noteLow(pool, label) {
-    (pool || []).forEach((item) => {
-      if (item.lowConfidence) {
-        const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
-        const reason = item.stabilityReason ? `，原因 ${item.stabilityReason}` : "";
-        repairReport.push(`${label}暂停低稳：${item.name} ${item.code}，安全率 ${rate}${reason}`);
-      }
-    });
-  }
-
-  function promoteIfBackup(item, kindLabel) {
-    if (!item) return item;
-    if ((item.side || "recommend") !== "backup") return item;
-    const next = Object.assign({}, item, {
-      side: "recommend",
-      repairedIntoTop: true,
-      derivedFrom: item.derivedFrom || (item.kind === "hewei" ? "hewei-backup-algorithm" : "position-backup-algorithm")
-    });
-    if (item.kind === "hewei") {
-      next.name = String(item.name || "").replace(/备用$/, "推荐") || "千百十合尾推荐";
-    } else {
-      next.name = String(item.name || "").replace(/备用$/, "推荐") || `${kindLabel || "定位"}备用算法`;
-    }
-    return next;
-  }
-
-  function commitItem(item) {
-    if (!item) return false;
-    const id = autoTop6ItemId(item);
-    if (used.has(id)) return false;
-    if (frameworkConflictsSameExcludeDigit(chosen, item)) return false;
-    if (frameworkConflictsSameHeweiDigit(chosen, item)) return false;
-    used.add(id);
-    chosen.push(item);
-    return true;
-  }
-
-  // 1) 先定千百十合尾，再选定位，避免合尾码占满后定位撞死
-  const heweiPool = candidates.filter((item) => item.kind === "hewei" && item.key === "wanQianBai").sort(order);
-  noteLow(heweiPool, "三定框架合尾池");
-  const heweiSideOrder = ["recommend", "main", "backup"];
-  let heweiPicked = false;
-  function tryPickHewei(requireGate, allowConflict) {
-    for (let s = 0; s < heweiSideOrder.length; s += 1) {
-      const side = heweiSideOrder[s];
-      const pool = heweiPool.filter((item) => (item.side || "recommend") === side && (!requireGate || item.stabilityGate)).sort(order);
-      let best = null;
-      let bestScore = -Infinity;
-      pool.forEach((raw) => {
-        const item = promoteIfBackup(raw, "合尾");
-        const id = autoTop6ItemId(item);
-        if (used.has(id)) return;
-        if (!allowConflict && frameworkConflictsSameExcludeDigit(chosen, item)) return;
-        if (!allowConflict && frameworkConflictsSameHeweiDigit(chosen, item)) return;
-        const score = comboPickScore(item) + positionStrengthScore(item) - s * 30;
-        if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
-          best = item;
-          bestScore = score;
-        }
-      });
-      if (best && commitItem(best)) {
-        heweiPicked = true;
-        return true;
-      }
-    }
-    return false;
-  }
-  if (!tryPickHewei(true, false)) tryPickHewei(false, false);
-  if (!heweiPicked && tryPickHewei(false, true)) {
-    repairReport.push("三定框架千百十合尾放宽同码限制补齐");
-  }
-  if (!heweiPicked) repairReport.push("三定框架千百十合尾缺失");
-  else {
-    const hw = chosen.find((item) => item && item.kind === "hewei" && item.key === "wanQianBai");
-    if (hw) repairReport.push(`三定框架千百十合尾：${hw.code}${hw.stabilityGate ? "" : "（观察项）"}`);
-  }
-
-  // 2) 定位加强：优先备用/主攻算法侧 + 健康门 + 硬度 + 更稳排除码
-  const positionPool = candidates.filter((item) => item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || ""))).sort(order);
-  noteLow(positionPool, "三定框架定位池");
-  void opts.allowUnhealthy;
-  const positionHealthy = healthy.filter((item) => item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || ""))).sort(order);
-  const sideOrder = ["backup", "main", "recommend"];
-  if (preferExcludeDigits.size) {
-    repairReport.push(`三定框架定位加强：更稳排除码优先 ${Array.from(preferExcludeDigits).join("")}`);
-  } else if ((assist.excludeShapes || []).length || (assist.excludeSpans || []).length) {
-    repairReport.push(`三定框架定位加强：更稳形态/跨度辅助（单码空：形态${(assist.excludeShapes || []).slice(0, 2).join("、") || "无"}，跨度${(assist.excludeSpans || []).slice(0, 3).join("、") || "无"}）`);
-  } else {
-    repairReport.push("三定框架定位加强：优先备用/主攻算法侧与硬度分");
-  }
-
-  function pickBestForKey(key, allowConflict) {
-    const pools = [
-      positionHealthy.filter((item) => String(item.key) === key),
-      positionPool.filter((item) => String(item.key) === key)
-    ];
-    for (let p = 0; p < pools.length; p += 1) {
-      for (let s = 0; s < sideOrder.length; s += 1) {
-        const side = sideOrder[s];
-        const pool = pools[p].filter((item) => (item.side || "recommend") === side).sort(order);
-        let best = null;
-        let bestScore = -Infinity;
-        pool.forEach((raw) => {
-          const item = promoteIfBackup(raw, "定位");
-          const id = autoTop6ItemId(item);
-          if (used.has(id)) return;
-          if (!allowConflict && frameworkConflictsSameExcludeDigit(chosen, item)) return;
-          const score = comboPickScore(item) + positionStrengthScore(item) - s * 20 - p * 1000;
-          if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
-            best = item;
-            bestScore = score;
-          }
-        });
-        if (best && commitItem(best)) return true;
-      }
-    }
-    return false;
-  }
-  function forceFillMissingKey(key) {
-    const taken = frameworkSingleExcludeDigits(chosen);
-    let digit = null;
-    // 强制补位时也优先更稳排除码
-    const preferList = Array.from(preferExcludeDigits).concat(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
-    for (let i = 0; i < preferList.length; i += 1) {
-      const text = String(preferList[i]);
-      if (/^\d$/.test(text) && !taken.has(text)) {
-        digit = text;
-        break;
-      }
-    }
-    if (digit == null) return false;
-    const forced = autoTop6DecorateItem(safeHistory, {
-      kind: "position",
-      key,
-      side: "recommend",
-      name: ({ wan: "千位", qian: "百位", bai: "十位" }[key] || key) + "强制独立码",
-      code: digit,
-      derivedFrom: "compact-force-unique-digit",
-      repairedIntoTop: true
-    }, evaluatedCount);
-    if (!commitItem(forced)) return false;
-    repairReport.push(`三定框架${key}定位与同框撞码，已强制错开为 ${digit}`);
-    return true;
-  }
-
-  // 固定按千/百/十各取1项，禁止只凑到2位就停
-  ["wan", "qian", "bai"].forEach((key) => {
-    if (pickBestForKey(key, false)) return;
-    if (pickBestForKey(key, true)) {
-      repairReport.push(`三定框架${key}定位放宽同码限制补齐`);
-      return;
-    }
-    forceFillMissingKey(key);
-  });
-  const posCount = chosen.filter((item) => item && item.kind === "position").length;
-  if (posCount < 3) repairReport.push("三定框架定位正式项不足千百十三项（不含个位）。");
-  else {
-    const sidesUsed = chosen.filter((item) => item && item.kind === "position").map((item) => item.derivedFrom || item.side || "recommend");
-    repairReport.push(`三定框架三项定位已固定落到千百十（加强选码：${sidesUsed.join("/")}）。`);
-  }
-
-  // 3) 二数合5码：结构对齐合尾/定位/Codex，禁全单/全双
-  const scopeForRank = heweiScopeIndexesFromItems(chosen);
-  let picked = pickStructuralAnyTwoHeweiHit(safeHistory, evaluatedCount, scopeForRank, chosen, prediction, new Set(), assist);
-  if (picked && isUniformParityDigitSet(String(picked.code || ""))) {
-    repairReport.push(`三定框架二数合拒绝全单/全双：${picked.code}`);
-    picked = null;
-  }
-  if (!picked) {
-    repairReport.push("三定框架固定模型缺失：anyTwoHeweiHit");
-  } else {
-    repairReport.push(`三定框架二数合结构对齐：${picked.code}`);
-    commitItem(picked);
-  }
-
-  const stableShape = pickStableMathShapeCandidate(assist, safeHistory, evaluatedCount, 3);
-  if (stableShape) {
-    if (commitItem(stableShape)) {
-      repairReport.push(`三定框架更稳排除形态：${stableShape.name} ${String(stableShape.code || "").slice(0, 3)}`);
-    }
-  } else if ((assist.excludeSpans || []).length) {
-    const spanRaw = stableMathSpanFrameworkItem(assist.excludeSpans[0]);
-    if (spanRaw) {
-      const spanItem = autoTop6DecorateItem(safeHistory, spanRaw, evaluatedCount);
-      if (commitItem(spanItem)) {
-        repairReport.push(`三定框架更稳排除跨度：${spanItem.code}`);
-      }
-    }
-  }
-
-  const heweiScopeIndexes = heweiScopeIndexesFromItems(chosen);
-  if (heweiScopeIndexes.length === 3) {
-    repairReport.push(`三定框架二数合作用位：${heweiScopeIndexes.map((index) => ["千", "百", "十", "个"][index] || index).join("")}`);
-  }
-
-  // 输出顺序：3定位 → 千百十合 → 二数合（面板展示更直观）
-  const ordered = [];
-  ["wan", "qian", "bai"].forEach((key) => {
-    const item = chosen.find((row) => row && row.kind === "position" && String(row.key) === key);
-    if (item) ordered.push(item);
-  });
-  chosen.forEach((item) => {
-    if (item && item.kind === "hewei" && item.key === "wanQianBai") ordered.push(item);
-  });
-  chosen.forEach((item) => {
-    if (item && item.kind === "extra" && item.key === "anyTwoHeweiHit") ordered.push(item);
-  });
-  chosen.forEach((item) => {
-    if (ordered.indexOf(item) < 0) ordered.push(item);
-  });
-
-  return {
-    version: COMPACT_ATTACK_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(ordered.length, COMPACT_ATTACK_ITEM_COUNT),
-    framework: {
-      positionCount: 3,
-      heweiComboCount: 1,
-      shapeParityCount: chosen.some((item) => item && item.kind === "derivedReverseShape") ? 1 : 0,
-      heweiCount: 1,
-      pool: "qianBaiShi",
-      pickOrder: ["hewei.wanQianBai", "positionx3-strengthened", "anyTwoHeweiHit-mixedParity", "stableMathShapeOrSpan"],
-      positionSidePreference: sideOrder.slice(),
-      heweiScopeIndexes: heweiScopeIndexes.length >= 2 ? heweiScopeIndexes.slice() : undefined
-    },
-    heweiScopeIndexes: heweiScopeIndexes.length >= 2 ? heweiScopeIndexes.slice() : undefined,
-    items: ordered.slice(0, COMPACT_ATTACK_ITEM_COUNT).map((item, index) => ({
-      rank: index + 1,
-      kind: item.kind,
-      key: item.key,
-      side: item.side || "recommend",
-      name: item.name,
-      code: item.code,
-      mode: item.mode || (item.kind === "extra" && /Hit$/.test(String(item.key || "")) ? "hit" : "avoid"),
-      rate: item.rate,
-      stableScore: item.stableScore,
-      rate30: item.rate30,
-      rate60: item.rate60,
-      rate120: item.rate120,
-      rate300: item.rate300,
-      safetyRate: item.safetyRate,
-      safetyThreshold: item.safetyThreshold,
-      longFloor: item.longFloor,
-      lower120: item.lower120,
-      recentMissStreak: item.recentMissStreak,
-      maxMissStreak120: item.maxMissStreak120,
-      maxMissStreak1000: item.maxMissStreak1000,
-      hardnessScore: item.hardnessScore,
-      stabilityGate: !!item.stabilityGate,
-      stabilityReason: item.stabilityReason || "",
-      stageLabel: item.stageLabel,
-      lowConfidence: !!item.lowConfidence,
-      repairedIntoTop: !!item.repairedIntoTop,
-      codeCount: item.codeCount,
-      codes: Array.isArray(item.codes) ? item.codes.slice(0, recentExactCodeCodeLimit(item)) : undefined,
-      shapeKey: item.shapeKey || "",
-      derivedFrom: item.derivedFrom || "",
-      heweiScopeIndexes: (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") && heweiScopeIndexes.length >= 2
-        ? heweiScopeIndexes.slice()
-        : undefined
-    })),
-    repairReport
-  };
+  return frameworkItems.buildCompactAttackSnapshot(prediction, history, options);
 }
 
 function ensurePredictionCompactAttackSnapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  const assist = resolveStableMathAssist(prediction);
-  if (
-    compactAttackSnapshotIsComplete(prediction.compactAttack)
-    && prediction.compactAttack.stableMathAssist
-    && !snapshotNeedsStableMathAssistRefresh(prediction.compactAttack, assist)
-  ) {
-    return prediction.compactAttack;
-  }
-  prediction.compactAttack = buildCompactAttackSnapshot(prediction, history);
-  attachStableMathAssistToSnapshot(prediction.compactAttack, assist, "三定框架");
-  prediction.compactAttackItems = prediction.compactAttack.items;
-  prediction.compactAttackRepairReport = prediction.compactAttack.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.compactAttackSnapshotVersion = prediction.compactAttack.version;
-  return prediction.compactAttack;
+  return frameworkItems.ensurePredictionCompactAttackSnapshot(prediction, history);
 }
 
 function mapFrameworkSnapshotItems(chosen, heweiScopeIndexes, itemCount) {
@@ -7466,8 +6399,7 @@ function frameworkAnyTwoCodesFromItems(items) {
   (Array.isArray(items) ? items : []).forEach((item) => {
     if (!item || item.kind !== "extra" || item.key !== "anyTwoHeweiHit") return;
     const code = String(item.code || "");
-    // 全码池二数合固定 5 码；旧 4 码残留不得进入分框错开集合
-    if (/^\d{5}$/.test(code) && new Set(code.split("")).size === 5) out.add(code);
+    if (isAnyTwoHeweiCode(code)) out.add(code);
   });
   return out;
 }
@@ -7501,12 +6433,12 @@ function promoteFrameworkBackupItem(item, label) {
 
 function rankAnyTwoHeweiHitPool(history, evaluatedCount, scopeIndexes, baseCandidates) {
   const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const codes = digitSetCandidatesMixedParity(5);
+  const codes = anyTwoHeweiCandidates();
   const byCode = new Map();
   (Array.isArray(baseCandidates) ? baseCandidates : []).forEach((item) => {
     if (!item || item.kind !== "extra" || item.key !== "anyTwoHeweiHit") return;
     const code = String(item.code || "");
-    if (/^\d{5}$/.test(code)) byCode.set(code, item);
+    if (isAnyTwoHeweiCode(code)) byCode.set(code, item);
   });
   const pool = [];
   codes.forEach((code) => {
@@ -7518,7 +6450,7 @@ function rankAnyTwoHeweiHitPool(history, evaluatedCount, scopeIndexes, baseCandi
         kind: "extra",
         key: "anyTwoHeweiHit",
         side: "recommend",
-        name: "全码池二数合尾5码命中",
+        name: "二数合尾02468排1码命中",
         code,
         mode: "hit",
         derivedFrom: "anyTwo-alt-rank"
@@ -7550,9 +6482,9 @@ function rankAnyTwoHeweiHitPool(history, evaluatedCount, scopeIndexes, baseCandi
 function pickRankedAnyTwoHeweiHit(history, evaluatedCount, scopeIndexes, baseCandidates, avoidCodes) {
   const avoid = avoidCodes instanceof Set ? avoidCodes : new Set(Array.isArray(avoidCodes) ? avoidCodes : []);
   const pool = rankAnyTwoHeweiHitPool(history, evaluatedCount, scopeIndexes, baseCandidates);
-  const fresh = pool.find((item) => item && /^\d{5}$/.test(String(item.code || "")) && !avoid.has(String(item.code))) || null;
+  const fresh = pool.find((item) => item && isAnyTwoHeweiCode(item.code) && !avoid.has(String(item.code))) || null;
   if (fresh) return fresh;
-  return pool.find((item) => item && /^\d{5}$/.test(String(item.code || ""))) || null;
+  return pool.find((item) => item && isAnyTwoHeweiCode(item.code)) || null;
 }
 
 function structuralAnyTwoAlignment(chosenItems, prediction, assist) {
@@ -7604,7 +6536,7 @@ function pickStructuralAnyTwoHeweiHit(history, evaluatedCount, scopeIndexes, cho
   const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
   const avoid = avoidCodes instanceof Set ? avoidCodes : new Set(Array.isArray(avoidCodes) ? avoidCodes : []);
   const alignment = structuralAnyTwoAlignment(chosenItems, prediction, assist || resolveStableMathAssist(prediction));
-  const codes = digitSetCandidatesMixedParity(5);
+  const codes = anyTwoHeweiCandidates();
   let bestCode = null;
   let bestScore = -Infinity;
   codes.forEach((code) => {
@@ -7615,25 +6547,76 @@ function pickStructuralAnyTwoHeweiHit(history, evaluatedCount, scopeIndexes, cho
       bestCode = code;
     }
   });
-  if (!bestCode) bestCode = codes.find((code) => !avoid.has(code)) || "02468";
+  if (!bestCode) bestCode = codes.find((code) => !avoid.has(code)) || anyTwoHeweiCandidates()[0];
   let item = {
     kind: "extra",
     key: "anyTwoHeweiHit",
     side: "recommend",
-    name: "全码池二数合尾5码命中",
+    name: "二数合尾02468排1码命中",
     code: bestCode,
     mode: "hit",
     derivedFrom: "structural-align-position-hewei",
     structuralPick: true,
-    algorithm: "structural-any-two-hewei-5",
+    algorithm: "structural-any-two-hewei-02468-exclude-one",
     hitMode: true,
-    matchMode: "hit-if-any-two-hewei-tail-in-selected-five",
+    matchMode: "hit-if-any-two-hewei-tail-in-02468-exclude-one",
     dynamicEveryPrediction: true
   };
   if (Array.isArray(scopeIndexes) && scopeIndexes.length >= 2) item.heweiScopeIndexes = scopeIndexes.slice();
   item = autoTop6DecorateItem(safeHistory, item, evaluatedCount);
   item.structuralPick = true;
   item.derivedFrom = "structural-align-position-hewei";
+  if (Array.isArray(scopeIndexes) && scopeIndexes.length >= 2) item.heweiScopeIndexes = scopeIndexes.slice();
+  return item;
+}
+
+function pickThreeDingTwoAnyTwoFromSeed(history, evaluatedCount, scopeIndexes, chosenItems, prediction, avoidCodes) {
+  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
+  const avoid = avoidCodes instanceof Set ? avoidCodes : new Set(Array.isArray(avoidCodes) ? avoidCodes : []);
+  const seedArr = uniqueDigits(ANY_TWO_HEWEI_SOURCE_DIGITS).sort();
+  const kills = frameworkSingleExcludeDigits(chosenItems);
+  const heweiItem = (Array.isArray(chosenItems) ? chosenItems : []).find((item) => item && item.kind === "hewei" && item.key === "wanQianBai");
+  const heweiKill = frameworkSingleExcludeDigitToken(heweiItem);
+  let excludedDigit = null;
+  if (heweiKill && seedArr.includes(heweiKill)) excludedDigit = heweiKill;
+  if (!excludedDigit) {
+    for (let index = 0; index < seedArr.length; index += 1) {
+      const digit = seedArr[index];
+      if (kills.has(digit)) {
+        excludedDigit = digit;
+        break;
+      }
+    }
+  }
+  if (!excludedDigit) excludedDigit = seedArr[seedArr.length - 1] || "8";
+  let digits = seedArr.filter((digit) => digit !== excludedDigit);
+  let bestCode = digits.sort().join("");
+  if (!isAnyTwoHeweiCode(bestCode)) bestCode = anyTwoHeweiCandidates()[0];
+  if (avoid.has(bestCode)) {
+    const fallback = anyTwoHeweiCandidates().find((code) => !avoid.has(code) && code.split("").filter((digit) => seedArr.includes(digit)).length === ANY_TWO_HEWEI_CODE_SIZE);
+    if (fallback) bestCode = fallback;
+  }
+  let item = {
+    kind: "extra",
+    key: "anyTwoHeweiHit",
+    side: "recommend",
+    name: "二数合尾02468排1码命中",
+    code: bestCode,
+    mode: "hit",
+    derivedFrom: "three-ding-two-seed-02468-exclude-one",
+    structuralPick: true,
+    algorithm: "three-ding-two-any-two-seed-02468-exclude-one",
+    seedCode: THREE_DING_TWO_ANY_TWO_SEED,
+    excludedSeedDigit: excludedDigit,
+    hitMode: true,
+    matchMode: "hit-if-any-two-hewei-tail-in-02468-exclude-one",
+    dynamicEveryPrediction: true
+  };
+  if (Array.isArray(scopeIndexes) && scopeIndexes.length >= 2) item.heweiScopeIndexes = scopeIndexes.slice();
+  item = autoTop6DecorateItem(safeHistory, item, evaluatedCount);
+  item.derivedFrom = "three-ding-two-seed-02468-exclude-one";
+  item.seedCode = THREE_DING_TWO_ANY_TWO_SEED;
+  item.excludedSeedDigit = excludedDigit;
   if (Array.isArray(scopeIndexes) && scopeIndexes.length >= 2) item.heweiScopeIndexes = scopeIndexes.slice();
   return item;
 }
@@ -7773,6 +6756,54 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
       });
       if (chosen.length - before >= needCount) repairReport.push(`${label}定位健康项不足，已用观察项/备用算法补齐（仅千百十，不含个位）。`);
     }
+    // 候选同码/跨框避码抽干时，对齐原三定：强制补独立码，避免 B 快照 intermittent incomplete
+    function forceFillMissingPosition() {
+      const keyOrder = ["wan", "qian", "bai"];
+      const usedKeys = new Set(
+        chosen
+          .filter((item) => item && item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || "")))
+          .map((item) => String(item.key))
+      );
+      let filled = 0;
+      while (chosen.length - before < needCount) {
+        const missingKey = keyOrder.find((key) => !usedKeys.has(key));
+        if (!missingKey) break;
+        const taken = frameworkSingleExcludeDigits(chosen);
+        // 优先错开跨框 avoidDigits，再回退任意未占用单码（同框仍禁同码）
+        const digitOrder = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+        const preferList = digitOrder.filter((digit) => !avoidDigits.has(digit)).concat(digitOrder);
+        let digit = null;
+        for (let i = 0; i < preferList.length; i += 1) {
+          const text = String(preferList[i]);
+          if (/^\d$/.test(text) && !taken.has(text)) {
+            digit = text;
+            break;
+          }
+        }
+        if (digit == null) break;
+        const forced = autoTop6DecorateItem(safeHistory, {
+          kind: "position",
+          key: missingKey,
+          side: "recommend",
+          name: ({ wan: "千位", qian: "百位", bai: "十位" }[missingKey] || missingKey) + "强制独立码",
+          code: digit,
+          derivedFrom: "three-ding-force-unique-digit",
+          repairedIntoTop: true
+        }, evaluatedCount);
+        if (!commitItem(forced)) break;
+        usedKeys.add(missingKey);
+        filled += 1;
+        const avoided = avoidDigits.has(digit) ? "（仍触碰跨框避码）" : "";
+        repairReport.push(`${label}${missingKey}定位候选撞码/不足，已强制错开为 ${digit}${avoided}`);
+      }
+      return filled;
+    }
+    if (chosen.length - before < needCount) {
+      const filled = forceFillMissingPosition();
+      if (filled > 0 && chosen.length - before >= needCount) {
+        repairReport.push(`${label}定位已用强制独立码补齐至${needCount}项（仅千百十）。`);
+      }
+    }
     if (chosen.length - before < needCount) repairReport.push(`${label}定位正式项不足${needCount}个（仅千百十）。`);
     else {
       const sidesUsed = chosen.slice(before).filter((item) => item.kind === "position").map((item) => item.derivedFrom || item.side || "recommend");
@@ -7835,6 +6866,29 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
     } else {
       repairReport.push(`${label}二数合结构对齐：${picked.code}`);
     }
+    const id = autoTop6ItemId(picked);
+    if (!used.has(id)) {
+      used.add(id);
+      if (Array.isArray(scopeIndexes) && scopeIndexes.length >= 2) picked.heweiScopeIndexes = scopeIndexes.slice();
+      chosen.push(picked);
+    }
+  }
+
+  function pickThreeDingTwoAnyTwo(label, scopeIndexes) {
+    const picked = pickThreeDingTwoAnyTwoFromSeed(
+      safeHistory,
+      evaluatedCount,
+      scopeIndexes,
+      chosen,
+      prediction,
+      avoidAnyTwoCodes
+    );
+    if (!picked) {
+      repairReport.push(`${label}固定模型缺失：anyTwoHeweiHit`);
+      return;
+    }
+    const excluded = String(picked.excludedSeedDigit || "");
+    repairReport.push(`${label}二数合02468排除${excluded || "一码"}：${picked.code}`);
     const id = autoTop6ItemId(picked);
     if (!used.has(id)) {
       used.add(id);
@@ -7908,8 +6962,9 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
   function pickReverseShape(label) {
     const assist = resolveStableMathAssist(prediction);
     const scopeLen = 3;
+    // 更稳单双形态（全奇→单单单）已禁用；仅接受大小类更稳形态
     const stableFirst = pickStableMathShapeCandidate(assist, safeHistory, evaluatedCount, scopeLen);
-    if (stableFirst) {
+    if (stableFirst && !isParityOnlyShapeCode(stableFirst.code)) {
       const id = autoTop6ItemId(stableFirst);
       if (!used.has(id)) {
         used.add(id);
@@ -7921,6 +6976,8 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
     const reverseBase = chosen.filter((item) => item && item.kind === "position");
     const reversePool = autoTop6ReverseShapeCandidatesFromPositions(reverseBase, safeHistory)
       .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
+      // 三定 A/B 排除形态禁用单双，优先/仅用大小形态
+      .filter((item) => item && !isParityOnlyShapeCode(item.code) && (item.shapeKey === "shapeSize" || item.key === "reverseSize" || /^[大小]{3,4}$/.test(String(item.code || ""))))
       .sort(order);
     noteLow(reversePool, `${label}反向形态池`);
     const reverseHealthy = reversePool.filter((item) => item && item.stabilityGate === true);
@@ -7930,15 +6987,28 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
       return delta || order(a, b);
     })[0] || null;
     if (!reversePicked) {
-      repairReport.push(`${label}排除形态暂缺，等待定位项稳定后自动恢复。`);
-      return;
+      // 无大小形态时强制挂一个大小排除，保证 A/B 结构完整，绝不回退单单单
+      const forced = autoTop6DecorateItem(safeHistory, {
+        kind: "derivedReverseShape",
+        key: "reverseSize",
+        side: "recommend",
+        name: "排除形态(大小)",
+        code: "大大小",
+        shapeKey: "shapeSize",
+        shapeScopeLength: 3,
+        mode: "avoid",
+        derivedFrom: "three-ding-size-shape-fallback",
+        repairedIntoTop: true
+      }, evaluatedCount);
+      reversePicked = forced;
+      repairReport.push(`${label}排除形态暂缺，已强制大小形态大大小（禁用单双）。`);
     }
     if (!reversePicked.stabilityGate) {
       reversePicked.repairedIntoTop = true;
       repairReport.push(`${label}排除形态未达安全阈值，暂用最优观察项：${reversePicked.name} ${reversePicked.code}。`);
     } else {
       const attackShape = String(reversePicked.code || "").slice(0, 3);
-      repairReport.push(`${label}排除形态：${reversePicked.name} ${attackShape}（千百十三字攻击语，含大小/单双）`);
+      repairReport.push(`${label}排除形态：${reversePicked.name} ${attackShape}（千百十三字攻击语，仅大小形态）`);
     }
     const id = autoTop6ItemId(reversePicked);
     if (!used.has(id)) {
@@ -7947,82 +7017,15 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
     }
   }
 
-  return { chosen, repairReport, pickPositions, pickWanQianBai, pickAnyTwo, pickTwoDigitAvoid, pickReverseShape };
+  return { chosen, repairReport, pickPositions, pickWanQianBai, pickAnyTwo, pickThreeDingTwoAnyTwo, pickTwoDigitAvoid, pickReverseShape };
 }
 
 function buildThreeDingTwoSnapshot(prediction, history, options) {
-  // 三定框架A：千百十合尾 + 千百十挑1位除1码 + 二数合(千百十) + 排除形态1 + 一对数避开
-  const ctx = buildThreeDingVariantHelpers(prediction, history, Object.assign({
-    preferredPositionSides: ["backup", "main", "recommend"]
-  }, options || {}));
-  ctx.pickWanQianBai("三定框架A", ["recommend", "main", "backup"]);
-  // 合尾入框后再选定位，避免备用定位码占满合尾可用码
-  ctx.pickPositions(1, "三定框架A");
-  ctx.pickReverseShape("三定框架A");
-  ctx.chosen.forEach((item) => {
-    if (item && item.kind === "derivedReverseShape") item.shapeScopeLength = 3;
-  });
-  const heweiScopeIndexes = [0, 1, 2];
-  ctx.repairReport.push("三定框架A二数合作用位：千百十");
-  ctx.pickAnyTwo("三定框架A", heweiScopeIndexes);
-  ctx.pickTwoDigitAvoid("三定框架A");
-  return {
-    version: THREE_DING_TWO_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(ctx.chosen.length, THREE_DING_TWO_ITEM_COUNT),
-    framework: {
-      positionCount: 1,
-      heweiCount: 1,
-      heweiComboCount: 1,
-      reverseShapeCount: 1,
-      pairAvoidCount: 1,
-      pool: "qianBaiShi",
-      pickOrder: ["hewei.wanQianBai", "positionx1", "derivedReverseShape", "anyTwoHeweiHit", "twoDigitAvoid"],
-      positionSidePreference: ["backup", "main", "recommend"],
-      heweiScopeIndexes: heweiScopeIndexes.slice()
-    },
-    heweiScopeIndexes: heweiScopeIndexes.slice(),
-    items: mapFrameworkSnapshotItems(ctx.chosen, heweiScopeIndexes, THREE_DING_TWO_ITEM_COUNT),
-    repairReport: ctx.repairReport
-  };
+  return frameworkItems.buildThreeDingTwoSnapshot(prediction, history, options);
 }
 
 function buildThreeDingOneSnapshot(prediction, history, options) {
-  // 三定框架B：先合尾(优先备用)，再从千百十挑2位避开合尾同码 + 二数合(千百十) + 对数避开
-  const ctx = buildThreeDingVariantHelpers(prediction, history, Object.assign({
-    preferredPositionSides: ["recommend", "main", "backup"]
-  }, options || {}));
-  ctx.pickWanQianBai("三定框架B", ["backup", "main", "recommend"]);
-  ctx.pickPositions(2, "三定框架B");
-  ctx.pickReverseShape("三定框架B");
-  ctx.chosen.forEach((item) => {
-    if (item && item.kind === "derivedReverseShape") item.shapeScopeLength = 3;
-  });
-  const heweiScopeIndexes = [0, 1, 2];
-  ctx.repairReport.push("三定框架B二数合作用位：千百十");
-  ctx.pickAnyTwo("三定框架B", heweiScopeIndexes);
-  ctx.pickTwoDigitAvoid("三定框架B");
-  return {
-    version: THREE_DING_ONE_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(ctx.chosen.length, THREE_DING_ONE_ITEM_COUNT),
-    framework: {
-      positionCount: 2,
-      heweiCount: 1,
-      heweiComboCount: 1,
-      reverseShapeCount: 1,
-      pairAvoidCount: 1,
-      pool: "qianBaiShi",
-      pickOrder: ["hewei.wanQianBai", "positionx2", "derivedReverseShape", "anyTwoHeweiHit", "twoDigitAvoid"],
-      heweiSidePreference: ["backup", "main", "recommend"],
-      heweiScopeIndexes: heweiScopeIndexes.slice()
-    },
-    heweiScopeIndexes: heweiScopeIndexes.slice(),
-    items: mapFrameworkSnapshotItems(ctx.chosen, heweiScopeIndexes, THREE_DING_ONE_ITEM_COUNT),
-    repairReport: ctx.repairReport
-  };
+  return frameworkItems.buildThreeDingOneSnapshot(prediction, history, options);
 }
 
 function normalizeStableMathFilterOnPrediction(prediction) {
@@ -8051,6 +7054,10 @@ function normalizeStableMathFiltersInState(stateObj) {
 
 function applyStableMathFilterToPrediction(prediction, filter) {
   if (!prediction || typeof prediction !== "object" || !filter || typeof filter !== "object") return prediction;
+  // A sealed prediction is immutable evidence.  The next prediction will use a
+  // refreshed filter, but the current prediction must retain the filter that
+  // existed when its snapshots were sealed.
+  if (predictionSnapshotsAreImmutable(prediction)) return prediction;
   const slim = stableMathFilterBridge.slimStableMathFilter(filter);
   if (!slim) return prediction;
   prediction.stableMathFilter = slim;
@@ -8061,10 +7068,10 @@ function applyStableMathFilterToPrediction(prediction, filter) {
 
 function attachCachedStableMathFilter(prediction) {
   if (!prediction || typeof prediction !== "object") return prediction;
-  const cached = (state && state.stableMathFilter)
-    || stableMathFilterBridge.readCachedFilter()
-    || null;
-  if (cached) applyStableMathFilterToPrediction(prediction, cached);
+  const attached = l0Orchestrator.stableMathAlgo.compute({
+    history: state && Array.isArray(state.history) ? state.history : []
+  });
+  if (attached && attached.payload) applyStableMathFilterToPrediction(prediction, attached.payload);
   return prediction;
 }
 
@@ -8081,27 +7088,25 @@ function scheduleStableMathFilterRefresh(reason) {
   stableMathFilterRunning = true;
   stableMathFilterQueued = false;
   setImmediate(() => {
-    Promise.resolve(stableMathFilterBridge.runStableMathFilterAsync(history, { timeoutMs: 25000 }))
+    Promise.resolve(l0Orchestrator.stableMathAlgo.computeAsync({ history }, { timeoutMs: 25000 }))
       .then((outcome) => {
-        const filter = outcome && outcome.result ? outcome.result : null;
-        if (filter && typeof filter === "object") {
-          state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(filter);
-          if (state.currentPrediction) {
-            applyStableMathFilterToPrediction(state.currentPrediction, filter);
-            ensurePredictionFrameworkSnapshots(state.currentPrediction, history);
-          }
+        const slim = outcome && outcome.payload ? outcome.payload : null;
+        const raw = outcome && outcome.raw ? outcome.raw : null;
+        if (slim && typeof slim === "object") {
+          state.stableMathFilter = slim;
           invalidatePanelStateCache();
           addLog("更稳数学排除已刷新", {
             trigger,
-            ok: !!(outcome && outcome.ok),
-            latestPeriod: filter.latest_period || null,
-            historyCount: filter.history_count || null,
-            error: outcome && outcome.ok ? null : String((outcome && outcome.error) || "")
+            ok: !!(outcome && outcome.meta && outcome.meta.ok !== false),
+            latestPeriod: slim.latest_period || null,
+            historyCount: slim.history_count || (raw && raw.history_count) || null,
+            error: outcome && outcome.meta ? outcome.meta.error : null,
+            via: "stable-math/computeAsync"
           });
         } else {
           addLog("更稳数学排除刷新无结果", {
             trigger,
-            error: String((outcome && outcome.error) || "empty-result")
+            error: String((outcome && outcome.meta && outcome.meta.error) || "empty-result")
           });
         }
       })
@@ -8130,7 +7135,6 @@ async function handleStableMathFilterRequest(req, res, parsedUrl) {
     const filter = outcome && outcome.result ? outcome.result : null;
     if (filter && typeof filter === "object") {
       state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(filter);
-      if (state.currentPrediction) applyStableMathFilterToPrediction(state.currentPrediction, filter);
       invalidatePanelStateCache();
     }
     sendJson(res, outcome && outcome.ok ? 200 : 500, {
@@ -8168,12 +7172,59 @@ function buildExclusionModelPayload(prediction, options) {
       || null);
   const assist = resolveStableMathAssist(p);
   const independent = p.independentHeweiKills && typeof p.independentHeweiKills === "object" ? p.independentHeweiKills : {};
+  const detail = p.detail && typeof p.detail === "object" ? p.detail : {};
+
+  function positionSlot(entry) {
+    if (!entry || typeof entry !== "object") {
+      return { main: "", backup: "", killDigits: [], confidence: null, recommendable: null, reason: "" };
+    }
+    const main = String(entry.main != null ? entry.main : (entry.recommendDigit != null ? entry.recommendDigit : (entry.killDigits && entry.killDigits[0]) || ""));
+    const backup = String(entry.backup != null ? entry.backup : (entry.backupDigit != null ? entry.backupDigit : (entry.killDigits && entry.killDigits[1]) || ""));
+    const killDigits = Array.isArray(entry.killDigits)
+      ? entry.killDigits.map(String).filter((d) => /^\d$/.test(d)).slice(0, 2)
+      : [main, backup].filter((d) => /^\d$/.test(d));
+    return {
+      main: /^\d$/.test(main) ? main : "",
+      backup: /^\d$/.test(backup) ? backup : "",
+      killDigits,
+      confidence: entry.confidence != null ? entry.confidence : null,
+      recommendable: entry.recommendable,
+      reason: entry.reason ? String(entry.reason) : ""
+    };
+  }
+
+  function heweiSlot(entry, digitField) {
+    if (!entry || typeof entry !== "object") {
+      return { killDigit: "", backupDigit: "", confidence: null, recommendable: null, reason: "" };
+    }
+    const killDigit = String(entry[digitField] != null ? entry[digitField] : (entry.killDigit != null ? entry.killDigit : (entry.killHewei != null ? entry.killHewei : "")));
+    const backupDigit = String(entry.backupDigit != null ? entry.backupDigit : "");
+    return {
+      killDigit: /^\d$/.test(killDigit) ? killDigit : "",
+      backupDigit: /^\d$/.test(backupDigit) ? backupDigit : "",
+      confidence: entry.confidence != null ? entry.confidence : null,
+      recommendable: entry.recommendable,
+      reason: entry.reason ? String(entry.reason) : ""
+    };
+  }
+
+  const posWan = positionSlot(p.positionKills && p.positionKills.wan);
+  const posQian = positionSlot(p.positionKills && p.positionKills.qian);
+  const posBai = positionSlot(p.positionKills && p.positionKills.bai);
+  const posShi = positionSlot(p.positionKills && p.positionKills.shi);
+  const heweiTotal = heweiSlot(detail.totalHeweiKill || { killHewei: p.totalHeweiKill, backupDigit: p.totalHeweiBackupDigit }, "killHewei");
+  const heweiUnified = heweiSlot(detail.threeFourHeweiKill || { killDigit: p.threeFourHeweiKillDigit, backupDigit: p.threeFourHeweiBackupDigit }, "killDigit");
+  const heweiWqb = heweiSlot(independent.wanQianBai, "killDigit");
+  const heweiQbs = heweiSlot(independent.qianBaiShi, "killDigit");
+  const heweiWqbs = heweiSlot(independent.wanQianBaiShi, "killDigit");
+
   return {
     model: "Exclusion Model",
-    version: "exclusion-model-v1",
+    version: "exclusion-model-v2",
     generatedAt: isoNow(),
     basePeriod: p.basePeriod || "",
     latestPeriod: assist.latestPeriod || p.basePeriod || "",
+    tipReady: !!(p.tipReady === true || (typeof state !== "undefined" && state && state.tipReady === true)),
     source: {
       stableMath: assist.source || "cache",
       predictionId: p.id || ""
@@ -8190,19 +7241,33 @@ function buildExclusionModelPayload(prediction, options) {
         excludeSizeRatios: assist.excludeSizeRatios || [],
         summary: assist.summary || null
       },
+      // 兼容旧字段：仍给单码字符串；完整双码/置信度见 *Detail
       hewei: {
-        total: String(p.totalHeweiKill == null ? "" : p.totalHeweiKill),
-        unified: String(p.threeFourHeweiKillDigit == null ? "" : p.threeFourHeweiKillDigit),
-        wanQianBai: independent.wanQianBai ? String(independent.wanQianBai.killDigit == null ? "" : independent.wanQianBai.killDigit) : "",
-        qianBaiShi: independent.qianBaiShi ? String(independent.qianBaiShi.killDigit == null ? "" : independent.qianBaiShi.killDigit) : "",
-        wanQianBaiShi: independent.wanQianBaiShi ? String(independent.wanQianBaiShi.killDigit == null ? "" : independent.wanQianBaiShi.killDigit) : "",
-        reconcileNotes: (p.detail && Array.isArray(p.detail.heweiReconcileNotes)) ? p.detail.heweiReconcileNotes.slice(0, 20) : []
+        total: heweiTotal.killDigit,
+        unified: heweiUnified.killDigit,
+        wanQianBai: heweiWqb.killDigit,
+        qianBaiShi: heweiQbs.killDigit,
+        wanQianBaiShi: heweiWqbs.killDigit,
+        reconcileNotes: Array.isArray(detail.heweiReconcileNotes) ? detail.heweiReconcileNotes.slice(0, 20) : []
+      },
+      heweiDetail: {
+        total: heweiTotal,
+        unified: heweiUnified,
+        wanQianBai: heweiWqb,
+        qianBaiShi: heweiQbs,
+        wanQianBaiShi: heweiWqbs
       },
       position: {
-        wan: p.positionKills && p.positionKills.wan ? String(p.positionKills.wan.main == null ? "" : p.positionKills.wan.main) : "",
-        qian: p.positionKills && p.positionKills.qian ? String(p.positionKills.qian.main == null ? "" : p.positionKills.qian.main) : "",
-        bai: p.positionKills && p.positionKills.bai ? String(p.positionKills.bai.main == null ? "" : p.positionKills.bai.main) : "",
-        shi: p.positionKills && p.positionKills.shi ? String(p.positionKills.shi.main == null ? "" : p.positionKills.shi.main) : ""
+        wan: posWan.main,
+        qian: posQian.main,
+        bai: posBai.main,
+        shi: posShi.main
+      },
+      positionDetail: {
+        wan: posWan,
+        qian: posQian,
+        bai: posBai,
+        shi: posShi
       }
     },
     stableMathFilter: filterRaw
@@ -8399,18 +7464,30 @@ const STABLE_MATH_SHAPE_CODE_MAP = {
   "全2路": "双双双双"
 };
 
+const STABLE_MATH_PARITY_SHAPE_LABELS = new Set(["全奇", "全偶", "全1路", "全2路"]);
+
+function isParityOnlyShapeCode(code) {
+  return /^[单双]{3,4}$/.test(String(code || ""));
+}
+
 function stableMathShapeFrameworkItem(shapeLabel, scopeLength) {
-  const full = STABLE_MATH_SHAPE_CODE_MAP[String(shapeLabel || "").trim()];
+  const label = String(shapeLabel || "").trim();
+  // 三定系列禁用单双形态挂载（全奇/全偶等）
+  if (STABLE_MATH_PARITY_SHAPE_LABELS.has(label)) return null;
+  const full = STABLE_MATH_SHAPE_CODE_MAP[label];
   if (!full) return null;
   const len = Math.max(3, Math.min(4, Number(scopeLength || 3)));
   const code = len >= 4 ? full : full.slice(0, len);
   if (!/^[大小单双]{3,4}$/.test(code)) return null;
+  if (isParityOnlyShapeCode(code)) return null;
+  const isSize = /^[大小]{3,4}$/.test(code);
   return {
     kind: "derivedReverseShape",
-    key: "stableMathShape",
+    key: isSize ? "reverseSize" : "stableMathShape",
     side: "recommend",
-    name: `更稳排除形态(${shapeLabel})`,
+    name: `更稳排除形态(${label})`,
     code,
+    shapeKey: isSize ? "shapeSize" : "shapeParity",
     shapeScopeLength: len,
     mode: "avoid",
     derivedFrom: "stable-math-filter"
@@ -8460,276 +7537,19 @@ function pickStableMathShapeCandidate(assist, history, evaluatedCount, scopeLeng
 }
 
 function ensurePredictionThreeDingTwoSnapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  const assist = resolveStableMathAssist(prediction);
-  if (
-    threeDingTwoSnapshotIsComplete(prediction.threeDingTwo)
-    && prediction.threeDingTwo.stableMathAssist
-    && !snapshotNeedsStableMathAssistRefresh(prediction.threeDingTwo, assist)
-  ) {
-    return prediction.threeDingTwo;
-  }
-  // A 与原三定/更稳算法独立选码：避开原三定已选单码 + 更稳排除单码
-  const avoidDigits = mergeStableMathAvoidDigits(
-    frameworkSingleExcludeDigits(prediction.compactAttack && prediction.compactAttack.items),
-    assist
-  );
-  const avoidAnyTwoCodes = frameworkAnyTwoCodesFromItems(prediction.compactAttack && prediction.compactAttack.items);
-  prediction.threeDingTwo = buildThreeDingTwoSnapshot(prediction, history, { avoidDigits, avoidAnyTwoCodes });
-  attachStableMathAssistToSnapshot(prediction.threeDingTwo, assist, "三定框架A");
-  prediction.threeDingTwoItems = prediction.threeDingTwo.items;
-  prediction.threeDingTwoRepairReport = prediction.threeDingTwo.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.threeDingTwoSnapshotVersion = prediction.threeDingTwo.version;
-  return prediction.threeDingTwo;
+  return frameworkItems.ensurePredictionThreeDingTwoSnapshot(prediction, history);
 }
 
 function ensurePredictionThreeDingOneSnapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  const assist = resolveStableMathAssist(prediction);
-  if (
-    threeDingOneSnapshotIsComplete(prediction.threeDingOne)
-    && prediction.threeDingOne.stableMathAssist
-    && !snapshotNeedsStableMathAssistRefresh(prediction.threeDingOne, assist)
-  ) {
-    return prediction.threeDingOne;
-  }
-  // B 与 A/原三定/更稳算法独立选码：尽量错开已选单码 + 更稳排除单码
-  const avoidDigits = mergeStableMathAvoidDigits(new Set([
-    ...frameworkSingleExcludeDigits(prediction.compactAttack && prediction.compactAttack.items),
-    ...frameworkSingleExcludeDigits(prediction.threeDingTwo && prediction.threeDingTwo.items)
-  ]), assist);
-  const avoidAnyTwoCodes = new Set([
-    ...frameworkAnyTwoCodesFromItems(prediction.compactAttack && prediction.compactAttack.items),
-    ...frameworkAnyTwoCodesFromItems(prediction.threeDingTwo && prediction.threeDingTwo.items)
-  ]);
-  const avoidTwoDigitCodes = frameworkTwoDigitCodesFromItems(prediction.threeDingTwo && prediction.threeDingTwo.items);
-  prediction.threeDingOne = buildThreeDingOneSnapshot(prediction, history, { avoidDigits, avoidAnyTwoCodes, avoidTwoDigitCodes });
-  attachStableMathAssistToSnapshot(prediction.threeDingOne, assist, "三定框架B");
-  prediction.threeDingOneItems = prediction.threeDingOne.items;
-  prediction.threeDingOneRepairReport = prediction.threeDingOne.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.threeDingOneSnapshotVersion = prediction.threeDingOne.version;
-  return prediction.threeDingOne;
+  return frameworkItems.ensurePredictionThreeDingOneSnapshot(prediction, history);
 }
 
 function buildSideStableSnapshot(prediction, history) {
-  // 旁路稳筛 v4：1定位 + 总合尾 + 千百十合尾 + 二码对数 + 和值避开 + 二数合5码 + 三数合5码 + 固定近1300旧码回删
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
-  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
-  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
-  const chosen = [];
-  const used = new Set();
-  const repairReport = [];
-  const periodTarget = sideStablePeriodTarget(prediction && prediction.basePeriod);
-
-  function order(a, b) {
-    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
-    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
-    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
-    return String(a.name || "").localeCompare(String(b.name || ""));
-  }
-
-  function pushItem(item, requiredLabel) {
-    if (!item || !cleanAutoTop6Code(item.code)) {
-      if (requiredLabel) repairReport.push(`旁路稳筛缺少：${requiredLabel}`);
-      return false;
-    }
-    const id = autoTop6ItemId(item);
-    if (used.has(id)) return false;
-    used.add(id);
-    chosen.push(item);
-    return true;
-  }
-
-  function pickFixedExtra(extraKey, label) {
-    const pool = candidates
-      .filter((item) => item && item.kind === "extra" && item.key === extraKey && item.side !== "backup")
-      .sort((a, b) => {
-        if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
-        return order(a, b);
-      });
-    const picked = pool[0] || null;
-    if (!picked) {
-      repairReport.push(`旁路稳筛固定模型缺失：${label || extraKey}`);
-      return null;
-    }
-    if (picked.lowConfidence) {
-      const rate = picked.safetyRate === null ? "样本不足" : `${Number(picked.safetyRate).toFixed(2)}%`;
-      repairReport.push(`旁路稳筛观察加入：${picked.name} ${picked.code}，安全率 ${rate}`);
-      picked.repairedIntoTop = true;
-    }
-    pushItem(picked, label || extraKey);
-    return picked;
-  }
-
-  const positionHealthy = healthy.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
-  const positionPool = candidates.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
-  let positionPicked = positionHealthy[0] || positionPool[0] || null;
-  if (positionPicked) {
-    if (!positionPicked.stabilityGate) {
-      positionPicked.repairedIntoTop = true;
-      repairReport.push(`旁路稳筛定位健康项不足，已用观察项：${positionPicked.name} ${positionPicked.code}`);
-    }
-    pushItem(positionPicked, "定位排除");
-  } else {
-    repairReport.push("旁路稳筛定位正式项不足1个");
-  }
-
-  const totalMeta = resolveHeweiAlgorithmMeta(prediction, "total");
-  const totalCode = cleanAutoTop6Code(totalMeta.recommend || (prediction && prediction.totalHeweiKill));
-  const totalItem = autoTop6DecorateItem(safeHistory, {
-    kind: "hewei",
-    key: "total",
-    side: "recommend",
-    name: "总合尾综合排除",
-    code: totalCode,
-    mode: "avoid",
-    algorithmStability: totalMeta.stability || null,
-    confidence: totalMeta.confidence || null,
-    recommendable: totalMeta.recommendable,
-    algorithmReason: totalMeta.reason || "",
-    algorithm: totalMeta.algorithm || ""
-  }, evaluatedCount);
-  if (totalItem && totalItem.lowConfidence) {
-    totalItem.repairedIntoTop = true;
-    repairReport.push(`旁路稳筛总合尾观察加入：${totalItem.code}`);
-  }
-  pushItem(totalItem, "总合尾综合排除");
-
-  const wanQianBaiPool = candidates
-    .filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai" && item.side !== "backup")
-    .sort((a, b) => {
-      if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
-      return order(a, b);
-    });
-  const wanQianBai = wanQianBaiPool[0] || null;
-  if (wanQianBai && wanQianBai.lowConfidence) {
-    wanQianBai.repairedIntoTop = true;
-    repairReport.push(`旁路稳筛千百十合尾观察加入：${wanQianBai.code}`);
-  }
-  pushItem(wanQianBai, "千百十合尾");
-
-  // 二码对数：前四位同时出现这两个数字才杀。
-  const twoDigit = pickFixedExtra("twoDigitAvoid", "二码对数避开");
-  if (twoDigit) {
-    twoDigit.name = "二码对数避开";
-    twoDigit.mode = "avoid";
-  }
-
-  pickFixedExtra("sumAvoid", "前四位和值避开");
-  const sideAnyTwo = pickStructuralAnyTwoHeweiHit(
-    safeHistory,
-    evaluatedCount,
-    heweiScopeIndexesFromItems(chosen),
-    chosen,
-    prediction,
-    new Set(),
-    resolveStableMathAssist(prediction)
-  );
-  if (sideAnyTwo) {
-    repairReport.push(`旁路稳筛二数合结构对齐：${sideAnyTwo.code}`);
-    pushItem(sideAnyTwo, "全码池二数合尾5码命中");
-  } else {
-    repairReport.push("旁路稳筛缺少：全码池二数合尾5码命中");
-  }
-
-  const sideStableAnyThree = digitSetCandidatesMixedParity(5)
-    .map((code) => autoTop6DecorateItem(safeHistory, {
-      kind: "extra",
-      key: "anyThreeHeweiHit",
-      side: "recommend",
-      name: "全码池三数合尾5码命中",
-      code,
-      mode: "hit",
-      algorithm: "side-stable-any-three-hewei-selected-five",
-      hitMode: true,
-      matchMode: "hit-if-any-three-hewei-tail-in-selected-five",
-      dynamicEveryPrediction: true
-    }, evaluatedCount))
-    .sort((a, b) => {
-      if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
-      return order(a, b);
-    })[0] || null;
-  if (sideStableAnyThree) {
-    if (sideStableAnyThree.lowConfidence) {
-      const rate = sideStableAnyThree.safetyRate === null ? "样本不足" : `${Number(sideStableAnyThree.safetyRate).toFixed(2)}%`;
-      repairReport.push(`旁路稳筛三数合5码观察加入：${sideStableAnyThree.code}，安全率 ${rate}`);
-      sideStableAnyThree.repairedIntoTop = true;
-    }
-    pushItem(sideStableAnyThree, "全码池三数合尾5码命中");
-  } else {
-    repairReport.push("旁路稳筛缺少：全码池三数合尾5码命中");
-  }
-
-  const recent1300Base = Object.assign({}, recentExactCodeCandidate(1300, safeHistory), {
-    kind: "extra",
-    key: "recentExactCodeAvoid1300",
-    side: "recommend",
-    name: "近1300重复四码避开",
-    code: "1300",
-    mode: "avoid"
-  });
-  const recent1300 = coldFrameworkDecorateRecentExactItem(safeHistory, recent1300Base, evaluatedCount, 1300);
-  const recentPool = recent1300 ? [recent1300] : [];
-  const baseForRecent = chosen.filter((item) => item && !/^recentExactCodeAvoid/.test(String(item.key || "")));
-  const recentChoice = sideStableChooseRecentExactCandidate(baseForRecent, recentPool, [], periodTarget);
-  if (recentChoice) {
-    if (recentChoice.lowConfidence) {
-      const rate = recentChoice.safetyRate === null ? "样本不足" : `${Number(recentChoice.safetyRate).toFixed(2)}%`;
-      repairReport.push(`旁路稳筛近1300旧码观察：${recentChoice.name} ${recentChoice.code}，安全率 ${rate}`);
-    }
-    pushItem(recentChoice, "旧码回删");
-    if (recentChoice.choiceReason) repairReport.push(recentChoice.choiceReason);
-  } else {
-    repairReport.push("旁路稳筛缺少近1300旧码回删项");
-  }
-
-  return {
-    version: SIDE_STABLE_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(chosen.length, SIDE_STABLE_ITEM_COUNT),
-    framework: {
-      positionCount: 1,
-      totalHeweiCount: 1,
-      wanQianBaiCount: 1,
-      twoDigitAvoidCount: 1,
-      sumAvoidCount: 1,
-      anyTwoHeweiHitCount: 1,
-      anyThreeHeweiHitCount: 1,
-      recentExactChoiceCount: 1,
-      recentExactChoiceTargetGroupCount: periodTarget,
-      targetBandMin: SIDE_STABLE_TARGET_MIN,
-      targetBandMax: SIDE_STABLE_TARGET_MAX,
-      threeHeweiSelectedDigitCount: 5,
-      recentExactWindow: 1300,
-      semantics: "side-stable-v3=1pos+totalHewei+wanQianBai+twoDigitAvoid+sumAvoid+anyTwo5+anyThree5+oldCode1300"
-    },
-    txtSelection: {
-      strategy: recentChoice && recentChoice.trimStrategy || "ascending-first-n",
-      targetCount: Number(recentChoice && recentChoice.targetGroupCount || periodTarget),
-      targetBandMin: SIDE_STABLE_TARGET_MIN,
-      targetBandMax: SIDE_STABLE_TARGET_MAX,
-      rawCount: Number(recentChoice && recentChoice.rawGeneratedGroupCount || 0),
-      selectedCount: Number(recentChoice && recentChoice.generatedGroupCount || 0),
-      cutoffCode: String(recentChoice && recentChoice.generatedCodeCutoff || "")
-    },
-    items: chosen.slice(0, SIDE_STABLE_ITEM_COUNT).map((item, index) => coldFrameworkSerializeItem(item, index)),
-    repairReport
-  };
+  return frameworkItems.buildSideStableSnapshot(prediction, history);
 }
 
 function ensurePredictionSideStableSnapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  if (sideStableSnapshotIsComplete(prediction.sideStable)) return prediction.sideStable;
-  prediction.sideStable = buildSideStableSnapshot(prediction, history);
-  prediction.sideStableItems = prediction.sideStable.items;
-  prediction.sideStableRepairReport = prediction.sideStable.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.sideStableSnapshotVersion = prediction.sideStable.version;
-  return prediction.sideStable;
+  return frameworkItems.ensurePredictionSideStableSnapshot(prediction, history);
 }
 
 function evaluateSideStableSnapshot(prediction, actualRecord) {
@@ -9974,208 +8794,19 @@ function coldFrameworkChooseRecentExactCandidate(baseItems, recentCandidates, ta
 }
 
 function buildColdFrameworkSnapshot(prediction, history) {
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
-  const chosen = [];
-  const used = new Set();
-  const repairReport = [];
-  function add(item, requiredLabel) {
-    if (!item || !item.code) {
-      if (requiredLabel) repairReport.push(`冷码框架缺少：${requiredLabel}`);
-      return false;
-    }
-    const id = autoTop6ItemId(item);
-    if (used.has(id)) return false;
-    used.add(id);
-    chosen.push(item);
-    return true;
-  }
-  function noteLow(item, label) {
-    if (!item || !item.lowConfidence) return;
-    const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
-    repairReport.push(`${label}观察加入：${item.name} ${item.code}，安全率 ${rate}${item.stabilityReason ? "，原因 " + item.stabilityReason : ""}`);
-  }
-
-  const positionItems = coldFrameworkPositionCandidates(safeHistory, evaluatedCount).slice(0, 2);
-  positionItems.forEach((item) => { noteLow(item, "位置冷码"); add(item, "位置冷码"); });
-  if (positionItems.length < 2) repairReport.push(`位置冷码不足2个，当前 ${positionItems.length} 个。`);
-
-  const heweiItems = coldFrameworkHeweiCandidates(safeHistory, evaluatedCount).slice(0, 2);
-  heweiItems.forEach((item) => { noteLow(item, "合尾冷码"); add(item, "合尾冷码"); });
-  if (heweiItems.length < 2) repairReport.push(`合尾冷码不足2个，当前 ${heweiItems.length} 个。`);
-
-  const reversePool = (autoTop6ReverseShapeCandidatesFromPositions(positionItems, safeHistory) || [])
-    .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
-    .sort(coldFrameworkOrder);
-  const reversePicked = reversePool.filter((item) => item && item.stabilityGate === true)[0] || reversePool[0] || null;
-
-  const anyTwo = coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, "anyTwoHeweiHit");
-  const anyThree = coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, "anyThreeHeweiHit");
-  const recent500 = coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, "recentExactCodeAvoid500");
-  const recent800 = coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, "recentExactCodeAvoid800");
-  const recentChoice = coldFrameworkChooseRecentExactCandidate(chosen, [recent500, recent800], [reversePicked, anyTwo, anyThree]);
-  noteLow(recentChoice, "近500/近800近期码择优");
-  add(recentChoice, "近500/近800近期码择优");
-  if (recentChoice && recentChoice.choiceReason) {
-    const trimmed = Number(recentChoice.trimmedGroupCount || 0);
-    if (trimmed > 0) {
-      repairReport.push(`近期码择优：${recentChoice.name} ${recentChoice.code}，攻击语完整展开 ${recentChoice.rawGeneratedGroupCount} 组；${recentChoice.generatedGroupCount} 组及截止 ${recentChoice.generatedCodeCutoff} 仅作选型参考，不裁 TXT。`);
-    } else {
-      repairReport.push(`近期码择优：${recentChoice.name} ${recentChoice.code}，TXT约 ${recentChoice.generatedGroupCount} 组，距5000差 ${recentChoice.groupCountDistance}。`);
-    }
-  }
-
-  noteLow(reversePicked, "反向形态");
-  add(reversePicked, "反向形态");
-
-  noteLow(anyTwo, "二数合");
-  add(anyTwo, "二数合");
-  noteLow(anyThree, "三数合");
-  add(anyThree, "三数合");
-
-  return {
-    version: COLD_FRAMEWORK_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(chosen.length, COLD_FRAMEWORK_ITEM_COUNT),
-    framework: {
-      positionColdCount: 2,
-      heweiColdCount: 2,
-      recentExactChoiceCount: 1,
-      recentExactChoiceTargetGroupCount: COLD_FRAMEWORK_TARGET_GROUP_COUNT,
-      reverseShapeCount: 1,
-      heweiComboCount: 2
-    },
-    txtSelection: {
-      strategy: recentChoice && recentChoice.trimStrategy || "ascending-first-n",
-      targetCount: COLD_FRAMEWORK_TARGET_GROUP_COUNT,
-      rawCount: Number(recentChoice && recentChoice.rawGeneratedGroupCount || 0),
-      selectedCount: Number(recentChoice && recentChoice.generatedGroupCount || 0),
-      cutoffCode: String(recentChoice && recentChoice.generatedCodeCutoff || "")
-    },
-    items: chosen.slice(0, COLD_FRAMEWORK_ITEM_COUNT).map(coldFrameworkSerializeItem),
-    repairReport
-  };
+  return frameworkItems.buildColdFrameworkSnapshot(prediction, history);
 }
 
 function ensurePredictionColdFrameworkSnapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  if (coldFrameworkSnapshotIsComplete(prediction.coldFramework)) return prediction.coldFramework;
-  prediction.coldFramework = buildColdFrameworkSnapshot(prediction, history);
-  prediction.coldFrameworkItems = prediction.coldFramework.items;
-  prediction.coldFrameworkRepairReport = prediction.coldFramework.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.coldFrameworkSnapshotVersion = prediction.coldFramework.version;
-  return prediction.coldFramework;
+  return frameworkItems.ensurePredictionColdFrameworkSnapshot(prediction, history);
 }
 
 function buildPick5000Snapshot(prediction, history) {
-  // 看好5000组：2冷定位 + 2冷合尾 + 固定近500 + 反向 + 二数合 + 三数合；5000仅作选型参考，TXT完整展开
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
-  const chosen = [];
-  const used = new Set();
-  const repairReport = [];
-  function add(item, requiredLabel) {
-    if (!item || !item.code) {
-      if (requiredLabel) repairReport.push(`看好5000缺少：${requiredLabel}`);
-      return false;
-    }
-    const id = autoTop6ItemId(item);
-    if (used.has(id)) return false;
-    used.add(id);
-    chosen.push(item);
-    return true;
-  }
-  function noteLow(item, label) {
-    if (!item || !item.lowConfidence) return;
-    const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
-    repairReport.push(`${label}观察加入：${item.name} ${item.code}，安全率 ${rate}${item.stabilityReason ? "，原因 " + item.stabilityReason : ""}`);
-  }
-
-  const positionItems = coldFrameworkPositionCandidates(safeHistory, evaluatedCount).slice(0, 2);
-  positionItems.forEach((item) => { noteLow(item, "位置冷码"); add(item, "位置冷码"); });
-  if (positionItems.length < 2) repairReport.push(`位置冷码不足2个，当前 ${positionItems.length} 个。`);
-
-  const heweiItems = coldFrameworkHeweiCandidates(safeHistory, evaluatedCount).slice(0, 2);
-  heweiItems.forEach((item) => { noteLow(item, "合尾冷码"); add(item, "合尾冷码"); });
-  if (heweiItems.length < 2) repairReport.push(`合尾冷码不足2个，当前 ${heweiItems.length} 个。`);
-
-  const reversePool = (autoTop6ReverseShapeCandidatesFromPositions(positionItems, safeHistory) || [])
-    .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
-    .sort(coldFrameworkOrder);
-  const reversePicked = reversePool.filter((item) => item && item.stabilityGate === true)[0] || reversePool[0] || null;
-
-  const coldAnyTwoCodes = frameworkAnyTwoCodesFromItems(prediction && prediction.coldFramework && prediction.coldFramework.items);
-  const coldChosen = positionItems.concat(heweiItems);
-  const anyTwo = pickStructuralAnyTwoHeweiHit(
-    safeHistory,
-    evaluatedCount,
-    null,
-    coldChosen,
-    prediction,
-    coldAnyTwoCodes,
-    resolveStableMathAssist(prediction)
-  ) || coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, "anyTwoHeweiHit");
-  if (anyTwo && coldAnyTwoCodes.size && !coldAnyTwoCodes.has(String(anyTwo.code || ""))) {
-    repairReport.push(`看好5000二数合与冷门框错开：${anyTwo.code}`);
-  }
-  const anyThree = coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, "anyThreeHeweiHit");
-  const recent500 = coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, "recentExactCodeAvoid500");
-  const recentChoice = coldFrameworkChooseRecentExactCandidate(chosen, [recent500], [reversePicked, anyTwo, anyThree]);
-  if (recentChoice) {
-    recentChoice.targetGroupCount = PICK5000_TARGET_GROUP_COUNT;
-    if (Number(recentChoice.trimmedGroupCount || 0) > 0) {
-      recentChoice.choiceReason = `固定近500，目标${PICK5000_TARGET_GROUP_COUNT}组，攻击语完整展开${recentChoice.rawGeneratedGroupCount}组；${recentChoice.generatedGroupCount}组及截止${recentChoice.generatedCodeCutoff}仅作选型参考，不裁TXT`;
-    } else {
-      recentChoice.choiceReason = `固定近500，目标${PICK5000_TARGET_GROUP_COUNT}组，当前${recentChoice.generatedGroupCount}组`;
-    }
-  }
-  noteLow(recentChoice, "近500旧码");
-  add(recentChoice, "近500旧码");
-  if (recentChoice && recentChoice.choiceReason) repairReport.push(`看好5000：${recentChoice.choiceReason}`);
-
-  noteLow(reversePicked, "反向形态");
-  add(reversePicked, "反向形态");
-  noteLow(anyTwo, "二数合");
-  add(anyTwo, "二数合");
-  noteLow(anyThree, "三数合");
-  add(anyThree, "三数合");
-
-  return {
-    version: PICK5000_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(chosen.length, PICK5000_ITEM_COUNT),
-    framework: {
-      positionColdCount: 2,
-      heweiColdCount: 2,
-      recentExactFixedKey: "recentExactCodeAvoid500",
-      recentExactTargetGroupCount: PICK5000_TARGET_GROUP_COUNT,
-      reverseShapeCount: 1,
-      heweiComboCount: 2
-    },
-    txtSelection: {
-      strategy: recentChoice && recentChoice.trimStrategy || "ascending-first-n",
-      targetCount: PICK5000_TARGET_GROUP_COUNT,
-      rawCount: Number(recentChoice && recentChoice.rawGeneratedGroupCount || 0),
-      selectedCount: Number(recentChoice && recentChoice.generatedGroupCount || 0),
-      cutoffCode: String(recentChoice && recentChoice.generatedCodeCutoff || "")
-    },
-    items: chosen.slice(0, PICK5000_ITEM_COUNT).map(coldFrameworkSerializeItem),
-    repairReport
-  };
+  return frameworkItems.buildPick5000Snapshot(prediction, history);
 }
 
 function ensurePredictionPick5000Snapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  if (pick5000SnapshotIsComplete(prediction.pick5000)) return prediction.pick5000;
-  prediction.pick5000 = buildPick5000Snapshot(prediction, history);
-  prediction.pick5000Items = prediction.pick5000.items;
-  prediction.pick5000RepairReport = prediction.pick5000.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.pick5000SnapshotVersion = prediction.pick5000.version;
-  return prediction.pick5000;
+  return frameworkItems.ensurePredictionPick5000Snapshot(prediction, history);
 }
 
 function dingKillChooseRecentExactCandidate(baseItems, recentCandidates, tailItems, target) {
@@ -10244,223 +8875,11 @@ function dingKillChooseRecentExactCandidate(baseItems, recentCandidates, tailIte
 }
 
 function buildDingKillSnapshot(prediction, history) {
-  // 四定定位杀码：2定位 + 1合尾 + 1反向形态 + 二数合 + 三数合 + 旧码回删（剩组约 5000-5010，期数目标不固定）
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
-  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
-  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
-  const chosen = [];
-  const used = new Set();
-  const repairReport = [];
-  const comboRows = safeHistory.slice(0, Math.min(MODEL_STABLE_WINDOW, safeHistory.length));
-  const periodTarget = dingKillPeriodTarget(prediction && prediction.basePeriod);
-
-  function order(a, b) {
-    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
-    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
-    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
-    return String(a.name || "").localeCompare(String(b.name || ""));
-  }
-
-  function comboStats(items) {
-    let total = 0;
-    let hit = 0;
-    let validChecks = 0;
-    let successChecks = 0;
-    comboRows.forEach((record) => {
-      const results = (items || []).map((item) => autoTop6RecordSuccess(item, record)).filter((value) => typeof value === "boolean");
-      if (results.length !== (items || []).length || !results.length) return;
-      total += 1;
-      const wins = results.filter(Boolean).length;
-      validChecks += results.length;
-      successChecks += wins;
-      if (wins === results.length) hit += 1;
-    });
-    return {
-      total,
-      hit,
-      rate: total ? hit * 100 / total : null,
-      avgRate: validChecks ? successChecks * 100 / validChecks : null
-    };
-  }
-
-  function comboPickScore(item) {
-    const stats = comboStats(chosen.concat([item]));
-    const full = stats.rate === null ? -1 : Number(stats.rate || 0);
-    const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
-    return full * 10000 + avg * 100 + Number(item.stableScore || 0);
-  }
-
-  function pickBest(pool, maxPerSameModel, allowSameExcludeDigit) {
-    const modelCount = {};
-    chosen.forEach((item) => {
-      const modelKey = `${item.kind}:${item.key}`;
-      modelCount[modelKey] = Number(modelCount[modelKey] || 0) + 1;
-    });
-    let best = null;
-    let bestScore = -Infinity;
-    (pool || []).forEach((item) => {
-      const id = autoTop6ItemId(item);
-      const modelKey = `${item.kind}:${item.key}`;
-      if (used.has(id)) return;
-      if (Number(modelCount[modelKey] || 0) >= Number(maxPerSameModel || 1)) return;
-      if (frameworkConflictsSameHeweiDigit(chosen, item)) return;
-      if (!allowSameExcludeDigit && frameworkConflictsSameExcludeDigit(chosen, item)) return;
-      const score = comboPickScore(item);
-      if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
-        best = item;
-        bestScore = score;
-      }
-    });
-    if (!best) return false;
-    used.add(autoTop6ItemId(best));
-    chosen.push(best);
-    return true;
-  }
-
-  function noteLow(pool, label) {
-    (pool || []).forEach((item) => {
-      if (!item || !item.lowConfidence) return;
-      const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
-      const reason = item.stabilityReason ? `，原因 ${item.stabilityReason}` : "";
-      repairReport.push(`${label}观察：${item.name} ${item.code}，安全率 ${rate}${reason}`);
-    });
-  }
-
-  const positionPool = candidates.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
-  const heweiPool = candidates.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
-  noteLow(positionPool, "四定定位杀码定位池");
-  noteLow(heweiPool, "四定定位杀码合尾池");
-
-  const positionHealthy = healthy.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
-  let before = chosen.length;
-  while (chosen.length - before < 2 && pickBest(positionHealthy, 1, false)) {}
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(positionPool, 2, false)) {
-      chosen[chosen.length - 1].repairedIntoTop = true;
-    }
-    if (chosen.length - before >= 2) repairReport.push("四定定位杀码定位健康项不足，已用正式观察项补齐。");
-  }
-  if (chosen.length - before < 2) {
-    while (chosen.length - before < 2 && pickBest(positionPool, 2, true)) {
-      chosen[chosen.length - 1].repairedIntoTop = true;
-      repairReport.push(`四定定位杀码定位同码相碰无替代，被迫保留：${chosen[chosen.length - 1].name} ${chosen[chosen.length - 1].code}。`);
-    }
-  }
-  if (chosen.length - before < 2) repairReport.push(`四定定位杀码定位不足2个，当前 ${chosen.length - before} 个。`);
-
-  const heweiHealthy = healthy.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
-  before = chosen.length;
-  while (chosen.length - before < 1 && pickBest(heweiHealthy, 1, false)) {}
-  if (chosen.length - before < 1) {
-    while (chosen.length - before < 1 && pickBest(heweiPool, 1, false)) {
-      chosen[chosen.length - 1].repairedIntoTop = true;
-    }
-    if (chosen.length - before >= 1) repairReport.push("四定定位杀码合尾健康项不足，已用正式观察项补齐。");
-  }
-  if (chosen.length - before < 1) {
-    while (chosen.length - before < 1 && pickBest(heweiPool, 1, true)) {
-      chosen[chosen.length - 1].repairedIntoTop = true;
-      repairReport.push(`四定定位杀码合尾与定位同码相碰无替代，被迫保留：${chosen[chosen.length - 1].name} ${chosen[chosen.length - 1].code}。`);
-    }
-  }
-  if (chosen.length - before < 1) repairReport.push("四定定位杀码合尾正式项不足1个。");
-
-  const reverseBase = chosen.filter((item) => item.kind === "position");
-  const reversePool = autoTop6ReverseShapeCandidatesFromPositions(reverseBase, safeHistory)
-    .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
-    .sort(order);
-  noteLow(reversePool, "四定定位杀码反向形态池");
-  const reversePicked = reversePool.filter((item) => item && item.stabilityGate === true)[0] || reversePool[0] || null;
-
-  const anyTwo = candidates.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit").sort(order)[0] || null;
-  const anyThree = candidates.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit").sort(order)[0] || null;
-  const recentPool = ["recentExactCodeAvoid300", "recentExactCodeAvoid500", "recentExactCodeAvoid800", "recentExactCodeAvoid1000"]
-    .map((key) => coldFrameworkExtraCandidate(prediction, safeHistory, evaluatedCount, key))
-    .filter(Boolean);
-  const recentChoice = dingKillChooseRecentExactCandidate(chosen, recentPool, [reversePicked, anyTwo, anyThree], periodTarget);
-
-  if (recentChoice) {
-    if (recentChoice.lowConfidence) {
-      const rate = recentChoice.safetyRate === null ? "样本不足" : `${Number(recentChoice.safetyRate).toFixed(2)}%`;
-      repairReport.push(`旧码回删观察：${recentChoice.name} ${recentChoice.code}，安全率 ${rate}`);
-    }
-    if (!used.has(autoTop6ItemId(recentChoice))) {
-      used.add(autoTop6ItemId(recentChoice));
-      chosen.push(recentChoice);
-    }
-    if (recentChoice.choiceReason) repairReport.push(recentChoice.choiceReason);
-  } else {
-    repairReport.push("四定定位杀码缺少旧码回删项。");
-  }
-
-  if (reversePicked) {
-    if (!reversePicked.stabilityGate) {
-      reversePicked.repairedIntoTop = true;
-      repairReport.push(`四定定位杀码反向形态未达安全阈值，暂用观察项：${reversePicked.name} ${reversePicked.code}。`);
-    }
-    if (!used.has(autoTop6ItemId(reversePicked))) {
-      used.add(autoTop6ItemId(reversePicked));
-      chosen.push(reversePicked);
-    }
-  } else {
-    repairReport.push("四定定位杀码反向形态不足1个。");
-  }
-
-  [anyTwo, anyThree].forEach((picked, index) => {
-    const label = index === 0 ? "二数合" : "三数合";
-    if (!picked) {
-      repairReport.push(`四定定位杀码固定模型缺失：${label}`);
-      return;
-    }
-    if (picked.lowConfidence) {
-      const rate = picked.safetyRate === null ? "样本不足" : `${Number(picked.safetyRate).toFixed(2)}%`;
-      repairReport.push(`${label}观察加入：${picked.name} ${picked.code}，安全率 ${rate}`);
-    }
-    if (!used.has(autoTop6ItemId(picked))) {
-      used.add(autoTop6ItemId(picked));
-      chosen.push(picked);
-    }
-  });
-
-  return {
-    version: DING_KILL_SNAPSHOT_VERSION,
-    generatedAt: isoNow(),
-    basePeriod: prediction && prediction.basePeriod || "",
-    itemCount: Math.min(chosen.length, DING_KILL_ITEM_COUNT),
-    framework: {
-      positionCount: 2,
-      heweiCount: 1,
-      reverseShapeCount: 1,
-      heweiComboCount: 2,
-      recentExactChoiceCount: 1,
-      recentExactChoiceTargetGroupCount: periodTarget,
-      targetBandMin: DING_KILL_TARGET_MIN,
-      targetBandMax: DING_KILL_TARGET_MAX
-    },
-    txtSelection: {
-      strategy: recentChoice && recentChoice.trimStrategy || "ascending-first-n",
-      targetCount: Number(recentChoice && recentChoice.targetGroupCount || periodTarget),
-      targetBandMin: DING_KILL_TARGET_MIN,
-      targetBandMax: DING_KILL_TARGET_MAX,
-      rawCount: Number(recentChoice && recentChoice.rawGeneratedGroupCount || 0),
-      selectedCount: Number(recentChoice && recentChoice.generatedGroupCount || 0),
-      cutoffCode: String(recentChoice && recentChoice.generatedCodeCutoff || "")
-    },
-    items: chosen.slice(0, DING_KILL_ITEM_COUNT).map(coldFrameworkSerializeItem),
-    repairReport
-  };
+  return frameworkItems.buildDingKillSnapshot(prediction, history);
 }
 
 function ensurePredictionDingKillSnapshot(prediction, history) {
-  if (!prediction || typeof prediction !== "object") return null;
-  if (dingKillSnapshotIsComplete(prediction.dingKill)) return prediction.dingKill;
-  prediction.dingKill = buildDingKillSnapshot(prediction, history);
-  prediction.dingKillItems = prediction.dingKill.items;
-  prediction.dingKillRepairReport = prediction.dingKill.repairReport;
-  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
-  prediction.recommendationMeta.dingKillSnapshotVersion = prediction.dingKill.version;
-  return prediction.dingKill;
+  return frameworkItems.ensurePredictionDingKillSnapshot(prediction, history);
 }
 
 function evaluateDingKillSnapshot(prediction, actualRecord) {
@@ -10928,560 +9347,69 @@ function applyHeweiConfidenceFields(selected, picked, options) {
 }
 
 function reconcileHeweiKillBundle(bundle) {
-  const total = bundle && bundle.totalHeweiKill;
-  const unified = bundle && bundle.threeFourKill;
-  const independent = bundle && bundle.independentHeweiKills;
-  const notes = [];
-  if (!total || !independent || typeof independent !== "object") {
-    return { notes };
-  }
-
-  const wqbs = independent.wanQianBaiShi;
-  const totalDigit = heweiPrimaryDigit(total, "killHewei");
-  if (wqbs && /^\d$/.test(totalDigit) && heweiPrimaryDigit(wqbs, "killDigit") !== totalDigit) {
-    wqbs.killDigit = totalDigit;
-    wqbs.primaryDigit = total.primaryDigit || totalDigit;
-    wqbs.backupDigit = total.backupDigit || wqbs.backupDigit;
-    wqbs.reason = `aligned-with-total-hewei:${String(total.reason || "sync")}`;
-    notes.push(`wanQianBaiShi->${totalDigit}`);
-    if (typeof state !== "undefined" && state) {
+  const formula = require("./algorithms/hewei/formula");
+  formula.bindRuntime({
+    getStable120Locks() {
       if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
-      const totalLock = state.stable120Locks["v43:hewei:total"];
-      if (totalLock) state.stable120Locks["v43:hewei:wanQianBaiShi"] = Object.assign({}, totalLock);
-    }
-  }
-
-  const used = new Set();
-  const slots = [
-    {
-      name: "total",
-      result: total,
-      preferField: "killHewei",
-      backupField: "backupDigit",
-      getDigit: () => heweiPrimaryDigit(total, "killHewei"),
-      setDigit: (digit, backup) => {
-        total.killHewei = digit;
-        total.primaryDigit = digit;
-        if (backup) total.backupDigit = backup;
-      }
+      return state.stable120Locks;
     },
-    {
-      name: "unified",
-      result: unified,
-      preferField: "killDigit",
-      backupField: "backupDigit",
-      getDigit: () => heweiPrimaryDigit(unified, "killDigit"),
-      setDigit: (digit, backup) => {
-        if (!unified) return;
-        unified.killDigit = digit;
-        unified.primaryDigit = digit;
-        if (backup) unified.backupDigit = backup;
-      }
-    },
-    {
-      name: "wanQianBai",
-      result: independent.wanQianBai,
-      preferField: "killDigit",
-      backupField: "backupDigit",
-      getDigit: () => heweiPrimaryDigit(independent.wanQianBai, "killDigit"),
-      setDigit: (digit, backup) => {
-        independent.wanQianBai.killDigit = digit;
-        independent.wanQianBai.primaryDigit = digit;
-        if (backup) independent.wanQianBai.backupDigit = backup;
-      }
-    },
-    {
-      name: "qianBaiShi",
-      result: independent.qianBaiShi,
-      preferField: "killDigit",
-      backupField: "backupDigit",
-      getDigit: () => heweiPrimaryDigit(independent.qianBaiShi, "killDigit"),
-      setDigit: (digit, backup) => {
-        independent.qianBaiShi.killDigit = digit;
-        independent.qianBaiShi.primaryDigit = digit;
-        if (backup) independent.qianBaiShi.backupDigit = backup;
-      }
-    }
-  ];
-
-  slots.forEach((slot) => {
-    if (!slot.result) return;
-    let digit = slot.getDigit();
-    if (!/^\d$/.test(digit)) return;
-    if (!used.has(digit)) {
-      used.add(digit);
-      return;
-    }
-    const alt = pickAlternateHeweiDigit(slot.result, used, slot.preferField);
-    if (alt && alt !== digit) {
-      slot.setDigit(alt, slot.result[slot.backupField]);
-      slot.result.reason = `dedup-shift:${digit}->${alt}`;
-      notes.push(`${slot.name}:${digit}->${alt}`);
-      digit = alt;
-    }
-    used.add(digit);
+    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
+    getStableMathFilter() { return state && state.stableMathFilter || null; },
+    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
   });
-
-  return { notes };
+  return formula.reconcileHeweiKillBundle(bundle);
 }
 
 function calculateTotalHeweiKill(history, performance) {
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers) && record.numbers.length >= 4) : [];
-  function actual(record) {
-    return String(calculateMetrics(record.numbers).totalHewei);
-  }
-  const candidates = buildStableHeweiCandidates(safeHistory, actual, {
-    floor: HEWEI_BLOCK_FLOOR,
-    guardRate: HEWEI_GUARD_RATE,
-    missPenalty: 2.5,
-    getterId: "hewei:total"
+  const formula = require("./algorithms/hewei/formula");
+  formula.bindRuntime({
+    getStable120Locks() {
+      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+      return state.stable120Locks;
+    },
+    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
+    getStableMathFilter() { return state && state.stableMathFilter || null; },
+    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
   });
-  const picked = selectStableHeweiCandidate(candidates, "v43:hewei:total", performance, "hewei.total", {
-    floor: HEWEI_BLOCK_FLOOR,
-    guardRate: HEWEI_GUARD_RATE,
-    lowerFloor: 72,
-    performanceFloor: 78
-  });
-  const selected = picked.selected;
-  const backup = picked.backup;
-  const confidenceMeta = applyHeweiConfidenceFields(selected, picked, {
-    guardRate: HEWEI_GUARD_RATE
-  });
-  return {
-    killHewei: selected.digit,
-    primaryDigit: selected.digit,
-    backupDigit: backup.digit,
-    algorithm: "v43-total-hewei-stability-blocks",
-    performance: modelPerformanceSummary(performance, "hewei.total"),
-    detail: stableHeweiDetail(candidates),
-    stage: selected.stage,
-    stability: stableHeweiStability(selected, { floor: HEWEI_BLOCK_FLOOR, guardRate: HEWEI_GUARD_RATE }),
-    confidence: confidenceMeta.confidence,
-    recommendable: confidenceMeta.recommendable,
-    reason: confidenceMeta.reason
-  };
+  return formula.calculateTotalHeweiKill(history, performance);
 }
 function calculateThreeFourHeweiKillDigit(history, performance) {
-  const safeHistory = Array.isArray(history) ? history.filter(Boolean) : [];
-  function group(record) { const g = getCompositeHeweiGroup(record); return Array.isArray(g) ? g.map(String) : []; }
-  const candidates = buildStableHeweiCandidates(safeHistory, group, {
-    floor: HEWEI_UNIFIED_BLOCK_FLOOR,
-    guardRate: HEWEI_UNIFIED_GUARD_RATE,
-    missPenalty: 2.5,
-    getterId: "hewei:unified"
+  const formula = require("./algorithms/hewei/formula");
+  formula.bindRuntime({
+    getStable120Locks() {
+      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+      return state.stable120Locks;
+    },
+    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
+    getStableMathFilter() { return state && state.stableMathFilter || null; },
+    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
   });
-  const picked = selectStableHeweiCandidate(candidates, "v43:hewei:unified", performance, "hewei.unified", {
-    floor: HEWEI_UNIFIED_BLOCK_FLOOR,
-    guardRate: HEWEI_UNIFIED_GUARD_RATE,
-    lowerFloor: 56,
-    performanceFloor: 65
-  });
-  const selected = picked.selected;
-  const backup = picked.backup;
-  const confidenceMeta = applyHeweiConfidenceFields(selected, picked, {
-    guardRate: HEWEI_UNIFIED_GUARD_RATE
-  });
-  const reason = !confidenceMeta.recommendable && picked.reason === "best-stability-window"
-    ? "low-confidence-unified-hewei"
-    : confidenceMeta.reason;
-  return {
-    killDigit: selected.digit,
-    primaryDigit: selected.digit,
-    backupDigit: backup.digit,
-    algorithm: "v43-unified-hewei-stability-blocks",
-    performance: modelPerformanceSummary(performance, "hewei.unified"),
-    detail: stableHeweiDetail(candidates),
-    currentCompositeHeweiGroup: safeHistory[0] ? group(safeHistory[0]) : [],
-    confidence: confidenceMeta.confidence,
-    recommendable: confidenceMeta.recommendable,
-    stage: selected.stage,
-    stability: stableHeweiStability(selected, { floor: HEWEI_UNIFIED_BLOCK_FLOOR, guardRate: HEWEI_UNIFIED_GUARD_RATE }),
-    reason
-  };
+  return formula.calculateThreeFourHeweiKillDigit(history, performance);
 }
 function calculateIndependentHeweiKills(history, performance) {
-  const safeHistory = Array.isArray(history) ? history.filter(Boolean) : [];
-  function group(record) { const g = getCompositeHeweiGroup(record); return Array.isArray(g) ? g.map(String) : []; }
-  function calculateOne(index, label, key) {
-    const actual = (record) => {
-      const g = group(record);
-      return !g.length || g[index] === undefined ? "" : String(g[index]);
-    };
-    const candidates = buildStableHeweiCandidates(safeHistory, actual, {
-      floor: HEWEI_BLOCK_FLOOR,
-      guardRate: HEWEI_GUARD_RATE,
-      missPenalty: 2.5,
-      getterId: `hewei:${key}`
-    });
-    const picked = selectStableHeweiCandidate(candidates, `v43:hewei:${key}`, performance, `hewei.${key}`, {
-      floor: HEWEI_BLOCK_FLOOR,
-      guardRate: HEWEI_GUARD_RATE,
-      lowerFloor: 72,
-      performanceFloor: 78
-    });
-    const selected = picked.selected;
-    const backup = picked.backup;
-    const confidenceMeta = applyHeweiConfidenceFields(selected, picked, {
-      guardRate: HEWEI_GUARD_RATE
-    });
-    return {
-      label,
-      key,
-      killDigit: selected.digit,
-      primaryDigit: selected.digit,
-      backupDigit: backup.digit,
-      algorithm: `v43-independent-hewei-${key}-stability-blocks`,
-      performance: modelPerformanceSummary(performance, `hewei.${key}`),
-      detail: stableHeweiDetail(candidates),
-      stage: selected.stage,
-      stability: stableHeweiStability(selected, { floor: HEWEI_BLOCK_FLOOR, guardRate: HEWEI_GUARD_RATE }),
-      confidence: confidenceMeta.confidence,
-      recommendable: confidenceMeta.recommendable,
-      reason: confidenceMeta.reason
-    };
-  }
-  return {
-    wanQianBai: calculateOne(0, "千百十合尾", "wanQianBai"),
-    qianBaiShi: calculateOne(1, "百十个合尾", "qianBaiShi"),
-    wanQianBaiShi: calculateOne(2, "千百十个合尾", "wanQianBaiShi")
-  };
+  const formula = require("./algorithms/hewei/formula");
+  formula.bindRuntime({
+    getStable120Locks() {
+      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+      return state.stable120Locks;
+    },
+    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
+    getStableMathFilter() { return state && state.stableMathFilter || null; },
+    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
+  });
+  return formula.calculateIndependentHeweiKills(history, performance);
 }
 function calculatePositionKill(history, position, performance) {
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const index = Number(position && position.index);
-  const posKey = String(position && position.key || "pos");
-  const posLabel = String(position && position.label || posKey);
-
-  function actualDigit(record) {
-    const nums = record && Array.isArray(record.numbers) ? record.numbers : [];
-    return nums[index] === undefined || nums[index] === null ? "" : String(nums[index]);
-  }
-
-  function pairRateMultiWindow(pair, records, limits) {
-    const lims = [...new Set((Array.isArray(limits) ? limits : [limits]).map((limit) => Math.max(1, Number(limit || 120))))];
-    const maxLimit = Math.max(...lims);
-    const sliced = (records || []).slice(0, maxLimit);
-    const results = {};
-    lims.forEach((limit) => {
-      results[limit] = { total: 0, hit: 0, rate: 0, missStreak: 0, maxMissStreak: 0, _currentRun: 0, _leading: true };
-    });
-    for (let i = 0; i < sliced.length; i += 1) {
-      const actual = actualDigit(sliced[i]);
-      if (!actual) continue;
-      const ok = pair.indexOf(actual) < 0;
-      lims.forEach((limit) => {
-        if (i >= limit) return;
-        const result = results[limit];
-        result.total += 1;
-        if (ok) {
-          result.hit += 1;
-          result._currentRun = 0;
-          result._leading = false;
-        } else {
-          result._currentRun += 1;
-          if (result._currentRun > result.maxMissStreak) result.maxMissStreak = result._currentRun;
-          if (result._leading) result.missStreak += 1;
-        }
-      });
-    }
-    lims.forEach((limit) => {
-      const result = results[limit];
-      result.rate = result.total ? result.hit * 100 / result.total : 0;
-      delete result._currentRun;
-      delete result._leading;
-    });
-    return results;
-  }
-
-  function pairRate(pair, records, limit) {
-    const key = Math.max(1, Number(limit || 120));
-    const results = pairRateMultiWindow(pair, records, [key]);
-    return results[key] || { total: 0, hit: 0, rate: 0, missStreak: 0, maxMissStreak: 0 };
-  }
-
-  function pairBlockStats(pair) {
-    const rows = safeHistory.slice(0, POSITION_BLOCK_WINDOW);
-    const blocks = [];
-    for (let start = 0; start < rows.length; start += POSITION_BLOCK_SIZE) {
-      const blockRows = rows.slice(start, start + POSITION_BLOCK_SIZE);
-      if (!blockRows.length) continue;
-      const result = pairRate(pair, blockRows, blockRows.length);
-      if (result.total > 0) {
-        blocks.push({
-          index: blocks.length + 1,
-          total: result.total,
-          hit: result.hit,
-          fail: result.total - result.hit,
-          rate: Number(result.rate.toFixed(2))
-        });
-      }
-    }
-    if (!blocks.length) {
-      return {
-        window: POSITION_BLOCK_WINDOW,
-        blockSize: POSITION_BLOCK_SIZE,
-        blockCount: 0,
-        minRate: null,
-        avgRate: null,
-        maxRate: null,
-        variance: null,
-        weakBlocks: 0,
-        floor: POSITION_BLOCK_FLOOR,
-        blocks: []
-      };
-    }
-    const rates = blocks.map((block) => Number(block.rate || 0));
-    const avg = rates.reduce((sum, n) => sum + n, 0) / rates.length;
-    return {
-      window: POSITION_BLOCK_WINDOW,
-      blockSize: POSITION_BLOCK_SIZE,
-      blockCount: blocks.length,
-      minRate: Math.min(...rates),
-      avgRate: Number(avg.toFixed(2)),
-      maxRate: Math.max(...rates),
-      variance: Number(rateVariance(rates).toFixed(2)),
-      weakBlocks: blocks.filter((block) => Number(block.rate || 0) < POSITION_BLOCK_FLOOR).length,
-      floor: POSITION_BLOCK_FLOOR,
-      blocks
-    };
-  }
-
-  function scorePositionPair(pair, rLong, r300, r120, r60, r30) {
-    const weighted = stableWindowScore(r30, r60, r120, r300, rLong, 3.5);
-    const block = pairBlockStats(pair);
-    const lower120 = wilsonLowerRate(r120.hit, r120.total);
-    const lower300 = wilsonLowerRate(r300.hit, r300.total);
-    const recentPenalty = Number((r30 && r30.missStreak) || 0) * 1.8;
-    const weakPenalty = Number(block.weakBlocks || 0) * 2.4;
-    const variancePenalty = Number(block.variance || 0) * 0.08;
-    const score = (
-      weighted.score * 0.54 +
-      lower120 * 0.14 +
-      lower300 * 0.10 +
-      Number(block.minRate || 0) * 0.12 +
-      Number(block.avgRate || 0) * 0.08 -
-      recentPenalty -
-      weakPenalty -
-      variancePenalty
-    );
-    return {
-      score: Number(score.toFixed(4)),
-      stage: weighted.stage,
-      block,
-      lower120: Number(lower120.toFixed(2)),
-      lower300: Number(lower300.toFixed(2)),
-      repairFlags: {
-        recentMiss: Number((r30 && r30.missStreak) || 0),
-        weakBlocks: Number(block.weakBlocks || 0),
-        blockMinRate: Number(block.minRate || 0),
-        lower120: Number(lower120.toFixed(2))
-      }
-    };
-  }
-
-  function uniquePair(a, b) {
-    const out = [];
-    [a, b].forEach((digit) => {
-      digit = String(digit);
-      if (digit !== "" && digit !== "--" && out.indexOf(digit) < 0) out.push(digit);
-    });
-    DIGIT_POOL.forEach((digit) => { if (out.indexOf(digit) < 0) out.push(digit); });
-    return out.slice(0, 2);
-  }
-
-  const candidates = [];
-  const positionRateWindows = [MODEL_LONG_WINDOW, MODEL_STABLE_WINDOW, 120, 60, 30];
-  for (let i = 0; i < DIGIT_POOL.length; i += 1) {
-    for (let j = i + 1; j < DIGIT_POOL.length; j += 1) {
-      const pair = uniquePair(DIGIT_POOL[i], DIGIT_POOL[j]);
-      const rateWindows = pairRateMultiWindow(pair, safeHistory, positionRateWindows);
-      const rLong = rateWindows[MODEL_LONG_WINDOW];
-      const r300 = rateWindows[MODEL_STABLE_WINDOW];
-      const r120 = rateWindows[120];
-      const r30 = rateWindows[30];
-      const r60 = rateWindows[60];
-      const weighted = scorePositionPair(pair, rLong, r300, r120, r60, r30);
-      candidates.push({ pair, rLong, r300, r120, r60, r30, score: weighted.score, stage: weighted.stage, block: weighted.block, lower120: weighted.lower120, lower300: weighted.lower300, repairFlags: weighted.repairFlags });
-    }
-  }
-  candidates.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (b.lower120 !== a.lower120) return b.lower120 - a.lower120;
-    if ((b.block && b.block.minRate || 0) !== (a.block && a.block.minRate || 0)) return (b.block && b.block.minRate || 0) - (a.block && a.block.minRate || 0);
-    if (b.r300.rate !== a.r300.rate) return b.r300.rate - a.r300.rate;
-    if (b.rLong.rate !== a.rLong.rate) return b.rLong.rate - a.rLong.rate;
-    if (b.r120.rate !== a.r120.rate) return b.r120.rate - a.r120.rate;
-    if (b.r60.rate !== a.r60.rate) return b.r60.rate - a.r60.rate;
-    return a.pair.join("").localeCompare(b.pair.join(""));
-  });
-
-  const emptyBlock = {
-    window: POSITION_BLOCK_WINDOW,
-    blockSize: POSITION_BLOCK_SIZE,
-    blockCount: 0,
-    minRate: null,
-    avgRate: null,
-    maxRate: null,
-    variance: null,
-    weakBlocks: 0,
-    floor: POSITION_BLOCK_FLOOR,
-    blocks: []
-  };
-  const best = candidates[0] || {
-    pair: ["--", "--"],
-    rLong: { total: 0, hit: 0, rate: null, missStreak: 0 },
-    r300: { total: 0, hit: 0, rate: null, missStreak: 0 },
-    r120: { total: 0, hit: 0, rate: null, missStreak: 0 },
-    r60: { total: 0, hit: 0, rate: null, missStreak: 0 },
-    r30: { total: 0, hit: 0, rate: null, missStreak: 0 },
-    score: 0,
-    stage: stableWindowStage(0),
-    block: emptyBlock,
-    lower120: null,
-    lower300: null,
-    repairFlags: {},
-    truthAvailable: false
-  };
-  let selected = best;
-  let reason = "best-stability-window";
-  const perf = getModelStat(performance, `position.${posKey}.dual`);
-  const weak = perf.total >= 8 && Number(perf.rate || 0) < 78;
-
-  if (typeof state !== "undefined" && state) {
-    if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
-  }
-  const locks = (typeof state !== "undefined" && state && state.stable120Locks) ? state.stable120Locks : {};
-  const lockKey = `v42:position:${posKey}`;
-  const lock = locks[lockKey] || {};
-  const oldPair = Array.isArray(lock.pair) ? lock.pair.map(String).slice(0, 2) : [];
-
-  if (oldPair.length === 2) {
-    const oldRateWindows = pairRateMultiWindow(oldPair, safeHistory, positionRateWindows);
-    const old = {
-      pair: oldPair,
-      rLong: oldRateWindows[MODEL_LONG_WINDOW],
-      r300: oldRateWindows[MODEL_STABLE_WINDOW],
-      r120: oldRateWindows[120],
-      r60: oldRateWindows[60],
-      r30: oldRateWindows[30]
-    };
-    const oldWeighted = scorePositionPair(old.pair, old.rLong, old.r300, old.r120, old.r60, old.r30);
-    old.score = oldWeighted.score;
-    old.stage = oldWeighted.stage;
-    old.block = oldWeighted.block;
-    old.lower120 = oldWeighted.lower120;
-    old.lower300 = oldWeighted.lower300;
-    old.repairFlags = oldWeighted.repairFlags;
-    const oldHold = Number(lock.hold || 0);
-    const oldBlock = old.block || emptyBlock;
-    const bestClearlyBetter = best.score > old.score + POSITION_SWITCH_MARGIN;
-    const oldWarning = old.r30.missStreak >= 2 ||
-      old.r30.rate < MODEL_LOW_HIT_RATE ||
-      old.r60.rate < 80 ||
-      old.r120.rate < 78 ||
-      Number(old.lower120 || 0) < 72 ||
-      Number(oldBlock.minRate || 0) < POSITION_BLOCK_FLOOR ||
-      Number(oldBlock.weakBlocks || 0) > 0;
-    if (!weak && oldHold > 0 && oldHold < POSITION_MIN_HOLD && !oldWarning && best.score <= old.score + POSITION_SWITCH_MARGIN * 1.5) {
-      selected = old;
-      reason = "keep-min-hold-stable-pair";
-    } else if (!weak && !oldWarning && !bestClearlyBetter) {
-      selected = old;
-      reason = "keep-locked-1000-stable";
-    } else if (!weak && old.r120.rate >= best.r120.rate - 2 && old.r30.missStreak < 2 && Number(oldBlock.minRate || 0) >= POSITION_BLOCK_FLOOR && best.score <= old.score + POSITION_SWITCH_MARGIN * 1.25) {
-      selected = old;
-      reason = "keep-close-stable-pair";
-    } else {
-      reason = weak ? "weak-position-switch-1000" : "warning-switch-stability-block";
-    }
-  }
-
-  if (selected && selected.r30) {
-    const selectedBlock = selected.block || emptyBlock;
-    const selectedWarning = selected.r30.rate < MODEL_LOW_HIT_RATE ||
-      selected.r60.rate < 80 ||
-      selected.r120.rate < 78 ||
-      selected.r30.missStreak >= 2 ||
-      Number(selected.lower120 || 0) < 72 ||
-      Number(selectedBlock.minRate || 0) < POSITION_BLOCK_FLOOR ||
-      Number(selectedBlock.weakBlocks || 0) > 0;
-    const guarded = candidates
-      .filter((item) => item && item.r30 &&
-        item.r30.rate >= MODEL_LOW_HIT_RATE &&
-        item.r60.rate >= 80 &&
-        item.r120.rate >= 78 &&
-        item.r30.missStreak < 2 &&
-        Number(item.lower120 || 0) >= 72 &&
-        item.block &&
-        Number(item.block.minRate || 0) >= POSITION_BLOCK_FLOOR &&
-        Number(item.block.weakBlocks || 0) === 0)
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        if (b.lower120 !== a.lower120) return b.lower120 - a.lower120;
-        if ((b.block && b.block.minRate || 0) !== (a.block && a.block.minRate || 0)) return (b.block && b.block.minRate || 0) - (a.block && a.block.minRate || 0);
-        if (b.r300.rate !== a.r300.rate) return b.r300.rate - a.r300.rate;
-        if (b.r120.rate !== a.r120.rate) return b.r120.rate - a.r120.rate;
-        if (b.r60.rate !== a.r60.rate) return b.r60.rate - a.r60.rate;
-        if (b.r30.rate !== a.r30.rate) return b.r30.rate - a.r30.rate;
-        if (b.rLong.rate !== a.rLong.rate) return b.rLong.rate - a.rLong.rate;
-        return a.pair.join("").localeCompare(b.pair.join(""));
-      })[0];
-    if (selectedWarning && guarded && guarded.pair.join("") !== selected.pair.join("")) {
-      selected = guarded;
-      reason = "position-stability-guard";
-    }
-  }
-
-  const selectedValue = selected.pair.join("");
-  const oldValue = oldPair.join("");
-  const hold = oldValue && oldValue === selectedValue ? Number(lock.hold || 0) + 1 : 1;
-  const latestPeriod = safeHistory[0] ? String(safeHistory[0].period || safeHistory[0].uid || "") : "";
-  if (locks && lockKey) {
-    locks[lockKey] = {
-      pair: selected.pair.slice(0, 2),
-      hold,
-      period: latestPeriod,
-      score: selected.score,
-      rateLong: Number(selected.rLong.rate.toFixed(2)),
-      rate300: Number(selected.r300.rate.toFixed(2)),
-      rate120: Number(selected.r120.rate.toFixed(2)),
-      rate60: Number(selected.r60.rate.toFixed(2)),
-      rate30: Number(selected.r30.rate.toFixed(2)),
-      lower120: Number((selected.lower120 || 0).toFixed(2)),
-      lower300: Number((selected.lower300 || 0).toFixed(2)),
-      blockMinRate: Number(((selected.block && selected.block.minRate) || 0).toFixed(2)),
-      blockAvgRate: Number(((selected.block && selected.block.avgRate) || 0).toFixed(2)),
-      blockWeakBlocks: Number((selected.block && selected.block.weakBlocks) || 0),
-      blockVariance: Number(((selected.block && selected.block.variance) || 0).toFixed(2)),
-      missStreak30: selected.r30.missStreak,
-      stage: selected.stage,
-      reason,
-      updatedAt: (new Date()).toISOString()
-    };
-  }
-
-  return {
-    label: `${posLabel}位定位双码排除`,
-    key: posKey,
-    mainDigit: selected.pair[0] || "--",
-    backupDigit: selected.pair[1] || "--",
-    primaryDigit: selected.pair[0] || "--",
-    originalBackupDigit: selected.pair[1] || "--",
-    killDigits: selected.pair.filter((digit) => digit !== "--"),
-    algorithm: "v42-position-stability-blocks",
-    performance: modelPerformanceSummary(performance, `position.${posKey}.dual`),
-    detail: candidates.slice(0, 10).map((item) => ({ pair: item.pair, rateLong: Number(item.rLong.rate.toFixed(2)), rate300: Number(item.r300.rate.toFixed(2)), rate120: Number(item.r120.rate.toFixed(2)), rate60: Number(item.r60.rate.toFixed(2)), rate30: Number(item.r30.rate.toFixed(2)), lower120: Number((item.lower120 || 0).toFixed(2)), lower300: Number((item.lower300 || 0).toFixed(2)), blockMinRate: Number(((item.block && item.block.minRate) || 0).toFixed(2)), blockAvgRate: Number(((item.block && item.block.avgRate) || 0).toFixed(2)), blockWeakBlocks: Number((item.block && item.block.weakBlocks) || 0), blockVariance: Number(((item.block && item.block.variance) || 0).toFixed(2)), missStreak30: item.r30.missStreak, score: item.score, stage: item.stage })),
-    stage: selected.stage,
-    stability: {
-      lower120: Number((selected.lower120 || 0).toFixed(2)),
-      lower300: Number((selected.lower300 || 0).toFixed(2)),
-      block: selected.block || emptyBlock,
-      repairFlags: selected.repairFlags || {},
-      minHold: POSITION_MIN_HOLD,
-      switchMargin: POSITION_SWITCH_MARGIN
+  const formula = require("./algorithms/position-kills/formula");
+  return formula.calculatePositionKill(history, position, performance, {
+    getStable120Locks() {
+      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+      return state.stable120Locks;
     },
-    reason
-  };
+    setStable120Locks(value) {
+      state.stable120Locks = value && typeof value === "object" ? value : {};
+    }
+  });
 }
 function normalizePositionKillEntry(entry) {
   if (Array.isArray(entry)) {
@@ -11540,6 +9468,7 @@ function isPredictionCompatible(prediction, latest) {
 
 function ensurePredictionFrameworkSnapshots(prediction, history) {
   if (!prediction || typeof prediction !== "object") return prediction;
+  if (predictionSnapshotsAreImmutable(prediction)) return prediction;
   attachCachedStableMathFilter(prediction);
   ensurePredictionAutoTop6Snapshot(prediction, history);
   ensurePredictionRecommend2Snapshot(prediction, history);
@@ -11576,12 +9505,19 @@ function ensureTipStructurePerfect(options) {
     ensurePredictionFrameworkSnapshots(prediction, state.history);
     sealPredictionSnapshots(prediction, latest);
     issues = collectPredictionIntegrityIssues(prediction, latest);
-    if (!issues.length) {
+    markAlgorithmProjectIssues(issues);
+    const coreIssues = issues.filter(isCorePredictionIssue);
+    if (!coreIssues.length) {
       applyTipReadyState(prediction, latest, issues);
       if (opts.log !== false) {
-        addLog("结构完美门闩通过", { attempts, baseUid: prediction.baseUid, basePeriod: prediction.basePeriod });
+        addLog("核心预测门闩通过", {
+          attempts,
+          baseUid: prediction.baseUid,
+          basePeriod: prediction.basePeriod,
+          degradedProjectCount: issues.length
+        });
       }
-      return { ok: true, attempts, issues: [] };
+      return { ok: true, attempts, issues };
     }
     if (!allowRegenerate || attempts >= maxAttempts) break;
     if (predictionBuildRunning || (syncRunning && opts.fromSync !== true && String(opts.trigger || "").indexOf("sync") < 0)) {
@@ -11593,53 +9529,82 @@ function ensureTipStructurePerfect(options) {
   }
   const prediction = state && state.currentPrediction;
   issues = collectPredictionIntegrityIssues(prediction, latest);
+  markAlgorithmProjectIssues(issues);
   applyTipReadyState(prediction, latest, issues);
-  if (issues.length) {
+  const coreIssues = issues.filter(isCorePredictionIssue);
+  if (coreIssues.length) {
     addLog("结构完美门闩未通过，已阻断发布", {
       attempts,
-      issueCount: issues.length,
-      issues: issues.slice(0, 20),
+      issueCount: coreIssues.length,
+      issues: coreIssues.slice(0, 20),
       tipReady: false
     });
   }
-  return { ok: issues.length === 0, attempts, issues };
+  return { ok: coreIssues.length === 0, attempts, issues };
 }
+
+function bindL0AlgorithmHost() {
+  const lockApi = {
+    getStable120Locks() {
+      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+      return state.stable120Locks;
+    },
+    setStable120Locks(value) {
+      state.stable120Locks = value && typeof value === "object" ? value : {};
+    }
+  };
+  l0Orchestrator.bindRunnerHost({
+    // L0 formulas live in algorithms/*/formula.js; host only injects accessors.
+    getStable120Locks: lockApi.getStable120Locks,
+    setStable120Locks: lockApi.setStable120Locks,
+    getState: () => state,
+    getStableMathExcludeDigitSet: () => require("./algorithms/hewei/formula").getStableMathExcludeDigitSet(),
+    POSITION_LIST,
+    addLog,
+    getCachedFilter: () => (state && state.stableMathFilter) || stableMathFilterBridge.readCachedFilter() || null,
+    readCachedFilter: () => stableMathFilterBridge.readCachedFilter() || null,
+    setCachedFilter: (slim) => {
+      if (!state || !slim) return;
+      state.stableMathFilter = slim;
+    }
+  });
+}
+
+function bindL1AlgorithmHost() {
+  frameworkItems.bindRuntime({
+    getState: () => state,
+    invalidatePanelStateCache: invalidatePanelStateCache
+  });
+  l1Orchestrator.bindRunnerHost({
+    getState: () => state,
+    ensurePredictionAutoTop6Snapshot,
+    ensurePredictionRecommend2Snapshot,
+    ensurePredictionKillFrameworkSnapshot,
+    ensurePredictionCompactAttackSnapshot,
+    ensurePredictionThreeDingTwoSnapshot,
+    ensurePredictionThreeDingOneSnapshot,
+    ensurePredictionSideStableSnapshot,
+    ensurePredictionColdFrameworkSnapshot,
+    ensurePredictionDingKillSnapshot,
+    ensurePredictionPick5000Snapshot,
+    ensurePredictionThreeDuishuSnapshot
+  });
+}
+
+bindL0AlgorithmHost();
+bindL1AlgorithmHost();
 
 function generateBigDataPrediction(history) {
   const safeHistory = Array.isArray(history) && history.length ? history : [DEFAULT_RECORD];
   const latest = safeHistory[0];
   const nextPeriod = expectedNextPenta5Period(latest && latest.period);
   const modelPerformance = calculateModelPerformance(state && Array.isArray(state.predictions) ? state.predictions : []);
-  const totalHeweiKill = calculateTotalHeweiKill(safeHistory, modelPerformance);
-  const threeFourKill = calculateThreeFourHeweiKillDigit(safeHistory, modelPerformance);
-  const independentHeweiKills = calculateIndependentHeweiKills(safeHistory, modelPerformance);
-  const heweiReconcile = reconcileHeweiKillBundle({ totalHeweiKill, threeFourKill, independentHeweiKills });
-  if (heweiReconcile && Array.isArray(heweiReconcile.notes) && heweiReconcile.notes.length) {
-    addLog("合尾排除已协调去重", { notes: heweiReconcile.notes });
-  }
-  const extraKills = calculateExtraAvoidKills(safeHistory, modelPerformance);
-  const positionKills = {};
-  POSITION_LIST.slice(0, 4).forEach((position) => {
-    const calculated = calculatePositionKill(safeHistory, position, modelPerformance);
-    positionKills[position.key] = {
-      main: calculated.mainDigit,
-      backup: calculated.backupDigit,
-      recommendDigit: calculated.mainDigit,
-      selectedDigit: calculated.mainDigit,
-      mainAlgorithmDigit: calculated.primaryDigit,
-      backupAlgorithmDigit: calculated.originalBackupDigit,
-      killDigits: calculated.killDigits,
-      algorithm: calculated.algorithm,
-      performance: calculated.performance,
-      primaryDigit: calculated.primaryDigit,
-      originalBackupDigit: calculated.originalBackupDigit,
-      reason: calculated.reason,
-      stage: calculated.stage,
-      stability: calculated.stability,
-      detail: calculated.detail
-    };
-  });
-  codexStablePosition.applyCodexStablePositionOverlay(positionKills, safeHistory);
+  // L0 independent compute: hewei / position-kills / stable-math / extra-kills
+  const l0 = l0Orchestrator.computeL0({ history: safeHistory, modelPerformance });
+  const heweiPayload = l0.hewei || {};
+  const positionKills = l0.positionKills || {};
+  const heweiDetail = heweiPayload.detail || {};
+  const extraKills = l0.extraKills;
   const recommendationMeta = {
     targetCount: TOP_RECOMMEND_COUNT,
     targetRate: MODEL_LOW_HIT_RATE,
@@ -11649,10 +9614,10 @@ function generateBigDataPrediction(history) {
     panelPredictionLimit: PANEL_PREDICTION_LIMIT,
     lowHitRateThreshold: MODEL_LOW_HIT_RATE,
     minSample: MODEL_MIN_SAMPLE,
-    independenceMode: "all-models-calculated-before-selection",
+    independenceMode: "l1-isolated-compute-v1",
     lowConfidencePolicy: "mark-only"
   };
-  return {
+  const prediction = {
     id: `prediction:${latest.uid}:${Date.now()}`,
     modelVersion: MODEL_VERSION,
     baseUid: latest.uid,
@@ -11663,11 +9628,11 @@ function generateBigDataPrediction(history) {
     periodsPerDay: PENTA5_PERIODS_PER_DAY,
     generatedAt: isoNow(),
     generatedAtText: nowText(),
-    totalHeweiKill: totalHeweiKill.killHewei,
-    totalHeweiBackupDigit: totalHeweiKill.backupDigit,
-    threeFourHeweiKillDigit: threeFourKill.killDigit,
-    threeFourHeweiBackupDigit: threeFourKill.backupDigit,
-    independentHeweiKills: independentHeweiKills,
+    totalHeweiKill: heweiPayload.totalHeweiKill,
+    totalHeweiBackupDigit: heweiPayload.totalHeweiBackupDigit,
+    threeFourHeweiKillDigit: heweiPayload.threeFourHeweiKillDigit,
+    threeFourHeweiBackupDigit: heweiPayload.threeFourHeweiBackupDigit,
+    independentHeweiKills: heweiPayload.independentHeweiKills,
     positionKills,
     extraKills,
     modelPerformance,
@@ -11676,21 +9641,27 @@ function generateBigDataPrediction(history) {
     counterApplied: false,
     evaluation: null,
     detail: {
-      totalHeweiKill,
-      threeFourHeweiKill: threeFourKill,
-      independentHeweiKills,
-      heweiReconcileNotes: Array.isArray(heweiReconcile && heweiReconcile.notes) ? heweiReconcile.notes : [],
+      totalHeweiKill: heweiDetail.totalHeweiKill || null,
+      threeFourHeweiKill: heweiDetail.threeFourHeweiKill || null,
+      independentHeweiKills: heweiDetail.independentHeweiKills || heweiPayload.independentHeweiKills,
+      heweiReconcileNotes: Array.isArray(heweiDetail.heweiReconcileNotes) ? heweiDetail.heweiReconcileNotes : [],
       // 禁止把带 codes 的 extraKills 再复制一份进 detail（否则单 tip 双倍常驻）
       extraKills: slimExtraKillsForPersist(extraKills, false),
       positionKills: {},
       modelPerformance,
       recommendationMeta,
-      historyCountUsed: safeHistory.length
+      historyCountUsed: safeHistory.length,
+      l0Meta: l0.meta || null
     }
   };
+  if (l0.stableMathFilter) {
+    applyStableMathFilterToPrediction(prediction, l0.stableMathFilter);
+  }
+  return prediction;
 }
 function fillPredictionDetail(prediction, history) {
   const safeHistory = Array.isArray(history) && history.length ? history : [DEFAULT_RECORD];
+  if (predictionSnapshotsAreImmutable(prediction)) return prediction;
   if (!prediction.detail) prediction.detail = {};
   if (prediction.positionKills && typeof prediction.positionKills === "object" && Object.keys(prediction.positionKills).length) {
     prediction.detail.positionKills = prediction.positionKills;
@@ -11699,14 +9670,13 @@ function fillPredictionDetail(prediction, history) {
     prediction.positionKills = prediction.detail.positionKills;
     codexStablePosition.applyCodexStablePositionOverlay(prediction.positionKills, safeHistory);
   } else {
-    const detailPositionKills = {};
     const performance = calculateModelPerformance(state && Array.isArray(state.predictions) ? state.predictions : []);
-    POSITION_LIST.slice(0, 4).forEach((position) => {
-      detailPositionKills[position.key] = calculatePositionKill(safeHistory, position, performance);
+    const rebuilt = l0Orchestrator.positionKillsAlgo.computeRawEntries({
+      history: safeHistory,
+      modelPerformance: performance
     });
-    prediction.positionKills = detailPositionKills;
-    prediction.detail.positionKills = detailPositionKills;
-    codexStablePosition.applyCodexStablePositionOverlay(prediction.positionKills, safeHistory);
+    prediction.positionKills = rebuilt.payload;
+    prediction.detail.positionKills = rebuilt.payload;
   }
   attachCachedStableMathFilter(prediction);
   return prediction;
@@ -11922,7 +9892,7 @@ function evaluatePrediction(prediction, actualRecord) {
     anyTwoHeweiHit: {
       value: anyTwoHeweiHitValue,
       actualTails: heweiCombinationTails(actualRecord, 2),
-      success: (/^\d{5}$/.test(anyTwoHeweiHitValue) && new Set(anyTwoHeweiHitValue.split("")).size === 5 && !isUniformParityDigitSet(anyTwoHeweiHitValue))
+      success: isAnyTwoHeweiCode(anyTwoHeweiHitValue)
         ? anyHeweiCombinationHit(actualRecord, anyTwoHeweiHitValue, 2, 1)
         : null
     },
@@ -12392,12 +10362,15 @@ function alignTipPredictionAfterHydrate(reason) {
   if (!isPredictionCompatible(currentPrediction, latest)) {
     currentPrediction = fillPredictionDetail(generateBigDataPrediction(history), history);
     state.predictions = [currentPrediction].concat(Array.isArray(state.predictions) ? state.predictions : []);
+    resetAlgorithmProjectHealthForPrediction(currentPrediction);
     created = true;
   }
   ensurePredictionAutoTop6Snapshot(currentPrediction, history);
   ensurePredictionRecommend2Snapshot(currentPrediction, history);
   ensurePredictionKillFrameworkSnapshot(currentPrediction, history);
   ensurePredictionCompactAttackSnapshot(currentPrediction, history);
+  ensurePredictionThreeDingTwoSnapshot(currentPrediction, history);
+  ensurePredictionThreeDingOneSnapshot(currentPrediction, history);
   ensurePredictionSideStableSnapshot(currentPrediction, history);
   ensurePredictionColdFrameworkSnapshot(currentPrediction, history);
   ensurePredictionDingKillSnapshot(currentPrediction, history);
@@ -12522,6 +10495,7 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
   if (!isPredictionCompatible(currentPrediction, latest)) {
     currentPrediction = fillPredictionDetail(generateBigDataPrediction(state.history), state.history);
     state.predictions.unshift(currentPrediction);
+    resetAlgorithmProjectHealthForPrediction(currentPrediction);
   }
   await yieldEventLoop();
 
@@ -12529,6 +10503,8 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
   ensurePredictionRecommend2Snapshot(currentPrediction, state.history);
   ensurePredictionKillFrameworkSnapshot(currentPrediction, state.history);
   ensurePredictionCompactAttackSnapshot(currentPrediction, state.history);
+  ensurePredictionThreeDingTwoSnapshot(currentPrediction, state.history);
+  ensurePredictionThreeDingOneSnapshot(currentPrediction, state.history);
   await yieldEventLoop();
 
   ensurePredictionSideStableSnapshot(currentPrediction, state.history);
@@ -12803,6 +10779,8 @@ function buildModelAuditSummary() {
   const latest = state && state.latestRecord ? state.latestRecord : null;
   const current = state && state.currentPrediction ? state.currentPrediction : null;
   const integrityIssues = collectPredictionIntegrityIssues(current, latest);
+  const coreIntegrityIssues = integrityIssues.filter(isCorePredictionIssue);
+  const projectIntegrityIssues = integrityIssues.filter((issue) => !isCorePredictionIssue(issue));
   const stabilityIssues = current ? collectCurrentPredictionStabilityIssues(current) : [];
   const extraKills = current && (current.extraKills || (current.detail && current.detail.extraKills)) || {};
   const missingExtraKeys = REQUIRED_EXTRA_KILL_KEYS.filter((key) => extraModelIntegrityReason(key, extraKills[key]) !== "");
@@ -12810,15 +10788,17 @@ function buildModelAuditSummary() {
     ? current.autoTop6.items.filter((item) => item && item.side !== "backup").length
     : 0;
   return {
-    ok: integrityIssues.length === 0,
-    tipReady: integrityIssues.length === 0,
-    tipStructurePerfect: integrityIssues.length === 0,
+    ok: coreIntegrityIssues.length === 0,
+    tipReady: coreIntegrityIssues.length === 0,
+    tipStructurePerfect: coreIntegrityIssues.length === 0,
     checkedAt: isoNow(),
     modelVersion: current && current.modelVersion || "",
     requiredExtraModelCount: REQUIRED_EXTRA_KILL_KEYS.length,
     validExtraModelCount: REQUIRED_EXTRA_KILL_KEYS.length - missingExtraKeys.length,
     missingExtraKeys,
     integrityIssueCount: integrityIssues.length,
+    coreIntegrityIssueCount: coreIntegrityIssues.length,
+    projectIntegrityIssueCount: projectIntegrityIssues.length,
     stabilityIssueCount: stabilityIssues.length,
     truthMetrics: {
       autoTop6: savedSnapshotTruthMetrics("autoTop6", AUTO_TOP6_SNAPSHOT_VERSION, autoTop6Total, MODEL_STABLE_WINDOW),
@@ -12840,6 +10820,8 @@ function buildModelAuditSummary() {
     },
     simSampleTarget: FRAMEWORK_SIM_SAMPLE_TARGET,
     integrityIssues: integrityIssues.slice(0, 50),
+    coreIntegrityIssues: coreIntegrityIssues.slice(0, 50),
+    projectIntegrityIssues: projectIntegrityIssues.slice(0, 50),
     stabilityIssues: stabilityIssues.slice(0, 50)
   };
 }
@@ -12859,9 +10841,14 @@ function modelAuditCacheKeyNow() {
     current.baseUid || "",
     current.evaluated ? "1" : "0",
     evalAt,
+    current.snapshotsSealedAt || "",
+    current.snapshotsSealedBaseUid || "",
+    current.allSnapshotsSealed ? "1" : "0",
+    current.tipStructurePerfect ? "1" : "0",
     Array.isArray(state && state.predictions) ? state.predictions.length : 0,
     state && state.tipReady ? "1" : "0",
-    state && state.updatedAt || ""
+    state && state.tipReadyIssueCount || 0,
+    state && state.algorithmProjectIssueCount || 0
   ].join("|");
 }
 
@@ -12909,6 +10896,20 @@ function buildHealthSummary(options) {
     stormMode,
     tipReady: state && state.tipReady === true,
     tipReadyIssueCount: Number(state && state.tipReadyIssueCount || 0),
+    algorithmProjectIssueCount: Number(state && state.algorithmProjectIssueCount || 0),
+    algorithmProjectDegradedCount: Number(state && state.algorithmProjectDegradedCount || 0),
+    algorithmProjectDegradedIssueCount: Number(state && state.algorithmProjectDegradedIssueCount || 0),
+    algorithmProjectDegradedIds: Array.isArray(state && state.algorithmProjectDegradedIds)
+      ? state.algorithmProjectDegradedIds.slice(0, 32)
+      : [],
+    algorithmProjects: Object.fromEntries(
+      Object.entries(normalizeAlgorithmProjectHealth(state && state.algorithmProjectHealth)).map(([projectId, value]) => [projectId, {
+        status: value.status,
+        issueCount: value.issueCount,
+        basePeriod: value.basePeriod,
+        updatedAt: value.updatedAt
+      }])
+    ),
     tipStructurePerfect: !!(current && current.tipStructurePerfect),
     allSnapshotsSealed: !!(current && current.allSnapshotsSealed),
     rssMb: Number((memory.rss / 1024 / 1024).toFixed(2)),
@@ -12929,12 +10930,13 @@ let panelHtmlCacheMtimeMs = 0;
 let panelHtmlCacheText = "";
 let panelHtmlCacheGzip = null;
 
-function invalidatePanelStateCache() {
+function invalidatePanelStateCache(options) {
+  const opts = options && typeof options === "object" ? options : {};
   panelStateCacheKey = "";
   panelStateCacheText = "";
   panelStateCacheGzip = null;
   panelStateCacheCreatedAt = 0;
-  invalidateModelAuditCache();
+  if (opts.invalidateModelAudit !== false) invalidateModelAuditCache();
 }
 
 function panelHtmlFilePath() {
@@ -13309,6 +11311,70 @@ function slimFrameworkSnapshotForPanel(snapshot) {
   return out;
 }
 
+function slimFrameworkSnapshotForRobot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return snapshot || null;
+  const out = {};
+  ["version", "sealed", "sealedAt", "sealedBaseUid", "sealedBasePeriod", "sealHash"].forEach((key) => {
+    if (snapshot[key] !== undefined) out[key] = snapshot[key];
+  });
+  if (Array.isArray(snapshot.items)) {
+    out.items = snapshot.items.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const value = {};
+      [
+        "rank", "kind", "key", "side", "name", "code", "mode", "shapeKey",
+        "rate", "rate30", "rate60", "rate120", "rate300", "stableScore", "stageLabel",
+        "confidence", "recommendable", "generatedGroupCount", "codeCount", "codesOmitted"
+      ].forEach((key) => {
+        if (item[key] !== undefined) value[key] = item[key];
+      });
+      return value;
+    });
+  }
+  return out;
+}
+
+function buildRobotStatePayload() {
+  const current = state && state.currentPrediction && typeof state.currentPrediction === "object"
+    ? state.currentPrediction
+    : {};
+  const prediction = {};
+  [
+    "id", "modelVersion", "baseUid", "basePeriod", "baseOpenTime", "targetPeriod", "targetPeriodRule",
+    "generatedAt", "generatedAtText", "evaluated", "tipReady", "tipStructurePerfect",
+    "snapshotsSealedAt", "snapshotsSealedBaseUid", "allSnapshotsSealed",
+    "totalHeweiKill", "totalHeweiBackupDigit", "threeFourHeweiKillDigit", "threeFourHeweiBackupDigit"
+  ].forEach((key) => {
+    if (current[key] !== undefined) prediction[key] = current[key];
+  });
+  prediction.positionKills = slimPositionKills(current.positionKills, true);
+  prediction.independentHeweiKills = slimHeweiKills(current.independentHeweiKills, true);
+  prediction.extraKills = slimExtraKills(current.extraKills);
+  prediction.detail = slimThreeFourDetail(current.detail, true);
+  FRAMEWORK_SNAPSHOT_STORE_KEYS.forEach((storeName) => {
+    if (current[storeName]) prediction[storeName] = slimFrameworkSnapshotForRobot(current[storeName]);
+  });
+  if (current.threeDuishu) prediction.threeDuishu = slimThreeDuishuSnapshot(current.threeDuishu);
+
+  const historyLimit = Math.max(30, Math.min(120, MODEL_STABLE_WINDOW, MAX_HISTORY || 120));
+  return {
+    ok: !state.lastError,
+    version: state.version,
+    modelVersion: MODEL_VERSION,
+    dataReadMode: DATA_READ_MODE,
+    historyPersistedInRds: true,
+    lastSync: state.lastSync || {},
+    latestRecord: slimHistoryRecord(state.latestRecord),
+    currentPrediction: prediction,
+    tipReady: state.tipReady === true,
+    tipReadyIssueCount: Number(state.tipReadyIssueCount || 0),
+    stormMode: normalizeStormMode(state.stormMode),
+    dailyStreakLedger: normalizeDailyStreakLedger(state.dailyStreakLedger),
+    modelWatchdog: normalizeModelWatchdog(state.modelWatchdog),
+    history: Array.isArray(state.history) ? state.history.slice(0, historyLimit).map(slimHistoryRecord) : []
+  };
+}
+
 function buildPanelStatePayload() {
   const summary = buildSummary();
   summary.latestRecord = slimHistoryRecord(state.latestRecord);
@@ -13373,9 +11439,6 @@ function getPanelStateJson() {
 function commonJsonHeaders(extra) {
   return Object.assign({
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
     "Cache-Control": "no-store",
     "Connection": "close",
     "X-Content-Type-Options": "nosniff"
@@ -13474,9 +11537,6 @@ function sendPanelHtml(req, res) {
     if (!panelHtmlCacheGzip) panelHtmlCacheGzip = zlib.gzipSync(Buffer.from(text, "utf8"));
     res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type,Authorization",
       "Cache-Control": "no-store",
       "Pragma": "no-cache",
       "Expires": "0",
@@ -13492,9 +11552,6 @@ function sendPanelHtml(req, res) {
   }
   res.writeHead(200, {
     "Content-Type": "text/html; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
     "Cache-Control": "no-store",
     "Pragma": "no-cache",
     "Expires": "0",
@@ -13505,6 +11562,35 @@ function sendPanelHtml(req, res) {
     "Vary": "Accept-Encoding"
   });
   res.end(text);
+}
+
+function attackTxtContentType(pathname) {
+  if (pathname.endsWith(".js")) return "application/javascript; charset=utf-8";
+  if (pathname.endsWith(".json")) return "application/manifest+json; charset=utf-8";
+  if (pathname.endsWith(".svg")) return "image/svg+xml; charset=utf-8";
+  return "text/html; charset=utf-8";
+}
+
+function attackTxtFileForPath(pathname) {
+  if (pathname === "/attack-txt" || pathname === "/gongjiyu") return path.join(__dirname, "attack_txt.html");
+  if (pathname === "/txt_attack_convert.js") return path.join(__dirname, "txt_attack_convert.js");
+  if (pathname === "/attack-txt-manifest.json") return path.join(__dirname, "attack_txt_manifest.json");
+  if (pathname === "/attack-txt-icon.svg") return path.join(__dirname, "attack_txt_icon.svg");
+  return "";
+}
+
+function sendAttackTxtAsset(req, res, pathname) {
+  const file = attackTxtFileForPath(pathname);
+  if (!file) {
+    sendJson(res, 404, { ok: false, error: "Not Found" });
+    return;
+  }
+  try {
+    const text = fs.readFileSync(file, "utf8");
+    sendTextForRequest(req, res, 200, text, attackTxtContentType(pathname));
+  } catch (err) {
+    sendJson(res, 500, { ok: false, error: String(err && err.message || err) });
+  }
 }
 
 function localMidnightMs(dateObj) {
@@ -13567,7 +11653,12 @@ function scheduleDrawAlignedAutoSync(reason) {
 
 async function syncNow(trigger) {
   if (syncRunning) {
-    return { skipped: true, reason: "同步正在执行，已跳过重复请求", summary: buildHealthSummary({ lite: true }) };
+    return {
+      ok: true,
+      skipped: true,
+      reason: "同步正在执行，已跳过重复请求",
+      summary: buildHealthSummary({ lite: true })
+    };
   }
   syncRunning = true;
   const requestUrl = buildFreshApiUrl(SOURCE_API_URL);
@@ -13767,9 +11858,6 @@ function sendJsonText(res, statusCode, text) {
   });
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
     "Cache-Control": "no-store",
     "Connection": "close",
     "X-Content-Type-Options": "nosniff"
@@ -13783,9 +11871,6 @@ function sendText(res, statusCode, text, contentType) {
   });
   res.writeHead(statusCode, {
     "Content-Type": contentType || "text/plain; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
     "Cache-Control": "no-store",
     "Connection": "close",
     "X-Content-Type-Options": "nosniff"
@@ -13800,9 +11885,6 @@ function sendTextForRequest(req, res, statusCode, text, contentType) {
   const type = contentType || "text/plain; charset=utf-8";
   const headers = {
     "Content-Type": type,
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
     "Cache-Control": "no-store",
     "Pragma": "no-cache",
     "Expires": "0",
@@ -13930,6 +12012,41 @@ function passwordOnlyLoginRole(password) {
   return "";
 }
 
+function loginClientKey(req) {
+  const forwarded = String(req && req.headers && req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  const socketAddress = String(req && req.socket && req.socket.remoteAddress || "").trim();
+  return forwarded || socketAddress || "unknown";
+}
+
+function pruneLoginFailureBuckets(nowMs) {
+  for (const [key, bucket] of loginFailureBuckets.entries()) {
+    if (!bucket || nowMs - Number(bucket.firstAt || 0) > LOGIN_RATE_WINDOW_MS) loginFailureBuckets.delete(key);
+  }
+}
+
+function loginRateLimited(req) {
+  const nowMs = Date.now();
+  pruneLoginFailureBuckets(nowMs);
+  const bucket = loginFailureBuckets.get(loginClientKey(req));
+  return !!(bucket && Number(bucket.count || 0) >= LOGIN_RATE_MAX_FAILURES && nowMs - Number(bucket.firstAt || 0) <= LOGIN_RATE_WINDOW_MS);
+}
+
+function recordLoginFailure(req) {
+  const nowMs = Date.now();
+  const key = loginClientKey(req);
+  const previous = loginFailureBuckets.get(key);
+  if (!previous || nowMs - Number(previous.firstAt || 0) > LOGIN_RATE_WINDOW_MS) {
+    loginFailureBuckets.set(key, { firstAt: nowMs, count: 1 });
+    return;
+  }
+  previous.count = Math.max(0, Number(previous.count || 0) || 0) + 1;
+  loginFailureBuckets.set(key, previous);
+}
+
+function clearLoginFailures(req) {
+  loginFailureBuckets.delete(loginClientKey(req));
+}
+
 function authRoleForRequest(req) {
   if (!isAuthEnabled()) return "admin";
   const credentials = basicAuthCredentials(req);
@@ -13951,11 +12068,22 @@ function authRoleForRequest(req) {
   return authRoleFromPanelCookie(req);
 }
 
+function isAttackTxtPublicPath(pathname) {
+  return pathname === "/attack-txt"
+    || pathname === "/gongjiyu"
+    || pathname === "/txt_attack_convert.js"
+    || pathname === "/attack-txt-manifest.json"
+    || pathname === "/attack-txt-icon.svg";
+}
+
 function isViewerAllowedRequest(method, pathname) {
   return method === "GET" && (
     pathname === "/"
     || pathname === "/panel"
+    || isAttackTxtPublicPath(pathname)
+    || pathname === "/converter-history"
     || pathname === "/state"
+    || pathname === "/robot-state"
     || pathname === "/history"
     || pathname === "/health"
     || pathname === "/stable-math-filter"
@@ -13963,7 +12091,14 @@ function isViewerAllowedRequest(method, pathname) {
   );
 }
 
-function sendPasswordLoginHtml(req, res, message) {
+function safeLoginNextPath(raw) {
+  const text = String(raw || "").trim();
+  if (text === "/attack-txt" || text === "/gongjiyu" || text === "/panel") return text;
+  return "/panel";
+}
+
+function sendPasswordLoginHtml(req, res, message, nextPath) {
+  const next = safeLoginNextPath(nextPath || (req && req.url ? new URL(req.url, "http://localhost").searchParams.get("next") : "") || "/panel");
   const errorHtml = message ? `<div class="error">${String(message).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))}</div>` : "";
   const html = `<!doctype html>
 <html lang="zh-CN">
@@ -14007,7 +12142,7 @@ function sendPasswordLoginHtml(req, res, message) {
       try{
         var res=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:password})});
         if(!res.ok){ msg.textContent="密码不对"; btn.disabled=false; return; }
-        location.replace("/panel");
+        location.replace(${JSON.stringify(next)});
       }catch(err){
         msg.textContent="网络异常，请重试";
         btn.disabled=false;
@@ -14021,6 +12156,10 @@ function sendPasswordLoginHtml(req, res, message) {
 
 async function handlePasswordLogin(req, res) {
   try {
+    if (loginRateLimited(req)) {
+      sendJson(res, 429, { ok: false, error: "too many login attempts" });
+      return;
+    }
     const raw = await readRequestBody(req);
     let password = "";
     try {
@@ -14032,9 +12171,11 @@ async function handlePasswordLogin(req, res) {
     }
     const role = passwordOnlyLoginRole(password);
     if (!role) {
+      recordLoginFailure(req);
       sendJsonText(res, 401, safeJsonStringify({ ok: false, error: "bad password" }));
       return;
     }
+    clearLoginFailures(req);
     const text = safeJsonStringify({ ok: true, role });
     res.writeHead(200, commonJsonHeaders({
       "Set-Cookie": panelSessionCookieHeader(role),
@@ -14086,10 +12227,6 @@ async function handleRequest(req, res) {
   }
   const parsedUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const pathname = parsedUrl.pathname;
-  if (req.method === "GET" && pathname === "/converter-history") {
-    sendConverterHistory(req, res, parsedUrl);
-    return;
-  }
   if (req.method === "GET" && pathname === "/login") {
     sendPasswordLoginHtml(req, res, "");
     return;
@@ -14121,7 +12258,16 @@ async function handleRequest(req, res) {
   }
   if (!authRole) {
     if (req.method === "GET" && (pathname === "/" || pathname === "/panel")) {
-      sendPasswordLoginHtml(req, res, "");
+      sendPasswordLoginHtml(req, res, "", "/panel");
+      return;
+    }
+    if (req.method === "GET" && isAttackTxtPublicPath(pathname)) {
+      // 静态资源需登录后同会话访问；未登录统一进登录页，回跳攻击语页
+      if (pathname === "/attack-txt" || pathname === "/gongjiyu") {
+        sendPasswordLoginHtml(req, res, "", "/attack-txt");
+        return;
+      }
+      sendUnauthorized(res);
       return;
     }
     sendUnauthorized(res);
@@ -14152,24 +12298,64 @@ async function handleRequest(req, res) {
       sendPanelState(req, res);
       return;
     }
+    if (req.method === "GET" && pathname === "/robot-state") {
+      sendJson(res, 200, buildRobotStatePayload());
+      return;
+    }
     if (req.method === "GET" && pathname === "/history") {
       sendSharedHistory(req, res, parsedUrl);
       return;
     }
+    if (req.method === "GET" && pathname === "/converter-history") {
+      sendConverterHistory(req, res, parsedUrl);
+      return;
+    }
     if (req.method === "GET" && pathname === "/stable-math-filter") {
+      if ((parsedUrl.searchParams.get("refresh") === "1" || parsedUrl.searchParams.get("refresh") === "true") && authRole !== "admin") {
+        sendForbidden(res);
+        return;
+      }
       await handleStableMathFilterRequest(req, res, parsedUrl);
       return;
     }
     if (req.method === "GET" && pathname === "/exclusion-model") {
+      if ((parsedUrl.searchParams.get("refresh") === "1" || parsedUrl.searchParams.get("refresh") === "true") && authRole !== "admin") {
+        sendForbidden(res);
+        return;
+      }
       await handleExclusionModelRequest(req, res, parsedUrl);
       return;
     }
-    if (req.method === "GET" && pathname === "/backup") {
+    if (req.method === "GET" && pathname === "/download-full-backup") {
+      // 一次性全量备份下载（需已登录面板）；文件在仓库根或 backups/desktop-export
+      const candidates = [
+        path.join(__dirname, "penta5-runner-full-backup.tar.gz"),
+        path.join(__dirname, "backups", "desktop-export", "penta5-runner-full-backup.tar.gz")
+      ];
+      const filePath = candidates.find((p) => fs.existsSync(p));
+      if (!filePath) {
+        sendJson(res, 404, { ok: false, error: "backup archive not found" });
+        return;
+      }
+      const stat = fs.statSync(filePath);
+      res.writeHead(200, {
+        "Content-Type": "application/gzip",
+        "Content-Length": String(stat.size),
+        "Content-Disposition": 'attachment; filename="penta5-runner-full-backup.tar.gz"',
+        "Cache-Control": "no-store"
+      });
+      fs.createReadStream(filePath).pipe(res);
+      return;
+    }
+    if (req.method === "POST" && pathname === "/backup") {
       const file = makeBackup();
-      sendJson(res, 200, { ok: true, backupFile: file, state });
+      sendJson(res, 200, { ok: true, backupFile: file, createdAt: isoNow() });
       return;
     }
     if (req.method === "POST" && pathname === "/sync") {
+      // 拉长本请求超时，避免开奖窗同步被 15s 硬掐（监督 L2 误报 Remote end closed）
+      try { req.setTimeout(SYNC_REQUEST_TIMEOUT); } catch (_) {}
+      try { res.setTimeout(SYNC_REQUEST_TIMEOUT); } catch (_) {}
       let syncTrigger = "manual";
       try {
         const raw = await readRequestBody(req);
@@ -14178,6 +12364,7 @@ async function handleRequest(req, res) {
         // panel-auto：开奖窗前端自动踢同步；勿当 manual，避免每次都即时整包换码
         if (want === "panel-auto" || want === "auto" || want === "auto-draw") syncTrigger = "panel-auto";
         else if (want === "manual") syncTrigger = "manual";
+        else if (want === "supervisor") syncTrigger = "panel-auto";
       } catch (_) {
         syncTrigger = "manual";
       }
@@ -14217,7 +12404,11 @@ async function handleRequest(req, res) {
       sendPanelHtml(req, res);
       return;
     }
-    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /history", "GET /stable-math-filter", "GET /exclusion-model", "POST /sync", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "GET /backup"] });
+    if (req.method === "GET" && isAttackTxtPublicPath(pathname)) {
+      sendAttackTxtAsset(req, res, pathname);
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /robot-state", "GET /history", "GET /converter-history", "GET /stable-math-filter", "GET /exclusion-model", "GET /attack-txt", "POST /sync", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "POST /backup"] });
   } catch (err) {
     sendJson(res, 500, { ok: false, error: err.message || String(err) });
   }
@@ -14228,12 +12419,15 @@ function startServer() {
   addLog("后台常驻服务启动", { port: PORT, sourceApiUrl: SOURCE_API_URL, stateFile: STATE_FILE, autoRefreshMs: AUTO_REFRESH_INTERVAL });
   state.updatedAt = state.updatedAt || isoNow();
 
-  
+
 
 
 // CODEX_SERVER_PERCENT_0400_BEGIN
 const CODEX_PERCENT_FILE = path.join(DATA_DIR, "codex_percent_server.json");
-const CODEX_PERCENT_VERSION = "CODEX_SERVER_PERCENT_0400";
+const CODEX_PERCENT_VERSION = "CODEX_SERVER_PERCENT_0501_SEALED_ROLLING_100_PROOF";
+const CODEX_PERCENT_SELECTION_WINDOW = 100;
+const CODEX_PERCENT_MIN_TRAINING = 100;
+const CODEX_PERCENT_SOURCE = "rds-live-memory-v1";
 const CODEX_PERCENT_HISTORY_LIMIT = 1000;
 const CODEX_PERCENT_POSITIONS = [
   { key: "qian", label: "千位", index: 0 },
@@ -14355,8 +12549,8 @@ function codexPercentPickByRule(records, posIndex, rule) {
 function codexPercentBacktest(records, posIndex, rule) {
   let total = 0;
   let pass = 0;
-  for (let i = 30; i < records.length; i += 1) {
-    const train = records.slice(Math.max(0, i - 80), i);
+  for (let i = CODEX_PERCENT_MIN_TRAINING; i < records.length; i += 1) {
+    const train = records.slice(Math.max(0, i - CODEX_PERCENT_SELECTION_WINDOW), i);
     const digit = codexPercentPickByRule(train, posIndex, rule);
     const actual = records[i].numbers[posIndex];
     if (actual === undefined || actual === null || actual === "") continue;
@@ -14368,11 +12562,12 @@ function codexPercentBacktest(records, posIndex, rule) {
 
 function codexPercentBuildPrediction(records) {
   const latest = records[records.length - 1] || null;
-  const train = latest ? records.slice(0, -1) : records.slice();
+  // 下一期只使用当前已开奖记录中最近 100 期；当前期本身尚未成为待结算目标。
+  const train = records.slice();
   const rules = ["cold16", "cold24", "hot8", "gap"];
   const exclusions = { qian: [], bai: [], shi: [], ge: [] };
   const models = [];
-  if (!latest || train.length < 30) {
+  if (!latest || train.length < CODEX_PERCENT_MIN_TRAINING) {
     return {
       available: false,
       reason: "暂无真实回测",
@@ -14386,7 +12581,7 @@ function codexPercentBuildPrediction(records) {
   for (const pos of CODEX_PERCENT_POSITIONS) {
     const candidates = rules.map((rule) => {
       const stat = codexPercentBacktest(train, pos.index, rule);
-      const digit = codexPercentPickByRule(train.slice(-90), pos.index, rule);
+      const digit = codexPercentPickByRule(train.slice(-CODEX_PERCENT_SELECTION_WINDOW), pos.index, rule);
       return { rule, digit, total: stat.total, pass: stat.pass, rate: stat.rate };
     }).filter((item) => item.digit !== null && item.total > 0 && item.rate !== null)
       .sort((a, b) => (b.rate - a.rate) || (b.total - a.total) || a.digit.localeCompare(b.digit));
@@ -14406,20 +12601,53 @@ function codexPercentBuildPrediction(records) {
       rate: picked.rate,
     });
   }
-  return {
-    available: models.length === CODEX_PERCENT_POSITIONS.length,
-    reason: models.length === CODEX_PERCENT_POSITIONS.length ? "" : "暂无真实回测",
+  const available = models.length === CODEX_PERCENT_POSITIONS.length;
+  const prediction = {
+    available,
+    reason: available ? "" : "历史不足 100 期，暂不生成单码定位",
     afterPeriod: latest ? latest.period : "",
     afterOpenTime: latest ? latest.openTime : "",
     exclusions,
     models,
     savedAt: new Date().toISOString(),
-    note: "服务器端自动记录，最新开奖号不参与训练，关电脑不影响",
+    selectionWindow: CODEX_PERCENT_SELECTION_WINDOW,
+    note: "只用最近 100 期选码；仅累计开奖前封存且之后真实开奖的记录",
+  };
+  return available ? codexPercentSealPrediction(prediction) : prediction;
+}
+
+function codexPercentSealPayload(prediction) {
+  return {
+    version: String(prediction && prediction.version || CODEX_PERCENT_VERSION),
+    afterPeriod: String(prediction && prediction.afterPeriod || ""),
+    exclusions: prediction && prediction.exclusions || {},
+    selectionWindow: Number(prediction && prediction.selectionWindow || 0),
+    sealedAt: String(prediction && prediction.sealedAt || "")
   };
 }
 
+function codexPercentSealPrediction(prediction) {
+  if (!prediction || prediction.available !== true) return prediction;
+  prediction.version = CODEX_PERCENT_VERSION;
+  prediction.selectionWindow = CODEX_PERCENT_SELECTION_WINDOW;
+  prediction.sealedAt = new Date().toISOString();
+  prediction.sealHash = crypto.createHash("sha256").update(JSON.stringify(codexPercentSealPayload(prediction))).digest("hex");
+  prediction.sealed = true;
+  return prediction;
+}
+
+function codexPercentSealIsValid(prediction) {
+  if (!prediction || prediction.available !== true || prediction.sealed !== true) return false;
+  if (String(prediction.version || "") !== CODEX_PERCENT_VERSION) return false;
+  if (Number(prediction.selectionWindow || 0) !== CODEX_PERCENT_SELECTION_WINDOW) return false;
+  if (!/^[a-f0-9]{64}$/i.test(String(prediction.sealHash || ""))) return false;
+  const expected = crypto.createHash("sha256").update(JSON.stringify(codexPercentSealPayload(prediction))).digest("hex");
+  return expected === prediction.sealHash;
+}
+
 function codexPercentEvaluate(prediction, record) {
-  if (!prediction || prediction.available !== true || !prediction.afterPeriod || !record || !record.period) return null;
+  if (!codexPercentSealIsValid(prediction) || !prediction.afterPeriod || !record || !record.period) return null;
+  if (String(prediction.afterPeriod) === String(record.period)) return null;
   const detail = {};
   let overallPass = true;
   for (const pos of CODEX_PERCENT_POSITIONS) {
@@ -14440,6 +12668,9 @@ function codexPercentEvaluate(prediction, record) {
     excludedFromModel: true,
     detail,
     overallPass,
+    predictionSealedAt: String(prediction.sealedAt || ""),
+    predictionSealHash: String(prediction.sealHash || ""),
+    selectionWindow: Number(prediction.selectionWindow || 0),
     checkedAt: new Date().toISOString(),
   };
 }
@@ -14457,38 +12688,30 @@ function codexPercentStats(history, limit) {
 }
 
 function codexPercentTick() {
-  const state = codexPercentReadJson(STATE_FILE, null);
-  const records = codexPercentGetRecords(state);
-  if (!records.length) return codexPercentReadJson(CODEX_PERCENT_FILE, { ok: false, version: CODEX_PERCENT_VERSION, error: "no records", history: [] });
+  // state.json intentionally omits history.  Read the live in-memory history
+  // hydrated from the shared RDS source; never serve a stale disk fallback.
+  const liveState = state && Array.isArray(state.history) && state.history.length
+    ? state
+    : null;
+  const records = codexPercentGetRecords(liveState);
+  if (!records.length) {
+    return {
+      ok: false,
+      version: CODEX_PERCENT_VERSION,
+      source: CODEX_PERCENT_SOURCE,
+      error: "shared-rds-history-not-ready",
+      history: []
+    };
+  }
   const latest = records[records.length - 1];
   const store = codexPercentReadJson(CODEX_PERCENT_FILE, { version: CODEX_PERCENT_VERSION, history: [], pending: null });
+  if (store.source !== CODEX_PERCENT_SOURCE || store.version !== CODEX_PERCENT_VERSION) {
+    store.history = [];
+    store.pending = null;
+  }
   if (!Array.isArray(store.history)) store.history = [];
 
-  // CODEX_SERVER_PERCENT_BACKFILL_0401_BEGIN
-  if (store.history.length < CODEX_PERCENT_HISTORY_LIMIT && records.length >= 36) {
-    const startIndex = Math.max(31, records.length - CODEX_PERCENT_HISTORY_LIMIT);
-    const backfilled = [];
-    for (let i = startIndex; i < records.length; i += 1) {
-      const trainRecords = records.slice(0, i);
-      if (trainRecords.length < 31) continue;
-      const prediction = codexPercentBuildPrediction(trainRecords);
-      if (!prediction || prediction.available !== true) continue;
-      const evaluated = codexPercentEvaluate(prediction, records[i]);
-      if (!evaluated) continue;
-      backfilled.unshift(evaluated);
-    }
-    const mergedHistory = [];
-    const seenHistoryIds = new Set();
-    for (const item of backfilled.concat(store.history)) {
-      if (!item || !item.id || seenHistoryIds.has(item.id)) continue;
-      seenHistoryIds.add(item.id);
-      mergedHistory.push(item);
-    }
-    if (mergedHistory.length >= store.history.length) {
-      store.history = mergedHistory.slice(0, CODEX_PERCENT_HISTORY_LIMIT);
-    }
-  }
-  // CODEX_SERVER_PERCENT_BACKFILL_0401_END
+  // 真实百分比只认服务当时落盘的 pending 封存；禁止启动后用历史开奖号回填成绩。
 
   if (store.pending && store.pending.available === true && store.pending.afterPeriod && String(store.pending.afterPeriod) !== String(latest.period)) {
     const evaluated = codexPercentEvaluate(store.pending, latest);
@@ -14504,6 +12727,7 @@ function codexPercentTick() {
 
   store.ok = true;
   store.version = CODEX_PERCENT_VERSION;
+  store.source = CODEX_PERCENT_SOURCE;
   store.updatedAt = new Date().toISOString();
   store.latestRecord = latest;
   store.latestPeriod = latest.period;
@@ -14522,8 +12746,7 @@ function codexPercentTick() {
 function codexPercentSendJson(res, data) {
   res.writeHead(200, {
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-store"
   });
   res.end(JSON.stringify(data));
 }
@@ -14532,8 +12755,7 @@ function codexPercentSendScript(res, data) {
   const json = JSON.stringify(data).replace(/<\/script/gi, "<\\/script");
   res.writeHead(200, {
     "Content-Type": "application/javascript; charset=utf-8",
-    "Cache-Control": "no-store",
-    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-store"
   });
   res.end("window.__CODEX_PERCENT_SERVER__=" + json + ";if(window.__CODEX_RENDER_SERVER_PERCENT__){window.__CODEX_RENDER_SERVER_PERCENT__(window.__CODEX_PERCENT_SERVER__);}");
 }
@@ -14546,18 +12768,27 @@ const server = http.createServer((req, res) => {
   res.setTimeout(SERVER_REQUEST_TIMEOUT, () => {
     res.destroy();
   });
+  const requestPath = req.url.split("?")[0];
+  const restrictedSpecialPath = requestPath === "/codex-percent-state"
+    || requestPath === "/codex-percent-state.js"
+    || requestPath === "/enhanced-state.js"
+    || requestPath === "/enhanced.html";
+  if (restrictedSpecialPath && !authRoleForRequest(req)) {
+    sendUnauthorized(res);
+    return;
+  }
 
   // CODEX_SERVER_PERCENT_ROUTE_0400_BEGIN
-  if (req.method === "GET" && req.url.split("?")[0] === "/codex-percent-state") {
+  if (req.method === "GET" && requestPath === "/codex-percent-state") {
     return codexPercentSendJson(res, codexPercentTick());
   }
-  if (req.method === "GET" && req.url.split("?")[0] === "/codex-percent-state.js") {
+  if (req.method === "GET" && requestPath === "/codex-percent-state.js") {
     return codexPercentSendScript(res, codexPercentTick());
   }
   // CODEX_SERVER_PERCENT_ROUTE_0400_END
 
   // CODEX_LIVE_STATE_SCRIPT_0145: JSONP-style live state sync, avoids browser fetch/CORS blocks.
-  if (req.method === "GET" && req.url.split("?")[0] === "/enhanced-state.js") {
+  if (req.method === "GET" && requestPath === "/enhanced-state.js") {
     try {
       // 使用内存态（history 来自 RDS 灌注），禁止把磁盘 state.json 里的旧 history 副本推给浏览器
       const payload = Object.assign({}, state || {}, { ok: true, historyPersistedInRds: true });
@@ -14565,19 +12796,18 @@ const server = http.createServer((req, res) => {
       const js = `window.__PENTA5_LIVE_STATE__ = ${safeJson};\nif (typeof window.__PENTA5_APPLY_LIVE_STATE__ === "function") { window.__PENTA5_APPLY_LIVE_STATE__(window.__PENTA5_LIVE_STATE__); }\n`;
       res.writeHead(200, {
         "Content-Type": "application/javascript; charset=utf-8",
-        "Cache-Control": "no-store",
-        "Access-Control-Allow-Origin": "*"
+        "Cache-Control": "no-store"
       });
       res.end(js);
     } catch (error) {
-      res.writeHead(500, { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
+      res.writeHead(500, { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store" });
       res.end(`console.error(${JSON.stringify(String(error && error.message ? error.message : error))});`);
     }
     return;
   }
 
   // CODEX_BOOTSTRAP_ROUTE_0135: serve enhanced page with in-memory state (history from RDS).
-  if (req.method === "GET" && req.url.split("?")[0] === "/enhanced.html") {
+  if (req.method === "GET" && requestPath === "/enhanced.html") {
     try {
       let html = fs.readFileSync(path.join(__dirname, "enhanced.html"), "utf8");
       const payload = Object.assign({}, state || {}, { ok: true, historyPersistedInRds: true });
@@ -14590,36 +12820,19 @@ window.__PENTA5_BOOTSTRAP_STATE__ = ${safeJson};
       html = html.replace(/<body[^>]*>/i, (tag) => `${tag}\n${bootScript}`);
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-store",
-        "Access-Control-Allow-Origin": "*"
-      });
-      res.end(html);
-    } catch (error) {
-      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" });
-      res.end(JSON.stringify({ ok: false, error: String(error && error.message ? error.message : error) }));
-    }
-    return;
-  }
-
-  if (req.method === "GET" && req.url.split("?")[0] === "/enhanced.html") {
-    try {
-      const html = fs.readFileSync(path.join(__dirname, "enhanced.html"));
-      res.writeHead(200, {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-store",
-        "Access-Control-Allow-Origin": "*"
+        "Cache-Control": "no-store"
       });
       res.end(html);
     } catch (error) {
       res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: String(error.message || error) }));
+      res.end(JSON.stringify({ ok: false, error: String(error && error.message ? error.message : error) }));
     }
     return;
   }
 
     handleRequest(req, res);
   });
-  
+
 // CODEX_SERVER_PERCENT_TIMER_0400_BEGIN
 setTimeout(() => {
   try { codexPercentTick(); } catch (error) { console.error("[CodexPercent] startup tick failed", error && error.message ? error.message : error); }
@@ -14629,13 +12842,13 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 // CODEX_SERVER_PERCENT_TIMER_0400_END
 
-server.requestTimeout = SERVER_REQUEST_TIMEOUT;
-server.headersTimeout = SERVER_REQUEST_TIMEOUT + 5000;
+server.requestTimeout = Math.max(SERVER_REQUEST_TIMEOUT, SYNC_REQUEST_TIMEOUT);
+server.headersTimeout = Math.max(SERVER_REQUEST_TIMEOUT, SYNC_REQUEST_TIMEOUT) + 5000;
 server.keepAliveTimeout = 3000;
 server.maxRequestsPerSocket = 100;
 
-server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Penta5 backend runner listening on http://0.0.0.0:${PORT}`);
+server.listen(PORT, BIND_HOST, () => {
+    console.log(`Penta5 backend runner listening on http://${BIND_HOST}:${PORT}`);
     // 启动巡检延后：先让 /health /state 与 RDS 灌注可用，避免一启动就整包重生堵死探针
     setTimeout(() => {
       try { runModelWatchdog("startup", { save: true, integrityOnly: true }); } catch (error) {
