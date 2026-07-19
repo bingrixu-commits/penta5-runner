@@ -1762,11 +1762,12 @@ var DIGIT_POOL = window.DIGIT_POOL;
 <script id="codex-server-percent-panel-0400">
 (function () {
   "use strict";
+  // 与封存接口 /codex-percent-state 对齐：qian/bai/shi/ge = 千百十个（球一~球四）；球五不参与
   var POSITIONS = [
-    { key: "wan", label: "千位" },
-    { key: "qian", label: "百位" },
-    { key: "bai", label: "十位" },
-    { key: "shi", label: "个位" }
+    { key: "qian", label: "千位" },
+    { key: "bai", label: "百位" },
+    { key: "shi", label: "十位" },
+    { key: "ge", label: "个位" }
   ];
   function pct(value) {
     if (!isFinite(value)) return "-";
@@ -1778,13 +1779,13 @@ var DIGIT_POOL = window.DIGIT_POOL;
       panel = document.createElement("section");
       panel.id = "codex-percent-panel";
       panel.className = "codex-percent-card";
-      panel.innerHTML = '<div class="codex-percent-head"><div class="codex-percent-title">百分比对照 / 服务器自动验证</div><div class="codex-percent-badge">CODEX_SERVER_PERCENT_0400</div></div><div class="codex-percent-body" id="codex-percent-panel-body">等待服务器记录</div>';
+      panel.innerHTML = '<div class="codex-percent-head"><div class="codex-percent-title">百分比对照 / 服务器自动验证</div><div class="codex-percent-badge">CODEX_SERVER_PERCENT_0500_SEALED_100</div></div><div class="codex-percent-body" id="codex-percent-panel-body">等待服务器记录</div>';
       document.body.appendChild(panel);
     }
     var title = panel.querySelector(".codex-percent-title");
     var badge = panel.querySelector(".codex-percent-badge");
     if (title) title.textContent = "百分比对照 / 服务器自动验证";
-    if (badge) badge.textContent = "CODEX_SERVER_PERCENT_0400";
+    if (badge) badge.textContent = "CODEX_SERVER_PERCENT_0500_SEALED_100";
     return panel;
   }
   function esc(value) {
@@ -1810,8 +1811,7 @@ var DIGIT_POOL = window.DIGIT_POOL;
     }
     var latest = data.latestRecord || {};
     var pending = data.pending || {};
-    var h20 = data.stats20 || { total: 0, overallOk: 0, overallRate: 0, positions: {} };
-    var h50 = data.stats50 || { total: 0, overallOk: 0, overallRate: 0, positions: {} };
+    var h100 = data.stats100 || { total: 0, overallOk: 0, overallRate: 0, positions: {} };
     var rows = (data.history || []).slice(0, 10).map(function (item) {
       var cells = POSITIONS.map(function (pos) {
         var d = item.detail && item.detail[pos.key];
@@ -1822,17 +1822,16 @@ var DIGIT_POOL = window.DIGIT_POOL;
     }).join("");
     if (!rows) rows = '<tr><td colspan="7">服务器已开始记录，等下一期开奖后生成第一条验证</td></tr>';
     var posBoxes = POSITIONS.map(function (pos) {
-      var s = h20.positions && h20.positions[pos.key] ? h20.positions[pos.key] : { ok: 0, total: 0, rate: 0 };
+      var s = h100.positions && h100.positions[pos.key] ? h100.positions[pos.key] : { ok: 0, total: 0, rate: 0 };
       var current = pending.exclusions && pending.exclusions[pos.key] ? pending.exclusions[pos.key].join(',') : '-';
-      return '<div class="codex-percent-box"><div class="codex-percent-label">' + pos.label + '近20期</div><div class="codex-percent-value">' + (s.total ? pct(s.rate) : '-') + '</div><div class="codex-percent-sub">' + s.ok + '/' + s.total + '，当前排：' + esc(current) + '</div></div>';
+      return '<div class="codex-percent-box"><div class="codex-percent-label">' + pos.label + '近100期封存</div><div class="codex-percent-value">' + (s.total >= 100 ? pct(s.rate) : '数据不足') + '</div><div class="codex-percent-sub">' + s.ok + '/' + s.total + '，随机基线90.00%，当前排：' + esc(current) + '</div></div';
     }).join("");
     body.innerHTML = '<div class="codex-percent-grid">' +
       '<div class="codex-percent-box"><div class="codex-percent-label">服务器最新期号 / 开奖</div><div class="codex-percent-value">' + esc(latest.period || '-') + ' / ' + esc((latest.numbers || []).join(' ')) + '</div><div class="codex-percent-sub">服务器自动读取 state.json</div></div>' +
-      '<div class="codex-percent-box"><div class="codex-percent-label">近20期整体</div><div class="codex-percent-value">' + (h20.total ? pct(h20.overallRate) : '-') + '</div><div class="codex-percent-sub">' + h20.overallOk + '/' + h20.total + '，随机基准65.61%</div></div>' +
-      '<div class="codex-percent-box"><div class="codex-percent-label">近50期整体</div><div class="codex-percent-value">' + (h50.total ? pct(h50.overallRate) : '-') + '</div><div class="codex-percent-sub">' + h50.overallOk + '/' + h50.total + '，服务器保存</div></div>' +
-      '<div class="codex-percent-box"><div class="codex-percent-label">当前待验证</div><div class="codex-percent-value">' + esc(pending.afterPeriod || '-') + '</div><div class="codex-percent-sub">关电脑也继续记</div></div>' +
+      '<div class="codex-percent-box"><div class="codex-percent-label">近100期整体封存</div><div class="codex-percent-value">' + (h100.total >= 100 ? pct(h100.overallRate) : '数据不足') + '</div><div class="codex-percent-sub">' + h100.overallOk + '/' + h100.total + '，随机基线65.61%</div></div>' +
+      '<div class="codex-percent-box"><div class="codex-percent-label">当前待验证</div><div class="codex-percent-value">' + esc(pending.afterPeriod || '-') + '</div><div class="codex-percent-sub">近100期选码，开奖前封存</div></div>' +
       posBoxes + '</div>' +
-      '<div class="codex-percent-row"><span class="codex-pill wait">待验证：' + exclusionsText(pending.exclusions) + '</span><span class="codex-pill">随机基准：单位置90.00%，四位65.61%</span></div>' +
+      '<div class="codex-percent-row"><span class="codex-pill wait">待验证：' + exclusionsText(pending.exclusions) + '</span><span class="codex-pill">只统计封存满100期；随机基线：单位置90.00%，四位65.61%</span></div>' +
       '<div class="codex-percent-table-wrap"><table class="codex-percent-table"><thead><tr><th>验证期号</th><th>开奖号</th><th>千位</th><th>百位</th><th>十位</th><th>个位</th><th>整体</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
   function load() {

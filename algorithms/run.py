@@ -201,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stdin-json", action="store_true", help="从 stdin 读 JSON")
     p.add_argument("--rds", action="store_true", help="从 RDS official_draws 读取")
     p.add_argument("--history-url", help="从后端 /history 拉取")
-    p.add_argument("--limit", type=int, default=0, help="RDS 最多读取期数，0=全部")
+    p.add_argument("--limit", type=int, default=1200, help="RDS 最多读取期数，0=全部（长跑建议 <=1200 防 OOM）")
     p.add_argument("--oldest-first", action="store_true", help="输入已是从旧到新")
     p.add_argument("--out", default=str(DEFAULT_OUT), help="结果 JSON 输出路径")
     p.add_argument("--quiet", action="store_true", help="不打印控制台报告，只写文件")

@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="攻击语转">
+  <link rel="manifest" href="/attack-txt-manifest.json">
+  <link rel="apple-touch-icon" href="/attack-txt-icon.svg">
+  <link rel="icon" href="/attack-txt-icon.svg" type="image/svg+xml">
+  <title>攻击语转TXT</title>
+  <style>
+    :root{
+      --bg:#0f172a;--card:#111827;--ink:#f8fafc;--muted:#94a3b8;--line:#334155;
+      --blue:#2563eb;--green:#059669;--orange:#ea580c;--slate:#334155;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:linear-gradient(180deg,#0b1220 0%,var(--bg) 55%,#111827 100%);color:var(--ink);font-family:"PingFang SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{padding:16px 14px calc(24px + env(safe-area-inset-bottom));}
+    .wrap{max-width:720px;margin:0 auto}
+    .head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
+    h1{margin:0;font-size:22px;font-weight:900}
+    .sub{margin-top:6px;color:var(--muted);font-size:13px;line-height:1.55}
+    .link{color:#93c5fd;text-decoration:none;font-size:13px;font-weight:800;white-space:nowrap}
+    .card{background:rgba(17,24,39,.92);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 12px 40px rgba(0,0,0,.28)}
+    label{display:block;font-size:14px;font-weight:800;margin:0 0 8px}
+    textarea{
+      width:100%;min-height:140px;resize:vertical;border:1px solid #475569;border-radius:12px;
+      background:#0b1220;color:var(--ink);padding:12px;font-size:15px;line-height:1.5;outline:none;
+    }
+    textarea:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.25)}
+    .sec{margin-top:12px;padding-top:10px;border-top:1px dashed #334155}
+    .sec-title{font-size:13px;font-weight:900;color:#fdba74;margin:0 0 8px}
+    .btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .btns .span2{grid-column:1 / -1}
+    .toolbar{
+      display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px;
+    }
+    .toolbar button{flex:1 1 calc(50% - 4px);min-width:140px}
+    @media (min-width:560px){
+      .toolbar button{flex:1 1 auto;min-width:0}
+    }
+    .pager{
+      display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;
+      color:#cbd5e1;font-size:12px;font-weight:800;line-height:1.5;
+    }
+    .pager .nav{display:flex;gap:8px;margin-left:auto}
+    .pager button{padding:8px 12px;font-size:13px}
+    button{
+      border:0;border-radius:11px;padding:12px 10px;font-size:14px;font-weight:900;cursor:pointer;
+      -webkit-tap-highlight-color:transparent;
+    }
+    button:disabled{opacity:.5;cursor:default}
+    button.orange{background:var(--orange);color:#fff}
+    button.primary{background:var(--blue);color:#fff}
+    button.green{background:var(--green);color:#fff}
+    button.secondary{background:#1e293b;color:#e2e8f0;border:1px solid #475569}
+    .status{margin-top:12px;padding:10px 12px;border-radius:10px;background:#1e293b;color:#cbd5e1;font-size:13px;line-height:1.5;font-weight:700;word-break:break-word}
+    .status.ok{background:rgba(5,150,105,.18);color:#6ee7b7}
+    .status.err{background:rgba(220,38,38,.18);color:#fca5a5}
+    .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .chip{background:#0b1220;border:1px solid #334155;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;color:#e2e8f0}
+    .preview{
+      width:100%;min-height:110px;max-height:36vh;resize:vertical;border:1px solid #334155;border-radius:12px;
+      background:#020617;color:#e2e8f0;padding:12px;font-size:13px;line-height:1.45;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    .hint{margin-top:10px;color:var(--muted);font-size:12px;line-height:1.6}
+    .install{margin-top:12px;padding:12px;border-radius:12px;border:1px dashed #475569;background:rgba(37,99,235,.08);color:#cbd5e1;font-size:12px;line-height:1.6}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <h1>三定/四定转TXT</h1>
+        <div class="sub">三定支持千百十 / 百十个 / 千十个(万十个) / 千百个，空位为 x；排除后按 RDS 真实旧码回删到 490–499；逗号隔开、各字收尾；数值升序不跳码。</div>
+      </div>
+      <a class="link" href="/panel">回面板</a>
+    </div>
+
+    <div class="card">
+      <div class="toolbar" id="quickToolbar">
+        <button type="button" class="secondary" id="btnPaste">读取剪贴板</button>
+        <button type="button" class="secondary" id="btnClear">清空</button>
+        <button type="button" class="secondary" id="btnPreviewCount">预览组数</button>
+        <button type="button" class="green" id="btnDownload" disabled>确认生成TXT</button>
+        <button type="button" class="primary" id="btnCopyPage" disabled>复制本页（逗号+各）</button>
+      </div>
+
+      <label for="attackInput">攻击语</label>
+      <textarea id="attackInput" placeholder="粘贴三定/四定攻击语，例如：&#10;千123456789百234567890十134567890三定千百十合123456780千百十二数合34567除对数16-19各&#10;百十个：百134…+123…个123…三定千百十合…对数06各（空位输出 x）&#10;三定的千百十二数合只计算千、百、十两两合尾；也支持：千十个/万十个、千百个、千百个合…、对数16-19（可省略「除」）" autofocus></textarea>
+
+      <div class="sec">
+        <div class="sec-title">三定排除完成后，只用阿里 RDS 真实旧号回删到 490–499 组</div>
+        <div class="btns">
+          <button type="button" class="orange span2" id="btnThreeBackDelete">三定转换（回删490-499）</button>
+          <button type="button" class="primary span2" id="btnConvert">四定转换</button>
+        </div>
+      </div>
+
+      <div class="status" id="status">粘贴攻击语后点「三定转换」。结果按 000→999 升序；每页 250 组，用「复制本页」分段带走。</div>
+      <div class="meta" id="meta" hidden></div>
+
+      <div class="pager" id="pager" hidden>
+        <span id="pagerInfo">完整计算结果（仅供核对，尚未生成TXT）</span>
+        <div class="nav">
+          <button type="button" class="secondary" id="btnPrevPage" disabled>上一页</button>
+          <button type="button" class="secondary" id="btnNextPage" disabled>下一页</button>
+        </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <label for="preview">本页预览</label>
+        <textarea id="preview" class="preview" readonly placeholder="例：103x / x346 / 1x03 / 10x3，…各"></textarea>
+      </div>
+
+      <div class="btns" style="margin-top:10px">
+        <button type="button" class="green span2" id="btnOneClickCopy" disabled>一键复制本页（逗号+各）</button>
+      </div>
+
+      <div class="hint">确认生成TXT=下载文件；复制本页=当前页逗号分隔并以「各」收尾（每页250组）。攻击语与转换结果会保存在本机，刷新不丢；点「清空」才清除。</div>
+      <div class="install">添加到主屏幕：Safari/Chrome 菜单 →「添加到主屏幕」。</div>
+    </div>
+  </div>
+
+  <script src="/txt_attack_convert.js"></script>
+  <script>
+(function(){
+  var PAGE_SIZE=250;
+  var STORE_KEY="penta5AttackTxtPageV1";
+  var HISTORY_KEY="penta5AttackTxtHistoryV1";
+  var HISTORY_TTL_MS=30*60*1000;
+  var input=document.getElementById("attackInput");
+  var preview=document.getElementById("preview");
+  var statusEl=document.getElementById("status");
+  var meta=document.getElementById("meta");
+  var pager=document.getElementById("pager");
+  var pagerInfo=document.getElementById("pagerInfo");
+  var btnPaste=document.getElementById("btnPaste");
+  var btnClear=document.getElementById("btnClear");
+  var btnPreviewCount=document.getElementById("btnPreviewCount");
+  var btnThree=document.getElementById("btnThreeBackDelete");
+  var btnConvert=document.getElementById("btnConvert");
+  var btnCopyPage=document.getElementById("btnCopyPage");
+  var btnOneClickCopy=document.getElementById("btnOneClickCopy");
+  var btnDownload=document.getElementById("btnDownload");
+  var btnPrevPage=document.getElementById("btnPrevPage");
+  var btnNextPage=document.getElementById("btnNextPage");
+  var lastResult=null;
+  var pageIndex=0;
+  var txtGenerated=false;
+  var lastMode="";
+  var saveTimer=null;
+  var api=window.Penta5AttackTxtConvert;
+  var historyCache=null,historyCacheAt=0;
+
+  function setStatus(text,kind){
+    statusEl.textContent=String(text||"");
+    statusEl.className="status"+(kind==="ok"?" ok":kind==="err"?" err":"");
+  }
+  function safeParse(raw){
+    try{return raw?JSON.parse(raw):null;}catch(e){return null;}
+  }
+  function persistPage(){
+    try{
+      var payload={
+        v:1,
+        savedAt:Date.now(),
+        attackText:String(input&&input.value||""),
+        pageIndex:pageIndex,
+        txtGenerated:!!txtGenerated,
+        mode:lastMode||"",
+        status:String(statusEl&&statusEl.textContent||""),
+        statusKind:/ok/.test(statusEl&&statusEl.className||"")?"ok":(/err/.test(statusEl&&statusEl.className||"")?"err":""),
+        result:null
+      };
+      if(lastResult&&lastResult.ok){
+        payload.result={
+          ok:true,
+          width:lastResult.width||null,
+          count:lastResult.count||0,
+          tokens:Array.isArray(lastResult.tokens)?lastResult.tokens.slice():tokensOf(lastResult),
+          text:String(lastResult.text||""),
+          fileName:String(lastResult.fileName||""),
+          label:String(lastResult.label||""),
+          note:String(lastResult.note||""),
+          afterFilter:lastResult.afterFilter!=null?lastResult.afterFilter:null,
+          targetRemain:lastResult.targetRemain!=null?lastResult.targetRemain:null,
+          deletedUnique:lastResult.deletedUnique!=null?lastResult.deletedUnique:null,
+          scanned:lastResult.scanned!=null?lastResult.scanned:null,
+          source:String(lastResult.source||"")
+        };
+      }
+      localStorage.setItem(STORE_KEY,JSON.stringify(payload));
+    }catch(e){}
+  }
+  function schedulePersist(){
+    if(saveTimer)clearTimeout(saveTimer);
+    saveTimer=setTimeout(persistPage,200);
+  }
+  function restorePage(){
+    var snap=safeParse(localStorage.getItem(STORE_KEY));
+    if(!snap||snap.v!==1)return false;
+    if(input)input.value=String(snap.attackText||"");
+    pageIndex=Math.max(0,Number(snap.pageIndex||0)||0);
+    txtGenerated=!!snap.txtGenerated;
+    lastMode=String(snap.mode||"");
+    if(snap.result&&snap.result.ok){
+      lastResult=snap.result;
+      setMeta(lastResult);
+      renderPager();
+      var pages=pageCountOf(lastResult);
+      var msg=String(snap.status||"")||("已恢复上次结果："+(lastResult.label||"TXT")+"，"+lastResult.count+" 组｜共 "+pages+" 页。刷新未丢，可直接复制。");
+      setStatus(msg,snap.statusKind==="err"?"err":"ok");
+      return true;
+    }
+    if(String(snap.attackText||"").trim()){
+      setStatus(String(snap.status||"已恢复上次攻击语。刷新后仍保留，可直接再转换。"),snap.statusKind==="err"?"err":"ok");
+      return true;
+    }
+    return false;
+  }
+  function persistHistory(rows){
+    try{
+      localStorage.setItem(HISTORY_KEY,JSON.stringify({
+        savedAt:Date.now(),
+        history:Array.isArray(rows)?rows:[]
+      }));
+    }catch(e){}
+  }
+  function restoreHistory(){
+    var snap=safeParse(localStorage.getItem(HISTORY_KEY));
+    if(!snap||!Array.isArray(snap.history)||!snap.history.length)return null;
+    if(snap.savedAt&&(Date.now()-Number(snap.savedAt))>HISTORY_TTL_MS)return null;
+    return snap.history;
+  }
+  function clearPersisted(){
+    try{
+      localStorage.removeItem(STORE_KEY);
+    }catch(e){}
+  }
+  function unmaskToken(token){
+    if(api&&typeof api.threeDingUnmaskToken==="function")return api.threeDingUnmaskToken(token)||"";
+    var t=String(token||"").replace(/各/g,"").trim();
+    if(/^\d{3}$/.test(t))return t;
+    if(/^\d{3}[xX+]$/.test(t))return t.slice(0,3);
+    if(/^[xX+\d]{4}$/.test(t)&&(t.match(/[xX+]/g)||[]).length===1)return t.replace(/[xX+]/g,"");
+    var digits=t.replace(/\D/g,"");
+    return /^\d{3}$/.test(digits)?digits:t;
+  }
+  function tokensOf(result){
+    if(!result)return [];
+    if(Array.isArray(result.tokens)&&result.tokens.length)return result.tokens.slice();
+    var text=String(result.text||"").replace(/各+$/,"").trim();
+    if(!text)return [];
+    if(text.indexOf(",")>=0){
+      return text.split(",").map(function(s){return unmaskToken(s);}).filter(Boolean);
+    }
+    return text.split(/\s+/).map(function(s){return unmaskToken(s);}).filter(Boolean);
+  }
+  function pageCountOf(result){
+    var n=tokensOf(result).length;
+    return n?Math.ceil(n/PAGE_SIZE):0;
+  }
+  function pageSlice(result,idx){
+    var toks=tokensOf(result);
+    var start=idx*PAGE_SIZE;
+    return toks.slice(start,start+PAGE_SIZE);
+  }
+  function pageText(result,idx){
+    var slice=pageSlice(result,idx);
+    if(!slice.length)return "";
+    var allThree=slice.every(function(t){return /^\d{3}$/.test(String(t));});
+    if(allThree&&api&&typeof api.formatThreeDingGeList==="function"){
+      var combo=null;
+      if(result&&result.comboName)combo={name:result.comboName,blankIndex:result.blankIndex,positions:result.positions};
+      else if(result&&result.blankIndex!=null)combo=result.blankIndex;
+      return api.formatThreeDingGeList(slice,null,combo);
+    }
+    return slice.map(function(t){return String(t);}).join(",")+"各";
+  }
+  function setMeta(result){
+    if(!result||!result.ok){meta.hidden=true;meta.innerHTML="";return;}
+    meta.hidden=false;
+    var chips=[
+      '<span class="chip">'+(result.label||"TXT")+'</span>',
+      '<span class="chip">'+String(result.count||0)+' 组</span>',
+      '<span class="chip">每页 '+PAGE_SIZE+'</span>'
+    ];
+    if(result.comboName)chips.push('<span class="chip">'+String(result.comboName)+'三定</span>');
+    if(result.blankIndex!=null)chips.push('<span class="chip">空位 x</span>');
+    if(result.afterFilter!=null)chips.push('<span class="chip">排除后 '+result.afterFilter+'</span>');
+    if(result.targetRemain!=null)chips.push('<span class="chip">目标剩 '+result.targetRemain+'</span>');
+    if(result.deletedUnique!=null)chips.push('<span class="chip">已删旧码 '+result.deletedUnique+'</span>');
+    if(result.scanned!=null)chips.push('<span class="chip">扫 '+result.scanned+' 期</span>');
+    meta.innerHTML=chips.join("");
+  }
+  function renderPager(){
+    var pages=pageCountOf(lastResult);
+    var has=!!(lastResult&&lastResult.ok&&pages>0);
+    pager.hidden=!has;
+    btnCopyPage.disabled=!has;
+    if(btnOneClickCopy)btnOneClickCopy.disabled=!has;
+    btnDownload.disabled=!has;
+    if(!has){
+      preview.value="";
+      pagerInfo.textContent="完整计算结果（仅供核对，尚未生成TXT）";
+      btnPrevPage.disabled=true;
+      btnNextPage.disabled=true;
+      return;
+    }
+    if(pageIndex>=pages)pageIndex=pages-1;
+    if(pageIndex<0)pageIndex=0;
+    var start=pageIndex*PAGE_SIZE+1;
+    var end=Math.min((pageIndex+1)*PAGE_SIZE,tokensOf(lastResult).length);
+    var checkNote=txtGenerated?"已生成TXT":"仅供核对，尚未生成TXT";
+    pagerInfo.textContent="完整计算结果（"+checkNote+"）｜第"+(pageIndex+1)+"/"+pages+"页（第"+start+"–"+end+"组；每页"+PAGE_SIZE+"组）";
+    btnPrevPage.disabled=pageIndex<=0;
+    btnNextPage.disabled=pageIndex>=pages-1;
+    preview.value=pageText(lastResult,pageIndex);
+  }
+  function setBusy(busy,mode){
+    [btnPaste,btnClear,btnPreviewCount,btnThree,btnConvert,btnPrevPage,btnNextPage].forEach(function(b){if(b)b.disabled=!!busy;});
+    if(!busy){
+      btnThree.textContent="三定转换（回删490-499）";
+      btnConvert.textContent="四定转换";
+      renderPager();
+      return;
+    }
+    btnCopyPage.disabled=true;
+    if(btnOneClickCopy)btnOneClickCopy.disabled=true;
+    btnDownload.disabled=true;
+    if(mode==="three")btnThree.textContent="回删中…";
+    else if(mode==="four")btnConvert.textContent="转换中…";
+  }
+  function applyResult(result,opts){
+    opts=opts&&typeof opts==="object"?opts:{};
+    lastResult=result&&result.ok?result:null;
+    if(!opts.keepPage)pageIndex=0;
+    if(!opts.keepGenerated)txtGenerated=false;
+    if(!result||!result.ok){
+      renderPager();
+      setMeta(null);
+      setStatus((result&&result.message)||"转换失败。","err");
+      schedulePersist();
+      return;
+    }
+    setMeta(result);
+    renderPager();
+    var pages=pageCountOf(lastResult);
+    setStatus("已转换："+result.label+"，"+result.count+" 组（升序不跳码）。共 "+pages+" 页，可用「复制本页」分段带走。"+(result.note?" "+result.note:""),"ok");
+    schedulePersist();
+  }
+  function copyText(value,okMsg){
+    value=String(value||"");
+    if(!value){setStatus("没有可复制内容。","err");return;}
+    function done(){setStatus(okMsg||("已复制 "+value.length+" 字。"),"ok");schedulePersist();}
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(value).then(done).catch(function(){
+        preview.value=value;preview.focus();preview.select();
+        try{document.execCommand("copy");done();}catch(e){setStatus("复制失败，请长按预览区手动复制。","err");}
+      });
+    }else{
+      preview.value=value;preview.focus();preview.select();
+      try{document.execCommand("copy");done();}catch(e){setStatus("复制失败，请长按预览区手动复制。","err");}
+    }
+  }
+  function loadConverterHistory(){
+    var now=Date.now();
+    if(historyCache&&(now-historyCacheAt)<60000)return Promise.resolve(historyCache);
+    var cached=restoreHistory();
+    if(cached&&cached.length){
+      historyCache=cached;
+      historyCacheAt=Date.now();
+      // 后台静默刷新，不挡本次转换
+      fetch("/converter-history?limit=1500",{credentials:"same-origin",cache:"no-store"})
+        .then(function(res){return res.ok?res.json():null;})
+        .then(function(data){
+          if(!data||data.ok===false)return;
+          var rows=Array.isArray(data.history)?data.history:[];
+          if(!rows.length)return;
+          historyCache=rows;historyCacheAt=Date.now();
+          persistHistory(rows);
+        }).catch(function(){});
+      return Promise.resolve(cached);
+    }
+    return fetch("/converter-history?limit=1500",{credentials:"same-origin",cache:"no-store"})
+      .then(function(res){
+        if(!res.ok)throw new Error("历史接口 HTTP "+res.status);
+        return res.json();
+      })
+      .then(function(data){
+        if(!data||data.ok===false)throw new Error((data&&data.error)||"RDS 共享历史未就绪");
+        var rows=Array.isArray(data.history)?data.history:[];
+        if(!rows.length)throw new Error("历史为空，无法回删旧码");
+        historyCache=rows;historyCacheAt=Date.now();
+        persistHistory(rows);
+        return rows;
+      });
+  }
+  function doPaste(){
+    if(!(navigator.clipboard&&navigator.clipboard.readText)){
+      setStatus("当前浏览器不支持读取剪贴板，请长按输入框粘贴。","err");
+      return;
+    }
+    navigator.clipboard.readText().then(function(text){
+      input.value=String(text||"");
+      setStatus("已读取剪贴板。","ok");
+      schedulePersist();
+    }).catch(function(){
+      setStatus("读取剪贴板失败，请手动粘贴。","err");
+    });
+  }
+  function doClear(){
+    input.value="";
+    lastResult=null;
+    pageIndex=0;
+    txtGenerated=false;
+    lastMode="";
+    setMeta(null);
+    renderPager();
+    clearPersisted();
+    setStatus("已清空（含本机缓存）。");
+  }
+  function doPreviewCount(){
+    if(!lastResult||!lastResult.ok){
+      setStatus("请先转换，再预览组数。","err");
+      return;
+    }
+    var pages=pageCountOf(lastResult);
+    var start=pageIndex*PAGE_SIZE+1;
+    var end=Math.min((pageIndex+1)*PAGE_SIZE,tokensOf(lastResult).length);
+    setStatus("共 "+lastResult.count+" 组｜"+pages+" 页｜当前第"+(pageIndex+1)+"页（第"+start+"–"+end+"组）"+(lastResult.targetRemain!=null?("｜目标剩 "+lastResult.targetRemain):""),"ok");
+    schedulePersist();
+  }
+  function doConvert(){
+    if(!api||typeof api.convert!=="function"){setStatus("转换脚本未加载，请刷新。","err");return;}
+    lastMode="four";
+    setBusy(true,"four");
+    setStatus("正在四定转换…");
+    setTimeout(function(){
+      var result=null;
+      try{result=api.convert(input.value||"");}catch(err){result={ok:false,message:String(err&&err.message||err)};}
+      applyResult(result);setBusy(false);
+    },30);
+  }
+  function doThreeBackDelete(){
+    if(!api||typeof api.convertThreeDingBackDelete!=="function"){setStatus("转换脚本未加载，请刷新。","err");return;}
+    lastMode="three";
+    setBusy(true,"three");
+    setStatus("正在拉取 RDS 旧码并回删到 490–499…");
+    loadConverterHistory().then(function(history){
+      var result=null;
+      try{result=api.convertThreeDingBackDelete(input.value||"",history);}catch(err){result={ok:false,message:String(err&&err.message||err)};}
+      applyResult(result);setBusy(false);
+    }).catch(function(err){
+      applyResult({ok:false,message:"拉取旧码失败："+String(err&&err.message||err)});
+      setBusy(false);
+    });
+  }
+  function doCopyPage(){
+    if(!lastResult||!lastResult.ok){setStatus("请先转换。","err");return;}
+    var text=pageText(lastResult,pageIndex);
+    var slice=pageSlice(lastResult,pageIndex);
+    if(!slice.length){setStatus("本页没有组。","err");return;}
+    copyText(text,"已复制本页 "+slice.length+" 组（逗号+各）｜第"+(pageIndex+1)+"/"+pageCountOf(lastResult)+"页。");
+  }
+  function doDownload(){
+    if(!lastResult||!api)return;
+    try{
+      var name=api.download(lastResult.fileName||"attack.txt",lastResult.text||"");
+      txtGenerated=true;
+      renderPager();
+      setStatus("已生成并下载："+name+"（"+lastResult.count+" 组）。","ok");
+      schedulePersist();
+    }catch(err){setStatus("下载失败："+String(err&&err.message||err),"err");}
+  }
+  function doPrevPage(){
+    if(pageIndex<=0)return;
+    pageIndex-=1;
+    renderPager();
+    schedulePersist();
+  }
+  function doNextPage(){
+    if(pageIndex>=pageCountOf(lastResult)-1)return;
+    pageIndex+=1;
+    renderPager();
+    schedulePersist();
+  }
+
+  btnPaste.addEventListener("click",doPaste);
+  btnClear.addEventListener("click",doClear);
+  btnPreviewCount.addEventListener("click",doPreviewCount);
+  btnThree.addEventListener("click",doThreeBackDelete);
+  btnConvert.addEventListener("click",doConvert);
+  btnCopyPage.addEventListener("click",doCopyPage);
+  if(btnOneClickCopy)btnOneClickCopy.addEventListener("click",doCopyPage);
+  btnDownload.addEventListener("click",doDownload);
+  btnPrevPage.addEventListener("click",doPrevPage);
+  btnNextPage.addEventListener("click",doNextPage);
+  if(input){
+    input.addEventListener("input",schedulePersist);
+    input.addEventListener("change",schedulePersist);
+  }
+  window.addEventListener("beforeunload",persistPage);
+  window.addEventListener("pagehide",persistPage);
+
+  if(restorePage()){
+    // 已从本机缓存恢复
+  }else{
+    setStatus("粘贴攻击语后点「三定转换」。结果会保存在本机，刷新不丢；点「清空」才清除。");
+  }
+})();
+  </script>
+</body>
+</html>

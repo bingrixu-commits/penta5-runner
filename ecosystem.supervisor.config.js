@@ -9,8 +9,10 @@
  * 环境变量（可选，默认已够用）：
  *   PENTA5_SUPERVISOR_INTERVAL=90
  *   PENTA5_SUPERVISOR_RESTART_COOLDOWN=300
- *   PENTA5_SUPERVISOR_INTEGRITY_FAILS=3
+ *   PENTA5_SUPERVISOR_INTEGRITY_FAILS=5
  *   PENTA5_SUPERVISOR_WATCHDOG_ERRORS=2
+ *   PENTA5_STORM_RESUME_ROBOTS=1
+ *   PENTA5_RUNNER_WARMUP_SEC=120
  *
  * 面板鉴权：从 /root/penta5-runner/.env 读取 PANEL_*，禁止在本文件硬编码密码。
  */
@@ -67,6 +69,10 @@ module.exports = {
         PENTA5_SUPERVISOR_SYNC_COOLDOWN: "180",
         // 启动灌注/换码会阻塞事件循环数十秒，过短会导致误判 timeout→重启风暴
         PENTA5_SUPERVISOR_HTTP_TIMEOUT: "90",
+        // /sync 本身可能超过 15s；监督侧单独加长，避免 Remote end closed 误报
+        PENTA5_SUPERVISOR_SYNC_HTTP_TIMEOUT: "120",
+        // tipReady 需连续 N 轮确认 false 才停机器人/告警，压掉开奖窗抖动
+        PENTA5_SUPERVISOR_TIP_CONFIRM_TICKS: "3",
         PENTA5_SUPERVISOR_RDS_LAG_PERIODS: "3",
         PENTA5_SUPERVISOR_LOG: path.join(ROOT, "data/penta5_supervisor.log"),
         PENTA5_SUPERVISOR_STATE: path.join(ROOT, "data/penta5_supervisor_state.json"),
@@ -77,7 +83,8 @@ module.exports = {
         PANEL_VIEWER_PASSWORD: envGet("PANEL_VIEWER_PASSWORD", ""),
         // 可选：钉钉/企微/飞书 webhook；也可用阿里 .env 的 PENTA5_ALERT_WEBHOOK_URL
         // PENTA5_ALERT_WEBHOOK_URL: "",
-        PENTA5_STORM_RESUME_ROBOTS: "0",
+        PENTA5_STORM_RESUME_ROBOTS: "1",
+        PENTA5_RUNNER_WARMUP_SEC: "120",
         PENTA5_ALERT_COOLDOWN: "180",
       },
     },

@@ -1,0 +1,6 @@
+# 2026-07-19 接线后现场记录（摘录）
+SMOKE OK
+health tipReady=true latestPeriod=20260719099
+sync HTTP 200 ok=true
+L1 hasLocalFormula: 11/11 true
+framework_items.js ~231374 bytes

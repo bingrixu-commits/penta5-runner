@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="攻击语转TXT">
+  <rect width="128" height="128" rx="28" fill="#2563eb"/>
+  <rect x="22" y="28" width="84" height="72" rx="12" fill="#eff6ff"/>
+  <path d="M38 48h52M38 64h40M38 80h46" stroke="#1d4ed8" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="96" cy="92" r="18" fill="#0f172a"/>
+  <path d="M88 92h16M96 84v16" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,17 @@
+/root/penta5-runner/algorithms/compact-attack/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/algorithms/kill-framework/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/algorithms/side-stable/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/algorithms/cold-framework/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/algorithms/three-duishu/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/algorithms/auto-top6/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/algorithms/recommend2/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/algorithms/three-ding-two/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/algorithms/three-ding-one/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/penta5_backend_runner.js:22:const frameworkItems = require("./algorithms/_shared/framework_items");
+/root/penta5-runner/penta5_backend_runner.js:9610:    independenceMode: "l1-isolated-compute-v1",
+/root/penta5-runner/algorithms/pick-5000/index.js:10:  formulaPath: path.join(__dirname, "formula.js")
+/root/penta5-runner/algorithms/_shared/create_snapshot_algorithm.js:18:  const formulaPath = opts.formulaPath ? String(opts.formulaPath) : null;
+/root/penta5-runner/algorithms/_shared/create_snapshot_algorithm.js:22:  if (formulaPath) {
+/root/penta5-runner/algorithms/_shared/create_snapshot_algorithm.js:24:      localFormula = require(formulaPath);
+/root/penta5-runner/algorithms/_shared/create_snapshot_algorithm.js:60:        formula: localFormula ? (formulaPath || "local") : "host:" + ensureKey
+/root/penta5-runner/algorithms/ding-kill/index.js:10:  formulaPath: path.join(__dirname, "formula.js")

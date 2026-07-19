@@ -1,11 +1,13 @@
 "use strict";
 
 /**
- * CODEX_STABLE_MODEL_0200 — backend mirror of enhanced.html buildOwnPositionModels().
+ * CODEX_STABLE_MODEL_0201 — rolling 100-target evaluation; latest draw is display-only.
  * Rolling backtest per position; latest draw is display-only (excluded from training).
  */
 
 const DIGIT_POOL = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+const CODEX_STABLE_EVALUATION_WINDOW = 100;
+const CODEX_STABLE_TRAINING_WINDOW = 100;
 
 const CODEX_RULE_LIST = [
   { id: "balancedLow", label: "低频均衡" },
@@ -91,13 +93,13 @@ function pickByRule(training, index, ruleId, blockDigit) {
 }
 
 function backtestRule(records, pos, rule) {
-  const maxTargets = Math.min(records.length - 18, 90);
+  const maxTargets = Math.min(records.length - 18, CODEX_STABLE_EVALUATION_WINDOW);
   let total = 0;
   let hit = 0;
   for (let i = 0; i < maxTargets; i += 1) {
     const actual = recordDigit(records[i], pos.index);
     const blockDigit = recordDigit(records[i + 1], pos.index);
-    const training = records.slice(i + 1, i + 91);
+    const training = records.slice(i + 1, i + 1 + CODEX_STABLE_TRAINING_WINDOW);
     const pick = pickByRule(training, pos.index, rule.id, blockDigit);
     if (actual === null || pick === null) continue;
     total += 1;
@@ -122,14 +124,14 @@ function computeCodexStablePositionKills(history) {
     const options = CODEX_RULE_LIST.map((rule) => {
       const digit = pickByRule(records, pos.index, rule.id, latestDigit);
       const test = backtestRule(records, pos, rule);
-      const stability = test.rate * 100 + Math.min(test.total, 70) * 0.03;
+      const stability = test.rate * 100 + Math.min(test.total, CODEX_STABLE_EVALUATION_WINDOW) * 0.03;
       return { rule, digit, total: test.total, hit: test.hit, rate: test.rate, stability };
-    }).filter((item) => item.digit !== null && item.total >= 30);
+    }).filter((item) => item.digit !== null && item.total >= CODEX_STABLE_EVALUATION_WINDOW);
 
     options.sort((a, b) => b.rate - a.rate || b.hit - a.hit || b.stability - a.stability);
     const best = options[0];
     if (!best) return;
-    const strongEnough = best.rate >= 0.88 && best.total >= 40;
+    const strongEnough = best.rate >= 0.90 && best.total >= CODEX_STABLE_EVALUATION_WINDOW;
     out[pos.key] = {
       digit: best.digit,
       rate: Number(best.rate.toFixed(4)),
@@ -138,7 +140,7 @@ function computeCodexStablePositionKills(history) {
       ruleId: best.rule.id,
       ruleLabel: best.rule.label,
       recommended: strongEnough,
-      strict: best.rate >= 0.93 && best.total >= 40
+      strict: best.rate >= 0.93 && best.total >= CODEX_STABLE_EVALUATION_WINDOW
     };
   });
   return out;
@@ -189,7 +191,7 @@ function applyCodexStablePositionOverlay(positionKills, history) {
     entry.backup = backup;
     entry.backupDigit = backup;
     entry.killDigits = [codexDigit, backup].filter((d, idx, arr) => /^\d$/.test(d) && arr.indexOf(d) === idx);
-    entry.algorithm = "v42-position-stability-blocks+codex-stable-0200";
+    entry.algorithm = "v43-position-stability-blocks+codex-stable-0201-rolling100";
     entry.reason = `codex-stable-override:${pick.ruleId}:${(pick.rate * 100).toFixed(2)}%`;
   });
   return positionKills;

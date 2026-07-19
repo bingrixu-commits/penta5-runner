@@ -26,6 +26,60 @@ check_json "source-proxy" "http://127.0.0.1:3000/health"
 check_json "rds-api" "http://127.0.0.1:8787/health"
 check_json "runner" "http://127.0.0.1:3001/health"
 
+PANEL_AUTH=()
+readarray -t PANEL_CREDS < <(python3 - <<'PY'
+from pathlib import Path
+env = {}
+for line in Path("/root/penta5-runner/.env").read_text(encoding="utf-8", errors="replace").splitlines():
+    line = line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    k, v = line.split("=", 1)
+    env[k.strip()] = v.strip().strip('"').strip("'")
+user = env.get("PANEL_USER", "")
+password = env.get("PANEL_PASSWORD", "")
+if user and password:
+    print(f"{user}:{password}")
+PY
+)
+if [[ ${#PANEL_CREDS[@]} -gt 0 && -n "${PANEL_CREDS[0]:-}" ]]; then
+  PANEL_AUTH=(-u "${PANEL_CREDS[0]}")
+fi
+
+if curl -sS -m 8 "${PANEL_AUTH[@]}" "http://127.0.0.1:3001/exclusion-model" 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+m=d.get('model') or {}
+assert d.get('ok') is True
+assert m.get('version','').startswith('exclusion-model-v')
+assert isinstance(m.get('exclusions'), dict)
+pos=(m.get('exclusions') or {}).get('positionDetail') or {}
+# v2 应带双码；若仍是旧进程则至少有 position
+if pos:
+    wan=pos.get('wan') or {}
+    assert isinstance(wan.get('killDigits'), list)
+"; then
+  echo "[OK]   exclusion-model"
+  ok=$((ok + 1))
+else
+  echo "[FAIL] exclusion-model"
+  fail=$((fail + 1))
+fi
+
+if curl -sS -m 8 "${PANEL_AUTH[@]}" "http://127.0.0.1:3001/stable-math-filter" 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+f=d.get('filter') or {}
+assert d.get('ok') is True
+assert not f.get('rules')
+"; then
+  echo "[OK]   stable-math-filter slim"
+  ok=$((ok + 1))
+else
+  echo "[FAIL] stable-math-filter slim"
+  fail=$((fail + 1))
+fi
+
 python3 <<'PY'
 import json
 from pathlib import Path

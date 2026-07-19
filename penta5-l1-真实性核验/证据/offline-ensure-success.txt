@@ -1,0 +1,12 @@
+autoTop6 backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit items=7
+killFramework backend-kill-framework-snapshot-v8-formal-anytwo4-pool02468-label-v2 items=8
+recommend2 backend-recommend2-snapshot-v16-formal-anytwo4-pool02468-label-v2 items=6
+compactAttack backend-three-ding-framework-v9-no-shape-anytwo4-pool02468-label-v2 items=5
+threeDingTwo backend-three-ding-two-v12-force-unique-digit-anytwo4-pool02468-label-v3 items=4
+threeDingOne backend-three-ding-one-v10-force-unique-digit-anytwo4-pool02468-label-v2 items=5
+sideStable backend-side-stable-snapshot-v5-1pos-2hewei-2digit-sum-anytwo4-pool02468-three5-old1300-label-v2 items=7
+coldFramework backend-cold-framework-snapshot-v6-anytwo4-pool02468-label-v2 items=6
+dingKill backend-ding-kill-snapshot-v4-anytwo4-pool02468-label-v2 items=6
+pick5000 backend-pick5000-snapshot-v4-anytwo4-pool02468-stagger-label-v2 items=6
+threeDuishu backend-three-duishu-snapshot-v1 
+ALL_ENSURES_OK

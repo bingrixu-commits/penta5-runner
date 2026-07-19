@@ -28,6 +28,14 @@ robot_runtime/robot_profiles/
 __pycache__/
 *.pyc
 *.log
+*.log.nohup
+*.pid
+memory.log.nohup
+data/
+penta5-runner-full-backup.tar.gz
+penta5-runner-全量备份-*.tar.gz
+penta5-l1-真实性核验.tar.gz
+【全量备份-请右键下载整个文件夹】/
 .DS_Store
 /000
 /200

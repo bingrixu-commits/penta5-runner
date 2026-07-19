@@ -22,7 +22,8 @@
   --radius:14px;
 }
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
+/* 禁止全局 smooth：刷新/重绘时 scrollTo 会拖着整页「漂移」 */
+html{scroll-behavior:auto}
 body{margin:0;background:linear-gradient(180deg,#f7fafc 0%,var(--bg) 100%);color:var(--ink);font-family:"Microsoft YaHei","PingFang SC",-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
 .wrap{max-width:1180px;margin:0 auto;padding:0 14px 24px}
 .panel-hero{position:sticky;top:0;z-index:120;background:rgba(247,250,252,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);margin:0 -14px 14px;padding:12px 14px 10px;box-shadow:0 4px 18px rgba(15,23,42,.06)}
@@ -162,6 +163,8 @@ button.gray{background:#4b5563}
     <nav class="section-nav" id="sectionNav" aria-label="页面分区">
       <a href="#txtConvertBox">回删命中率</a>
       <a href="#txtThreeRemainTopBox">三定回删</a>
+      <a href="#section-three-ding-nav">三定导航</a>
+      <a href="/attack-txt">攻击语转换</a>
       <a href="#practiceModelBox">自有转换靶场</a>
       <a href="#section-lottery">开奖数据</a>
       <a href="#section-prediction">四定推荐</a>
@@ -181,7 +184,7 @@ button.gray{background:#4b5563}
 
   <div id="txtThreeRemainTopBox" class="section-anchor nested-collapse" style="margin:10px 0 0;border:1px solid #f97316;border-radius:12px;background:#fff7ed;padding:10px;">
     <div class="card-head" data-collapse-head="txtThreeRemainTop">
-      <div class="card-head-title"><b style="font-size:16px;color:#9a3412;">三定回删命中率（千百十 · 回删150剩850）</b></div>
+      <div class="card-head-title"><b style="font-size:16px;color:#9a3412;">三定回删命中率（千百十 · 回删150剩850 / 回删100剩900）</b></div>
       <button type="button" class="card-toggle" data-collapse-toggle="txtThreeRemainTop" data-collapse-default="0" aria-expanded="true">收起</button>
     </div>
     <div class="card-body" data-collapse-body="txtThreeRemainTop">
@@ -391,6 +394,12 @@ function panelOpenNavTarget(hash){
     panelExpandCollapseId("predictionShell");
     panelExpandCollapseId("brotherNumberFramework");
   }
+  if(id==="section-three-ding-nav"||id==="compactAttackFrameworkBox"||id==="threeDingTwoFrameworkBox"||id==="threeDingOneFrameworkBox"){
+    panelExpandCollapseId("predictionShell");
+    panelExpandCollapseId("compactAttackFramework");
+    panelExpandCollapseId("threeDingTwoFramework");
+    panelExpandCollapseId("threeDingOneFramework");
+  }
   if(id==="section-history")panelExpandCollapseId("history");
   var node=el;
   while(node&&node!==document.body){
@@ -441,7 +450,11 @@ function initPanelCollapseDelegation(){
     var runBtn=event.target&&event.target.closest?event.target.closest("[data-txt-position-run-detail]"):null;
     if(!runBtn)return;
     event.preventDefault();
-    if(typeof txtRunPositionDetailRender==="function")txtRunPositionDetailRender();
+    if(typeof txtRunPositionDetailRender!=="function")return;
+    var runVal=runBtn.getAttribute("data-txt-position-run-detail");
+    var onlyTarget=runVal&&runVal!=="1"?Number(runVal):null;
+    if(onlyTarget!=null&&!isFinite(onlyTarget))onlyTarget=null;
+    txtRunPositionDetailRender(onlyTarget);
   });
   restorePanelCollapsibles(document);
   initSectionNavOpen();
@@ -1166,16 +1179,16 @@ function txtBuildContent(config,day,data){
   return {count:groups.length,width:config.width,text:txtFormatTokenList(displayGroups),preview:txtFormatTokenList(displayGroups,80)};
 }
 var TXT_POSITION_HISTORY_WINDOW = 50;
-/** 二定回删已下线；三定只留千百十一档：回删150剩850（面板手动核对，不走 GPU） */
+/** 二定回删已下线；三定千百十两档：回删150剩850、回删100剩900（面板手动核对，不走 GPU） */
 var TXT_POSITION_TWO_ONLY_POSITIONS = [0, 1];
 var TXT_POSITION_TWO_REMAIN_TARGETS = [];
 var TXT_POSITION_TWO_REMAIN_TARGET = 70;
 var TXT_POSITION_TWO_EXCLUDE_TARGET = TXT_POSITION_TWO_REMAIN_TARGET;
 var TXT_POSITION_THREE_ONLY_POSITIONS = [0, 1, 2];
-var TXT_POSITION_THREE_REMAIN_TARGETS = [850];
+var TXT_POSITION_THREE_REMAIN_TARGETS = [850, 900];
 var TXT_POSITION_THREE_REMAIN_TARGET = 850;
 var TXT_POSITION_THREE_REMAIN_MIN = 850;
-var TXT_POSITION_THREE_REMAIN_MAX = 850;
+var TXT_POSITION_THREE_REMAIN_MAX = 900;
 var TXT_POSITION_TWO_TARGET = TXT_POSITION_TWO_REMAIN_TARGET;
 var TXT_POSITION_THREE_TARGET = TXT_POSITION_THREE_REMAIN_TARGET;
 var TXT_POSITION_BACKTEST_LIMIT = 30;
@@ -1205,7 +1218,7 @@ function txtPositionNormalizeThreeRemainTarget(value){
   if(TXT_POSITION_THREE_REMAIN_TARGETS.indexOf(next)<0)next=TXT_POSITION_THREE_REMAIN_TARGET;
   return next;
 }
-/** 模型键：二定已下线；三定=剩850 一档 */
+/** 模型键：二定已下线；三定=剩850/900 两档 */
 function txtPositionModelTarget(size,override){
   if(size===3){
     if(override!=null&&Number(override)>0)return txtPositionNormalizeThreeRemainTarget(override);
@@ -2031,12 +2044,12 @@ function txtPositionModelFrameHtmlFromComputed(twoByTarget,threeByTarget,twoSyst
   var twoRec=txtPositionRecommendItem(twoItems);
   var threeRec=txtPositionRecommendItem(threeItems);
   return '<div style="border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;padding:9px;margin-top:8px;">'
-    +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#0f172a;">三定旧码原位置核查</b><span style="color:#64748b;">三定只留千百十：回删150剩850。</span></div>'
+    +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#0f172a;">三定旧码原位置核查</b><span style="color:#64748b;">三定千百十：回删150剩850、回删100剩900。</span></div>'
     +'<div style="margin-top:6px;font-size:12px;font-weight:700;color:#9a3412;">中/不中按最新开奖对上期回删结果回算，不是下方当前生成按钮的即时码。</div>'
     +(twoRec?('<div style="border:1px solid #c4b5fd;border-radius:9px;background:#f5f3ff;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#5b21b6;">二定推荐</b>'+txtPositionRecommendSummary(twoRec,"二定")+'</div>'):'')
     +render("二定：已下线",twoItems,twoRec,"#ddd6fe")
     +(threeRec?('<div style="border:1px solid #fed7aa;border-radius:9px;background:#fff7ed;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#9a3412;">三定推荐</b>'+txtPositionRecommendSummary(threeRec,"三定")+'</div>'):'')
-    +render("三定：回删150剩850",threeItems,threeRec,"#fed7aa")
+    +render("三定：回删150剩850 / 回删100剩900",threeItems,threeRec,"#fed7aa")
     +'</div>';
 }
 function txtPositionSplitModelFrameHtmlFromComputed(twoByTarget,threeByTarget,twoSystemStatsByTarget,threeSystemStatsByTarget){
@@ -2085,7 +2098,7 @@ function txtPositionSplitModelFrameHtmlFromComputed(twoByTarget,threeByTarget,tw
       +render("二定位置模型",twoItems,twoRec,"#ddd6fe")
       +'</div>',
     threeBox:'<div style="border:1px solid #fdba74;border-radius:10px;background:#fff7ed;padding:9px;margin-top:8px;">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定核查</b><span style="color:#64748b;">只留千百十 · 回删150剩850 · 真实旧号回删 · TXT空格 · 攻击语各字封尾</span></div>'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定核查</b><span style="color:#64748b;">千百十 · 回删150剩850 / 回删100剩900 · 真实旧号回删 · TXT空格 · 攻击语各字封尾</span></div>'
       +'<div style="margin-top:6px;font-size:12px;font-weight:700;color:#9a3412;">中/不中按最新开奖对上期回删结果回算，不是下方当前生成按钮的即时码。</div>'
       +(threeRec?('<div style="border:1px solid #fed7aa;border-radius:9px;background:white;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#9a3412;">推荐</b>'+txtPositionRecommendSummary(threeRec,"三定")+'</div>'):'')
       +render("三定位置模型",threeItems,threeRec,"#fed7aa")
@@ -2140,7 +2153,7 @@ function txtThreeRemainTopHtmlFromComputed(threeByTarget,threeSystemStatsByTarge
     }).join("");
     return '<div style="border:1px solid #fdba74;border-radius:10px;background:white;padding:10px 12px;display:grid;gap:8px;">'
       +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">'
-      +'<b style="font-size:15px;color:#9a3412;">'+txtEsc(item.name)+'</b>'
+      +'<b style="font-size:15px;color:#9a3412;">'+txtEsc(item.name)+' · '+txtEsc(txtPositionRemainLabel(3,item.remainTarget!=null?item.remainTarget:item.excludeTarget))+'</b>'
       +'<span style="border-radius:999px;padding:3px 10px;background:'+color+';color:'+fg+';font-weight:900;">最新 '+(ok===true?"中":ok===false?"不中":"--")+'</span>'
       +'<span style="color:#64748b;">今日</span><b>'+txtEsc(txtPositionRateText(item.today))+'</b>'
       +'<span style="color:#64748b;">近'+txtEsc(item.recentLimit)+'</span><b>'+txtEsc(txtPositionRateText(item.recent))+'</b>'
@@ -2151,7 +2164,7 @@ function txtThreeRemainTopHtmlFromComputed(threeByTarget,threeSystemStatsByTarge
   return ''
     +'<div style="margin-top:6px;font-size:12px;color:#9a3412;">中/不中：看「最新」徽章，以及下方近N期逐期芯片（绿=中，红=不中）。今日/近N是命中率汇总。</div>'
     +'<div style="margin-top:8px;display:grid;gap:8px;">'+rows+'</div>'
-    +'<button type="button" data-txt-position-run-detail="1" style="margin-top:8px;border:0;border-radius:8px;padding:7px 12px;background:#ea580c;color:white;font-weight:900;cursor:pointer;font-size:13px;">重新计算三定回删</button>';
+    +txtThreeRemainActionButtonsHtml();
 }
 function txtPositionModelFrameHtml(data){
   var twoByTarget={},threeByTarget={},twoSystemStatsByTarget={},threeSystemStatsByTarget={};
@@ -2169,7 +2182,7 @@ function txtPositionQuickModelFrameHtml(data,kind){
   var isThree=String(kind||"")==="three";
   if(isThree){
     return '<div style="border:1px solid #fdba74;border-radius:10px;background:#fff7ed;padding:9px;margin-top:8px;">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定旧码原位置核查</b><span style="color:#64748b;">只留千百十 · 回删150剩850，按真实旧号自动分段回算。</span></div>'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定旧码原位置核查</b><span style="color:#64748b;">千百十 · 回删150剩850 / 回删100剩900，按真实旧号自动分段回算。</span></div>'
       +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">'
       +'<button type="button" data-txt-position-generate="three" style="border:0;border-radius:7px;padding:7px 10px;background:#ea580c;color:white;font-weight:900;cursor:pointer;font-size:13px;">一键生成所有三定TXT</button>'
       +'</div>'
@@ -2468,7 +2481,7 @@ function txtUpdatePositionFrameworkInfo(data){
   var threeInfo=txtPositionInfoEl("three");
   var shared="数据库共享历史 "+rows.length+" 期（非整页 /state 的近120期）；纯旧码回删；点「重新计算」用整库回算中/不中。";
   if(twoInfo)twoInfo.textContent="二定回删已下线。";
-  if(threeInfo)threeInfo.textContent=shared+" 三定千百十：回删150剩850。";
+  if(threeInfo)threeInfo.textContent=shared+" 三定千百十：回删150剩850、回删100剩900。";
   // 不再自动分段回算：开奖窗每4秒刷新会反复占满主线程，表现为网页卡、结算慢
   var key=txtPositionDetailCacheKey(data||{});
   if(txtPositionDetailHtmlCache[key]){
@@ -2481,13 +2494,21 @@ function txtUpdatePositionFrameworkInfo(data){
   if(threeContent)setHtml(threeContent,txtPositionIdleShellHtml("three"));
 }
 var txtPositionDetailHtmlCache={};
+var txtPositionThreeByTargetCache={};
+function txtThreeRemainActionButtonsHtml(){
+  return '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    +'<button type="button" data-txt-position-run-detail="850" style="border:0;border-radius:8px;padding:7px 12px;background:#ea580c;color:white;font-weight:900;cursor:pointer;font-size:13px;">回删150组</button>'
+    +'<button type="button" data-txt-position-run-detail="900" style="border:0;border-radius:8px;padding:7px 12px;background:#c2410c;color:white;font-weight:900;cursor:pointer;font-size:13px;">回删100组</button>'
+    +'<a href="#section-three-ding-nav" style="display:inline-flex;align-items:center;border-radius:8px;padding:7px 12px;background:#fff;border:1px solid #fdba74;color:#9a3412;font-weight:900;cursor:pointer;font-size:13px;text-decoration:none;">三定导航</a>'
+    +'</div>';
+}
 var txtPositionProgressiveSeq=0;
 function txtPositionDetailCacheKey(data){
   var rows=txtRecords(data||{});
   var first=rows[0]||{};
   var pk=(data&&data.currentPrediction&&data.currentPrediction.positionKills)||{};
   var backupSig=["wan","qian","bai","shi"].map(function(key){return txtPositionBackupDigitFromEntry(pk[key]);}).join("");
-  return String(first.period||first.uid||"")+"|"+String(rows.length)+"|three_qianbaishi_850|b"+backupSig;
+  return String(first.period||first.uid||"")+"|"+String(rows.length)+"|three_qianbaishi_850_900|b"+backupSig;
 }
 function txtPositionApplyDetailHtml(payload,twoBox,threeBox){
   payload=payload||{};
@@ -2534,16 +2555,17 @@ function txtPositionProgressText(modelBox,text){
   var threeInner=threeBox&&threeBox.querySelector?threeBox.querySelector('[data-txt-position-progress="1"]'):null;
   if(threeInner)threeInner.textContent=text;
 }
-function txtStartPositionProgressiveRender(data,twoBox,threeBox){
+function txtStartPositionProgressiveRender(data,twoBox,threeBox,onlyThreeTarget){
   if(!TXT_POSITION_TWO_LITE_MODE)twoBox=twoBox||txtPositionModelBoxEl("two");
   if(!TXT_POSITION_THREE_LITE_MODE)threeBox=threeBox||txtPositionModelBoxEl("three");
   var hasLiteContent=(TXT_POSITION_TWO_LITE_MODE&&$("txtTwoRemainContent"))||(TXT_POSITION_THREE_LITE_MODE&&$("txtThreeRemainContent"));
   if(!twoBox&&!threeBox&&!hasLiteContent)return;
   var key=txtPositionDetailCacheKey(data||{});
-  if(txtPositionDetailHtmlCache[key]){
+  if(!onlyThreeTarget&&txtPositionDetailHtmlCache[key]){
     txtPositionApplyDetailHtml(txtPositionDetailHtmlCache[key],twoBox,threeBox);
     return;
   }
+  onlyThreeTarget=onlyThreeTarget!=null&&isFinite(Number(onlyThreeTarget))?txtPositionNormalizeThreeRemainTarget(onlyThreeTarget):null;
   txtPositionProgressiveSeq+=1;
   var seq=txtPositionProgressiveSeq;
   txtPositionOpenedMemoClear();
@@ -2555,7 +2577,9 @@ function txtStartPositionProgressiveRender(data,twoBox,threeBox){
   if(twoContent)setHtml(twoContent,'<div data-txt-two-progress="1" style="margin-top:6px;color:#6d28d9;font-weight:700;">二定回删已下线</div>');
   if(threeContent)setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">准备中…</div>');
   TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){twoByTarget[target]=[];});
-  TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){threeByTarget[target]=[];});
+  TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){
+    threeByTarget[target]=onlyThreeTarget&&target!==onlyThreeTarget?(txtPositionThreeByTargetCache[target]||[]):[];
+  });
   var tasks=[];
   TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){
     var combos=txtPositionCombos(2);
@@ -2570,6 +2594,7 @@ function txtStartPositionProgressiveRender(data,twoBox,threeBox){
     });
   });
   TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){
+    if(onlyThreeTarget&&target!==onlyThreeTarget)return;
     var combos=txtPositionCombos(3);
     combos.forEach(function(positions,idx){
       tasks.push({
@@ -2601,7 +2626,10 @@ function txtStartPositionProgressiveRender(data,twoBox,threeBox){
       };
       if(!TXT_POSITION_TWO_LITE_MODE)payload.twoBox=split.twoBox;
       if(!TXT_POSITION_THREE_LITE_MODE)payload.threeBox=split.threeBox;
-      txtPositionDetailHtmlCache={};
+      TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){
+        txtPositionThreeByTargetCache[target]=threeByTarget[target]||[];
+      });
+      if(!onlyThreeTarget)txtPositionDetailHtmlCache={};
       txtPositionDetailHtmlCache[key]=payload;
       txtPositionApplyDetailHtml(payload,twoBox,threeBox);
     }catch(err){
@@ -2648,20 +2676,26 @@ function txtStartPositionProgressiveRender(data,twoBox,threeBox){
 }
 function txtPositionIdleShellHtml(kind){
   var isTwo=kind==="two";
+  if(!isTwo){
+    return '<div style="margin-top:6px;color:#64748b;font-size:13px;">纯旧码回删、不加排除码；点「回删150组/回删100组」分段跑真实胜率。</div>'
+      +txtThreeRemainActionButtonsHtml();
+  }
   return '<div style="margin-top:6px;color:#64748b;font-size:13px;">纯旧码回删、不加排除码；打开后自动分段跑真实胜率，也可手动重算。</div>'
-    +'<button type="button" data-txt-position-run-detail="1" style="margin-top:8px;border:0;border-radius:8px;padding:8px 12px;background:'+(isTwo?"#7c3aed":"#ea580c")+';color:white;font-weight:900;cursor:pointer;font-size:13px;">重新计算'+(isTwo?"二定":"三定")+'回删</button>';
+    +'<button type="button" data-txt-position-run-detail="1" style="margin-top:8px;border:0;border-radius:8px;padding:8px 12px;background:#7c3aed;color:white;font-weight:900;cursor:pointer;font-size:13px;">重新计算二定回删</button>';
 }
-function txtRunPositionDetailRender(){
+function txtRunPositionDetailRender(onlyThreeTarget){
   var data=window.__penta5TxtState||{};
   var twoBox=TXT_POSITION_TWO_LITE_MODE?null:txtPositionModelBoxEl("two");
   var threeBox=TXT_POSITION_THREE_LITE_MODE?null:txtPositionModelBoxEl("three");
   window.__txtPositionProgressiveKey=null;
-  txtPositionDetailHtmlCache={};
+  onlyThreeTarget=onlyThreeTarget!=null&&isFinite(Number(onlyThreeTarget))?txtPositionNormalizeThreeRemainTarget(onlyThreeTarget):null;
+  if(!onlyThreeTarget)txtPositionDetailHtmlCache={};
   var threeContent=$("txtThreeRemainContent");
+  var progressLabel=onlyThreeTarget===900?"回删100剩900":onlyThreeTarget===850?"回删150剩850":"三定千百十回删";
   if(threeContent){
     setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">正在从数据库拉取共享历史（约两千期）…</div>');
   }
-  // 库内 shared history 两千+期；回删150必须用整库，不能只用 /state 近120期
+  // 库内 shared history 两千+期；回删必须用整库，不能只用 /state 近120期
   var wantHistory=Math.max(2000,Number((data&&data.historyCount)||0)||0);
   var ensure=typeof window.__penta5EnsureHistoryCache==="function"
     ?window.__penta5EnsureHistoryCache(wantHistory)
@@ -2671,9 +2705,9 @@ function txtRunPositionDetailRender(){
       twoBox.setAttribute("data-txt-position-filled","1");
       setHtml(twoBox,txtPositionQuickModelFrameHtml(data||{},"two"));
     }
-    txtStartPositionProgressiveRender(data||{},twoBox,threeBox);
+    txtStartPositionProgressiveRender(data||{},twoBox,threeBox,onlyThreeTarget);
     var rows=txtRecords(data||{});
-    txtSetStatus("已开始分段计算：三定千百十回删150剩850（数据库共享历史 "+rows.length+" 期）；中/不中在「最新」徽章与近N期芯片。");
+    txtSetStatus("已开始分段计算："+progressLabel+"（数据库共享历史 "+rows.length+" 期）；中/不中在「最新」徽章与近N期芯片。");
   }).catch(function(err){
     if(threeContent){
       setHtml(threeContent,'<div style="color:#b91c1c;">拉取共享历史失败：'+txtEsc(err&&err.message?err.message:err)+'。请刷新后再点重新计算。</div>');
@@ -3230,7 +3264,7 @@ function txtFixedHeweiItems(data){
   }
   var recommend2=(typeof backendRecommend2Items==="function"?backendRecommend2Items(data):null)||[];
   recommend2.forEach(add);
-  add(txtFixedHeweiItemFromExtra(data,"anyTwoHeweiHit","二数合尾宽命中（高基线参考）"));
+  add(txtFixedHeweiItemFromExtra(data,"anyTwoHeweiHit","二数合尾02468排1码命中（高基线参考）"));
   add(txtFixedHeweiItemFromExtra(data,"anyThreeHeweiHit","三数合尾宽命中（高基线参考）"));
   return out.filter(function(item){return item.key==="anyTwoHeweiHit"||item.key==="anyThreeHeweiHit";});
 }
@@ -3319,8 +3353,9 @@ function txtFixedHeweiExcludeItemsFromInput(raw){
     var shortPos=positionMap[match[1]];
     return shortPos?{kind:"position",key:shortPos.key,side:"recommend",name:shortPos.label+"手动排除",code:match[2]}:null;
   });
-  [
+    [
     {regex:/(千百十个|四位|四定|总)(?:合尾|合|和尾|和)?(?:排除|避开|杀|除)([0-9])/g,key:"wanQianBaiShi",name:"千百十个合尾手动排除"},
+    {regex:/(千百个)(?:合尾|合|和尾|和)?(?:排除|避开|杀|除)([0-9])/g,key:"wanQianGe",name:"千百个合尾手动排除"},
     {regex:/(千百十|前三|前3)(?:合尾|合|和尾|和)?(?:排除|避开|杀|除)([0-9])/g,key:"wanQianBai",name:"千百十合尾手动排除"},
     {regex:/(百十个|后三|后3)(?:合尾|合|和尾|和)?(?:排除|避开|杀|除)([0-9])/g,key:"qianBaiShi",name:"百十个合尾手动排除"}
   ].forEach(function(rule){
@@ -3330,6 +3365,7 @@ function txtFixedHeweiExcludeItemsFromInput(raw){
   });
   [
     {regex:/除(?:千百十个|四位|四定|四合|总合)(?:合|尾)?([0-9])/g,key:"wanQianBaiShi",name:"千百十个合尾手动排除"},
+    {regex:/除(?:千百个)(?:合|尾)?([0-9])/g,key:"wanQianGe",name:"千百个合尾手动排除"},
     {regex:/除(?:千百十|千百合|前三|前3)(?:合|尾)?([0-9])/g,key:"wanQianBai",name:"千百十合尾手动排除"},
     {regex:/除(?:百十个|百十合|后三|后3)(?:合|尾)?([0-9])/g,key:"qianBaiShi",name:"百十个合尾手动排除"}
   ].forEach(function(rule){
@@ -3340,9 +3376,14 @@ function txtFixedHeweiExcludeItemsFromInput(raw){
   collect(/除?([大小单双]{4})/g,function(match){
     return {kind:"shape",key:txtFixedHeweiShapeKey(match[1]),side:"recommend",name:"形态手动排除",code:match[1]};
   });
-  collect(/除对数(\d{2,3}(?:-\d{2,3})*)/g,function(match){
+  collect(/(?:除)?对数(\d{2,3}(?:[-.、~/]\d{2,3})*)/g,function(match){
+    // 不误吃「含对数 / 中对数」
+    if(match.index>0){
+      var prev=String(candidateText||"").charAt(match.index-1);
+      if(prev==="含"||prev==="中")return null;
+    }
     var code=String(match[1]||"");
-    var parts=code.split("-").map(function(part){return String(part||"").replace(/\D/g,"");}).filter(Boolean);
+    var parts=code.split(/[-.、~/]/).map(function(part){return String(part||"").replace(/\D/g,"");}).filter(Boolean);
     // 多组对子（如 16-38-49）必须按三对数处理，禁止误判成三数共现避开
     if(parts.length>=2){
       var pairCodes=parts.map(function(part){return part.slice(0,2);}).filter(function(part){return part.length===2;}).slice(0,3);
@@ -3580,6 +3621,18 @@ function txtShotSegmentStartIndex(text,start){
     }
     return -1;
   }
+  if(label==="千百合"){
+    var aliasIdx=-1;
+    while((aliasIdx=raw.indexOf(label,aliasIdx+1))>=0){
+      var after=raw.charAt(aliasIdx+3);
+      if(after==="十"||after==="个")continue;
+      return aliasIdx;
+    }
+    return -1;
+  }
+  if(label==="千百个合"){
+    return raw.indexOf(label);
+  }
   if(label==="百十个合"){
     var idx=-1;
     while((idx=raw.indexOf(label,idx+1))>=0){
@@ -3588,6 +3641,17 @@ function txtShotSegmentStartIndex(text,start){
     return -1;
   }
   return raw.indexOf(label);
+}
+function txtShotOptionalDigitsFirst(text,labels,ends){
+  var list=Array.isArray(labels)?labels:[labels];
+  for(var i=0;i<list.length;i++){
+    var raw=txtShotSegment(text,list[i],ends);
+    if(raw){
+      var digits=txtShotDigits(raw);
+      return digits.length?digits:"0123456789".split("");
+    }
+  }
+  return "0123456789".split("");
 }
 function txtShotDigits(value){
   var seen={},out=[];
@@ -3640,6 +3704,7 @@ function txtApplyShortShotExclusions(raw,rule){
   }
   var heweiRules=[
     {regex:/除(?:千百十个|四位|四定|四合|总合)(?:合|尾)?([0-9])/g,key:"qianBaiShiGeHewei"},
+    {regex:/除(?:千百个)(?:合|尾)?([0-9])/g,key:"qianBaiGeHewei"},
     {regex:/除(?:千百十|千百合|前三|前3)(?:合|尾)?([0-9])/g,key:"qianBaiShiHewei"},
     {regex:/除(?:百十个|百十合|后三|后3)(?:合|尾)?([0-9])/g,key:"baiShiGeHewei"}
   ];
@@ -3665,9 +3730,16 @@ function txtShotExcludeShapes(text){
   return out;
 }
 function txtShotExcludePairs(text){
-  var out=[],match,regex=/除对数(\d{2,3}(?:-\d{2,3})*)/g;
-  while((match=regex.exec(text))){
-    String(match[1]||"").split("-").forEach(function(part){
+  var out=[],match;
+  // 认：除对数16-19 / 对数16-19 / 除对数16.19；不误吃「含对数/中对数」
+  var regex=/(?:除对数|对数)(\d{2,3}(?:[-.、~/]\d{2,3})*)/g;
+  var raw=String(text||"");
+  while((match=regex.exec(raw))){
+    if(match[0].indexOf("除对数")!==0){
+      var prev=match.index>0?raw.charAt(match.index-1):"";
+      if(prev==="含"||prev==="中")continue;
+    }
+    String(match[1]||"").split(/[-.、~/]/).forEach(function(part){
       var digits=String(part||"").replace(/\D/g,"");
       if(digits.length>=2&&out.indexOf(digits)<0)out.push(digits);
     });
@@ -3757,9 +3829,9 @@ function txtRecentExactCodeList(limit){
   return out;
 }
 function txtShotHitPairs(text){
-  var out=[],match,regex=/(?:含对数|中对数)(\d{2,3}(?:-\d{2,3})*)/g;
+  var out=[],match,regex=/(?:含对数|中对数)(\d{2,3}(?:[-.、~/]\d{2,3})*)/g;
   while((match=regex.exec(String(text||"")))){
-    String(match[1]||"").split("-").forEach(function(part){
+    String(match[1]||"").split(/[-.、~/]/).forEach(function(part){
       var digits=String(part||"").replace(/\D/g,"");
       if(digits.length>=2&&out.indexOf(digits)<0)out.push(digits);
     });
@@ -3782,13 +3854,15 @@ function txtShotRuleFromText(text,options){
   if(!txtShotLooksLikeFullModel(raw))return null;
   var opts=options&&typeof options==="object"?options:{};
   var tailEnds=["二数合","三数合","取二兄弟","兄弟号","除","含","中","各"];
+  var heweiEnds=["千百十合","千百合","千百个合","百十个合","千百十个合"].concat(tailEnds);
   var rule={
     raw:raw,
     qian:txtShotRequiredDigits(raw,"千",["百"]),
     bai:txtShotRequiredDigits(raw,"百",["十"]),
     shi:txtShotRequiredDigits(raw,"十",["个"]),
-    ge:txtShotRequiredDigits(raw,"个",["四定","千百十合","百十个合","千百十个合"].concat(tailEnds)),
-    qianBaiShiHewei:txtShotOptionalDigits(raw,"千百十合",["百十个合","千百十个合"].concat(tailEnds)),
+    ge:txtShotRequiredDigits(raw,"个",["四定"].concat(heweiEnds)),
+    qianBaiShiHewei:txtShotOptionalDigitsFirst(raw,["千百十合","千百合"],["千百个合","百十个合","千百十个合"].concat(tailEnds)),
+    qianBaiGeHewei:txtShotOptionalDigits(raw,"千百个合",["百十个合","千百十个合"].concat(tailEnds)),
     baiShiGeHewei:txtShotOptionalDigits(raw,"百十个合",["千百十个合"].concat(tailEnds)),
     qianBaiShiGeHewei:txtShotOptionalDigits(raw,"千百十个合",tailEnds),
     twoHeweiHit:txtShotHitHeweiDigits(raw,"二数合"),
@@ -3889,7 +3963,9 @@ function txtShotCodeHasBrother(code){
   return txtShotBrotherPairs().some(function(pair){return txtShotCodeContainsPair(code,pair);});
 }
 function txtShotBrotherChoice(text){
-  var match=/(?:取二兄弟|兄弟号)(有|否)?/.exec(String(text||""));
+  var raw=String(text||"");
+  if(/除两兄弟/.test(raw))return "否";
+  var match=/(?:取二兄弟|兄弟号)(有|否)?/.exec(raw);
   return match?(match[1]||"有"):"";
 }
 function txtShotCodeSum(code){
@@ -3973,6 +4049,7 @@ function txtShotPassesRule(code,rule){
   if(!txtShotContains(rule.shi,c))return false;
   if(!txtShotContains(rule.ge,d))return false;
   if(!txtShotContains(rule.qianBaiShiHewei,txtShotHewei(a,b,c)))return false;
+  if(!txtShotContains(rule.qianBaiGeHewei||"0123456789".split(""),txtShotHewei(a,b,d)))return false;
   if(!txtShotContains(rule.baiShiGeHewei,txtShotHewei(b,c,d)))return false;
   if(!txtShotContains(rule.qianBaiShiGeHewei,txtShotHewei(a,b,c,d)))return false;
   if(!txtShotAnyTwoHeweiHit(code,rule.twoHeweiHit,rule.twoHeweiScopeIndexes))return false;
@@ -4041,11 +4118,12 @@ function txtShotRuleSummary(rule){
     +" 十"+rule.shi.join("")
     +" 个"+rule.ge.join("")
     +" 千百十合"+rule.qianBaiShiHewei.join("")
+    +((rule.qianBaiGeHewei||[]).join("")&&rule.qianBaiGeHewei.join("")!=="0123456789"?" 千百个合"+rule.qianBaiGeHewei.join(""):"")
     +" 百十个合"+rule.baiShiGeHewei.join("")
     +(rule.qianBaiShiGeHewei.join("")!=="0123456789"?" 千百十个合"+rule.qianBaiShiGeHewei.join(""):"")
     +(rule.twoHeweiHit.length?" 二数合"+rule.twoHeweiHit.join(""):"")
     +(rule.threeHeweiHit.length?" 三数合"+rule.threeHeweiHit.join(""):"")
-    +(rule.brotherChoice?" 取二兄弟":"")
+    +(rule.brotherChoice?(rule.brotherChoice==="否"?" 除两兄弟":" 取二兄弟"):"")
     +(rule.shapes.length?" 除"+rule.shapes.join("、除"):"")
     +(rule.sumAvoid.length?" 除和值"+rule.sumAvoid.join("、除和值"):"")
     +(rule.sumRangeAvoid.length?" 除和值"+rule.sumRangeAvoid.join("、除和值"):"")
@@ -4360,11 +4438,15 @@ function initTxtConverter(){
     if(positionSingleSize)txtGenerateSinglePositionFramework(positionSingleSize,positionSinglePositions,positionSingleExclude);
     if(positionCopySingleSize)txtCopySinglePositionFramework(positionCopySingleSize,positionCopySinglePositions,positionCopySingleExclude);
     if(customTwoGenerate){
-      txtSetStatus("自定义二定50组已移除：二定回删已下线；三定只留千百十回删150剩850。");
+      txtSetStatus("自定义二定50组已移除：二定回删已下线；三定千百十支持回删150剩850、回删100剩900。");
     }
     if(positionCopy)txtCopyPositionFramework(positionCopy==="three"||positionCopy==="3"?"three":"two");
     if(positionDownload)txtDownloadPositionFramework(positionDownload==="three"||positionDownload==="3"?"three":"two");
-    if(positionRunDetail)txtRunPositionDetailRender();
+    if(positionRunDetail){
+      var onlyTarget=positionRunDetail!=="1"?Number(positionRunDetail):null;
+      if(onlyTarget!=null&&!isFinite(onlyTarget))onlyTarget=null;
+      txtRunPositionDetailRender(onlyTarget);
+    }
     if(syncModelsTxt){
       var syncedText=syncModelsToTxtTarget(lastModelResults);
       txtSetStatus(syncedText?"已同步最新模型到 TXT 靶场。":"当前没有可同步的模型结果。");
@@ -4829,19 +4911,19 @@ safeOrderRows();
   var practiceLastCelebrationKey = "";
   var practiceSnapshotStore = {};
   var dailyStreakReportCache = {};
-var PANEL_UI_VERSION = "20260717_three_ding_shape3_parity_size_v8";
+var PANEL_UI_VERSION = "20260719_live_missing_model_v10";
 var PANEL_SNAPSHOT_VERSIONS = {
     autoTop6:"backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit",
-    recommend2:"backend-recommend2-snapshot-v15-formal-anytwo5",
-    killFramework:"backend-kill-framework-snapshot-v7-formal-anytwo5",
+    recommend2:"backend-recommend2-snapshot-v16-formal-anytwo4-pool02468-label-v2",
+    killFramework:"backend-kill-framework-snapshot-v8-formal-anytwo4-pool02468-label-v2",
     // 必须与 penta5_backend_runner.js 中 COMPACT/THREE_DING_*_SNAPSHOT_VERSION 完全一致，否则真实回测会因版本错配被隐藏
-    compactAttack:"backend-three-ding-framework-v7-structural-anytwo",
-    threeDingTwo:"backend-three-ding-two-v8-structural-anytwo",
-    threeDingOne:"backend-three-ding-one-v7-structural-anytwo",
-    sideStable:"backend-side-stable-snapshot-v4-1pos-2hewei-2digit-sum-anytwo5-three5-old1300",
-    coldFramework:"backend-cold-framework-snapshot-v5-anytwo5",
-    dingKill:"backend-ding-kill-snapshot-v3-anytwo5",
-    pick5000:"backend-pick5000-snapshot-v3-anytwo5-stagger"
+    compactAttack:"backend-three-ding-framework-v9-no-shape-anytwo4-pool02468-label-v2",
+    threeDingTwo:"backend-three-ding-two-v12-force-unique-digit-anytwo4-pool02468-label-v3",
+    threeDingOne:"backend-three-ding-one-v10-force-unique-digit-anytwo4-pool02468-label-v2",
+    sideStable:"backend-side-stable-snapshot-v5-1pos-2hewei-2digit-sum-anytwo4-pool02468-three5-old1300-label-v2",
+    coldFramework:"backend-cold-framework-snapshot-v6-anytwo4-pool02468-label-v2",
+    dingKill:"backend-ding-kill-snapshot-v4-anytwo4-pool02468-label-v2",
+    pick5000:"backend-pick5000-snapshot-v4-anytwo4-pool02468-stagger-label-v2"
   };
   var PANEL_CANONICAL_PATH = "/panel";
   try{
@@ -4931,6 +5013,18 @@ var PANEL_SNAPSHOT_VERSIONS = {
       }
       return -1;
     }
+    if(name==="千百合"){
+      var aliasIdx=-1;
+      while((aliasIdx=raw.indexOf(name,aliasIdx+1))>=0){
+        var after=raw.charAt(aliasIdx+3);
+        if(after==="十"||after==="个")continue;
+        return aliasIdx;
+      }
+      return -1;
+    }
+    if(name==="千百个合"){
+      return raw.indexOf(name);
+    }
     if(name==="百十个合"){
       var idx=-1;
       while((idx=raw.indexOf(name,idx+1))>=0){
@@ -4959,12 +5053,14 @@ var PANEL_SNAPSHOT_VERSIONS = {
         start=practiceHeweiLabelStartIndex(text,label);
       }
     }
-    removeSegment("千百十合",["百十个合","千百十个合","除","含","中","各"]);
+    removeSegment("千百十合",["千百个合","百十个合","千百十个合","除","含","中","各"]);
+    removeSegment("千百合",["千百个合","百十个合","千百十个合","除","含","中","各"]);
+    removeSegment("千百个合",["百十个合","千百十个合","除","含","中","各"]);
     removeSegment("百十个合",["千百十个合","除","含","中","各"]);
     removeSegment("千百十个合",["除","含","中","各"]);
-    text=text.replace(/除对数\d{2,3}(?:-\d{2,3})*/g,"");
-    text=text.replace(/含对数\d{2,3}/g,"");
-    text=text.replace(/中对数\d{2,3}/g,"");
+    text=text.replace(/(?:除)?对数\d{2,3}(?:[-.、~/]\d{2,3})*/g,"");
+    text=text.replace(/含对数\d{2,3}(?:[-.、~/]\d{2,3})*/g,"");
+    text=text.replace(/中对数\d{2,3}(?:[-.、~/]\d{2,3})*/g,"");
     text=text.replace(/二数合\d+/g,"");
     text=text.replace(/三数合\d+/g,"");
     text=text.replace(/除(?:和值|值)\d+(?:到|至|-)\d+/g,"");
@@ -4976,7 +5072,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     text=text.replace(/除(?:奇偶比)?[0-4]单[0-4]双/g,"");
     text=text.replace(/除(?:大小比)?[0-4]大[0-4]小/g,"");
     text=text.replace(/除(?:旧码|重复码|历史码)(?:300|500|800|1000|1300|最大|全部|MAX)/gi,"");
-    text=text.replace(/(?:取二兄弟|兄弟号)(?:有|否)?/g,"");
+    text=text.replace(/(?:取二兄弟|兄弟号)(?:有|否)?|除两兄弟/g,"");
     text=text.replace(/除[大小单双]{4}/g,"");
     text=text.replace(/各+$/,"");
     return text;
@@ -5048,7 +5144,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     {id:"twoDigitAvoid3",key:"twoDigitAvoid3",label:"对数避开3组",kind:"twoDigits"},
     {id:"twoDigitHit",key:"twoDigitHit",label:"两数共现除对数（基线参考）",kind:"twoDigits",mode:"avoid",scoreClass:"pair-avoid-baseline",baseline:90},
     {id:"threeDigitHit",key:"threeDigitHit",label:"三数共现命中",kind:"threeDigits",mode:"hit"},
-    {id:"anyTwoHeweiHit",key:"anyTwoHeweiHit",label:"二数合尾宽命中（高基线参考）",kind:"twoHeweiTails",mode:"hit",scoreClass:"wide-hit-baseline",baseline:99},
+    {id:"anyTwoHeweiHit",key:"anyTwoHeweiHit",label:"二数合尾02468排1码命中（高基线参考）",kind:"twoHeweiTails",mode:"hit",scoreClass:"wide-hit-baseline",baseline:99},
     {id:"anyThreeHeweiHit",key:"anyThreeHeweiHit",label:"三数合尾宽命中（高基线参考）",kind:"threeHeweiTails",mode:"hit",scoreClass:"wide-hit-baseline",baseline:95}
   ];
   var HIGH_BASELINE_SCORE_META={
@@ -5269,6 +5365,28 @@ var PANEL_SNAPSHOT_VERSIONS = {
   }
   function records(data){
     return (Array.isArray(data&&data.history)?data.history:[]).filter(function(r){return r&&Array.isArray(r.numbers)&&r.numbers.length>=4;});
+  }
+  function missingModelItems(data){
+    var rows=records(data||{});
+    if(!rows.length)return [];
+    var labels=["千位","百位","十位","个位"];
+    var out=[];
+    for(var index=0;index<4;index++){
+      var missing={};
+      for(var digit=0;digit<=9;digit++){
+        var gap=0;
+        for(var rowIndex=0;rowIndex<rows.length;rowIndex++){
+          var numbers=rows[rowIndex]&&Array.isArray(rows[rowIndex].numbers)?rows[rowIndex].numbers:[];
+          if(String(numbers[index])===String(digit))break;
+          gap++;
+        }
+        missing[String(digit)]=gap;
+      }
+      var maxGap=Math.max.apply(null,Object.keys(missing).map(function(digit){return missing[digit];}));
+      var digits=Object.keys(missing).filter(function(digit){return missing[digit]===maxGap;}).join("");
+      out.push(labels[index]+"遗漏最高："+digits+"（"+maxGap+"期）");
+    }
+    return out;
   }
   function evalRows(data){
     return (Array.isArray(data&&data.predictions)?data.predictions:[])
@@ -5582,6 +5700,11 @@ var PANEL_SNAPSHOT_VERSIONS = {
       if(seenOdd&&seenEven)return false;
     }
     return seenOdd||seenEven;
+  }
+  function isAnyTwoHeweiCode(value){
+    var code=String(value||"").replace(/\D/g,"");
+    if(!/^[02468]{4}$/.test(code))return false;
+    return new Set(code.split("")).size===4;
   }
   function digitSetCandidatesMixedParity(size){
     var key="digitSetMixed"+String(size);
@@ -6404,7 +6527,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
 /* PENTA5_V28_STABLE_TOP_END */
 
   function panelExternalModelName(item,fallback){
-    if(item&&item.key==="anyTwoHeweiHit")return "二数合尾宽命中（高基线参考）";
+    if(item&&item.key==="anyTwoHeweiHit")return "二数合尾02468排1码命中（高基线参考）";
     if(item&&item.key==="anyThreeHeweiHit")return "三数合尾宽命中（高基线参考）";
     if(item&&item.kind==="derivedReverseShape"){
       var attackCode=threeDingShapeAttackCode(String(item.code||""));
@@ -6460,6 +6583,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }
     return true;
   }
+  function panelThreeDingShapeCodeOk(code){
+    return /^[大小单双]{3,4}$/.test(String(code==null?"":code));
+  }
   function panelSnapshotStructureIsValid(storeName,snapshot){
     var version=String(snapshot&&snapshot.version||"");
     var versionOk=version===PANEL_SNAPSHOT_VERSIONS[storeName];
@@ -6492,7 +6618,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         &&formalR2Count(function(item){return item&&item.kind==="position";})===2
         &&formalR2Count(function(item){return item&&item.kind==="hewei";})===2
         &&formalR2Count(function(item){return item&&item.kind==="derivedReverseShape";})===1
-        &&formalR2Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
+        &&formalR2Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
         &&formalR2Count(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
         &&formalR2Count(isPairAvoid)===1;
     }
@@ -6504,7 +6630,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         &&formalKillCount(function(item){return item&&item.kind==="position";})===2
         &&formalKillCount(function(item){return item&&item.kind==="hewei";})===2
         &&formalKillCount(function(item){return item&&item.kind==="derivedReverseShape";})===2
-        &&formalKillCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
+        &&formalKillCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
         &&formalKillCount(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1;
     }
     if(storeName==="compactAttack"){
@@ -6522,9 +6648,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
         &&formalCompactCount(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai"&&/^\d$/.test(String(item.code||""));})===1
         &&formalCompactCount(function(item){
           if(!(item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"))return false;
-          var code=String(item.code||"");
-          return /^\d{5}$/.test(code)&&!isUniformParityDigitSet(code);
-        })===1;
+          return isAnyTwoHeweiCode(item.code);
+        })===1
+        &&formalCompactCount(function(item){return item&&(item.kind==="derivedReverseShape"||item.kind==="shape");})===0;
     }
     if(storeName==="threeDingTwo"){
       var formalTd2=items.filter(function(item){return item&&item.side!=="backup";});
@@ -6538,8 +6664,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
         &&formalTd2Count(function(item){return item&&item.kind==="position"&&["wan","qian","bai"].indexOf(String(item.key))>=0;})===1
         &&Object.keys(td2PosKeys).length===1
         &&formalTd2Count(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai"&&/^\d$/.test(String(item.code||""));})===1
-        &&formalTd2Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
-        &&formalTd2Count(function(item){return item&&item.kind==="derivedReverseShape"&&/^[大小单双]{4}$/.test(String(item.code||""));})===1
+        &&formalTd2Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
+        &&formalTd2Count(function(item){return item&&item.kind==="derivedReverseShape"&&/^[大小]{3,4}$/.test(String(item.code||""))&&!/^[单双]{3,4}$/.test(String(item.code||""));})===1
         &&formalTd2Count(function(item){return item&&item.kind==="extra"&&["twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3"].indexOf(String(item.key))>=0&&/^\d{2}$/.test(String(item.code||""));})===1;
     }
     if(storeName==="threeDingOne"){
@@ -6549,12 +6675,13 @@ var PANEL_SNAPSHOT_VERSIONS = {
       formalTd1.forEach(function(item){
         if(item&&item.kind==="position"&&item.key&&["wan","qian","bai"].indexOf(String(item.key))>=0)td1PosKeys[String(item.key)]=true;
       });
-      return items.length===5
-        &&formalTd1.length===5
+      return items.length===6
+        &&formalTd1.length===6
         &&formalTd1Count(function(item){return item&&item.kind==="position"&&["wan","qian","bai"].indexOf(String(item.key))>=0;})===2
         &&Object.keys(td1PosKeys).length===2
         &&formalTd1Count(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai"&&/^\d$/.test(String(item.code||""));})===1
-        &&formalTd1Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
+        &&formalTd1Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
+        &&formalTd1Count(function(item){return item&&item.kind==="derivedReverseShape"&&/^[大小]{3,4}$/.test(String(item.code||""))&&!/^[单双]{3,4}$/.test(String(item.code||""));})===1
         &&formalTd1Count(function(item){return item&&item.kind==="extra"&&["twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3"].indexOf(String(item.key))>=0&&/^\d{2}$/.test(String(item.code||""));})===1;
     }
     if(storeName==="sideStable"){
@@ -6571,7 +6698,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         &&formalSideCount(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai";})===1
         &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="twoDigitAvoid"&&/^\d{2}$/.test(String(item.code||""));})===1
         &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="sumAvoid";})===1
-        &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
+        &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
         &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
         &&formalSideCount(function(item){
           if(!(item&&item.kind==="extra"&&item.key==="recentExactCodeAvoid1300"&&String(item.code||"")==="1300"&&Number(item.codeCount||0)>=1000&&isFinite(Number(item.generatedGroupCount))))return false;
@@ -6588,7 +6715,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         &&count(function(item){return item&&item.kind==="hewei"&&item.side==="cold";})===2
         &&count(function(item){return item&&item.kind==="extra"&&["recentExactCodeAvoid500","recentExactCodeAvoid800"].indexOf(item.key)>=0&&isFinite(Number(item.generatedGroupCount));})===1
         &&count(function(item){return item&&item.kind==="derivedReverseShape";})===1
-        &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
+        &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
         &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1;
     }
     if(storeName==="dingKill"){
@@ -6603,7 +6730,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         &&formalDingCount(function(item){return item&&item.kind==="position";})===2
         &&formalDingCount(function(item){return item&&item.kind==="hewei";})===1
         &&formalDingCount(function(item){return item&&item.kind==="derivedReverseShape";})===1
-        &&formalDingCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
+        &&formalDingCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
         &&formalDingCount(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
         &&formalDingCount(function(item){return item&&item.kind==="extra"&&/^recentExactCodeAvoid(?:\d+|Max)$/.test(String(item.key||""))&&isFinite(Number(item.generatedGroupCount));})===1;
     }
@@ -6616,7 +6743,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         &&count(function(item){return item&&item.kind==="hewei"&&item.side==="cold";})===2
         &&count(function(item){return item&&item.kind==="extra"&&item.key==="recentExactCodeAvoid500"&&isFinite(Number(item.generatedGroupCount));})===1
         &&count(function(item){return item&&item.kind==="derivedReverseShape";})===1
-        &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
+        &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
         &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1;
     }
     return false;
@@ -7652,7 +7779,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       positionExclude:positionExcludeItems,
       cold:coldItems,
       hot:hotItems,
-      missing:[],
+      missing:missingModelItems(data||{}),
       repeat:extraItems(["repeatAvoid"]),
       consecutive:extraItems(["consecutiveAvoid"]),
       sum:extraItems(["sumAvoid","sumRangeAvoid"]),
@@ -7667,17 +7794,11 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var threeFourRate=(window.penta5RealModelStatsHtml&&typeof window.penta5RealModelStatsHtml==="function")?window.penta5RealModelStatsHtml(data||{},"threeFour"):"";
     renderPredictionSection("合尾综合排除",[prediction.totalHeweiKill],{rateHtml:totalHeweiRate,defaultExpanded:true});
     renderPredictionSection("三四字合尾杀码",[prediction.threeFourHeweiKillDigit],{rateHtml:threeFourRate,defaultExpanded:true});
-    renderPredictionSection("冷码模型",lastModelResults.cold);
-    renderPredictionSection("热码模型",lastModelResults.hot);
-    renderPredictionSection("遗漏模型",lastModelResults.missing);
-    renderPredictionSection("重号模型",lastModelResults.repeat);
-    renderPredictionSection("连号模型",lastModelResults.consecutive);
-    renderPredictionSection("和值模型",lastModelResults.sum);
-    renderPredictionSection("跨度模型",lastModelResults.span);
-    renderPredictionSection("定位双码",lastModelResults.doubleCode);
-    renderPredictionSection("主攻组合",lastModelResults.mainAttack);
-    renderPredictionSection("杀码过滤",lastModelResults.kill);
-    renderPredictionSection("过滤组合",lastModelResults.filtered);
+    // 保留用户指定的冷码、热码、遗漏和唯一一份可见的杀码筛选；其余重复模型不再渲染。
+    renderPredictionSection("冷码模型",lastModelResults.cold,{defaultExpanded:true});
+    renderPredictionSection("热码模型",lastModelResults.hot,{defaultExpanded:true});
+    renderPredictionSection("遗漏模型",lastModelResults.missing,{defaultExpanded:true});
+    renderPredictionSection("杀码过滤",lastModelResults.kill,{defaultExpanded:true});
     syncModelsToTxtTarget(lastModelResults);
   }
   function renderPositionColdCodeFramework(data){
@@ -7722,15 +7843,14 @@ var PANEL_SNAPSHOT_VERSIONS = {
   function brotherNumberPracticeItem(data){
     var rows=records(data||{});
     var rec=brotherNumberRecommendFromRows(rows);
-    // 固定取二兄弟：推荐与攻击语一律按「有」，不输出「否」
+    var choice=rec&&rec.choice==="否"?"否":"有";
     return {
       kind:"brotherNumber",
       key:"brotherNumber",
       side:"recommend",
       name:"取二兄弟推荐",
-      code:"有",
+      code:choice,
       stableScore:rec?(rec.yesScore!=null?rec.yesScore:rec.score):null,
-      fixedTakeBrother:true,
       rate30:brotherNumberStats(data,30).rate,
       rate120:brotherNumberStats(data,120).rate,
       rate300:brotherNumberStats(data,300).rate
@@ -7872,7 +7992,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }));
   }
   function brotherNumberFrameworkPracticeItems(data){
-    // 恢复旧口径：除定位1 + 除合尾1 + 二数合 + 三数合 + 取二兄弟 + 除单双形态1
+    // 除定位1 + 除合尾1 + 二数合02468排1码 + 三数合 + 二兄弟有取/否除 + 除单双形态1
     data=data||state||{};
     var pool=practicePoolItems();
     var positions=killFrameworkPickTop(data,pool.filter(function(item){
@@ -7898,10 +8018,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
       key:"brotherNumber",
       side:"recommend",
       name:"取二兄弟推荐",
-      code:"有",
-      fixedTakeBrother:true
+      code:"有"
     };
-    brother=Object.assign({},brother,{code:"有",fixedTakeBrother:true});
+    brother=Object.assign({},brother,{code:brother&&brother.code==="否"?"否":"有"});
     var out=positions.concat(heweis,extras);
     out.push(brother);
     out=out.concat(shapes);
@@ -7935,7 +8054,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       rowHtml='<div style="color:#64748b;font-size:13px;">等待定位/合尾/二数合/三数合/形态模型就绪…</div>';
     }
     return '<div id="brotherNumberFrameworkBox" class="section-anchor" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bbf7d0;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">取二兄弟框架</b><div class="small">除定位1 + 除合尾1 + 二数合 + 三数合 + 取二兄弟 + 除单双形态1；攻击语含千百十个合/形态；固定「取二兄弟」</div>','brotherNumberFramework',false)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">取二兄弟框架</b><div class="small">除定位1 + 除合尾1 + 二数合02468排1码 + 三数合 + 二兄弟有取/否除 + 除单双形态1；攻击语含千百十个合/形态</div>','brotherNumberFramework',false)
       +panelCollapseBodyOpen('brotherNumberFramework',false)
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #bbf7d0;border-radius:12px;padding:12px;background:#f0fdf4;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rowHtml+'</div>'
@@ -8136,7 +8255,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     return latestFrameworkEvaluation(data,"threeDingTwo",{versionPrefix:"backend-three-ding-two-",total:5});
   }
   function latestThreeDingOneEvaluation(data){
-    return latestFrameworkEvaluation(data,"threeDingOne",{versionPrefix:"backend-three-ding-one-",total:5});
+    return latestFrameworkEvaluation(data,"threeDingOne",{versionPrefix:"backend-three-ding-one-",total:6});
   }
   function latestSideStableEvaluation(data){
     return latestFrameworkEvaluation(data,"sideStable",{version:PANEL_SNAPSHOT_VERSIONS.sideStable,total:8});
@@ -8389,6 +8508,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }
     var idx=full.indexOf("四定");
     var tail=idx>=0?threeDingShapeTailText(full.slice(idx+2).replace(/各+$/,"")):"";
+    // 三定二数合只作用于千、百、十；将范围写入攻击语，外部转换器据此不能把个位混入两两合尾。
+    tail=tail.replace(/二数合(\d+)/g,"千百十二数合$1");
     return ensurePracticeShotGeTail(head+"三定"+tail);
   }
   function frameworkAttackTextFromItems(items,options){
@@ -8407,29 +8528,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return "";
     }
   }
-  function frameworkAttackTxtResultFromText(attackText,label){
-    var raw=String(attackText||"").trim();
-    if(!raw||/^等待/.test(raw))return {ok:false,message:(label||"框架")+"攻击语未就绪"};
-    var day=txtTodayKeyForData(window.__penta5TxtState||state||{});
-    var convertRaw=raw;
-    var shotOpts=null;
-    if(/三定/.test(raw.replace(/\s+/g,""))&&!/四定/.test(raw.replace(/\s+/g,""))){
-      convertRaw=expandThreeDingAttackToFourDingText(raw)||raw;
-      // 三定二数合固定按千百十三个数两两合尾，不把个位对算进去
-      shotOpts={twoHeweiScopeIndexes:[0,1,2]};
-    }
-    var result=txtShotResultFromInput(convertRaw,day,shotOpts);
-    if(!result||!result.ok){
-      return {ok:false,message:(result&&result.message)||((label||"框架")+"攻击语无法转换TXT")};
-    }
-    // 框架生成TXT固定空格无逗号（图2：6560 4564 4564）
-    var tokens=txtResultTokens(result.text);
-    result.text=txtForceSpaceTokenList(tokens);
-    result.preview=txtForceSpaceTokenList(tokens,120);
-    result.source="framework-attack";
-    result.label=String(label||"框架")+"TXT";
-    return result;
-  }
   function frameworkAttackTextHtml(label,items,domId,options){
     var shot=frameworkAttackTextFromItems(items,options);
     var id=String(domId||("frameworkAttack_"+String(label||"x").replace(/[^\w\u4e00-\u9fff]+/g,"_")));
@@ -8442,11 +8540,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
       +'<b style="font-size:13px;color:#334155;">'+esc(label)+'攻击语</b>'
       +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'
       +'<button type="button" data-copy-framework-attack="'+esc(id)+'" style="border:0;border-radius:7px;padding:5px 10px;background:#334155;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">复制攻击语</button>'
-      +'<button type="button" data-generate-framework-attack-txt="'+esc(id)+'" data-framework-attack-label="'+esc(label)+'" style="border:0;border-radius:7px;padding:5px 10px;background:#2563eb;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">生成TXT</button>'
       +'</div>'
       +'</div>'
       +'<textarea id="'+esc(id)+'" readonly style="width:100%;min-height:58px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:8px;background:#f8fafc;font-size:14px;line-height:1.45;color:#0f172a;">'+esc(shot)+'</textarea>'
-      +'<div id="'+esc(id)+'TxtStatus" class="small" style="margin-top:6px;color:#64748b;">TXT 空格分隔无逗号（例：6560 4564 4564）；按攻击语完整展开，不按数量或截止码截断；后台不保存，仅本机下载保留</div>'
       +'</div>';
   }
   function bindFrameworkAttackCopy(root){
@@ -8454,38 +8550,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(!host||host._pentaFrameworkAttackCopyBound)return;
     host._pentaFrameworkAttackCopyBound=true;
     host.addEventListener("click",function(ev){
-      var txtBtn=ev.target&&ev.target.closest?ev.target.closest("[data-generate-framework-attack-txt]"):null;
-      if(txtBtn){
-        if(ev&&ev.preventDefault)ev.preventDefault();
-        if(ev&&ev.stopPropagation)ev.stopPropagation();
-        var txtId=txtBtn.getAttribute("data-generate-framework-attack-txt")||"";
-        var label=txtBtn.getAttribute("data-framework-attack-label")||"框架";
-        var box=txtId?document.getElementById(txtId):null;
-        var status=txtId?document.getElementById(txtId+"TxtStatus"):null;
-        var value=box?String(box.value||box.textContent||""):"";
-        var result=frameworkAttackTxtResultFromText(value,label);
-        if(!result||!result.ok){
-          if(status){
-            status.style.color="#9a3412";
-            status.textContent=result&&result.message?result.message:"生成TXT失败";
-          }
-          return;
-        }
-        var preview=document.getElementById("txtPreview");
-        if(preview)preview.value=result.text||"";
-        // 禁止 renderPredictionResult：会 clearPredictionPanel，把整页模型分析清空成「四定…TXT」预览
-        txtDownload(result.fileName,result.text);
-        txtAuditSnapshot(result,"框架攻击语生成TXT");
-        txtSetStatus("已生成本机TXT："+result.label+"，按攻击语完整展开 "+result.count+" 组（空格无逗号）；后台不保存，仅本机下载保留。");
-        if(status){
-          status.style.color="#166534";
-          status.textContent="已本机下载：按攻击语完整展开 "+result.count+" 组；未按数量或截止码截断。文件 "+(result.fileName||"");
-        }
-        var oldTxt=txtBtn.textContent;
-        txtBtn.textContent="已下载";
-        setTimeout(function(){txtBtn.textContent=oldTxt||"生成TXT";},1200);
-        return;
-      }
       var btn=ev.target&&ev.target.closest?ev.target.closest("[data-copy-framework-attack]"):null;
       if(!btn)return;
       var id=btn.getAttribute("data-copy-framework-attack")||"";
@@ -8513,7 +8577,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="recommend2FrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bfdbfe;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">推荐2框架</b><div class="small">等待远程生成</div>','recommend2Framework',true)
         +panelCollapseBodyOpen('recommend2Framework')
-        +'<div style="border:1px solid #bfdbfe;border-radius:10px;padding:10px;background:#f8fbff;color:#475569;font-size:13px;">推荐2框架：等待远程生成 2个定位、2个合尾、1个反向形态、二数合、三数合、1个对数2位避开。</div>'
+        +'<div style="border:1px solid #bfdbfe;border-radius:10px;padding:10px;background:#f8fbff;color:#475569;font-size:13px;">推荐2框架：等待远程生成 2个定位、2个合尾、1个反向形态、二数合02468排1码、三数合、1个对数2位避开。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -8531,7 +8595,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="recommend2FrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bfdbfe;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">推荐2框架</b><div class="small">2个定位数字排除 + 2个合尾排除 + 1个反向形态 + 二数合 + 三数合 + 1个对数2位避开，全通过才算中</div>','recommend2Framework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">推荐2框架</b><div class="small">2个定位数字排除 + 2个合尾排除 + 1个反向形态 + 二数合02468排1码 + 三数合 + 1个对数2位避开，全通过才算中</div>','recommend2Framework',true)
       +panelCollapseBodyOpen('recommend2Framework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #bfdbfe;border-radius:12px;padding:12px;background:#f8fbff;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -8552,7 +8616,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="coldFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bbf7d0;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">冷码综合框架</b><div class="small">等待远程生成</div>','coldFramework',true)
         +panelCollapseBodyOpen('coldFramework')
-        +'<div style="border:1px solid #bbf7d0;border-radius:10px;padding:10px;background:#f0fdf4;color:#475569;font-size:13px;">冷码综合框架：等待远程生成 2个位置冷码、2个合尾冷码、近500/近800近期码择优、1个反向形态、二数合、三数合。</div>'
+        +'<div style="border:1px solid #bbf7d0;border-radius:10px;padding:10px;background:#f0fdf4;color:#475569;font-size:13px;">冷码综合框架：等待远程生成 2个位置冷码、2个合尾冷码、近500/近800近期码择优、1个反向形态、二数合02468排1码、三数合。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -8587,7 +8651,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="coldFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bbf7d0;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">冷码综合框架</b><div class="small">2个位置冷码 + 2个合尾冷码 + 近500/近800近期码择优 + 1个反向形态 + 二数合 + 三数合，全通过才算中</div>','coldFramework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">冷码综合框架</b><div class="small">2个位置冷码 + 2个合尾冷码 + 近500/近800近期码择优 + 1个反向形态 + 二数合02468排1码 + 三数合，全通过才算中</div>','coldFramework',true)
       +panelCollapseBodyOpen('coldFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #bbf7d0;border-radius:12px;padding:12px;background:#f0fdf4;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -8608,7 +8672,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="pick5000FrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #93c5fd;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;color:#1d4ed8;">看好5000组</b><div class="small">等待远程生成</div>','pick5000Framework',true)
         +panelCollapseBodyOpen('pick5000Framework')
-        +'<div style="border:1px solid #93c5fd;border-radius:10px;padding:10px;background:#eff6ff;color:#475569;font-size:13px;">看好5000组：等待远程生成 2个位置冷码、2个合尾冷码、固定近500旧码、1个反向形态、二数合、三数合（5000仅用于框架选型，TXT按攻击语完整展开）。</div>'
+        +'<div style="border:1px solid #93c5fd;border-radius:10px;padding:10px;background:#eff6ff;color:#475569;font-size:13px;">看好5000组：等待远程生成 2个位置冷码、2个合尾冷码、固定近500旧码、1个反向形态、二数合02468排1码、三数合（5000仅用于框架选型，TXT按攻击语完整展开）。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -8642,7 +8706,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="pick5000FrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #93c5fd;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;color:#1d4ed8;">看好5000组</b><div class="small">2个位置冷码 + 2个合尾冷码 + 固定近500旧码 + 1个反向形态 + 二数合 + 三数合；5000仅用于选型，TXT按攻击语完整展开</div>','pick5000Framework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;color:#1d4ed8;">看好5000组</b><div class="small">2个位置冷码 + 2个合尾冷码 + 固定近500旧码 + 1个反向形态 + 二数合02468排1码 + 三数合；5000仅用于选型，TXT按攻击语完整展开</div>','pick5000Framework',true)
       +panelCollapseBodyOpen('pick5000Framework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #93c5fd;border-radius:12px;padding:12px;background:#eff6ff;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -8663,7 +8727,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="dingKillFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">四定定位杀码框架</b><div class="small">等待远程生成</div>','dingKillFramework',true)
         +panelCollapseBodyOpen('dingKillFramework')
-        +'<div style="border:1px solid #fda4af;border-radius:10px;padding:10px;background:#fff1f2;color:#475569;font-size:13px;">四定定位杀码：等待远程生成 2个定位杀码、1个合尾、1个反向形态、二数合、三数合、旧码回删（剩组约5000-5010）。</div>'
+        +'<div style="border:1px solid #fda4af;border-radius:10px;padding:10px;background:#fff1f2;color:#475569;font-size:13px;">四定定位杀码：等待远程生成 2个定位杀码、1个合尾、1个反向形态、二数合02468排1码、三数合、旧码回删（剩组约5000-5010）。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -8696,7 +8760,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="dingKillFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">四定定位杀码框架</b><div class="small">2个定位杀码 + 1个合尾 + 1个反向形态 + 二数合 + 三数合 + 旧码回删（剩组约5000-5010，期数目标不固定），全通过才算中</div>','dingKillFramework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">四定定位杀码框架</b><div class="small">2个定位杀码 + 1个合尾 + 1个反向形态 + 二数合02468排1码 + 三数合 + 旧码回删（剩组约5000-5010，期数目标不固定），全通过才算中</div>','dingKillFramework',true)
       +panelCollapseBodyOpen('dingKillFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #fda4af;border-radius:12px;padding:12px;background:#fff1f2;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -8792,7 +8856,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     html+=frameworkAttackTextHtml("自动推荐使用"+(topCount||6)+"项",top||[],"frameworkAttackAutoTop6");
     html+=twoDigitAvoidGroupHtml(data,items||[]);
     html+='<div style="margin-top:10px;padding:10px 12px;border:1px solid #86efac;border-radius:10px;background:#f0fdf4;color:#166534;font-size:13px;font-weight:800;">'
-      +'取二兄弟攻击语已独立成卡：请点顶栏「取二兄弟框架」，或滚到冷码框架正上方查看「取二兄弟框架攻击语」（复制/生成TXT）。'
+      +'取二兄弟攻击语已独立成卡：请点顶栏「取二兄弟框架」，或滚到冷码框架正上方复制「取二兄弟框架攻击语」。'
       +' <a href="#brotherNumberFrameworkBox" style="color:#15803d;text-decoration:underline;">立即跳转</a>'
       +'</div>';
     html+=panelCollapseBodyClose();
@@ -8959,15 +9023,16 @@ var PANEL_SNAPSHOT_VERSIONS = {
       codes=uniqueCodes(codes);
       return codes.length?codes:unifiedHeweiCodes;
     }
-    ensureHeweiSegment("千百十合",["百十个合","千百十个合","除"],independentOrUnifiedHewei(selectedCodes(list,"hewei","wanQianBai")));
+    ensureHeweiSegment("千百十合",["千百个合","百十个合","千百十个合","除"],independentOrUnifiedHewei(selectedCodes(list,"hewei","wanQianBai")));
+    ensureHeweiSegment("千百个合",["百十个合","千百十个合","除"],independentOrUnifiedHewei(selectedCodes(list,"hewei","wanQianGe")));
     ensureHeweiSegment("百十个合",["千百十个合","除"],independentOrUnifiedHewei(selectedCodes(list,"hewei","qianBaiShi")));
     ensureHeweiSegment("千百十个合",["除"],independentOrUnifiedHewei(uniqueCodes(selectedCodes(list,"hewei","total"),selectedCodes(list,"hewei","wanQianBaiShi"))));
 
     text=text.replace(/四定除值\d+/g,"四定");
     text=text.replace(/四定\d+/g,"四定");
-    text=text.replace(/除对数\d{2,3}(?:-\d{2,3})*/g,"");
-    text=text.replace(/含对数\d{2,3}/g,"");
-    text=text.replace(/中对数\d{2,3}/g,"");
+    text=text.replace(/(?:除)?对数\d{2,3}(?:[-.、~/]\d{2,3})*/g,"");
+    text=text.replace(/含对数\d{2,3}(?:[-.、~/]\d{2,3})*/g,"");
+    text=text.replace(/中对数\d{2,3}(?:[-.、~/]\d{2,3})*/g,"");
     text=text.replace(/二数合\d+/g,"");
     text=text.replace(/三数合\d+/g,"");
     text=text.replace(/除(?:和值|值)\d+(?:到|至|-)\d+/g,"");
@@ -9038,9 +9103,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
         key="extra.anyThreeHeweiHit";
         token="三数合"+item.code;
       }else if(item.kind==="brotherNumber"){
-        // 固定取二兄弟：攻击语只写「取二兄弟」，永不输出「否」
-        key="brotherNumber.有";
-        token="取二兄弟";
+        key="brotherNumber."+(item.code==="否"?"否":"有");
+        token=item.code==="否"?"除两兄弟":"取二兄弟";
       }else if(item.kind==="threeDuishu"){
         key="threeDuishu."+String(item.code||"");
         var pairCodes=threeDuishuPairTokens(item);
@@ -9049,14 +9113,14 @@ var PANEL_SNAPSHOT_VERSIONS = {
         token="";
       }else if(item.kind==="shape"){
         var shapeCode=forceThreeWithOneShape(item.code,item.key);
-        if(!/^[大小单双]{4}$/.test(shapeCode))return;
+        if(!/^[大小单双]{4}$/.test(shapeCode)&&!(opts.threeDingShapeAttack===true&&/^[大小单双]{3}$/.test(shapeCode)))return;
         var shapeAttack=opts.threeDingShapeAttack===true?threeDingShapeAttackCode(shapeCode):shapeCode;
         key="shape."+(item.key||"")+"."+shapeAttack;
         token="除"+shapeAttack;
       }else if(item.kind==="derivedReverseShape"){
         var reverseShapeKey=item.shapeKey||(item.key==="reverseSize"?"shapeSize":"shapeParity");
         var reverseShapeCode=forceThreeWithOneShape(item.code,reverseShapeKey);
-        if(!/^[大小单双]{4}$/.test(reverseShapeCode))return;
+        if(!/^[大小单双]{4}$/.test(reverseShapeCode)&&!(opts.threeDingShapeAttack===true&&/^[大小单双]{3}$/.test(reverseShapeCode)))return;
         var reverseAttack=opts.threeDingShapeAttack===true?threeDingShapeAttackCode(reverseShapeCode):reverseShapeCode;
         key="derivedReverseShape."+(item.key||"")+"."+reverseAttack;
         token="除"+reverseAttack;
@@ -9351,7 +9415,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     return killFrameworkPickTop(data,pool,count,preferUniqueKey);
   }
   function compactAttackFrameworkPracticeItems(data){
-    // 三定框架：千百十合尾 + 三项定位固定千百十各除1码 + 二数合（禁全单全双）
+    // 三定框架：千百十合尾 + 三项定位固定千百十各除1码 + 二数合02468排1码
     data=data||state||{};
     var pool=practicePoolItems();
     var positions=compactAttackPickTop(data,pool.filter(function(item){
@@ -9386,10 +9450,11 @@ var PANEL_SNAPSHOT_VERSIONS = {
   function compactAttackFrameworkHtml(data){
     var top=backendCompactAttackItems(data)||compactAttackFrameworkPracticeItems(data);
     if(!top||!top.length){
-      return '<div id="compactAttackFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #c4b5fd;">'
+      return '<div id="compactAttackFrameworkBox" class="section-anchor" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #c4b5fd;">'
+        +'<div id="section-three-ding-nav" class="section-anchor" style="scroll-margin-top:96px;height:0;overflow:hidden;" aria-hidden="true"></div>'
         +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架</b><div class="small">等待模型就绪</div>','compactAttackFramework',true)
         +panelCollapseBodyOpen('compactAttackFramework')
-        +'<div style="border:1px solid #c4b5fd;border-radius:10px;padding:10px;background:#f5f3ff;color:#475569;font-size:13px;">三定框架：千百十合尾1码 + 千/百/十各除1码（定位加强）+ 二数合5码（禁全单全双）；二数合只按千百十两两合尾；共5项全过才算中。</div>'
+        +'<div style="border:1px solid #c4b5fd;border-radius:10px;padding:10px;background:#f5f3ff;color:#475569;font-size:13px;">三定框架：千百十合尾1码 + 千/百/十各除1码（定位加强）+ 二数合02468排1码；二数合只按千百十两两合尾；不挂单双/形态项；共5项全过才算中。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9405,8 +9470,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +frameworkItemBackupRefHtml(data,item)
         +'</div>';
     }).join("");
-    return '<div id="compactAttackFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #c4b5fd;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架</b><div class="small">千百十合尾 + 千百十各除1码（定位加强）+ 二数合禁全单全双；二数合只按千百十两两合尾；同框禁同码；共5项，全通过才算中；攻击语在下方</div>','compactAttackFramework',true)
+    return '<div id="compactAttackFrameworkBox" class="section-anchor" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #c4b5fd;">'
+      +'<div id="section-three-ding-nav" class="section-anchor" style="scroll-margin-top:96px;height:0;overflow:hidden;" aria-hidden="true"></div>'
+      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架</b><div class="small">千百十合尾 + 千百十各除1码（定位加强）+ 二数合02468排1码；二数合只按千百十两两合尾；同框禁同码；不挂单双形态；共5项，全通过才算中；攻击语在下方</div>','compactAttackFramework',false)
       +panelCollapseBodyOpen('compactAttackFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #c4b5fd;border-radius:12px;padding:12px;background:#f5f3ff;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -9426,7 +9492,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="threeDingTwoFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #f9a8d4;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架A</b><div class="small">等待模型就绪</div>','threeDingTwoFramework',true)
         +panelCollapseBodyOpen('threeDingTwoFramework')
-        +'<div style="border:1px solid #f9a8d4;border-radius:10px;padding:10px;background:#fdf2f8;color:#475569;font-size:13px;">三定框架A：定位千百十，挑1个位置排除1码 + 千百十合尾 + 二数合 + 排除形态1（千百十三字：除大大小/除单单双等，大小单双均可）+ 一对数；共5项全过才算中。</div>'
+        +'<div style="border:1px solid #f9a8d4;border-radius:10px;padding:10px;background:#fdf2f8;color:#475569;font-size:13px;">三定框架A：定位千百十，挑1个位置排除1码 + 千百十合尾 + 二数合02468排1码 + 排除形态1（千百十三字，仅大小形态，禁用单双）+ 一对数；共5项全过才算中。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9444,7 +9510,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="threeDingTwoFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #f9a8d4;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架A</b><div class="small">千百十挑1位 + 合尾 + 二数合 + 排除形态(千百十三字·大小/单双) + 一对数；共5项全过才算中</div>','threeDingTwoFramework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架A</b><div class="small">千百十挑1位 + 合尾 + 二数合02468排1码 + 排除形态(千百十三字·仅大小) + 一对数；禁用单双形态；共5项全过才算中</div>','threeDingTwoFramework',false)
       +panelCollapseBodyOpen('threeDingTwoFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #f9a8d4;border-radius:12px;padding:12px;background:#fdf2f8;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -9464,7 +9530,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="threeDingOneFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架B</b><div class="small">等待模型就绪</div>','threeDingOneFramework',true)
         +panelCollapseBodyOpen('threeDingOneFramework')
-        +'<div style="border:1px solid #fda4af;border-radius:10px;padding:10px;background:#fff1f2;color:#475569;font-size:13px;">三定框架B：从千百十挑2个位置各排除1码 + 千百十合尾 + 二数合（千百十作用）+ 对数避开1组；与A各算各的，尽量不同码；共5项全过才算中。</div>'
+        +'<div style="border:1px solid #fda4af;border-radius:10px;padding:10px;background:#fff1f2;color:#475569;font-size:13px;">三定框架B：从千百十挑2个位置各排除1码 + 千百十合尾 + 二数合02468排1码 + 排除形态(仅大小，禁用单双) + 对数避开1组；与A各算各的，尽量不同码；共6项全过才算中。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9472,16 +9538,17 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var repair=(top&&top.repairReport)||[];
     var latestHtml=frameworkLatestEvalHtml(latestThreeDingOneEvaluation(data),"三定框架B");
     var rows=frameworkFormalItems(top).map(function(item,index){
+      var displayCode=item&&item.kind==="derivedReverseShape"?threeDingShapeAttackCode(item.code):item.code;
       return '<div style="display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap;margin:4px 0;">'
         +'<span style="width:18px;color:#e11d48;font-weight:800;">'+esc(index+1)+'.</span>'
         +'<span style="min-width:112px;font-weight:800;">'+esc(panelExternalModelName(item,item.name))+'</span>'
-        +normalizePredictionItems(item.code).map(function(code){return '<span class="prediction-chip">'+esc(code)+'</span>';}).join("")
+        +normalizePredictionItems(displayCode).map(function(code){return '<span class="prediction-chip">'+esc(code)+'</span>';}).join("")
         +frameworkItemTruthHtml(combo,item,data)
         +frameworkItemBackupRefHtml(data,item)
         +'</div>';
     }).join("");
     return '<div id="threeDingOneFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架B</b><div class="small">千百十挑2位 + 合尾(优先备用) + 二数合(分框) + 对数避开；单码/二数合尽量与A错开；共5项全过才算中</div>','threeDingOneFramework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架B</b><div class="small">千百十挑2位 + 合尾 + 二数合02468排1码 + 排除形态(仅大小，禁用单双) + 对数避开；单码/二数合02468排1码尽量与A错开；共6项全过才算中</div>','threeDingOneFramework',false)
       +panelCollapseBodyOpen('threeDingOneFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #fda4af;border-radius:12px;padding:12px;background:#fff1f2;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -9505,7 +9572,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="sideStableFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #99f6e4;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">旁路稳筛</b><div class="small">等待模型就绪</div>','sideStableFramework',true)
         +panelCollapseBodyOpen('sideStableFramework')
-        +'<div style="border:1px solid #99f6e4;border-radius:10px;padding:10px;background:#f0fdfa;color:#475569;font-size:13px;">旁路稳筛：1定位 + 总合尾 + 千百十合尾 + 二码对数 + 和值避开 + 二数合5码 + 三数合5码 + 固定近1300旧码回删。</div>'
+        +'<div style="border:1px solid #99f6e4;border-radius:10px;padding:10px;background:#f0fdfa;color:#475569;font-size:13px;">旁路稳筛：1定位 + 总合尾 + 千百十合尾 + 二码对数 + 和值避开 + 二数合02468排1码 + 三数合5码 + 固定近1300旧码回删。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9521,7 +9588,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="sideStableFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #99f6e4;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">旁路稳筛</b><div class="small">1定位 + 总合尾 + 千百十合尾 + 二码对数 + 和值 + 二数合5码 + 三数合5码 + 固定近1300旧码；TXT按攻击语完整展开</div>','sideStableFramework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">旁路稳筛</b><div class="small">1定位 + 总合尾 + 千百十合尾 + 二码对数 + 和值 + 二数合02468排1码 + 三数合5码 + 固定近1300旧码；TXT按攻击语完整展开</div>','sideStableFramework',true)
       +panelCollapseBodyOpen('sideStableFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #5eead4;border-radius:12px;padding:12px;background:#f0fdfa;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -9580,7 +9647,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="killFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fde68a;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">杀码框架</b><div class="small">等待远程生成</div>','killFramework',true)
         +panelCollapseBodyOpen('killFramework')
-        +'<div style="border:1px solid #fde68a;border-radius:10px;padding:10px;background:#fffbeb;color:#475569;font-size:13px;">杀码框架：等待远程生成 2个定位、2个合尾、2个反向形态、二数合5码、三数合5码。</div>'
+        +'<div style="border:1px solid #fde68a;border-radius:10px;padding:10px;background:#fffbeb;color:#475569;font-size:13px;">杀码框架：等待远程生成 2个定位、2个合尾、2个反向形态、二数合02468排1码、三数合5码。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9597,7 +9664,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="killFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fde68a;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">杀码框架</b><div class="small">2个定位 + 2个合尾 + 2个反向形态 + 二数合5码 + 三数合5码；替补不进列表/攻击语；开奖前封存，全通过才算中</div>','killFramework',true)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">杀码框架</b><div class="small">2个定位 + 2个合尾 + 2个反向形态 + 二数合02468排1码 + 三数合5码；替补不进列表/攻击语；开奖前封存，全通过才算中</div>','killFramework',true)
       +panelCollapseBodyOpen('killFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #fde68a;border-radius:12px;padding:12px;background:#fffbeb;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -10362,7 +10429,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       hint.style.cssText="font-size:12px;color:#64748b;margin:4px 0 8px;";
       if(title&&title.parentNode)title.parentNode.insertBefore(hint,title.nextSibling);
     }
-    hint.textContent="只留一个挑选板块：点「+」勾选模型单项，再生成攻击语（当前已选 "+count+" 项）。完整框架攻击语仍在各框架卡片下方可复制/生成TXT；本池只列基础全量模型，不混入框架快照以免重复。";
+    hint.textContent="只留一个挑选板块：点「+」勾选模型单项，再生成攻击语（当前已选 "+count+" 项）。完整框架攻击语仍在各框架卡片下方可复制；本池只列基础全量模型，不混入框架快照以免重复。";
   }
   function ensurePracticeBox(top){
     var latest=document.getElementById("numbers");
@@ -10684,8 +10751,15 @@ var PANEL_SNAPSHOT_VERSIONS = {
   function restorePanelViewState(view){
     if(!view)return;
     try{
-      window.scrollTo(view.scrollX||0, view.scrollY||0);
-    }catch(e){}
+      // 必须 behavior:auto，否则全局/浏览器默认 smooth 会把整页拖着「漂移」
+      if(typeof window.scrollTo==="function"){
+        window.scrollTo({left:view.scrollX||0,top:view.scrollY||0,behavior:"auto"});
+      }else{
+        window.scrollTo(view.scrollX||0, view.scrollY||0);
+      }
+    }catch(e){
+      try{window.scrollTo(view.scrollX||0, view.scrollY||0);}catch(e2){}
+    }
     var el=null;
     if(view.activeId)el=document.getElementById(view.activeId);
     if(!el&&view.activeName)el=document.querySelector('[name="'+view.activeName.replace(/"/g,"")+'"]');
@@ -10704,9 +10778,12 @@ var PANEL_SNAPSHOT_VERSIONS = {
       result=fn();
     }finally{
       restorePanelViewState(view);
-      setTimeout(function(){restorePanelViewState(view);},0);
-      setTimeout(function(){restorePanelViewState(view);},40);
-      setTimeout(function(){restorePanelViewState(view);},120);
+      // 只在下一帧再钉一次；禁止 40/120ms 连环 scrollTo（会叠成肉眼可见漂移）
+      if(typeof requestAnimationFrame==="function"){
+        requestAnimationFrame(function(){restorePanelViewState(view);});
+      }else{
+        setTimeout(function(){restorePanelViewState(view);},0);
+      }
     }
     return result;
   }
@@ -10759,7 +10836,10 @@ var PANEL_SNAPSHOT_VERSIONS = {
         console.error("panel chunk render failed",err);
         setStatus("页面模块计算失败："+(err&&err.message?err.message:err),false);
       }
-      if(preserveView)restorePanelViewState(view);
+      // 分段重绘时不每步 scrollTo（会抖）；只在关键步结束与全部完成时钉住
+      if(preserveView&&(index+1===criticalSteps.length||index+1===steps.length)){
+        restorePanelViewState(view);
+      }
       index+=1;
       var gap=stepGap;
       if(drawFast&&index===criticalSteps.length)gap=450;
@@ -10773,7 +10853,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       var sync=data&&data.lastSync||{};
       var prediction=data&&data.currentPrediction||{};
       var nums=Array.isArray(latest.numbers)?latest.numbers.slice(0,5):[];
-      sessionStorage.setItem("penta5PanelWarmSnapshot",JSON.stringify({
+      var payload=JSON.stringify({
         v:PANEL_UI_VERSION,
         period:latest.period||latest.uid||"",
         opentime:latest.opentime||"",
@@ -10782,16 +10862,23 @@ var PANEL_SNAPSHOT_VERSIONS = {
         syncText:sync.text||sync.at||"",
         historyCount:Array.isArray(data&&data.history)?data.history.length:0,
         savedAt:Date.now()
-      }));
+      });
+      // localStorage：关标签/刷新都可恢复；sessionStorage 作同会话兜底
+      try{localStorage.setItem("penta5PanelWarmSnapshot",payload);}catch(eLocal){}
+      try{sessionStorage.setItem("penta5PanelWarmSnapshot",payload);}catch(eSession){}
     }catch(e){}
   }
   function paintPanelWarmSnapshot(){
     try{
-      var raw=sessionStorage.getItem("penta5PanelWarmSnapshot");
+      var raw=null;
+      try{raw=localStorage.getItem("penta5PanelWarmSnapshot");}catch(e1){}
+      if(!raw){
+        try{raw=sessionStorage.getItem("penta5PanelWarmSnapshot");}catch(e2){}
+      }
       if(!raw)return false;
       var snap=JSON.parse(raw);
       if(!snap||snap.v!==PANEL_UI_VERSION)return false;
-      if(snap.savedAt&&(Date.now()-Number(snap.savedAt))>6*60*60*1000)return false;
+      if(snap.savedAt&&(Date.now()-Number(snap.savedAt))>24*60*60*1000)return false;
       var period=snap.period||"--";
       var nums=Array.isArray(snap.numbers)?snap.numbers:[];
       var periodCell=document.getElementById("period");
@@ -11004,8 +11091,12 @@ var PANEL_SNAPSHOT_VERSIONS = {
     },700);
     document.addEventListener("visibilitychange",function(){if(!document.hidden)coalescePanelRefresh(false,"auto");});
     window.addEventListener("focus",function(){coalescePanelRefresh(false,"auto");});
-    window.addEventListener("pageshow",function(){coalescePanelRefresh(false,"auto");});
+    // 普通刷新会走 boot，不必再叠一次 pageshow 静默刷新（会二次重绘导致漂移）
+    window.addEventListener("pageshow",function(ev){
+      if(ev&&ev.persisted)coalescePanelRefresh(false,"auto");
+    });
     window.addEventListener("online",function(){coalescePanelRefresh(true,"auto");});
+    try{if(history&&"scrollRestoration" in history)history.scrollRestoration="manual";}catch(eScroll){}
   }
   document.addEventListener("DOMContentLoaded",startPanelLoop);
   if(document.readyState!=="loading")startPanelLoop();
