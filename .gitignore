@@ -16,8 +16,9 @@ data/stable_math_filter.json
 data/codex_percent_server.json
 *.bak
 *.bak_*
-*.bak-
+*.bak-*
 panel.html.bak_*
+panel.html.bak-*
 api.bak.*/
 backups/
 backup_codex/
