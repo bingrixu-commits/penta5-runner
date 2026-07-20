@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>五路横财数据分析</title>
+<title>五路公交车数据库</title>
 <style>
 :root{
   --bg:#eef2f7;
@@ -140,7 +140,7 @@ button.gray{background:#4b5563}
   <div class="panel-hero__head">
     <div class="panel-hero__brand" aria-hidden="true"></div>
     <div class="panel-hero__center">
-      <h1>五路横财数据分析</h1>
+      <h1>五路公交车数据库</h1>
       <div id="status" class="status is-hidden">等待同步...</div>
     </div>
     <div class="panel-hero__actions btns">
@@ -164,10 +164,10 @@ button.gray{background:#4b5563}
       <a href="#txtConvertBox">回删命中率</a>
       <a href="#txtThreeRemainTopBox">三定回删</a>
       <a href="#section-three-ding-nav">三定导航</a>
-      <a href="/attack-txt">攻击语转换</a>
-      <a href="#practiceModelBox">自有转换靶场</a>
+      <a href="/attack-txt">转换攻击</a>
       <a href="#section-lottery">开奖数据</a>
-      <a href="#section-prediction">四定推荐</a>
+      <a href="#section-prediction">单独模型</a>
+      <a href="#twoDigitAvoidGroupBox">对数模型</a>
       <a href="#brotherNumberFrameworkBox">取二兄弟框架</a>
       <a href="#section-history">历史记录</a>
     </nav>
@@ -180,11 +180,11 @@ button.gray{background:#4b5563}
     <button type="button" class="card-toggle" id="txtConvertToggle" data-collapse-toggle="txtConvert" data-collapse-default="0" aria-expanded="true">收起</button>
   </div>
   <div class="card-body" id="txtConvertBody" data-collapse-body="txtConvert">
-  <div class="small">按真实旧号回删分段统计命中率；点「重新计算」才跑（手动核对，不占 GPU），避免开奖刷新时卡死。</div>
+  <div class="small">只用 RDS 真实历史旧码；开奖后 1 分 20 秒强制重拉历史并启动核算。期号、号码、来源记录或唯一旧码数量任一校验失败就停止并报错。</div>
 
   <div id="txtThreeRemainTopBox" class="section-anchor nested-collapse" style="margin:10px 0 0;border:1px solid #f97316;border-radius:12px;background:#fff7ed;padding:10px;">
     <div class="card-head" data-collapse-head="txtThreeRemainTop">
-      <div class="card-head-title"><b style="font-size:16px;color:#9a3412;">三定回删命中率（千百十 · 回删150剩850 / 回删100剩900）</b></div>
+    <div class="card-head-title"><b style="font-size:16px;color:#9a3412;">三定回删命中率（四种三位组合 · 统一回删200剩800）</b></div>
       <button type="button" class="card-toggle" data-collapse-toggle="txtThreeRemainTop" data-collapse-default="0" aria-expanded="true">收起</button>
     </div>
     <div class="card-body" data-collapse-body="txtThreeRemainTop">
@@ -275,7 +275,7 @@ function ball(n,cls){return '<span class="ball '+(cls||'')+'">'+esc(n)+'</span>'
 function tag(t){return '<span class="tag">'+esc(t)+'</span>'}
 function heweiConfidenceTag(meta){
   if(!meta||typeof meta!=="object")return "";
-  if(meta.recommendable===false||meta.confidence==="low")return tag("低置信");
+  if(meta.recommendable===false||meta.confidence==="low")return "";
   if(meta.confidence==="normal")return "";
   return "";
 }
@@ -389,7 +389,7 @@ function panelOpenNavTarget(hash){
     if(id==="txtTwoRemainTopBox")panelExpandCollapseId("txtTwoRemainTop");
     if(id==="txtThreeRemainTopBox")panelExpandCollapseId("txtThreeRemainTop");
   }
-  if(id==="section-prediction")panelExpandCollapseId("predictionShell");
+  if(id==="section-prediction"||id==="twoDigitAvoidGroupBox")panelExpandCollapseId("predictionShell");
   if(id==="brotherNumberFrameworkBox"){
     panelExpandCollapseId("predictionShell");
     panelExpandCollapseId("brotherNumberFramework");
@@ -455,6 +455,14 @@ function initPanelCollapseDelegation(){
     var onlyTarget=runVal&&runVal!=="1"?Number(runVal):null;
     if(onlyTarget!=null&&!isFinite(onlyTarget))onlyTarget=null;
     txtRunPositionDetailRender(onlyTarget);
+  });
+  document.addEventListener("click",function(event){
+    var summary=event.target&&event.target.closest?event.target.closest("summary[data-txt-position-sources]"):null;
+    if(!summary)return;
+    var details=summary.parentElement;
+    if(details&&details.getAttribute("data-txt-position-sources")){
+      setTimeout(function(){txtPositionRenderSourceDetails(details);},0);
+    }
   });
   restorePanelCollapsibles(document);
   initSectionNavOpen();
@@ -1026,12 +1034,10 @@ function txtClearGeneratedTxtResults(){
   var twoOutput=$("txtTwoFrameworkOutput");
   var threeOutput=$("txtThreeFrameworkOutput");
   var positionOutput=$("txtPositionFrameworkOutput");
-  var oldOutput=$("txtOldCodeFrameworkOutput");
   if(preview)preview.value="";
   if(twoOutput)twoOutput.value="";
   if(threeOutput)threeOutput.value="";
   if(positionOutput)positionOutput.value="";
-  if(oldOutput)oldOutput.value="";
 }
 function txtInitPlaceholderFormat(){
   try{
@@ -1071,7 +1077,7 @@ function txtRecords(data){
   var fromState=(Array.isArray(data&&data.history)?data.history:[]).filter(function(row){
     return row&&Array.isArray(row.numbers)&&row.numbers.length>=4;
   });
-  // /state 为防卡顿只带近百期；三定回删150需要更长共享历史，优先用 /history 扩展缓存
+  // /state 为防卡顿只带近百期；三定回删200剩800优先用 /history 扩展缓存
   var cached=Array.isArray(window.__penta5HistoryCache)?window.__penta5HistoryCache:[];
   var fromCache=cached.filter(function(row){
     return row&&Array.isArray(row.numbers)&&row.numbers.length>=4;
@@ -1179,19 +1185,21 @@ function txtBuildContent(config,day,data){
   return {count:groups.length,width:config.width,text:txtFormatTokenList(displayGroups),preview:txtFormatTokenList(displayGroups,80)};
 }
 var TXT_POSITION_HISTORY_WINDOW = 50;
-/** 二定回删已下线；三定千百十两档：回删150剩850、回删100剩900（面板手动核对，不走 GPU） */
+/** 二定回删已下线；三定四种三位组合统一真实旧码回删200剩800（面板手动核对，不走 GPU） */
 var TXT_POSITION_TWO_ONLY_POSITIONS = [0, 1];
 var TXT_POSITION_TWO_REMAIN_TARGETS = [];
 var TXT_POSITION_TWO_REMAIN_TARGET = 70;
 var TXT_POSITION_TWO_EXCLUDE_TARGET = TXT_POSITION_TWO_REMAIN_TARGET;
-var TXT_POSITION_THREE_ONLY_POSITIONS = [0, 1, 2];
-var TXT_POSITION_THREE_REMAIN_TARGETS = [850, 900];
-var TXT_POSITION_THREE_REMAIN_TARGET = 850;
-var TXT_POSITION_THREE_REMAIN_MIN = 850;
-var TXT_POSITION_THREE_REMAIN_MAX = 900;
+var TXT_POSITION_THREE_COMBOS = [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]];
+var TXT_POSITION_THREE_REMAIN_TARGETS = [800];
+var TXT_POSITION_THREE_REMAIN_TARGET = 800;
+var TXT_POSITION_THREE_REMAIN_MIN = 800;
+var TXT_POSITION_THREE_REMAIN_MAX = 800;
 var TXT_POSITION_TWO_TARGET = TXT_POSITION_TWO_REMAIN_TARGET;
 var TXT_POSITION_THREE_TARGET = TXT_POSITION_THREE_REMAIN_TARGET;
 var TXT_POSITION_BACKTEST_LIMIT = 30;
+// 同一页面始终只有一条三定回删队列。
+var TXT_POSITION_THREE_RUN_ORDER = [800];
 /** 剩1 在跑也要记真实胜率：今日尽量覆盖整天，近N用更大样本；分段 yield 保页面可滚 */
 var TXT_POSITION_DISPLAY_TODAY_LIMIT = 80;
 var TXT_POSITION_DISPLAY_RECENT_LIMIT = 40;
@@ -1204,6 +1212,9 @@ var TXT_POSITION_THREE_DISPLAY_TODAY_LIMIT = 15;
 var TXT_POSITION_THREE_DISPLAY_RECENT_LIMIT = 12;
 var TXT_POSITION_RECOMMEND_DISPLAY_LIMIT = 20;
 var TXT_POSITION_TASK_YIELD_MS = 72;
+var TXT_POSITION_THREE_TASK_YIELD_MS = 250;
+var TXT_POSITION_THREE_TARGET_YIELD_MS = 1000;
+var TXT_POSITION_VERIFY_DELAY_MS = 80 * 1000;
 var txtPositionOpenedMemo={};
 var txtPositionFrameworkLastResult = null;
 var txtPositionTwoLastResult = null;
@@ -1218,7 +1229,7 @@ function txtPositionNormalizeThreeRemainTarget(value){
   if(TXT_POSITION_THREE_REMAIN_TARGETS.indexOf(next)<0)next=TXT_POSITION_THREE_REMAIN_TARGET;
   return next;
 }
-/** 模型键：二定已下线；三定=剩850/900 两档 */
+/** 模型键：二定已下线；三定固定回删200剩800 */
 function txtPositionModelTarget(size,override){
   if(size===3){
     if(override!=null&&Number(override)>0)return txtPositionNormalizeThreeRemainTarget(override);
@@ -1243,7 +1254,7 @@ function txtPositionClampRemainCount(size,count,remainTarget){
 function txtPositionRemainLabel(size,remainTarget){
   var target=txtPositionModelTarget(size,remainTarget);
   if(size===2||size===3){
-    // 与界面「回删」前缀拼成「回删150剩850」，避免「回删删」
+    // 与界面「回删」前缀拼成固定目标标签，避免重复前缀
     return txtPositionDeleteCount(size,target)+"剩"+target;
   }
   return "固定剩"+target;
@@ -1341,12 +1352,12 @@ function txtPositionPredictionForTargetRow(data,row){
   return null;
 }
 function txtPositionCombos(size){
-  // 二定已下线；三定只留千百十剩850 一张卡
+  // 二定已下线；三定四种三位组合统一按回删200剩800核查
   if(size===2){
     if(!TXT_POSITION_TWO_REMAIN_TARGETS.length)return [];
     return [TXT_POSITION_TWO_ONLY_POSITIONS.slice()];
   }
-  if(size===3)return [TXT_POSITION_THREE_ONLY_POSITIONS.slice()];
+  if(size===3)return TXT_POSITION_THREE_COMBOS.map(function(positions){return positions.slice();});
   return [];
 }
 function txtPositionComboName(positions){
@@ -1397,16 +1408,22 @@ function txtPositionRecentSetFromRows(rows,positions,limit){
 function txtPositionUniqueOpenedFromRows(rows,positions,targetUnique){
   rows=Array.isArray(rows)?rows:[];
   targetUnique=Math.max(1,Number(targetUnique||1));
-  var set={},list=[],scanned=0;
+  var set={},list=[],sources=[],scanned=0;
   for(var i=0;i<rows.length;i++){
     scanned++;
     var code=txtPositionCodeFromRow(rows[i],positions);
     if(!code||set[code])continue;
     set[code]=true;
     list.push(code);
+    sources.push({
+      code:code,
+      period:String(rows[i]&&((rows[i].period!=null&&rows[i].period!=="")?rows[i].period:rows[i].uid)||""),
+      opentime:String(rows[i]&&rows[i].opentime||""),
+      historyIndex:i
+    });
     if(list.length>=targetUnique)break;
   }
-  return {set:set,list:list,unique:list.length,scanned:scanned,target:targetUnique};
+  return {set:set,list:list,sources:sources,unique:list.length,scanned:scanned,target:targetUnique};
 }
 function txtPositionOpenedMemoClear(){txtPositionOpenedMemo={};}
 function txtPositionUniqueOpenedMemo(rows,positions,targetUnique){
@@ -1418,6 +1435,76 @@ function txtPositionUniqueOpenedMemo(rows,positions,targetUnique){
   var result=txtPositionUniqueOpenedFromRows(rows,positions,targetUnique);
   txtPositionOpenedMemo[key]=result;
   return result;
+}
+function txtPositionLatestPeriod(data){
+  var latest=data&&data.latestRecord||{};
+  return String((latest.period!=null&&latest.period!=="")?latest.period:(latest.uid||""));
+}
+function txtPositionParseTimeMs(value){
+  if(!value)return 0;
+  var direct=Date.parse(String(value));
+  if(isFinite(direct))return direct;
+  var normalized=String(value).replace(/-/g,"/");
+  var parsed=Date.parse(normalized);
+  return isFinite(parsed)?parsed:0;
+}
+function txtPositionVerifyGate(data){
+  var latest=data&&data.latestRecord||{};
+  var period=txtPositionLatestPeriod(data);
+  var openMs=txtPositionParseTimeMs(latest.opentime);
+  if(!period)return {ok:false,period:"",message:"最新期号为空，禁止启动回删旧码核算。"};
+  if(!openMs)return {ok:false,period:period,message:"最新期开奖时间无效，禁止启动回删旧码核算。"};
+  var now=Date.now();
+  var slotDate=new Date(now);
+  var slotMinute=slotDate.getMinutes()-(slotDate.getMinutes()%5);
+  var expectedSlot=new Date(slotDate.getFullYear(),slotDate.getMonth(),slotDate.getDate(),slotDate.getHours(),slotMinute,12,0).getTime();
+  if(expectedSlot>now)expectedSlot-=5*60*1000;
+  if(expectedSlot-openMs>90*1000){
+    return {ok:false,period:period,message:"当前开奖时段尚未落库：RDS 最新仍是 "+period+"（"+String(latest.opentime||"无时间")+"），禁止拿上一期冒充本期核算。"};
+  }
+  var startAt=openMs+TXT_POSITION_VERIFY_DELAY_MS;
+  return {ok:true,period:period,openMs:openMs,startAt:startAt,remainingMs:Math.max(0,startAt-now)};
+}
+function txtPositionHistoryRowPeriod(row){
+  return String(row&&((row.period!=null&&row.period!=="")?row.period:row.uid)||"");
+}
+function txtPositionValidateHistoryRows(rows,data,requiredUnique){
+  rows=Array.isArray(rows)?rows:[];
+  var expected=txtPositionLatestPeriod(data||{});
+  if(!rows.length)return {ok:false,message:"RDS 历史为空，禁止核算。"};
+  var firstPeriod=txtPositionHistoryRowPeriod(rows[0]);
+  if(!expected)return {ok:false,message:"当前最新期号为空，无法核对 RDS 历史。"};
+  if(firstPeriod!==expected){
+    return {ok:false,message:"RDS 历史首期 "+(firstPeriod||"空")+" 与当前最新期 "+expected+" 不一致，禁止使用旧缓存核算。"};
+  }
+  var seenPeriods={};
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i]||{};
+    var period=txtPositionHistoryRowPeriod(row);
+    if(!period)return {ok:false,message:"RDS 历史第 "+(i+1)+" 条缺少期号，禁止核算。"};
+    if(seenPeriods[period])return {ok:false,message:"RDS 历史期号 "+period+" 重复，禁止核算。"};
+    seenPeriods[period]=true;
+    if(!String(row.opentime||"").trim())return {ok:false,message:"RDS 历史期号 "+period+" 缺少真实开奖时间，禁止核算。"};
+    var nums=Array.isArray(row.numbers)?row.numbers:[];
+    if(nums.length<4||nums.slice(0,4).some(function(value){return !/^\d$/.test(String(value));})){
+      return {ok:false,message:"RDS 历史期号 "+period+" 的前四位号码不完整，禁止核算。"};
+    }
+  }
+  requiredUnique=Math.max(1,Number(requiredUnique||200));
+  var comboChecks=[];
+  var failedCombo=null;
+  txtPositionCombos(3).forEach(function(positions){
+    var opened=txtPositionUniqueOpenedFromRows(rows,positions,requiredUnique);
+    var check={name:txtPositionComboName(positions),positions:positions.slice(),unique:opened.unique,scanned:opened.scanned};
+    comboChecks.push(check);
+    if(!failedCombo&&opened.unique<requiredUnique)failedCombo=check;
+  });
+  if(failedCombo){
+    return {ok:false,message:"RDS 真实"+failedCombo.name+"旧码不足：需要 "+requiredUnique+" 个唯一旧码，当前只有 "+failedCombo.unique+" 个；禁止补码、截断或伪造。",combos:comboChecks};
+  }
+  var minUnique=comboChecks.length?Math.min.apply(null,comboChecks.map(function(check){return check.unique;})):0;
+  var maxScanned=comboChecks.length?Math.max.apply(null,comboChecks.map(function(check){return check.scanned;})):0;
+  return {ok:true,expectedPeriod:expected,historyCount:rows.length,unique:minUnique,scanned:maxScanned,combos:comboChecks};
 }
 function txtPositionUniverseCount(size){
   return size===3?1000:100;
@@ -1528,6 +1615,7 @@ function txtPositionCandidateGroupFromRows(rows,size,positions,day,salt,data,exc
     excludeTarget:modelTarget,
     deleteTarget:deleteCount,
     scanned:opened.scanned,
+    deletedSources:Array.isArray(opened.sources)?opened.sources.slice():[],
     beforeBackup:beforeBackup,
     backupKilled:0,
     backupDigits:backupDigits,
@@ -1600,14 +1688,14 @@ function txtPositionBuildResultFromRows(rows,kind,day,salt){
     label:isThree?"三定旧码原位置回删":"二定旧码原位置回删",
     targetCount:target*groups.length,
     historyWindow:isThree?TXT_POSITION_THREE_REMAIN_TARGET:TXT_POSITION_TWO_REMAIN_TARGET,
-    groups:groups.map(function(group){return {name:group.name,left:group.left,excluded:group.excluded,excludeTarget:group.excludeTarget,remainTarget:group.remainTarget,deleteTarget:group.deleteTarget,scanned:group.scanned};}),
+    groups:groups.map(function(group){return {name:group.name,left:group.left,excluded:group.excluded,excludeTarget:group.excludeTarget,remainTarget:group.remainTarget,deleteTarget:group.deleteTarget,scanned:group.scanned,deletedSources:Array.isArray(group.deletedSources)?group.deletedSources.slice():[]};}),
     note:"按旧码原位置拆分回删，每个位置模型独立删除历史唯一组合，重复自动往更早历史补（纯回删不加排除码）；"+details.join("；")+"。TXT空格；攻击语"+(isThree?"各字封尾":"英文逗号")+"。"
   };
 }
 function txtPositionTwoAllResult(data,day){
   return txtPositionBuildResultFromRows(txtRecords(data||{}),"two",day,"current-two");
 }
-function txtPositionThree500Result(data,day){
+function txtPositionThreeFixed800Result(data,day){
   return txtPositionBuildResultFromRows(txtRecords(data||{}),"three",day,"current-three");
 }
 function txtPositionTokenMatchesRow(token,row){
@@ -1658,7 +1746,7 @@ function txtPositionGroupResultFromRows(rows,size,positions,day,salt,data,exclud
     excludeTarget:modelTarget,
     remainTarget:group.remainTarget,
     group:group,
-    groups:[{name:group.name,left:group.left,excluded:group.excluded,excludeTarget:group.excludeTarget,remainTarget:group.remainTarget,deleteTarget:group.deleteTarget,scanned:group.scanned,backupLabel:group.backupLabel,backupKilled:group.backupKilled}],
+    groups:[{name:group.name,left:group.left,excluded:group.excluded,excludeTarget:group.excludeTarget,remainTarget:group.remainTarget,deleteTarget:group.deleteTarget,scanned:group.scanned,backupLabel:group.backupLabel,backupKilled:group.backupKilled,deletedSources:Array.isArray(group.deletedSources)?group.deletedSources.slice():[]}],
     note:note
   };
 }
@@ -1921,7 +2009,8 @@ function txtPositionRemainSnapshotFromRows(rows,size,positions,excludeTarget){
     excludeTarget:modelTarget,
     remainTarget:modelTarget,
     deleteTarget:deleteCount,
-    scanned:opened.scanned
+    scanned:opened.scanned,
+    deletedSources:Array.isArray(opened.sources)?opened.sources.slice():[]
   };
 }
 function txtPositionModelFrameItemFromRows(rows,size,day,positions,data,excludeTarget){
@@ -1935,7 +2024,8 @@ function txtPositionModelFrameItemFromRows(rows,size,day,positions,data,excludeT
   var todayLimit=isLite
     ?(size===3?TXT_POSITION_THREE_DISPLAY_TODAY_LIMIT:TXT_POSITION_TWO_DISPLAY_TODAY_LIMIT)
     :TXT_POSITION_DISPLAY_TODAY_LIMIT;
-  var current=isLite?null:txtPositionRemainSnapshotFromRows(rows,size,positions,modelTarget);
+  // 精简卡也保留当前真实旧码快照，直接展示已删唯一旧码、扫描期数和实际剩余组数。
+  var current=txtPositionRemainSnapshotFromRows(rows,size,positions,modelTarget);
   var todayStats=txtPositionBacktestStats(txtPositionBacktestRowsForPositionsFromRows(rows,size,positions,todayLimit,true,day,modelTarget));
   var recentRows=txtPositionBacktestRowsForPositionsFromRows(rows,size,positions,recentLimit,false,day,modelTarget);
   var recentStats=txtPositionBacktestStats(recentRows);
@@ -1957,6 +2047,7 @@ function txtPositionModelFrameItemFromRows(rows,size,day,positions,data,excludeT
     remainTarget:current?current.remainTarget:modelTarget,
     deleteTarget:current?current.deleteTarget:null,
     scanned:current?current.scanned:null,
+    deletedSources:current&&Array.isArray(current.deletedSources)?current.deletedSources.slice():[],
     today:todayStats,
     recent:recentStats,
     recentRows:recentRows,
@@ -2044,12 +2135,12 @@ function txtPositionModelFrameHtmlFromComputed(twoByTarget,threeByTarget,twoSyst
   var twoRec=txtPositionRecommendItem(twoItems);
   var threeRec=txtPositionRecommendItem(threeItems);
   return '<div style="border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;padding:9px;margin-top:8px;">'
-    +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#0f172a;">三定旧码原位置核查</b><span style="color:#64748b;">三定千百十：回删150剩850、回删100剩900。</span></div>'
+    +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#0f172a;">三定旧码原位置核查</b><span style="color:#64748b;">四种三位组合：千百十、千百个、千十个、百十个；统一回删200剩800。</span></div>'
     +'<div style="margin-top:6px;font-size:12px;font-weight:700;color:#9a3412;">中/不中按最新开奖对上期回删结果回算，不是下方当前生成按钮的即时码。</div>'
     +(twoRec?('<div style="border:1px solid #c4b5fd;border-radius:9px;background:#f5f3ff;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#5b21b6;">二定推荐</b>'+txtPositionRecommendSummary(twoRec,"二定")+'</div>'):'')
     +render("二定：已下线",twoItems,twoRec,"#ddd6fe")
     +(threeRec?('<div style="border:1px solid #fed7aa;border-radius:9px;background:#fff7ed;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#9a3412;">三定推荐</b>'+txtPositionRecommendSummary(threeRec,"三定")+'</div>'):'')
-    +render("三定：回删150剩850 / 回删100剩900",threeItems,threeRec,"#fed7aa")
+    +render("三定：回删200剩800",threeItems,threeRec,"#fed7aa")
     +'</div>';
 }
 function txtPositionSplitModelFrameHtmlFromComputed(twoByTarget,threeByTarget,twoSystemStatsByTarget,threeSystemStatsByTarget){
@@ -2098,7 +2189,7 @@ function txtPositionSplitModelFrameHtmlFromComputed(twoByTarget,threeByTarget,tw
       +render("二定位置模型",twoItems,twoRec,"#ddd6fe")
       +'</div>',
     threeBox:'<div style="border:1px solid #fdba74;border-radius:10px;background:#fff7ed;padding:9px;margin-top:8px;">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定核查</b><span style="color:#64748b;">千百十 · 回删150剩850 / 回删100剩900 · 真实旧号回删 · TXT空格 · 攻击语各字封尾</span></div>'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定核查</b><span style="color:#64748b;">千百十、千百个、千十个、百十个 · 真实旧号统一回删200剩800 · TXT空格 · 攻击语各字封尾</span></div>'
       +'<div style="margin-top:6px;font-size:12px;font-weight:700;color:#9a3412;">中/不中按最新开奖对上期回删结果回算，不是下方当前生成按钮的即时码。</div>'
       +(threeRec?('<div style="border:1px solid #fed7aa;border-radius:9px;background:white;padding:8px;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><b style="color:#9a3412;">推荐</b>'+txtPositionRecommendSummary(threeRec,"三定")+'</div>'):'')
       +render("三定位置模型",threeItems,threeRec,"#fed7aa")
@@ -2143,6 +2234,24 @@ function txtThreeRemainTopHtmlFromComputed(threeByTarget,threeSystemStatsByTarge
     var ok=item.latest&&typeof item.latest.success==="boolean"?item.latest.success:null;
     var color=ok===true?"#dcfce7":ok===false?"#fee2e2":"#f1f5f9";
     var fg=ok===true?"#166534":ok===false?"#991b1b":"#64748b";
+    var remainTarget=Number(item.remainTarget!=null?item.remainTarget:item.excludeTarget);
+    var deletedSources=Array.isArray(item.deletedSources)?item.deletedSources:[];
+    var truthReady=Number(item.left)===remainTarget
+      &&Number(item.excluded)===Number(item.deleteTarget)
+      &&deletedSources.length===Number(item.deleteTarget)
+      &&deletedSources.every(function(source){return /^\d{3}$/.test(String(source&&source.code||""))&&!!String(source&&source.period||"")&&!!String(source&&source.opentime||"");});
+    var truthText=item.excluded==null||item.scanned==null||item.left==null
+      ?"数据库真实旧码记录：等待计算"
+      :("数据库真实旧码记录：已删 "+item.excluded+" 个唯一旧码 ｜ 扫描 "+item.scanned+" 期 ｜ 现剩 "+item.left+" 组"
+        +(truthReady?" ｜ 已达到真实回删目标":" ｜ 未达到目标，停止生成且不计有效结果"));
+    var sourceId="txt-position-sources-"+txtHashSeed(String(item.positionKey||item.name||"")+"|"+String(remainTarget)+"|"+String(deletedSources.length)).toString(16);
+    txtPositionSourceDetailStore[sourceId]=deletedSources.slice();
+    var sourceDetails=deletedSources.length
+      ?('<details data-txt-position-sources="'+txtEsc(sourceId)+'" style="border:1px solid #fed7aa;border-radius:8px;background:#fff7ed;padding:7px 9px;">'
+        +'<summary data-txt-position-sources="1" style="cursor:pointer;font-weight:900;color:#9a3412;">查看 '+txtEsc(deletedSources.length)+' 个真实回删旧码及其 RDS 来源期号</summary>'
+        +'<div data-txt-position-sources-body="1" style="margin-top:7px;max-height:280px;overflow:auto;font-size:12px;color:#64748b;">展开后加载真实来源明细。</div>'
+        +'</details>')
+      :'<div style="font-size:12px;color:#b91c1c;">没有可核对的旧码来源记录，当前结果无效。</div>';
     var chips=(Array.isArray(item.recentRows)?item.recentRows:[]).slice(0,item.recentLimit||12).map(function(row){
       var hit=row&&typeof row.success==="boolean"?row.success:null;
       var bg=hit===true?"#dcfce7":hit===false?"#fee2e2":"#e2e8f0";
@@ -2153,16 +2262,18 @@ function txtThreeRemainTopHtmlFromComputed(threeByTarget,threeSystemStatsByTarge
     }).join("");
     return '<div style="border:1px solid #fdba74;border-radius:10px;background:white;padding:10px 12px;display:grid;gap:8px;">'
       +'<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">'
-      +'<b style="font-size:15px;color:#9a3412;">'+txtEsc(item.name)+' · '+txtEsc(txtPositionRemainLabel(3,item.remainTarget!=null?item.remainTarget:item.excludeTarget))+'</b>'
+      +'<b style="font-size:15px;color:#9a3412;">'+txtEsc(item.name)+'</b>'
       +'<span style="border-radius:999px;padding:3px 10px;background:'+color+';color:'+fg+';font-weight:900;">最新 '+(ok===true?"中":ok===false?"不中":"--")+'</span>'
       +'<span style="color:#64748b;">今日</span><b>'+txtEsc(txtPositionRateText(item.today))+'</b>'
       +'<span style="color:#64748b;">近'+txtEsc(item.recentLimit)+'</span><b>'+txtEsc(txtPositionRateText(item.recent))+'</b>'
       +'</div>'
+      +'<div style="font-size:12px;font-weight:800;color:'+(truthReady?'#166534':'#b91c1c')+';">'+txtEsc(truthText)+'</div>'
+      +(truthReady?sourceDetails:'<div style="font-size:12px;color:#b91c1c;">来源记录未达到目标，已停止。</div>')
       +(chips?('<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;"><span style="color:#9a3412;font-weight:800;font-size:12px;">近'+txtEsc(item.recentLimit)+'期中/不中</span>'+chips+'</div>'):'')
       +'</div>';
   }).join("");
   return ''
-    +'<div style="margin-top:6px;font-size:12px;color:#9a3412;">中/不中：看「最新」徽章，以及下方近N期逐期芯片（绿=中，红=不中）。今日/近N是命中率汇总。</div>'
+    +'<div style="margin-top:6px;font-size:12px;color:#9a3412;">中/不中：看「最新」徽章及近N期逐期芯片。每档可展开核对全部真实回删旧码、来源期号和开奖时间。</div>'
     +'<div style="margin-top:8px;display:grid;gap:8px;">'+rows+'</div>'
     +txtThreeRemainActionButtonsHtml();
 }
@@ -2182,7 +2293,7 @@ function txtPositionQuickModelFrameHtml(data,kind){
   var isThree=String(kind||"")==="three";
   if(isThree){
     return '<div style="border:1px solid #fdba74;border-radius:10px;background:#fff7ed;padding:9px;margin-top:8px;">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定旧码原位置核查</b><span style="color:#64748b;">千百十 · 回删150剩850 / 回删100剩900，按真实旧号自动分段回算。</span></div>'
+    +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="font-size:14px;color:#9a3412;">三定旧码原位置核查</b><span style="color:#64748b;">千百十、千百个、千十个、百十个 · 统一回删200剩800。</span></div>'
       +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">'
       +'<button type="button" data-txt-position-generate="three" style="border:0;border-radius:7px;padding:7px 10px;background:#ea580c;color:white;font-weight:900;cursor:pointer;font-size:13px;">一键生成所有三定TXT</button>'
       +'</div>'
@@ -2200,180 +2311,8 @@ function txtPositionQuickModelFrameHtml(data,kind){
 function txtPositionFrameworkResult(kind){
   var data=window.__penta5TxtState||{};
   var day=txtTodayKeyForData(data);
-  if(kind==="three")return txtPositionThree500Result(data,day);
+  if(kind==="three")return txtPositionThreeFixed800Result(data,day);
   return txtPositionTwoAllResult(data,day);
-}
-var txtOldCodeFrameworkLastResult=null;
-function recentExactCodeWindowFromKey(key,fallback){
-  var text=String(key||"")+" "+String(fallback==null?"":fallback);
-  if(/recentExactCodeAvoidMax/i.test(text)||/最大|全部|MAX/i.test(text))return 5000;
-  var m=String(key||"").match(/recentExactCodeAvoid(\d+)/);
-  if(m)return Math.max(1,Number(m[1]));
-  var fb=String(fallback==null?"":fallback).match(/(\d+)/);
-  if(fb)return Math.max(1,Number(fb[1]));
-  return 500;
-}
-function recentExactCodeWindowIsMax(value){
-  return String(value||"").toLowerCase()==="max"||/最大|全部|MAX/i.test(String(value||""));
-}
-function recentExactCodeWindowKey(value){
-  return recentExactCodeWindowIsMax(value)?"Max":String(recentExactCodeWindowFromKey("",value));
-}
-function recentExactCodeWindowLabel(value){
-  return recentExactCodeWindowIsMax(value)?"最大":"近"+recentExactCodeWindowFromKey("",value);
-}
-function recentExactCodeWindowValueFromKey(key,fallback){
-  var text=String(key||"")+" "+String(fallback==null?"":fallback);
-  return /recentExactCodeAvoidMax/i.test(text)||/最大|全部|MAX/i.test(text)?"最大":String(recentExactCodeWindowFromKey(key,fallback));
-}
-function txtOldCodeWindow(value){
-  if(recentExactCodeWindowIsMax(value))return "max";
-  var n=Number(String(value||"").replace(/\D/g,""));
-  return [300,500,800,1000].indexOf(n)>=0?n:500;
-}
-function txtOldCodeIntegrityCheck(oldCodes,remainCodes,historyRows,windowSize){
-  oldCodes=Array.isArray(oldCodes)?oldCodes:[];
-  remainCodes=Array.isArray(remainCodes)?remainCodes:[];
-  historyRows=Array.isArray(historyRows)?historyRows:[];
-  var issues=[];
-  if(!historyRows.length)issues.push("共享历史为空，无法回删真实号码");
-  var lookback=recentExactCodeWindowIsMax(windowSize)?historyRows.length:Math.max(1,Number(windowSize||0));
-  var scanned=Math.min(lookback,historyRows.length);
-  if(scanned<1)issues.push("窗口期内没有可扫描历史");
-  if(oldCodes.length+remainCodes.length!==10000)issues.push("删除组+剩余组不等于10000");
-  var remainSet={};
-  remainCodes.forEach(function(code){remainSet[String(code)]=true;});
-  var leaked=[];
-  oldCodes.forEach(function(code){
-    if(remainSet[String(code)])leaked.push(String(code));
-  });
-  if(leaked.length)issues.push("剩余结果仍含已删旧码 "+leaked.slice(0,5).join(","));
-  var oldSet={};
-  oldCodes.forEach(function(code){oldSet[String(code)]=true;});
-  var missingFromDelete=[];
-  for(var i=0;i<Math.min(30,scanned);i++){
-    var nums=historyRows[i]&&historyRows[i].numbers?historyRows[i].numbers.slice(0,4):[];
-    if(nums.length<4)continue;
-    var code=nums.map(function(n){return String(n);}).join("");
-    if(/^\d{4}$/.test(code)&&!oldSet[code])missingFromDelete.push(code);
-  }
-  if(missingFromDelete.length)issues.push("窗口真实号码未进入删除集 "+missingFromDelete.slice(0,5).join(","));
-  var deletedSamples=oldCodes.slice(0,8);
-  var historySamples=[],seenSample={};
-  for(var j=0;j<Math.min(40,scanned);j++){
-    var ns=historyRows[j]&&historyRows[j].numbers?historyRows[j].numbers.slice(0,4):[];
-    if(ns.length<4)continue;
-    var c=ns.map(function(n){return String(n);}).join("");
-    if(/^\d{4}$/.test(c)&&!seenSample[c]){seenSample[c]=true;historySamples.push(c);}
-    if(historySamples.length>=8)break;
-  }
-  return {ok:!issues.length,issues:issues,scanned:scanned,deletedSamples:deletedSamples,historySamples:historySamples};
-}
-function txtOldCodeFrameworkResult(windowSize){
-  windowSize=txtOldCodeWindow(windowSize);
-  var data=window.__penta5TxtState||{};
-  var historyRows=Array.isArray(data.history)?data.history:[];
-  if(!historyRows.length){
-    return {ok:false,message:"还没有读到阿里共享历史，无法按真实号码回删旧码。请先刷新面板数据。"};
-  }
-  var day=txtTodayKeyForData(data);
-  var oldCodes=txtRecentExactCodeList(windowSize);
-  if(!oldCodes.length){
-    return {ok:false,message:"当前窗口没有扫描到真实四码旧号，请确认共享历史已同步。"};
-  }
-  var labelWindow=recentExactCodeWindowIsMax(windowSize)?"最大":String(windowSize);
-  var oldSet={};
-  oldCodes.forEach(function(code){oldSet[String(code)]=true;});
-  var codes=[];
-  for(var i=0;i<10000;i++){
-    var code=("0000"+i).slice(-4);
-    if(!oldSet[code])codes.push(code);
-  }
-  var integrity=txtOldCodeIntegrityCheck(oldCodes,codes,historyRows,windowSize);
-  if(!integrity.ok){
-    return {ok:false,message:"旧码回删完整性失败："+(integrity.issues||[]).join("；")};
-  }
-  return {
-    ok:true,
-    width:4,
-    count:codes.length,
-    text:txtFormatTokenList(codes),
-    preview:txtFormatTokenList(codes,120),
-    fileName:txtFileNameByCount(4,day,codes.length),
-    source:"old-code-exact-position",
-    label:"旧码原位置回删"+labelWindow,
-    windowSize:windowSize,
-    excludedCount:oldCodes.length,
-    scanned:integrity.scanned,
-    deletedSamples:integrity.deletedSamples,
-    historySamples:integrity.historySamples,
-    modelText:"除旧码"+labelWindow,
-    note:"完整前四码原位置回删：扫描共享历史 "+integrity.scanned+" 期，删除真实出现过的完整四码 "+oldCodes.length+" 组，剩余 "+codes.length+" 组；样例已删 "+(integrity.deletedSamples||[]).join(",")+"。"
-  };
-}
-function txtSetOldCodeFrameworkResult(result,action){
-  var output=$("txtOldCodeFrameworkOutput");
-  var preview=$("txtPreview");
-  if(!result||!result.ok){
-    txtSetStatus(result&&result.message?result.message:"旧码回删TXT生成失败。");
-    return null;
-  }
-  txtOldCodeFrameworkLastResult=result;
-  if(output)output.value=result.text;
-  if(preview)preview.value=result.preview;
-  // 不写 predictionPanel：避免清空「下一期预测」整页模型，下载后只像跳到空白页
-  txtAuditSnapshot(result,action||"旧码回删生成");
-  var sampleText=(result.deletedSamples&&result.deletedSamples.length)?" 已删样例 "+result.deletedSamples.join(","):"";
-  txtSetStatus((action||"已生成")+"："+result.label+"，扫描 "+(result.scanned||"--")+" 期真实历史，删除旧码 "+result.excludedCount+" 组，剩余 "+result.count+" 组；按完整前四码原位置回删。"+sampleText+(result.note?" "+result.note:""));
-  return result;
-}
-function txtGenerateOldCodeFramework(windowSize){
-  return txtSetOldCodeFrameworkResult(txtOldCodeFrameworkResult(windowSize),"已生成旧码回删");
-}
-function txtCopyOldCodeFramework(){
-  var result=txtOldCodeFrameworkLastResult||txtOldCodeFrameworkResult(500);
-  result=txtSetOldCodeFrameworkResult(result,"已生成旧码回删");
-  if(!result)return;
-  var output=$("txtOldCodeFrameworkOutput");
-  var value=result.text||"";
-  txtAuditSnapshot(result,"复制旧码回删");
-  if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(value).then(function(){txtSetStatus("旧码回删结果已复制："+result.label+"，"+result.count+" 组。");}).catch(function(){
-      if(output){output.focus();output.select();document.execCommand("copy");txtSetStatus("旧码回删结果已复制："+result.label+"，"+result.count+" 组。");}
-    });
-  }else if(output){
-    output.focus();output.select();document.execCommand("copy");txtSetStatus("旧码回删结果已复制："+result.label+"，"+result.count+" 组。");
-  }
-}
-function txtDownloadOldCodeFramework(){
-  var result=txtOldCodeFrameworkLastResult||txtOldCodeFrameworkResult(500);
-  result=txtSetOldCodeFrameworkResult(result,"已生成旧码回删");
-  if(!result)return;
-  txtDownload(result.fileName,result.text);
-  txtAuditSnapshot(result,"下载旧码回删TXT");
-  txtSetStatus("已下载："+result.fileName+"，"+result.label+"，文件不保存到远程。");
-}
-function txtUpdateOldCodeFrameworkInfo(data){
-  window.__penta5TxtState=data||window.__penta5TxtState||{};
-  var info=$("txtOldCodeFrameworkInfo");
-  var output=$("txtOldCodeFrameworkOutput");
-  var historyRows=txtRecords(data||{});
-  if(info){
-    var parts=[300,500,800,1000].map(function(windowSize){
-      var list=txtRecentExactCodeList(windowSize);
-      return "近"+windowSize+"删"+list.length+"组，剩"+(10000-list.length)+"组";
-    });
-    var maxList=txtRecentExactCodeList("max");
-    var sample=historyRows.slice(0,5).map(function(row){
-      var nums=Array.isArray(row&&row.numbers)?row.numbers.slice(0,4):[];
-      return nums.length>=4?nums.map(function(n){return String(n);}).join(""):"";
-    }).filter(Boolean);
-    info.textContent="共享历史 "+historyRows.length+" 期（真实前四码样例 "+(sample.join(",")||"--")+"）；"
-      +parts.join("；")+"；最大删"+maxList.length+"组，剩"+(10000-maxList.length)+"组。点生成时会再做完整性校验，禁止空历史或假删。";
-  }
-  if(output&&!String(output.value||"").trim()){
-    // 不再自动预填旧码结果，避免刷新时内容自己跳出来
-  }
 }
 function txtPositionRecommendFrameworkResult(size){
   size=Number(size||0);
@@ -2479,10 +2418,9 @@ function txtUpdatePositionFrameworkInfo(data){
   var rows=txtRecords(data||{});
   var twoInfo=txtPositionInfoEl("two");
   var threeInfo=txtPositionInfoEl("three");
-  var shared="数据库共享历史 "+rows.length+" 期（非整页 /state 的近120期）；纯旧码回删；点「重新计算」用整库回算中/不中。";
+  var shared="RDS 共享历史缓存 "+rows.length+" 期；开奖后 1 分 20 秒强制重拉并校验首期、期号、号码和唯一旧码来源。";
   if(twoInfo)twoInfo.textContent="二定回删已下线。";
-  if(threeInfo)threeInfo.textContent=shared+" 三定千百十：回删150剩850、回删100剩900。";
-  // 不再自动分段回算：开奖窗每4秒刷新会反复占满主线程，表现为网页卡、结算慢
+  if(threeInfo)threeInfo.textContent=shared+" 三定四种三位组合（千百十、千百个、千十个、百十个）：统一回删200剩800。";
   var key=txtPositionDetailCacheKey(data||{});
   if(txtPositionDetailHtmlCache[key]){
     txtPositionApplyDetailHtml(txtPositionDetailHtmlCache[key],null,null);
@@ -2492,13 +2430,35 @@ function txtUpdatePositionFrameworkInfo(data){
   var threeContent=$("txtThreeRemainContent");
   if(twoContent)setHtml(twoContent,txtPositionIdleShellHtml("two"));
   if(threeContent)setHtml(threeContent,txtPositionIdleShellHtml("three"));
+  txtSchedulePositionAutoRender(data||{});
 }
 var txtPositionDetailHtmlCache={};
 var txtPositionThreeByTargetCache={};
+var txtPositionThreeCachePeriod="";
+var txtPositionSourceDetailStore={};
+var txtPositionAutoTimer=null;
+var txtPositionAutoTimerKey="";
+var txtPositionRunState={active:false,period:"",target:null,token:0,pending:null,startedAt:0};
+var txtPositionCompletedKey="";
+function txtPositionRenderSourceDetails(details){
+  if(!details||details.getAttribute("data-txt-position-sources-loaded")==="1")return;
+  var id=details.getAttribute("data-txt-position-sources")||"";
+  var rows=Array.isArray(txtPositionSourceDetailStore[id])?txtPositionSourceDetailStore[id]:[];
+  var mount=details.querySelector("[data-txt-position-sources-body]");
+  if(!mount)return;
+  mount.innerHTML=rows.map(function(source,index){
+    return '<div style="display:grid;grid-template-columns:34px 42px minmax(108px,1fr) minmax(128px,1fr);gap:6px;padding:3px 0;border-bottom:1px solid #ffedd5;align-items:center;">'
+      +'<span style="color:#9a3412;">'+txtEsc(index+1)+"</span>"
+      +'<b>'+txtEsc(source&&source.code||"--")+'</b>'
+      +'<span>'+txtEsc(source&&source.period||"无期号")+'</span>'
+      +'<span style="color:#64748b;">'+txtEsc(source&&source.opentime||"无开奖时间")+'</span>'
+      +'</div>';
+  }).join("")||'<div style="color:#b91c1c;">没有可核对的旧码来源记录。</div>';
+  details.setAttribute("data-txt-position-sources-loaded","1");
+}
 function txtThreeRemainActionButtonsHtml(){
   return '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-    +'<button type="button" data-txt-position-run-detail="850" style="border:0;border-radius:8px;padding:7px 12px;background:#ea580c;color:white;font-weight:900;cursor:pointer;font-size:13px;">回删150组</button>'
-    +'<button type="button" data-txt-position-run-detail="900" style="border:0;border-radius:8px;padding:7px 12px;background:#c2410c;color:white;font-weight:900;cursor:pointer;font-size:13px;">回删100组</button>'
+    +'<button type="button" data-txt-position-run-detail="800" style="border:0;border-radius:8px;padding:7px 12px;background:#9a3412;color:white;font-weight:900;cursor:pointer;font-size:13px;">回删200组（剩800）</button>'
     +'<a href="#section-three-ding-nav" style="display:inline-flex;align-items:center;border-radius:8px;padding:7px 12px;background:#fff;border:1px solid #fdba74;color:#9a3412;font-weight:900;cursor:pointer;font-size:13px;text-decoration:none;">三定导航</a>'
     +'</div>';
 }
@@ -2506,9 +2466,50 @@ var txtPositionProgressiveSeq=0;
 function txtPositionDetailCacheKey(data){
   var rows=txtRecords(data||{});
   var first=rows[0]||{};
+  var latestPeriod=txtPositionLatestPeriod(data||{});
   var pk=(data&&data.currentPrediction&&data.currentPrediction.positionKills)||{};
   var backupSig=["wan","qian","bai","shi"].map(function(key){return txtPositionBackupDigitFromEntry(pk[key]);}).join("");
-  return String(first.period||first.uid||"")+"|"+String(rows.length)+"|three_qianbaishi_850_900|b"+backupSig;
+  return String(latestPeriod||first.period||first.uid||"")+"|"+String(rows.length)+"|three_800_single_queue_rds_v1|b"+backupSig;
+}
+function txtPositionWaitingForVerifyHtml(gate){
+  if(!gate||!gate.ok)return '<div style="margin-top:6px;color:#b91c1c;font-weight:800;">'+txtEsc(gate&&gate.message||"无法确定核算时间，已停止。")+'</div>';
+  var seconds=Math.max(1,Math.ceil(Number(gate.remainingMs||0)/1000));
+  var startText=new Date(gate.startAt).toLocaleString();
+  return '<div style="margin-top:6px;color:#9a3412;font-weight:800;">等待真实数据落库：最新期 '+txtEsc(gate.period)+'，将在 '+txtEsc(startText)+'（约 '+txtEsc(seconds)+' 秒后）强制重拉 RDS 历史并核算。</div>';
+}
+function txtSchedulePositionAutoRender(data){
+  var gate=txtPositionVerifyGate(data||{});
+  var content=$("txtThreeRemainContent");
+  if(!gate.ok){
+    if(content)setHtml(content,txtPositionWaitingForVerifyHtml(gate)+txtThreeRemainActionButtonsHtml());
+    return;
+  }
+  var key=gate.period;
+  if(txtPositionAutoTimer&&txtPositionAutoTimerKey!==key){
+    clearTimeout(txtPositionAutoTimer);
+    txtPositionAutoTimer=null;
+  }
+  txtPositionAutoTimerKey=key;
+  if(txtPositionCompletedKey===key)return;
+  if(txtPositionRunState.active){
+    if(txtPositionRunState.period!==key){
+      txtPositionRunState.pending={period:key,target:null,auto:true};
+      txtPositionRunState.token+=1;
+      if(content)setHtml(content,'<div style="margin-top:6px;color:#9a3412;font-weight:800;">检测到新期 '+txtEsc(key)+'，正在取消旧期剩余核算，随后只计算最新期。</div>'+txtThreeRemainActionButtonsHtml());
+    }
+    return;
+  }
+  var stagger=txtHashSeed("three-position-auto|"+key)%4000;
+  if(gate.remainingMs>0||!txtPositionAutoTimer){
+    if(content)setHtml(content,txtPositionWaitingForVerifyHtml(gate)+txtThreeRemainActionButtonsHtml());
+    if(!txtPositionAutoTimer){
+      txtPositionAutoTimer=setTimeout(function(){
+        txtPositionAutoTimer=null;
+        txtRunPositionDetailRender(null,{auto:true,expectedPeriod:key});
+      },Math.max(0,gate.remainingMs)+stagger+50);
+    }
+    return;
+  }
 }
 function txtPositionApplyDetailHtml(payload,twoBox,threeBox){
   payload=payload||{};
@@ -2555,165 +2556,242 @@ function txtPositionProgressText(modelBox,text){
   var threeInner=threeBox&&threeBox.querySelector?threeBox.querySelector('[data-txt-position-progress="1"]'):null;
   if(threeInner)threeInner.textContent=text;
 }
-function txtStartPositionProgressiveRender(data,twoBox,threeBox,onlyThreeTarget){
-  if(!TXT_POSITION_TWO_LITE_MODE)twoBox=twoBox||txtPositionModelBoxEl("two");
-  if(!TXT_POSITION_THREE_LITE_MODE)threeBox=threeBox||txtPositionModelBoxEl("three");
-  var hasLiteContent=(TXT_POSITION_TWO_LITE_MODE&&$("txtTwoRemainContent"))||(TXT_POSITION_THREE_LITE_MODE&&$("txtThreeRemainContent"));
-  if(!twoBox&&!threeBox&&!hasLiteContent)return;
-  var key=txtPositionDetailCacheKey(data||{});
-  if(!onlyThreeTarget&&txtPositionDetailHtmlCache[key]){
-    txtPositionApplyDetailHtml(txtPositionDetailHtmlCache[key],twoBox,threeBox);
-    return;
-  }
-  onlyThreeTarget=onlyThreeTarget!=null&&isFinite(Number(onlyThreeTarget))?txtPositionNormalizeThreeRemainTarget(onlyThreeTarget):null;
-  txtPositionProgressiveSeq+=1;
-  var seq=txtPositionProgressiveSeq;
-  txtPositionOpenedMemoClear();
-  var rows=txtRecords(data||{});
-  var day=txtTodayKeyForData(data||{});
-  var twoByTarget={},threeByTarget={},twoSystemStatsByTarget={},threeSystemStatsByTarget={};
-  var twoContent=$("txtTwoRemainContent");
-  var threeContent=$("txtThreeRemainContent");
-  if(twoContent)setHtml(twoContent,'<div data-txt-two-progress="1" style="margin-top:6px;color:#6d28d9;font-weight:700;">二定回删已下线</div>');
-  if(threeContent)setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">准备中…</div>');
-  TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){twoByTarget[target]=[];});
-  TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){
-    threeByTarget[target]=onlyThreeTarget&&target!==onlyThreeTarget?(txtPositionThreeByTargetCache[target]||[]):[];
-  });
-  var tasks=[];
-  TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){
-    var combos=txtPositionCombos(2);
-    combos.forEach(function(positions,idx){
-      tasks.push({
-        label:"二定 "+txtPositionComboName(positions)+" 回删剩"+target,
-        kind:"two",
-        paintTwo:idx===combos.length-1,
-        paintThree:false,
-        run:function(){twoByTarget[target].push(txtPositionModelFrameItemFromRows(rows,2,day,positions,data||{},target));}
-      });
-    });
-  });
-  TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){
-    if(onlyThreeTarget&&target!==onlyThreeTarget)return;
-    var combos=txtPositionCombos(3);
-    combos.forEach(function(positions,idx){
-      tasks.push({
-        label:"三定 "+txtPositionComboName(positions)+" "+txtPositionRemainLabel(3,target),
-        kind:"three",
-        paintTwo:false,
-        paintThree:idx===combos.length-1,
-        run:function(){threeByTarget[target].push(txtPositionModelFrameItemFromRows(rows,3,day,positions,data||{},target));}
-      });
-    });
-  });
-  var index=0;
-  function finishAll(){
-    try{
-      if(!TXT_POSITION_TWO_LITE_MODE){
-        TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){
-          twoSystemStatsByTarget[target]=txtPositionRecommendSystemStats(data||{},2,target);
-        });
-      }
-      if(!TXT_POSITION_THREE_LITE_MODE){
-        TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){
-          threeSystemStatsByTarget[target]=txtPositionRecommendSystemStats(data||{},3,target);
-        });
-      }
-      var split=txtPositionSplitModelFrameHtmlFromComputed(twoByTarget,threeByTarget,twoSystemStatsByTarget,threeSystemStatsByTarget);
-      var payload={
-        twoTop:txtTwoRemainTopHtmlFromComputed(twoByTarget,twoSystemStatsByTarget),
-        threeTop:txtThreeRemainTopHtmlFromComputed(threeByTarget,threeSystemStatsByTarget)
-      };
-      if(!TXT_POSITION_TWO_LITE_MODE)payload.twoBox=split.twoBox;
-      if(!TXT_POSITION_THREE_LITE_MODE)payload.threeBox=split.threeBox;
-      TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){
-        txtPositionThreeByTargetCache[target]=threeByTarget[target]||[];
-      });
-      if(!onlyThreeTarget)txtPositionDetailHtmlCache={};
-      txtPositionDetailHtmlCache[key]=payload;
-      txtPositionApplyDetailHtml(payload,twoBox,threeBox);
-    }catch(err){
-      console.error("txt position detail final render failed",err);
-      var twoErr='<div style="color:#b91c1c;">二定位置模型计算失败：'+txtEsc(err&&err.message?err.message:err)+'</div>';
-      if(twoBox)setHtml(twoBox,twoErr);
-      else{var tc=$("txtTwoRemainContent");if(tc)setHtml(tc,twoErr);}
-      var threeErr='<div style="color:#b91c1c;">三定位置模型计算失败：'+txtEsc(err&&err.message?err.message:err)+'</div>';
-      if(threeBox)setHtml(threeBox,threeErr);
-      else{var tc=$("txtThreeRemainContent");if(tc)setHtml(tc,threeErr);}
-    }
-  }
-  function yieldNext(delay){
-    setTimeout(runNext,delay!=null?delay:TXT_POSITION_TASK_YIELD_MS);
-  }
-  function runNext(){
-    if(seq!==txtPositionProgressiveSeq)return;
-    if(index>=tasks.length){
-      finishAll();
+function txtStartPositionProgressiveRender(data,twoBox,threeBox,onlyThreeTarget,runContext){
+  return new Promise(function(resolve){
+    if(!TXT_POSITION_TWO_LITE_MODE)twoBox=twoBox||txtPositionModelBoxEl("two");
+    if(!TXT_POSITION_THREE_LITE_MODE)threeBox=threeBox||txtPositionModelBoxEl("three");
+    var hasLiteContent=(TXT_POSITION_TWO_LITE_MODE&&$("txtTwoRemainContent"))||(TXT_POSITION_THREE_LITE_MODE&&$("txtThreeRemainContent"));
+    if(!twoBox&&!threeBox&&!hasLiteContent){resolve({ok:true,skipped:true});return;}
+    runContext=runContext||{};
+    var runPeriod=String(runContext.period||txtPositionLatestPeriod(data||{}));
+    var runToken=Number(runContext.token||0);
+    var key=txtPositionDetailCacheKey(data||{});
+    if(!onlyThreeTarget&&txtPositionDetailHtmlCache[key]){
+      txtPositionApplyDetailHtml(txtPositionDetailHtmlCache[key],twoBox,threeBox);
+      resolve({ok:true,cached:true,period:runPeriod});
       return;
     }
-    var task=tasks[index];
-    var totalLabel=(task.kind==="three"?"三定":"二定")+" "+(index+1)+"/"+tasks.length;
-    txtPositionProgressText(twoBox,task.label+"（"+totalLabel+"）");
-    try{
-      task.run();
-      if(task.paintTwo){
-        try{txtPositionApplyDetailHtml({twoTop:txtTwoRemainTopHtmlFromComputed(twoByTarget,twoSystemStatsByTarget)},twoBox,threeBox);}catch(paintErr){console.error(paintErr);}
-      }
-      if(task.paintThree){
-        try{txtPositionApplyDetailHtml({threeTop:txtThreeRemainTopHtmlFromComputed(threeByTarget,threeSystemStatsByTarget)},twoBox,threeBox);}catch(paintErr){console.error(paintErr);}
-      }
-    }catch(err){
+    onlyThreeTarget=onlyThreeTarget!=null&&isFinite(Number(onlyThreeTarget))?txtPositionNormalizeThreeRemainTarget(onlyThreeTarget):null;
+    if(txtPositionThreeCachePeriod!==runPeriod){
+      txtPositionThreeCachePeriod=runPeriod;
+      txtPositionThreeByTargetCache={};
+      txtPositionSourceDetailStore={};
+    }
+    txtPositionProgressiveSeq+=1;
+    var seq=txtPositionProgressiveSeq;
+    txtPositionOpenedMemoClear();
+    var rows=txtRecords(data||{});
+    var day=txtTodayKeyForData(data||{});
+    var twoByTarget={},threeByTarget={},twoSystemStatsByTarget={},threeSystemStatsByTarget={};
+    var twoContent=$("txtTwoRemainContent");
+    var threeContent=$("txtThreeRemainContent");
+    var settled=false;
+    function settle(result){if(settled)return;settled=true;resolve(result||{ok:true});}
+    function cancelled(){
+      if(seq!==txtPositionProgressiveSeq)return true;
+      if(runToken&&runToken!==Number(txtPositionRunState.token||0))return true;
+      var currentPeriod=txtPositionLatestPeriod(window.__penta5TxtState||{});
+      return !!(runPeriod&&currentPeriod&&currentPeriod!==runPeriod);
+    }
+    if(twoContent)setHtml(twoContent,'<div data-txt-two-progress="1" style="margin-top:6px;color:#6d28d9;font-weight:700;">二定回删已下线</div>');
+    if(threeContent)setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">准备中…</div>');
+    TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){twoByTarget[target]=[];});
+    TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){
+      threeByTarget[target]=onlyThreeTarget&&target!==onlyThreeTarget?(txtPositionThreeByTargetCache[target]||[]):[];
+    });
+    var tasks=[];
+    TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){
+      var combos=txtPositionCombos(2);
+      combos.forEach(function(positions,idx){
+        tasks.push({
+          label:"二定 "+txtPositionComboName(positions)+" 回删剩"+target,
+          kind:"two",
+          endOfTarget:idx===combos.length-1,
+          run:function(){twoByTarget[target].push(txtPositionModelFrameItemFromRows(rows,2,day,positions,data||{},target));}
+        });
+      });
+    });
+    var runTargets=onlyThreeTarget?[onlyThreeTarget]:TXT_POSITION_THREE_RUN_ORDER.slice();
+    runTargets.forEach(function(target){
+      var combos=txtPositionCombos(3);
+      combos.forEach(function(positions,idx){
+        tasks.push({
+          label:"三定 "+txtPositionComboName(positions)+" "+txtPositionRemainLabel(3,target),
+          kind:"three",
+          target:target,
+          endOfTarget:idx===combos.length-1,
+          run:function(){threeByTarget[target].push(txtPositionModelFrameItemFromRows(rows,3,day,positions,data||{},target));}
+        });
+      });
+    });
+    var index=0;
+    function failRender(err){
       console.error("txt position detail render failed",err);
-      var errMsg='<div style="color:#b91c1c;">二定/三定位置模型计算失败：'+txtEsc(err&&err.message?err.message:err)+'</div>';
-      if(twoBox)setHtml(twoBox,errMsg);
-      else{var tc=$("txtTwoRemainContent");if(tc)setHtml(tc,errMsg);}
-      return;
+      var message=err&&err.message?err.message:String(err||"未知错误");
+      var errMsg='<div style="color:#b91c1c;font-weight:800;">三定真实回删核算已停止：'+txtEsc(message)+'。未发布本次结果。</div>'+txtThreeRemainActionButtonsHtml();
+      if(threeBox)setHtml(threeBox,errMsg);
+      else{var tc=$("txtThreeRemainContent");if(tc)setHtml(tc,errMsg);}
+      settle({ok:false,error:message,period:runPeriod});
     }
-    index+=1;
-    yieldNext(task.kind==="three"?120:TXT_POSITION_TASK_YIELD_MS);
-  }
-  yieldNext(0);
+    function finishAll(){
+      if(cancelled()){settle({ok:false,cancelled:true,period:runPeriod});return;}
+      try{
+        if(!TXT_POSITION_TWO_LITE_MODE){
+          TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){twoSystemStatsByTarget[target]=txtPositionRecommendSystemStats(data||{},2,target);});
+        }
+        if(!TXT_POSITION_THREE_LITE_MODE){
+          TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){threeSystemStatsByTarget[target]=txtPositionRecommendSystemStats(data||{},3,target);});
+        }
+        var split=txtPositionSplitModelFrameHtmlFromComputed(twoByTarget,threeByTarget,twoSystemStatsByTarget,threeSystemStatsByTarget);
+        var payload={
+          twoTop:txtTwoRemainTopHtmlFromComputed(twoByTarget,twoSystemStatsByTarget),
+          threeTop:txtThreeRemainTopHtmlFromComputed(threeByTarget,threeSystemStatsByTarget)
+        };
+        if(!TXT_POSITION_TWO_LITE_MODE)payload.twoBox=split.twoBox;
+        if(!TXT_POSITION_THREE_LITE_MODE)payload.threeBox=split.threeBox;
+        txtPositionProgressText(twoBox,"核算完成，正在复核 RDS 当前期号后发布…");
+        var verify=typeof window.__penta5VerifyConverterHistoryPeriod==="function"
+          ?window.__penta5VerifyConverterHistoryPeriod(runPeriod)
+          :Promise.reject(new Error("严格 RDS 期号复核接口未就绪"));
+        Promise.resolve(verify).then(function(){
+          if(cancelled())throw new Error("核算期间期号已变化，本次结果作废");
+          TXT_POSITION_THREE_REMAIN_TARGETS.forEach(function(target){txtPositionThreeByTargetCache[target]=threeByTarget[target]||[];});
+          if(!onlyThreeTarget)txtPositionDetailHtmlCache={};
+          txtPositionDetailHtmlCache[key]=payload;
+          txtPositionApplyDetailHtml(payload,twoBox,threeBox);
+          txtSetStatus("三定真实回删已完成：RDS 首期与当前期 "+runPeriod+" 一致；四种组合均统一按回删200、剩800核算，全程单队列。");
+          settle({ok:true,period:runPeriod,target:onlyThreeTarget,payload:payload});
+        }).catch(failRender);
+      }catch(err){failRender(err);}
+    }
+    function yieldNext(delay){setTimeout(runNext,delay!=null?delay:TXT_POSITION_TASK_YIELD_MS);}
+    function runNext(){
+      if(cancelled()){settle({ok:false,cancelled:true,period:runPeriod});return;}
+      if(index>=tasks.length){finishAll();return;}
+      var task=tasks[index];
+      var totalLabel=(task.kind==="three"?"三定":"二定")+" "+(index+1)+"/"+tasks.length;
+      txtPositionProgressText(twoBox,task.label+"（"+totalLabel+"，单队列）");
+      try{task.run();}catch(err){failRender(err);return;}
+      index+=1;
+      var delay=task.kind==="three"
+        ?(task.endOfTarget?TXT_POSITION_THREE_TARGET_YIELD_MS:TXT_POSITION_THREE_TASK_YIELD_MS)
+        :TXT_POSITION_TASK_YIELD_MS;
+      yieldNext(delay);
+    }
+    yieldNext(0);
+  });
 }
 function txtPositionIdleShellHtml(kind){
   var isTwo=kind==="two";
   if(!isTwo){
-    return '<div style="margin-top:6px;color:#64748b;font-size:13px;">纯旧码回删、不加排除码；点「回删150组/回删100组」分段跑真实胜率。</div>'
+    return '<div style="margin-top:6px;color:#64748b;font-size:13px;">纯旧码回删、不加排除码；开奖后 1 分 20 秒自动强制重拉 RDS 历史。数据校验不过就停止，不补码、不截断、不伪造。</div>'
       +txtThreeRemainActionButtonsHtml();
   }
   return '<div style="margin-top:6px;color:#64748b;font-size:13px;">纯旧码回删、不加排除码；打开后自动分段跑真实胜率，也可手动重算。</div>'
     +'<button type="button" data-txt-position-run-detail="1" style="margin-top:8px;border:0;border-radius:8px;padding:8px 12px;background:#7c3aed;color:white;font-weight:900;cursor:pointer;font-size:13px;">重新计算二定回删</button>';
 }
-function txtRunPositionDetailRender(onlyThreeTarget){
+function txtRunPositionDetailRender(onlyThreeTarget,opts){
+  opts=opts||{};
   var data=window.__penta5TxtState||{};
+  var gate=txtPositionVerifyGate(data);
+  var content=$("txtThreeRemainContent");
+  if(!gate.ok){
+    if(content)setHtml(content,txtPositionWaitingForVerifyHtml(gate)+txtThreeRemainActionButtonsHtml());
+    txtSetStatus(gate.message||"回删核算已停止。");
+    return Promise.resolve({ok:false,blocked:true,message:gate.message||""});
+  }
+  if(opts.expectedPeriod&&String(opts.expectedPeriod)!==gate.period){
+    txtSchedulePositionAutoRender(data);
+    return Promise.resolve({ok:false,cancelled:true,reason:"period-changed"});
+  }
+  if(gate.remainingMs>0){
+    if(content)setHtml(content,txtPositionWaitingForVerifyHtml(gate)+txtThreeRemainActionButtonsHtml());
+    txtSetStatus("最新期 "+gate.period+" 尚未到开奖后 1 分 20 秒，已禁止提前核算。");
+    txtSchedulePositionAutoRender(data);
+    return Promise.resolve({ok:false,blocked:true,reason:"verify-delay"});
+  }
+  onlyThreeTarget=onlyThreeTarget!=null&&isFinite(Number(onlyThreeTarget))?txtPositionNormalizeThreeRemainTarget(onlyThreeTarget):null;
+  if(data&&((data.syncing===true)||(data.predictionBuildRunning===true))){
+    var busyText=data.syncing===true?"后台正在同步开奖":"后台正在整理预测";
+    if(content)setHtml(content,'<div style="margin-top:6px;color:#9a3412;font-weight:800;">'+txtEsc(busyText)+'，三定回删将在 5 秒后重试，不与后台重任务堆叠。</div>'+txtThreeRemainActionButtonsHtml());
+    if(txtPositionAutoTimer)clearTimeout(txtPositionAutoTimer);
+    txtPositionAutoTimerKey=gate.period;
+    txtPositionAutoTimer=setTimeout(function(){
+      txtPositionAutoTimer=null;
+      txtRunPositionDetailRender(onlyThreeTarget,{auto:true,expectedPeriod:gate.period});
+    },5000);
+    return Promise.resolve({ok:false,deferred:true,reason:"backend-busy"});
+  }
+  var request={period:gate.period,target:onlyThreeTarget,auto:opts.auto===true};
+  if(txtPositionRunState.active){
+    var same=txtPositionRunState.period===request.period&&Number(txtPositionRunState.target||0)===Number(request.target||0);
+    if(!same)txtPositionRunState.pending=request;
+    if(txtPositionRunState.period!==request.period)txtPositionRunState.token+=1;
+    txtSetStatus(same
+      ?("最新期 "+request.period+" 的三定真实回删正在单队列执行，重复请求已合并。")
+      :("三定回删请求已排队；当前任务完成或取消后，只执行最新请求。"));
+    return Promise.resolve({ok:true,queued:!same,merged:same,period:request.period});
+  }
+  txtPositionRunState.active=true;
+  txtPositionRunState.period=request.period;
+  txtPositionRunState.target=request.target;
+  txtPositionRunState.startedAt=Date.now();
+  txtPositionRunState.token+=1;
+  var runToken=txtPositionRunState.token;
   var twoBox=TXT_POSITION_TWO_LITE_MODE?null:txtPositionModelBoxEl("two");
   var threeBox=TXT_POSITION_THREE_LITE_MODE?null:txtPositionModelBoxEl("three");
   window.__txtPositionProgressiveKey=null;
-  onlyThreeTarget=onlyThreeTarget!=null&&isFinite(Number(onlyThreeTarget))?txtPositionNormalizeThreeRemainTarget(onlyThreeTarget):null;
   if(!onlyThreeTarget)txtPositionDetailHtmlCache={};
   var threeContent=$("txtThreeRemainContent");
-  var progressLabel=onlyThreeTarget===900?"回删100剩900":onlyThreeTarget===850?"回删150剩850":"三定千百十回删";
+  var progressLabel=onlyThreeTarget?("回删"+txtPositionRemainLabel(3,onlyThreeTarget)):"三定四种三位组合回删";
   if(threeContent){
     setHtml(threeContent,'<div data-txt-three-progress="1" style="margin-top:6px;color:#c2410c;font-weight:700;">正在从数据库拉取共享历史（约两千期）…</div>');
   }
   // 库内 shared history 两千+期；回删必须用整库，不能只用 /state 近120期
   var wantHistory=Math.max(2000,Number((data&&data.historyCount)||0)||0);
-  var ensure=typeof window.__penta5EnsureHistoryCache==="function"
-    ?window.__penta5EnsureHistoryCache(wantHistory)
-    :Promise.resolve([]);
-  Promise.resolve(ensure).then(function(){
+  var ensure=typeof window.__penta5EnsureVerifiedConverterHistoryCache==="function"
+    ?window.__penta5EnsureVerifiedConverterHistoryCache(wantHistory,gate.period,true)
+    :Promise.reject(new Error("严格 RDS 转换历史接口未就绪"));
+  var outcome=null;
+  var runPromise=Promise.resolve(ensure).then(function(rowsFromRds){
+    if(runToken!==txtPositionRunState.token) return {ok:false,cancelled:true,period:gate.period};
+    if(txtPositionLatestPeriod(window.__penta5TxtState||{})!==gate.period)return {ok:false,cancelled:true,period:gate.period};
+    var rows=Array.isArray(rowsFromRds)&&rowsFromRds.length?rowsFromRds:txtRecords(data||{});
+    var requiredUnique=onlyThreeTarget!=null?txtPositionDeleteCount(3,txtPositionNormalizeThreeRemainTarget(onlyThreeTarget)):200;
+    var validation=txtPositionValidateHistoryRows(rows,data,requiredUnique);
+    if(!validation.ok)throw new Error(validation.message);
     if(twoBox){
       twoBox.setAttribute("data-txt-position-filled","1");
       setHtml(twoBox,txtPositionQuickModelFrameHtml(data||{},"two"));
     }
-    txtStartPositionProgressiveRender(data||{},twoBox,threeBox,onlyThreeTarget);
-    var rows=txtRecords(data||{});
-    txtSetStatus("已开始分段计算："+progressLabel+"（数据库共享历史 "+rows.length+" 期）；中/不中在「最新」徽章与近N期芯片。");
+    txtSetStatus("RDS 真实历史校验通过：首期 "+validation.expectedPeriod+"，共 "+validation.historyCount+" 期；已开始 "+progressLabel+"，每个回删旧码保留来源期号和开奖时间。");
+    return txtStartPositionProgressiveRender(data||{},twoBox,threeBox,onlyThreeTarget,{period:gate.period,token:runToken});
   }).catch(function(err){
     if(threeContent){
-      setHtml(threeContent,'<div style="color:#b91c1c;">拉取共享历史失败：'+txtEsc(err&&err.message?err.message:err)+'。请刷新后再点重新计算。</div>');
+      setHtml(threeContent,'<div style="color:#b91c1c;font-weight:800;">真实回删核算已停止：'+txtEsc(err&&err.message?err.message:err)+'。没有生成任何替代码。</div>'+txtThreeRemainActionButtonsHtml());
     }
-    txtSetStatus("拉取共享历史失败，无法计算三定回删命中率。");
+    txtSetStatus("真实 RDS 历史拉取或校验失败，已停止三定回删核算。");
+    return {ok:false,error:err&&err.message?err.message:String(err||"未知错误"),period:gate.period};
+  }).then(function(result){
+    outcome=result||{ok:false,period:gate.period};
+    if(outcome.ok&&onlyThreeTarget==null)txtPositionCompletedKey=gate.period;
+    return outcome;
+  }).finally(function(){
+    txtPositionRunState.active=false;
+    txtPositionRunState.period="";
+    txtPositionRunState.target=null;
+    txtPositionRunState.startedAt=0;
+    var pending=txtPositionRunState.pending;
+    txtPositionRunState.pending=null;
+    if(pending){
+      setTimeout(function(){
+        var latest=txtPositionLatestPeriod(window.__penta5TxtState||{});
+        if(latest===pending.period)txtRunPositionDetailRender(pending.target,{auto:pending.auto,expectedPeriod:pending.period});
+        else txtSchedulePositionAutoRender(window.__penta5TxtState||{});
+      },TXT_POSITION_THREE_TARGET_YIELD_MS);
+    }
   });
+  return runPromise;
 }
 function txtSchedulePositionDetailRender(data,twoBox,threeBox){
   if(!TXT_POSITION_TWO_LITE_MODE)twoBox=twoBox||txtPositionModelBoxEl("two");
@@ -3155,6 +3233,17 @@ function txtAuditSnapshot(result,action){
   var sourcePeriod=txtAuditSourcePeriod(data);
   var targetPeriod=txtAuditTargetPeriod(data);
   var hash=txtAuditHash(result&&result.text||"");
+  var oldCodeSources=[];
+  (Array.isArray(result&&result.groups)?result.groups:[]).forEach(function(group){
+    (Array.isArray(group&&group.deletedSources)?group.deletedSources:[]).forEach(function(source){
+      oldCodeSources.push({
+        group:String(group&&group.name||""),
+        code:String(source&&source.code||""),
+        period:String(source&&source.period||""),
+        opentime:String(source&&source.opentime||"")
+      });
+    });
+  });
   var snapshot={
     id:[targetPeriod||"pending",hash,String(result&&result.source||"txt")].join(":"),
     action:String(action||"生成"),
@@ -3174,7 +3263,9 @@ function txtAuditSnapshot(result,action){
     bitmap:txtAuditBuildBitmap(tokens,validation.width),
     tokenCount:tokens.length,
     fileName:String(result&&result.fileName||""),
-    modelText:String(result&&result.modelText||result&&result.note||result&&result.label||"").slice(0,1000)
+    modelText:String(result&&result.modelText||result&&result.note||result&&result.label||"").slice(0,1000),
+    oldCodeSourceCount:oldCodeSources.length,
+    oldCodeSources:oldCodeSources
   };
   txtAuditEvaluateSnapshot(snapshot,data);
   var list=txtAuditLoad().filter(function(item){return item&&item.id!==snapshot.id;});
@@ -3197,6 +3288,7 @@ function txtAuditLine(snapshot){
     +' ｜ 目标期 '+txtEsc(snapshot.targetPeriod||"--")
     +actual
     +' ｜ '+txtEsc(snapshot.count)+'组'
+    +(snapshot.oldCodeSourceCount?(' ｜ 真实旧码来源 '+txtEsc(snapshot.oldCodeSourceCount)+' 条'):'')
     +' ｜ '+txtEsc(checkText)+bad
     +' ｜ 哈希 '+txtEsc(snapshot.hash||"--")
     +'</div>';
@@ -3305,12 +3397,10 @@ function txtFixedHeweiDescribeItem(item){
   if(item.kind==="extra"&&item.key==="consecutiveAvoid")return "连号结构除"+code;
   if(item.kind==="extra"&&item.key==="parityRatioAvoid")return "奇偶比除"+code;
   if(item.kind==="extra"&&item.key==="sizeRatioAvoid")return "大小比除"+code;
-  if(item.kind==="extra"&&/^recentExactCodeAvoid/.test(item.key||""))return "旧码除"+code;
   if(item.kind==="extra"&&(item.key==="twoDigitAvoid"||item.key==="twoDigitAvoid2"||item.key==="twoDigitAvoid3"||item.key==="threeDigitAvoid"||item.key==="twoDigitHit"))return "除对数"+code;
   if(item.kind==="extra"&&item.key==="threeDigitHit")return "含对数"+code;
   if(item.kind==="threeDuishu"){
-    var pairTokens=Array.isArray(item.pairs)?item.pairs:(Array.isArray(item.pairCodes)?item.pairCodes:[]);
-    var normalized=pairTokens.map(function(pair){return String(pair||"").replace(/\D/g,"").slice(0,2);}).filter(function(pair){return pair.length===2;});
+    var normalized=threeDuishuPairTokens(item);
     if(normalized.length)return "除对数"+normalized.join("-");
     return "除对数"+code;
   }
@@ -3429,10 +3519,6 @@ function txtFixedHeweiExcludeItemsFromInput(raw){
   });
   collect(/除(?:大小比)?([0-4]大[0-4]小)/g,function(match){
     return {kind:"extra",key:"sizeRatioAvoid",name:"大小比手动排除",code:match[1]};
-  });
-  collect(/除(?:旧码|重复码|历史码)(300|500|800|1000|1300|最大|全部|MAX)/gi,function(match){
-    var value=recentExactCodeWindowIsMax(match[1])?"最大":match[1];
-    return {kind:"extra",key:"recentExactCodeAvoid"+recentExactCodeWindowKey(value),name:"旧码手动排除",code:value};
   });
   candidates.sort(function(a,b){
     if(a.index!==b.index)return a.index-b.index;
@@ -3797,36 +3883,8 @@ function txtShotExcludeSizeRatios(text){
   }
   return out;
 }
-function txtShotExcludeRecentExactWindows(text){
-  var out=[],match,regex=/除(?:旧码|重复码|历史码)(300|500|800|1000|1300|最大|全部|MAX)/gi;
-  while((match=regex.exec(String(text||"")))){
-    var value=recentExactCodeWindowIsMax(match[1])?"最大":match[1];
-    if(out.indexOf(value)<0)out.push(value);
-  }
-  return out;
-}
-function txtRecentExactCodeList(limit){
-  var data=window.__penta5TxtState||{};
-  var historyRows=Array.isArray(data&&data.history)?data.history:[];
-  var want=recentExactCodeWindowIsMax(limit)?Math.max(historyRows.length,1500):Math.max(1,Number(limit||300));
-  if(window.__penta5HistoryCache&&window.__penta5HistoryCache.length>historyRows.length){
-    historyRows=window.__penta5HistoryCache;
-  }
-  if(historyRows.length<want&&typeof window.__penta5EnsureHistoryCache==="function"){
-    window.__penta5EnsureHistoryCache(want);
-  }
-  var rows=historyRows.slice(0,recentExactCodeWindowIsMax(limit)?historyRows.length:want);
-  var seen={},out=[];
-  rows.forEach(function(row){
-    var nums=Array.isArray(row&&row.numbers)?row.numbers.slice(0,4):[];
-    if(nums.length<4)return;
-    var code=nums.map(String).join("");
-    if(/^\d{4}$/.test(code)&&!seen[code]){
-      seen[code]=true;
-      out.push(code);
-    }
-  });
-  return out;
+function txtShotHasRetiredFourCodeToken(text){
+  return /除(?:旧码|重复码|历史码)(?:300|500|800|1000|1300|最大|全部|MAX)/i.test(String(text||""));
 }
 function txtShotHitPairs(text){
   var out=[],match,regex=/(?:含对数|中对数)(\d{2,3}(?:[-.、~/]\d{2,3})*)/g;
@@ -3846,11 +3904,12 @@ function txtShotLooksLikeShortExclusionCommand(text){
   var raw=txtShotNormalize(text);
   if(!raw||txtShotLooksLikeFullModel(raw))return false;
   if(/(?:排除|避开|杀|除)/.test(raw))return true;
-  if(/(?:二数合|三数合|和值|跨度|旧码|重复码|历史码|对数)/.test(raw))return true;
+  if(/(?:二数合|三数合|和值|跨度|对数)/.test(raw))return true;
   return false;
 }
 function txtShotRuleFromText(text,options){
   var raw=txtShotNormalize(text);
+  if(txtShotHasRetiredFourCodeToken(raw))return {error:"完整四码旧码回删已下线，请删除该指令后重试。"};
   if(!txtShotLooksLikeFullModel(raw))return null;
   var opts=options&&typeof options==="object"?options:{};
   var tailEnds=["二数合","三数合","取二兄弟","兄弟号","除","含","中","各"];
@@ -3878,7 +3937,6 @@ function txtShotRuleFromText(text,options){
     consecutiveAvoid:txtShotExcludeConsecutiveShapes(raw),
     parityRatioAvoid:txtShotExcludeParityRatios(raw),
     sizeRatioAvoid:txtShotExcludeSizeRatios(raw),
-    recentExactCodeAvoid:txtShotExcludeRecentExactWindows(raw),
     hitPairs:txtShotHitPairs(raw)
   };
   txtApplyShortShotExclusions(raw,rule);
@@ -4032,16 +4090,6 @@ function txtShotCodeSizeRatio(code){
   var big=nums.filter(function(n){return n>=5;}).length;
   return String(big)+"大"+String(4-big)+"小";
 }
-function txtShotPrepareRecentExactLookups(rule){
-  var lookups=Object.create(null);
-  (rule&&Array.isArray(rule.recentExactCodeAvoid)?rule.recentExactCodeAvoid:[]).forEach(function(limit){
-    var key=String(limit);
-    var lookup=Object.create(null);
-    txtRecentExactCodeList(limit).forEach(function(code){lookup[String(code)]=true;});
-    lookups[key]=lookup;
-  });
-  return lookups;
-}
 function txtShotPassesRule(code,rule){
   var a=code.charAt(0),b=code.charAt(1),c=code.charAt(2),d=code.charAt(3);
   if(!txtShotContains(rule.qian,a))return false;
@@ -4084,11 +4132,6 @@ function txtShotPassesRule(code,rule){
   for(var sz=0;sz<rule.sizeRatioAvoid.length;sz++){
     if(txtShotCodeSizeRatio(code)===String(rule.sizeRatioAvoid[sz]))return false;
   }
-  for(var old=0;old<rule.recentExactCodeAvoid.length;old++){
-    var oldLimit=rule.recentExactCodeAvoid[old];
-    var oldLookup=rule._recentExactCodeLookups&&rule._recentExactCodeLookups[String(oldLimit)];
-    if(oldLookup?oldLookup[String(code)]===true:txtRecentExactCodeList(oldLimit).indexOf(String(code))>=0)return false;
-  }
   for(var j=0;j<rule.pairs.length;j++){
     if(txtShotCodeContainsPair(code,rule.pairs[j]))return false;
   }
@@ -4099,16 +4142,9 @@ function txtShotPassesRule(code,rule){
 }
 function txtShotGenerateCodes(rule){
   var out=[];
-  var previousLookups=rule._recentExactCodeLookups;
-  rule._recentExactCodeLookups=txtShotPrepareRecentExactLookups(rule);
-  try{
-    for(var i=0;i<10000;i++){
-      var code=("0000"+i).slice(-4);
-      if(txtShotPassesRule(code,rule))out.push(code);
-    }
-  }finally{
-    if(previousLookups===undefined)delete rule._recentExactCodeLookups;
-    else rule._recentExactCodeLookups=previousLookups;
+  for(var i=0;i<10000;i++){
+    var code=("0000"+i).slice(-4);
+    if(txtShotPassesRule(code,rule))out.push(code);
   }
   return out;
 }
@@ -4132,7 +4168,6 @@ function txtShotRuleSummary(rule){
     +(rule.consecutiveAvoid.length?" 除"+rule.consecutiveAvoid.join("、除"):"")
     +(rule.parityRatioAvoid.length?" 除奇偶比"+rule.parityRatioAvoid.join("、除奇偶比"):"")
     +(rule.sizeRatioAvoid.length?" 除大小比"+rule.sizeRatioAvoid.join("、除大小比"):"")
-    +(rule.recentExactCodeAvoid.length?" 除旧码"+rule.recentExactCodeAvoid.join("、除旧码"):"")
     +(rule.pairs.length?" 除对数"+rule.pairs.join("-"):"")
     +(rule.hitPairs.length?" 含对数"+rule.hitPairs.join("-"):"");
 }
@@ -4382,7 +4417,6 @@ function txtStatsLine(label,stats){
 function renderTxtFrameworks(data){
   window.__penta5TxtState=data||{};
   syncModelsToTxtTarget();
-  txtUpdateOldCodeFrameworkInfo(data||{});
   txtUpdatePositionFrameworkInfo(data||{});
   txtAuditRender(data||{});
 }
@@ -4401,9 +4435,6 @@ function initTxtConverter(){
     var convertInstruction=target.getAttribute("data-txt-instruction-convert");
     var copyInstruction=target.getAttribute("data-txt-instruction-copy");
     var downloadInstruction=target.getAttribute("data-txt-instruction-download");
-    var oldCodeGenerate=target.getAttribute("data-txt-oldcode-generate");
-    var oldCodeCopy=target.getAttribute("data-txt-oldcode-copy");
-    var oldCodeDownload=target.getAttribute("data-txt-oldcode-download");
     var positionGenerate=target.getAttribute("data-txt-position-generate");
     var positionRecommend=target.getAttribute("data-txt-position-recommend");
     var positionSingleSize=target.getAttribute("data-txt-position-single-size");
@@ -4417,7 +4448,7 @@ function initTxtConverter(){
     var positionRunDetail=target.getAttribute("data-txt-position-run-detail");
     var customTwoGenerate=target.getAttribute("data-txt-custom-two-generate");
     var syncModelsTxt=target.getAttribute("data-sync-models-txt");
-    if(downloadKey||downloadInstruction||oldCodeDownload||positionDownload){
+    if(downloadKey||downloadInstruction||positionDownload){
       if(event&&event.preventDefault)event.preventDefault();
       if(event&&event.stopPropagation)event.stopPropagation();
     }
@@ -4426,9 +4457,6 @@ function initTxtConverter(){
     if(convertInstruction)txtConvertInstruction();
     if(copyInstruction)txtCopyInstructionResult();
     if(downloadInstruction)txtDownloadInstructionResult();
-    if(oldCodeGenerate)txtGenerateOldCodeFramework(oldCodeGenerate);
-    if(oldCodeCopy)txtCopyOldCodeFramework();
-    if(oldCodeDownload)txtDownloadOldCodeFramework();
     if(positionGenerate){
       txtGeneratePositionFramework(positionGenerate);
     }
@@ -4438,7 +4466,7 @@ function initTxtConverter(){
     if(positionSingleSize)txtGenerateSinglePositionFramework(positionSingleSize,positionSinglePositions,positionSingleExclude);
     if(positionCopySingleSize)txtCopySinglePositionFramework(positionCopySingleSize,positionCopySinglePositions,positionCopySingleExclude);
     if(customTwoGenerate){
-      txtSetStatus("自定义二定50组已移除：二定回删已下线；三定千百十支持回删150剩850、回删100剩900。");
+      txtSetStatus("自定义二定50组已移除：二定回删已下线；三定四种三位组合统一回删200剩800。");
     }
     if(positionCopy)txtCopyPositionFramework(positionCopy==="three"||positionCopy==="3"?"three":"two");
     if(positionDownload)txtDownloadPositionFramework(positionDownload==="three"||positionDownload==="3"?"three":"two");
@@ -4911,19 +4939,16 @@ safeOrderRows();
   var practiceLastCelebrationKey = "";
   var practiceSnapshotStore = {};
   var dailyStreakReportCache = {};
-var PANEL_UI_VERSION = "20260719_live_missing_model_v10";
+  var PANEL_UI_VERSION = "20260720_three_duishu_pair_rotation_v22";
 var PANEL_SNAPSHOT_VERSIONS = {
     autoTop6:"backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit",
     recommend2:"backend-recommend2-snapshot-v16-formal-anytwo4-pool02468-label-v2",
     killFramework:"backend-kill-framework-snapshot-v8-formal-anytwo4-pool02468-label-v2",
     // 必须与 penta5_backend_runner.js 中 COMPACT/THREE_DING_*_SNAPSHOT_VERSION 完全一致，否则真实回测会因版本错配被隐藏
-    compactAttack:"backend-three-ding-framework-v9-no-shape-anytwo4-pool02468-label-v2",
+    compactAttack:"backend-three-ding-framework-v11-any3of4-independent-hewei-v1",
     threeDingTwo:"backend-three-ding-two-v12-force-unique-digit-anytwo4-pool02468-label-v3",
-    threeDingOne:"backend-three-ding-one-v10-force-unique-digit-anytwo4-pool02468-label-v2",
-    sideStable:"backend-side-stable-snapshot-v5-1pos-2hewei-2digit-sum-anytwo4-pool02468-three5-old1300-label-v2",
-    coldFramework:"backend-cold-framework-snapshot-v6-anytwo4-pool02468-label-v2",
-    dingKill:"backend-ding-kill-snapshot-v4-anytwo4-pool02468-label-v2",
-    pick5000:"backend-pick5000-snapshot-v4-anytwo4-pool02468-stagger-label-v2"
+    threeDingOne:"backend-three-ding-one-v12-no-anytwo-pool02468-label-v1",
+    threeDuishu:"backend-three-duishu-snapshot-v3-single-pair-rotation"
   };
   var PANEL_CANONICAL_PATH = "/panel";
   try{
@@ -5124,7 +5149,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
     {id:"shapeSize", key:"shapeSize", label:"大小形态", pool:["大","小"]},
     {id:"shapeMixed", key:"shapeMixed", label:"单双大小形态", pool:["大","小","单","双"]}
   ];
-  var RECENT_EXACT_CODE_WINDOWS = [300,500,800,1000,"max"];
   var EXTRAS = [
     {id:"sumAvoid",key:"sumAvoid",label:"单点和值过滤（高基线）",kind:"sum",scoreClass:"structural-rare-avoid",baseline:97},
     {id:"sumRangeAvoid",key:"sumRangeAvoid",label:"和值极端区间过滤（高基线）",kind:"sumRange",scoreClass:"structural-rare-avoid",baseline:99},
@@ -5133,11 +5157,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
     {id:"consecutiveAvoid",key:"consecutiveAvoid",label:"连号极罕形态过滤（高基线）",kind:"consecutive",scoreClass:"structural-rare-avoid",baseline:99.5},
     {id:"parityRatioAvoid",key:"parityRatioAvoid",label:"极端奇偶比过滤（高基线）",kind:"parityRatio",scoreClass:"structural-rare-avoid",baseline:93},
     {id:"sizeRatioAvoid",key:"sizeRatioAvoid",label:"极端大小比过滤（高基线）",kind:"sizeRatio",scoreClass:"structural-rare-avoid",baseline:93},
-    {id:"recentExactCodeAvoid300",key:"recentExactCodeAvoid300",label:"旧码原位置回删近300",kind:"recentExactCode"},
-    {id:"recentExactCodeAvoid500",key:"recentExactCodeAvoid500",label:"旧码原位置回删近500",kind:"recentExactCode"},
-    {id:"recentExactCodeAvoid800",key:"recentExactCodeAvoid800",label:"旧码原位置回删近800",kind:"recentExactCode"},
-    {id:"recentExactCodeAvoid1000",key:"recentExactCodeAvoid1000",label:"旧码原位置回删近1000",kind:"recentExactCode"},
-    {id:"recentExactCodeAvoidMax",key:"recentExactCodeAvoidMax",label:"旧码原位置回删最大",kind:"recentExactCode"},
     {id:"threeDigitAvoid",key:"threeDigitAvoid",label:"对数共现避开",kind:"threeDigits"},
     {id:"twoDigitAvoid",key:"twoDigitAvoid",label:"对数避开1组",kind:"twoDigits"},
     {id:"twoDigitAvoid2",key:"twoDigitAvoid2",label:"对数避开2组",kind:"twoDigits"},
@@ -5325,36 +5344,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
     return '<span style="font-size:12px;color:#166534;font-weight:700;">真实回测：'+esc(parts.join(" ｜ "))+'</span>';
   }
   window.penta5RealModelStatsHtml=realModelStatsHtml;
-  function recentExactCodeWindowFromKey(key,fallback){
-    var text=String(key||"")+" "+String(fallback==null?"":fallback);
-    if(/recentExactCodeAvoidMax/i.test(text)||/最大|全部|MAX/i.test(text))return 5000;
-    var m=String(key||"").match(/recentExactCodeAvoid(\d+)/);
-    if(m)return Math.max(1,Number(m[1]));
-    var fb=String(fallback==null?"":fallback).match(/(\d+)/);
-    if(fb)return Math.max(1,Number(fb[1]));
-    return 500;
-  }
-  function recentExactCodeWindowIsMax(value){
-    return String(value||"").toLowerCase()==="max"||/最大|全部|MAX/i.test(String(value||""));
-  }
-  function recentExactCodeWindowKey(value){
-    return recentExactCodeWindowIsMax(value)?"Max":String(recentExactCodeWindowFromKey("",value));
-  }
-  function recentExactCodeWindowLabel(value){
-    return recentExactCodeWindowIsMax(value)?"最大":"近"+recentExactCodeWindowFromKey("",value);
-  }
-  function recentExactCodeWindowValueFromKey(key,fallback){
-    var text=String(key||"")+" "+String(fallback==null?"":fallback);
-    return /recentExactCodeAvoidMax/i.test(text)||/最大|全部|MAX/i.test(text)?"最大":String(recentExactCodeWindowFromKey(key,fallback));
-  }
-  function recentExactCodeLookbackForData(data,value){
-    if(recentExactCodeWindowIsMax(value))return Math.max(1,records(data||{}).length);
-    return Math.max(1,recentExactCodeWindowFromKey("",value));
-  }
-  function recentExactCodeCodeLimitForItem(item){
-    if(item&&String(item.key||"")==="recentExactCodeAvoidMax")return Math.max(1,Number(item.codeCount||5000));
-    return recentExactCodeWindowFromKey(item&&item.key,item&&(item.code||item.value||item.primary||item.backup));
-  }
   function circle(v, color){
     return '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:34px;padding:0 7px;border-radius:18px;background:'+(color||"#0f172a")+';color:#fff;font-weight:700;margin-right:7px;box-sizing:border-box;">'+esc(v)+'</span>';
   }
@@ -5760,7 +5749,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(extra.kind==="repeat")return 0.42;
     if(extra.kind==="consecutive")return 0.55;
     if(extra.kind==="parityRatio"||extra.kind==="sizeRatio")return 0.2;
-    if(extra.kind==="recentExactCode")return 0.05;
     if(extra.kind==="twoHeweiTails")return 0.55;
     if(extra.kind==="threeHeweiTails")return 0.62;
     return 0.0204;
@@ -5779,7 +5767,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(extra.kind==="consecutive")return ["连号","二连","三连","四连"];
     if(extra.kind==="parityRatio")return ["0单4双","1单3双","2单2双","3单1双","4单0双"];
     if(extra.kind==="sizeRatio")return ["0大4小","1大3小","2大2小","3大1小","4大0小"];
-    if(extra.kind==="recentExactCode")return [recentExactCodeWindowValueFromKey(extra.key)];
     if(extra.kind==="twoDigits")return twoDigitCandidates();
     if(extra.kind==="twoHeweiTails")return digitSetCandidatesMixedParity(5);
     if(extra.kind==="threeHeweiTails")return digitSetCandidatesMixedParity(5);
@@ -5793,12 +5780,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(extra.kind==="consecutive")return String(candidate)==="连号"?hasConsecutiveShape(record):consecutiveShapeOf(record)===String(candidate);
     if(extra.kind==="parityRatio")return parityRatioOf(record)===String(candidate);
     if(extra.kind==="sizeRatio")return sizeRatioOf(record)===String(candidate);
-    if(extra.kind==="recentExactCode"){
-      var codes=Array.isArray(extra.codes)?extra.codes.map(String).filter(function(value){return /^\d{4}$/.test(value);}):[];
-      var code=(record&&record.numbers||[]).slice(0,4).map(String).join("");
-      if(!/^\d{4}$/.test(code)||!codes.length)return null;
-      return codes.indexOf(code)>=0;
-    }
     if(extra.kind==="twoHeweiTails")return anyHeweiCombinationHit(record,candidate,2,1);
     if(extra.kind==="threeHeweiTails")return anyHeweiCombinationHit(record,candidate,3,1);
     var group=String(candidate).split("");
@@ -5902,7 +5883,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var digits=String(value==null?"":value).replace(/\D/g,"");
     return digits.length>=3?digits.slice(0,3):"";
   }
-  function threeDuishuPairTokens(item){
+  function threeDuishuAllPairTokens(item){
     var out=[],seen={};
     function pushPair(raw){
       var code=String(raw==null?"":raw).replace(/\D/g,"").slice(0,2);
@@ -5916,11 +5897,18 @@ var PANEL_SNAPSHOT_VERSIONS = {
     // 禁止把三位数码（如 689）拆成单字符伪对子，避免除对数漏过滤/错过滤
     return out;
   }
+  function threeDuishuPairTokens(item){
+    var selected=String(item&&item.selectedPair||"").replace(/\D/g,"").slice(0,2);
+    if(selected.length===2)return [selected];
+    return threeDuishuAllPairTokens(item);
+  }
   function threeDuishuCandidateItem(data){
     var duishu=data&&data.threeDuishuRecommendation;
     if(!duishu||!duishu.ok||!duishu.code)return null;
     var pairs=Array.isArray(duishu.pairs)?duishu.pairs.slice(0,3):[];
     var pairCodes=Array.isArray(duishu.pairCodes)?duishu.pairCodes.slice(0,3):[];
+    var selectedPair=String(duishu.selectedPair||"").replace(/\D/g,"").slice(0,2);
+    var pairSelection=duishu.pairSelection&&typeof duishu.pairSelection==="object"?duishu.pairSelection:{};
     if(!pairs.length&&!pairCodes.length&&duishu.shot){
       var shotMatch=String(duishu.shot).match(/除对数(\d{2}(?:-\d{2}){1,2})/);
       if(shotMatch){
@@ -5936,11 +5924,13 @@ var PANEL_SNAPSHOT_VERSIONS = {
       code:threeDuishuCode(duishu.code),
       pairs:pairs,
       pairCodes:pairCodes.length?pairCodes:pairs.slice(),
+      selectedPair:selectedPair,
+      selectedPairCode:String(duishu.selectedPairCode||selectedPair),
       quality:duishu.quality||"",
-      rate30:duishu.rate30,
-      rate120:duishu.rate120,
-      rate300:duishu.rate300,
-      stableScore:duishu.score
+      rate30:pairSelection.rate30,
+      rate120:pairSelection.rate120,
+      rate300:pairSelection.rate300,
+      stableScore:pairSelection.score
     };
     item.rate=displayedItemRate(data,item,30);
     item.rate10=displayedItemRate(data,item,10);
@@ -6058,6 +6048,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
         var wantDuishu=String(item.code==null?"":item.code);
         var sealedCode=String(sealedDuishu.code==null?"":sealedDuishu.code);
         if(wantDuishu&&wantDuishu!=="--"&&sealedCode&&sealedCode!==wantDuishu)return null;
+        var wantPair=String(item.selectedPair||"");
+        var sealedPair=String(sealedDuishu.selectedPair||"");
+        if(wantPair&&sealedPair&&sealedPair!==wantPair)return null;
         return sealedDuishu.success;
       }
       // 无开奖前封存样本则不计真实战绩，禁止用当前对数回放历史冒充
@@ -6114,11 +6107,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(item.kind==="extra"){
       var extra=EXTRAS.filter(function(s){return s.key===item.key;})[0];
       if(!extra)return null;
-      if(extra.kind==="recentExactCode"){
-        return recentExactCodeHistorySuccess(data,row,code);
-      }
       var extraRuntime=Object.assign({},extra);
-      if(Array.isArray(item.codes))extraRuntime.codes=item.codes.slice(0,recentExactCodeCodeLimitForItem(item));
+      if(Array.isArray(item.codes))extraRuntime.codes=item.codes.slice(0,5000);
       return extraSuccess(extraRuntime,extraMatches(row,extraRuntime,code));
     }
     if(item.kind==="threeDuishu"){
@@ -6144,28 +6134,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var code=nums.map(String).join("");
     return /^\d{4}$/.test(code)?code:"";
   }
-  function recentExactCodeHistorySuccess(data,row,lookback){
-    var rows=records(data);
-    var index=rows.indexOf(row);
-    if(index<0){
-      var rowPeriod=String(row&&row.period||row&&row.uid||"");
-      for(var i=0;i<rows.length;i++){
-        if(String(rows[i]&&rows[i].period||rows[i]&&rows[i].uid||"")===rowPeriod){index=i;break;}
-      }
-    }
-    if(index<0)return null;
-    var limit=recentExactCodeWindowIsMax(lookback)?Math.max(1,rows.length):Math.max(1,Number(String(lookback||"").replace(/\D/g,"")||300));
-    var code=rowFirstFourCode(row);
-    if(!code)return null;
-    var previous=rows.slice(index+1,index+1+limit);
-    if(!previous.length)return null;
-    var seen={};
-    previous.forEach(function(prev){
-      var oldCode=rowFirstFourCode(prev);
-      if(oldCode)seen[oldCode]=true;
-    });
-    return !seen[code];
-  }
   function historyBacktestRate(data,item,limit){
     // 保留函数供靶场生成选码参考，但禁止用于面板“命中率/真实回测”展示
     var rows=records(data).slice(0,Math.max(1,Number(limit||30)));
@@ -6174,7 +6142,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
   }
   function sealedFrameworkItemSuccess(ev,item){
     if(!ev||!item)return null;
-    var stores=["autoTop6","recommend2","coldFramework","killFramework","compactAttack","sideStable","dingKill","pick5000"];
+    var stores=["autoTop6","recommend2","killFramework","compactAttack"];
     var wantCode=String(item.code==null?"":item.code);
     for(var i=0;i<stores.length;i++){
       var snap=ev[stores[i]];
@@ -6309,7 +6277,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       var code=saved&&(saved.value!=null?saved.value:(saved.code!=null?saved.code:null));
       var item={kind:"extra",key:extra.key,name:extra.label,code:code!=null?String(code):chooseExtra(records(data),extra).value};
       if(saved&&Array.isArray(saved.codes)){
-        item.codes=saved.codes.slice(0,recentExactCodeCodeLimitForItem(item));
+        item.codes=saved.codes.slice(0,5000);
         item.codeCount=Number(saved.codeCount||item.codes.length);
       }
       list.push(item);
@@ -6448,7 +6416,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       (pool||[]).forEach(function(item){
         markItemConfidence(data,item);
         if(item.lowConfidence){
-          repairReport.push(label+"暂停低命中："+modelLabel(item)+"，安全率 "+safetyText(item));
+          repairReport.push(label+"观察补位："+modelLabel(item)+"，安全率 "+safetyText(item));
         }
       });
     }
@@ -6638,18 +6606,14 @@ var PANEL_SNAPSHOT_VERSIONS = {
       function formalCompactCount(test){return formalCompact.filter(test).length;}
       var compactPosKeys={};
       formalCompact.forEach(function(item){
-        if(item&&item.kind==="position"&&item.key&&["wan","qian","bai"].indexOf(String(item.key))>=0)compactPosKeys[String(item.key)]=true;
+        if(item&&item.kind==="position"&&item.key&&["wan","qian","bai","shi"].indexOf(String(item.key))>=0)compactPosKeys[String(item.key)]=true;
       });
-      return items.length===5
-        &&formalCompact.length===5
-        &&formalCompactCount(function(item){return item&&item.kind==="position"&&["wan","qian","bai"].indexOf(String(item.key))>=0;})===3
+      return items.length===4
+        &&formalCompact.length===4
+        &&formalCompactCount(function(item){return item&&item.kind==="position"&&["wan","qian","bai","shi"].indexOf(String(item.key))>=0;})===3
         &&Object.keys(compactPosKeys).length===3
-        &&["wan","qian","bai"].every(function(key){return !!compactPosKeys[key];})
-        &&formalCompactCount(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai"&&/^\d$/.test(String(item.code||""));})===1
-        &&formalCompactCount(function(item){
-          if(!(item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"))return false;
-          return isAnyTwoHeweiCode(item.code);
-        })===1
+        &&Object.keys(compactPosKeys).every(function(key){return ["wan","qian","bai","shi"].indexOf(key)>=0;})
+        &&formalCompactCount(function(item){return item&&item.kind==="hewei"&&["wanQianBai","qianBaiShi","wanQianBaiShi"].indexOf(String(item.key))>=0&&/^\d$/.test(String(item.code||""));})===1
         &&formalCompactCount(function(item){return item&&(item.kind==="derivedReverseShape"||item.kind==="shape");})===0;
     }
     if(storeName==="threeDingTwo"){
@@ -6675,76 +6639,13 @@ var PANEL_SNAPSHOT_VERSIONS = {
       formalTd1.forEach(function(item){
         if(item&&item.kind==="position"&&item.key&&["wan","qian","bai"].indexOf(String(item.key))>=0)td1PosKeys[String(item.key)]=true;
       });
-      return items.length===6
-        &&formalTd1.length===6
+      return items.length===5
+        &&formalTd1.length===5
         &&formalTd1Count(function(item){return item&&item.kind==="position"&&["wan","qian","bai"].indexOf(String(item.key))>=0;})===2
         &&Object.keys(td1PosKeys).length===2
         &&formalTd1Count(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai"&&/^\d$/.test(String(item.code||""));})===1
-        &&formalTd1Count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
         &&formalTd1Count(function(item){return item&&item.kind==="derivedReverseShape"&&/^[大小]{3,4}$/.test(String(item.code||""))&&!/^[单双]{3,4}$/.test(String(item.code||""));})===1
         &&formalTd1Count(function(item){return item&&item.kind==="extra"&&["twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3"].indexOf(String(item.key))>=0&&/^\d{2}$/.test(String(item.code||""));})===1;
-    }
-    if(storeName==="sideStable"){
-      var formalSide=items.filter(function(item){return item&&item.side!=="backup";});
-      function formalSideCount(test){return formalSide.filter(test).length;}
-      var sideTxt=snapshot.txtSelection||{};
-      var sideRaw=Number(sideTxt.rawCount||0),sideSelected=Number(sideTxt.selectedCount||0);
-      var sideTxtValid=sideTxt.strategy==="ascending-first-n"&&sideSelected>0&&sideRaw>=sideSelected&&(sideRaw===sideSelected||/^\d{4}$/.test(String(sideTxt.cutoffCode||"")));
-      return items.length===8
-        &&formalSide.length===8
-        &&sideTxtValid
-        &&formalSideCount(function(item){return item&&item.kind==="position";})===1
-        &&formalSideCount(function(item){return item&&item.kind==="hewei"&&(item.key==="total"||item.key==="totalHewei");})===1
-        &&formalSideCount(function(item){return item&&item.kind==="hewei"&&item.key==="wanQianBai";})===1
-        &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="twoDigitAvoid"&&/^\d{2}$/.test(String(item.code||""));})===1
-        &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="sumAvoid";})===1
-        &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
-        &&formalSideCount(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
-        &&formalSideCount(function(item){
-          if(!(item&&item.kind==="extra"&&item.key==="recentExactCodeAvoid1300"&&String(item.code||"")==="1300"&&Number(item.codeCount||0)>=1000&&isFinite(Number(item.generatedGroupCount))))return false;
-          if(item.codesOmitted===true)return true;
-          return Array.isArray(item.codes)&&item.codes.length>=1000;
-        })===1;
-    }
-    if(storeName==="coldFramework"){
-      var txt=snapshot.txtSelection||{};
-      var rawCount=Number(txt.rawCount||0),selectedCount=Number(txt.selectedCount||0);
-      var txtValid=txt.strategy==="ascending-first-n"&&selectedCount>0&&rawCount>=selectedCount&&(rawCount===selectedCount||/^\d{4}$/.test(String(txt.cutoffCode||"")));
-      return items.length===8&&txtValid
-        &&count(function(item){return item&&item.kind==="position"&&item.side==="cold";})===2
-        &&count(function(item){return item&&item.kind==="hewei"&&item.side==="cold";})===2
-        &&count(function(item){return item&&item.kind==="extra"&&["recentExactCodeAvoid500","recentExactCodeAvoid800"].indexOf(item.key)>=0&&isFinite(Number(item.generatedGroupCount));})===1
-        &&count(function(item){return item&&item.kind==="derivedReverseShape";})===1
-        &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
-        &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1;
-    }
-    if(storeName==="dingKill"){
-      var formalDing=items.filter(function(item){return item&&item.side!=="backup";});
-      function formalDingCount(test){return formalDing.filter(test).length;}
-      var dingTxt=snapshot.txtSelection||{};
-      var dingRaw=Number(dingTxt.rawCount||0),dingSelected=Number(dingTxt.selectedCount||0);
-      var dingTxtValid=dingTxt.strategy==="ascending-first-n"&&dingSelected>0&&dingRaw>=dingSelected&&(dingRaw===dingSelected||/^\d{4}$/.test(String(dingTxt.cutoffCode||"")));
-      return items.length===7
-        &&formalDing.length===7
-        &&dingTxtValid
-        &&formalDingCount(function(item){return item&&item.kind==="position";})===2
-        &&formalDingCount(function(item){return item&&item.kind==="hewei";})===1
-        &&formalDingCount(function(item){return item&&item.kind==="derivedReverseShape";})===1
-        &&formalDingCount(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
-        &&formalDingCount(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1
-        &&formalDingCount(function(item){return item&&item.kind==="extra"&&/^recentExactCodeAvoid(?:\d+|Max)$/.test(String(item.key||""))&&isFinite(Number(item.generatedGroupCount));})===1;
-    }
-    if(storeName==="pick5000"){
-      var pickTxt=snapshot.txtSelection||{};
-      var pickRaw=Number(pickTxt.rawCount||0),pickSelected=Number(pickTxt.selectedCount||0);
-      var pickTxtValid=pickTxt.strategy==="ascending-first-n"&&pickSelected>0&&pickRaw>=pickSelected&&(pickRaw===pickSelected||/^\d{4}$/.test(String(pickTxt.cutoffCode||"")));
-      return items.length===8&&pickTxtValid
-        &&count(function(item){return item&&item.kind==="position"&&item.side==="cold";})===2
-        &&count(function(item){return item&&item.kind==="hewei"&&item.side==="cold";})===2
-        &&count(function(item){return item&&item.kind==="extra"&&item.key==="recentExactCodeAvoid500"&&isFinite(Number(item.generatedGroupCount));})===1
-        &&count(function(item){return item&&item.kind==="derivedReverseShape";})===1
-        &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyTwoHeweiHit"&&isAnyTwoHeweiCode(item.code);})===1
-        &&count(function(item){return item&&item.kind==="extra"&&item.key==="anyThreeHeweiHit"&&/^\d{5}$/.test(String(item.code||""));})===1;
     }
     return false;
   }
@@ -6801,18 +6702,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
   }
   function backendThreeDingOneItems(data){
     return backendSnapshotItems(data,"threeDingOne","三定框架B模型","threeDingOne");
-  }
-  function backendSideStableItems(data){
-    return backendSnapshotItems(data,"sideStable","旁路稳筛模型","sideStable");
-  }
-  function backendColdFrameworkItems(data){
-    return backendSnapshotItems(data,"coldFramework","冷码框架模型","coldFramework");
-  }
-  function backendDingKillItems(data){
-    return backendSnapshotItems(data,"dingKill","四定定位杀码模型","dingKill");
-  }
-  function backendPick5000Items(data){
-    return backendSnapshotItems(data,"pick5000","看好5000组模型","pick5000");
   }
   function emptyTruthTodayStats(data){
     return {available:false,day:typeof todayKeyForData==="function"?todayKeyForData(data):"",total:0,hit:0,rate:null,currentWin:0,currentMiss:0,maxWin:0,maxMiss:0,lastPeriod:""};
@@ -7040,16 +6929,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
         var predTd1=(state&&state.currentPrediction)||{};
         var snapTd1=predTd1.threeDingOne;
         if(snapTd1&&snapTd1.sealed===true)sealedHint='<div style="margin-top:4px;font-size:12px;font-weight:600;color:#9a3412;">本期快照已封存，开奖结算后开始累计全通过率与连中连败。</div>';
-      }
-      if(storeName==="dingKill"){
-        var predDing=(state&&state.currentPrediction)||{};
-        var snapDing=predDing.dingKill;
-        if(snapDing&&snapDing.sealed===true)sealedHint='<div style="margin-top:4px;font-size:12px;font-weight:600;color:#9a3412;">本期快照已封存，开奖结算后开始累计全通过率与连中连败。</div>';
-      }
-      if(storeName==="pick5000"){
-        var predPick=(state&&state.currentPrediction)||{};
-        var snapPick=predPick.pick5000;
-        if(snapPick&&snapPick.sealed===true)sealedHint='<div style="margin-top:4px;font-size:12px;font-weight:600;color:#1d4ed8;">本期看好5000组已封存，开奖结算后开始累计全通过率与连中连败；生成TXT按攻击语完整展开，不按封存截止码裁组。</div>';
       }
       return '<div style="margin-top:9px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:800;">'
         +esc(label)+'真实回测：暂无开奖前封存样本，已隐藏胜率、容错率和连中连败。'+sealedHint+simOnly+'</div>';
@@ -7350,14 +7229,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
     });
     var oldGroupRow=document.getElementById("twoDigitAvoidGroupRow");
     if(oldGroupRow&&oldGroupRow.parentNode)oldGroupRow.parentNode.removeChild(oldGroupRow);
-    // 对数避开三项由 renderTop 写入蓝框，禁止因父节点不是 #autoTop5Recommend 而误删
+    // 旧推荐1框架已下线；独立对数模型只能挂在预测区，若残留在旧推荐框内才清理。
     var oldGroupBox=document.getElementById("twoDigitAvoidGroupBox");
-    if(oldGroupBox&&oldGroupBox.parentNode){
-      var underAutoTop=!!(oldGroupBox.closest&&oldGroupBox.closest("#autoTop5Recommend"));
-      if(!underAutoTop&&oldGroupBox.parentNode.id!=="autoTop5Recommend"){
-        oldGroupBox.parentNode.removeChild(oldGroupBox);
-      }
-    }
+    if(oldGroupBox&&oldGroupBox.parentNode&&oldGroupBox.closest&&oldGroupBox.closest("#autoTop5Recommend"))oldGroupBox.parentNode.removeChild(oldGroupBox);
   }
   function reorderRows(){
     var first=rowById("wan");if(!first||!first.parentElement)return;
@@ -7400,15 +7274,18 @@ var PANEL_SNAPSHOT_VERSIONS = {
           // 没有 walk-forward 今日样本时，只用阿里账本，禁止当前码回放冒充
           duishuToday=stableTodayStreakStats("threeDuishu",{day:todayKey,total:0,hit:0,currentWin:0,currentMiss:0,maxWin:0,maxMiss:0});
         }
+        var selectedPair=String(duishu.selectedPair||"");
+        var pairSelection=duishu.pairSelection||{};
         setHtml(duishuCell,'<span style="display:inline-flex;align-items:center;justify-content:center;min-width:58px;height:34px;border-radius:18px;background:#111827;color:#fff;font-size:20px;font-weight:800;letter-spacing:0;margin-right:8px;">'+esc(duishu.code)+'</span>'
-          +'<span style="font-size:12px;color:#64748b;">'+esc((duishu.pairs||[]).join("|"))+' ｜ '+esc(duishu.quality||"观察")
+          +'<span style="font-size:12px;color:#64748b;">候选 '+esc((duishu.pairs||[]).join("|"))+' → <b style="color:#b91c1c;">本期排除 '+esc(selectedPair||"--")+'</b> ｜ '+esc(duishu.quality||"观察")
+          +' ｜ 持有 '+esc(pairSelection.holdCount||1)+'/'+esc(pairSelection.maxHold||8)+'期'
           +' ｜ 滚测 '+(walk.rateText||pct(walk.rate, walk.total))
-          +' ｜ 30期 '+pct(duishu.rate30, duishu.sample30)
-          +' ｜ 40期 '+pct(duishu.rate40, duishu.sample40)
-          +' ｜ 1000期 '+pct(duishu.rate300, duishu.sample300||duishu.sample120)
-          +' ｜ 块底 '+pct(block.minRate)+'</span>'
+          +' ｜ 30期 '+pct(pairSelection.rate30, pairSelection.sample30)
+          +' ｜ 40期 '+pct(pairSelection.rate40, pairSelection.sample40)
+          +' ｜ 120期 '+pct(pairSelection.rate120, pairSelection.sample120)
+          +' ｜ 300期 '+pct(pairSelection.rate300, pairSelection.sample300)+'</span>'
           +(duishuToday.total?('<div style="font-size:12px;color:#0f172a;font-weight:700;margin-top:4px;">今日最高连中：'+esc(duishuToday.maxWin)+'手 ｜ 今日最高连败：'+esc(duishuToday.maxMiss)+'手 <span style="font-weight:500;color:#64748b;">（真实样本'+esc(duishuToday.total)+'期）</span></div><div style="font-size:12px;color:#475569;margin-top:2px;">当前连中：'+esc(duishuToday.currentWin||0)+'手 ｜ 当前连败：'+esc(duishuToday.currentMiss||0)+'手</div>'):'<div style="font-size:12px;color:#64748b;margin-top:4px;">暂无连胜记录</div>')
-          +(typeof frameworkLatestEvalHtml==="function"?frameworkLatestEvalHtml(latestThreeDuishuEvaluation(data),"三对数排除"):""));
+          +(typeof threeDuishuLatestEvalHtml==="function"?threeDuishuLatestEvalHtml(latestThreeDuishuEvaluation(data)):""));
       }else{
         duishuCell.textContent="--";
       }
@@ -7585,20 +7462,20 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var group=twoDigitAvoidGroupItems(items);
     if(group.length<3){
       return '<div id="twoDigitAvoidGroupBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bfdbfe;">'
-        +'<div style="border:1px solid #bfdbfe;border-radius:10px;padding:10px;background:#eff6ff;color:#475569;font-size:13px;">对数避开三项组合：等待三组模型齐全</div>'
+        +'<div style="border:1px solid #bfdbfe;border-radius:10px;padding:10px;background:#eff6ff;color:#475569;font-size:13px;">独立对数模型：等待三组真实模型齐全</div>'
         +'</div>';
     }
     var today=todayTwoDigitAvoidGroupLedgerStats(data);
     var chips=group.map(function(item,index){
-      return '<span style="display:inline-flex;align-items:center;gap:6px;margin:3px 10px 3px 0;white-space:nowrap;"><b>'+esc(index+1)+'组</b>'+circle(item.code,"#0f172a")+'<span style="font-size:12px;color:#64748b;">30期 '+pct(displayedItemRate(data,item,30))+'</span></span>';
+      return '<span style="display:inline-flex;align-items:center;gap:6px;margin:3px 10px 3px 0;white-space:nowrap;"><b>'+esc(item.name||("对数避开"+(index+1)+"组"))+'</b>'+circle(item.code,"#0f172a")+'<span style="font-size:12px;color:#64748b;">真实30期 '+pct(displayedItemRate(data,item,30))+'</span></span>';
     }).join("");
     var stableToday=stableTodayGroupStats("twoDigitAvoidAllThree",today);
     var latestHtml=typeof frameworkLatestEvalHtml==="function"?frameworkLatestEvalHtml(latestTwoDigitAvoidGroupEvaluation(data),"对数避开三项"):"";
     return '<div id="twoDigitAvoidGroupBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bfdbfe;">'
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #bfdbfe;border-radius:12px;padding:12px;background:#f8fbff;color:#0f172a;">'
       +'<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
-      +'<b style="font-size:16px;">对数避开三项组合</b>'
-      +'<span style="font-size:12px;color:#475569;">三项一起通过才算中，任一项不过算连败</span>'
+      +'<b style="font-size:16px;">对数模型（独立单模型）</b>'
+      +'<span style="font-size:12px;color:#475569;">不属于四定推荐框架；三组单项独立保留，联合全过仅作真实核验</span>'
       +'</div>'
       +'<div style="margin-top:7px;">'+chips+'</div>'
       +latestHtml
@@ -7648,6 +7525,15 @@ var PANEL_SNAPSHOT_VERSIONS = {
     rows.forEach(function(row){
       var metrics=row&&row.metrics||{};
       var digit=metrics[field];
+      if((digit===undefined||digit===null||String(digit)==="--")&&Array.isArray(row&&row.numbers)){
+        var nums=row.numbers.slice(0,4).map(function(value){return Number(value);});
+        if(nums.length===4&&nums.every(function(value){return isFinite(value)&&value>=0&&value<=9;})){
+          if(field==="totalHewei")digit=(nums[0]+nums[1]+nums[2]+nums[3])%10;
+          else if(field==="wanQianBaiHewei")digit=(nums[0]+nums[1]+nums[2])%10;
+          else if(field==="qianBaiShiHewei")digit=(nums[1]+nums[2]+nums[3])%10;
+          else if(field==="wanQianBaiShiHewei")digit=(nums[0]+nums[1]+nums[2]+nums[3])%10;
+        }
+      }
       if(digit===undefined||digit===null||String(digit)==="--")return;
       digit=String(digit);
       if(!/^\d$/.test(digit))return;
@@ -7710,7 +7596,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
   function existingPredictionGeneratedTokens(){
     var results=[
       txtPositionFrameworkLastResult,
-      txtOldCodeFrameworkLastResult,
       window.__penta5TxtInstructionResult,
       window.__penta5TxtFixedHeweiResult
     ];
@@ -7749,10 +7634,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
       });
     });
     positionExcludeItems=normalizePositionExcludeLabels(positionExcludeItems);
-    (backendColdFrameworkItems(data||{})||[]).forEach(function(item){
-      var label=existingPredictionItemLabel(item);
-      if(label)coldItems.push(label);
-    });
     function extraItems(keys){
       var keySet={};
       (keys||[]).forEach(function(key){keySet[String(key)]=true;});
@@ -8066,110 +7947,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
       +panelCollapseBodyClose()
       +'</div>';
   }
-  function recentExactCodeFrameworkRows(data,limit){
-    var rows=records(data||{});
-    var out=[];
-    for(var i=0;i<rows.length&&out.length<Math.max(1,Number(limit||18));i++){
-      var row=rows[i]||{};
-      var code=rowFirstFourCode(row);
-      if(!code)continue;
-      var item={
-        period:String(row.period||row.uid||"--"),
-        code:code
-      };
-      RECENT_EXACT_CODE_WINDOWS.forEach(function(windowSize){
-        item["success"+recentExactCodeWindowKey(windowSize)]=recentExactCodeHistorySuccess(data,row,windowSize);
-      });
-      out.push(item);
-    }
-    return out;
-  }
-  function recentExactCodeFrameworkStats(rows,key){
-    var values=(rows||[]).map(function(row){return row&&row[key];}).filter(function(value){return typeof value==="boolean";});
-    var hit=values.filter(Boolean).length;
-    return {total:values.length,hit:hit,rate:values.length?hit*100/values.length:null};
-  }
-  function recentExactCodeFrameworkStatsByWindow(data,windowSize){
-    var source=records(data||{});
-    var limit=recentExactCodeWindowIsMax(windowSize)?source.length:Math.min(source.length,Math.max(1,Number(windowSize||30)));
-    var total=0,hit=0;
-    for(var i=0;i<limit;i++){
-      var success=recentExactCodeHistorySuccess(data,source[i],windowSize);
-      if(typeof success!=="boolean")continue;
-      total++;
-      if(success)hit++;
-    }
-    return {total:total,hit:hit,rate:total?hit*100/total:null,window:windowSize};
-  }
-  function recentExactCodeOutcomeCell(value){
-    if(typeof value!=="boolean"){
-      return '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:48px;border-radius:999px;padding:4px 8px;background:#f1f5f9;color:#64748b;font-weight:900;">--</span>';
-    }
-    return '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:48px;border-radius:999px;padding:4px 8px;background:'+(value?"#dcfce7":"#fee2e2")+';color:'+(value?"#166534":"#991b1b")+';font-weight:900;">'+(value?"中":"不中")+'</span>';
-  }
-  function removeRecentExactCodeRowsFromMainTable(){
-    RECENT_EXACT_CODE_WINDOWS.map(function(windowSize){return "recentExactCodeAvoid"+recentExactCodeWindowKey(windowSize);}).forEach(function(id){
-      var row=rowById(id);
-      if(row&&row.parentNode)row.parentNode.removeChild(row);
-    });
-  }
-  function recentExactCodeFrameworkHtml(data){
-    var latestRows=recentExactCodeFrameworkRows(data,18);
-    var stats={};
-    RECENT_EXACT_CODE_WINDOWS.forEach(function(windowSize){
-      stats[windowSize]=recentExactCodeFrameworkStatsByWindow(data,windowSize);
-    });
-    var body=latestRows.length?latestRows.map(function(row){
-      var cells=RECENT_EXACT_CODE_WINDOWS.map(function(windowSize){
-        return '<td style="padding:7px 6px;border-bottom:1px solid #e2e8f0;">'+recentExactCodeOutcomeCell(row["success"+recentExactCodeWindowKey(windowSize)])+'</td>';
-      }).join("");
-      return '<tr>'
-        +'<td style="padding:7px 6px;border-bottom:1px solid #e2e8f0;font-weight:800;">'+esc(row.period)+'</td>'
-        +'<td style="padding:7px 6px;border-bottom:1px solid #e2e8f0;">'+esc(row.code)+'</td>'
-        +cells
-        +'</tr>';
-    }).join(""):'<tr><td colspan="6" style="padding:10px;color:#64748b;">等待已开奖回算数据</td></tr>';
-    var statHtml=RECENT_EXACT_CODE_WINDOWS.map(function(windowSize){
-      var stat=stats[windowSize]||{};
-      return recentExactCodeWindowLabel(windowSize)+'：'+pct(stat.rate)+'（'+esc(stat.hit)+'/'+esc(stat.total)+'）';
-    }).join('<br>');
-    var headerHtml=RECENT_EXACT_CODE_WINDOWS.map(function(windowSize){
-      return '<th style="text-align:left;padding:7px 6px;background:#f8fafc;border-bottom:1px solid #cbd5e1;">'+recentExactCodeWindowLabel(windowSize)+'</th>';
-    }).join("");
-    return panelCollapseHeadHtml('<h2 style="margin:0 0 5px;font-size:18px;">旧码原位置回删框架（重复四码避开）</h2><div class="small">按完整前四码原位置回删：上期 6426，下期只删 6426；近300、近500、近800、近1000、最大旧码回删各自独立显示，每期开奖后单独标记中/不中。</div>','recentExactCode',true)
-      +panelCollapseBodyOpen('recentExactCode')
-      +'<div style="font-size:13px;color:#475569;line-height:1.7;font-weight:800;margin-bottom:8px;">'
-      +statHtml
-      +'</div>'
-      +'<div style="overflow:auto;">'
-      +'<table style="width:100%;border-collapse:collapse;font-size:13px;min-width:760px;">'
-      +'<thead><tr>'
-      +'<th style="text-align:left;padding:7px 6px;background:#f8fafc;border-bottom:1px solid #cbd5e1;">期号</th>'
-      +'<th style="text-align:left;padding:7px 6px;background:#f8fafc;border-bottom:1px solid #cbd5e1;">前四码</th>'
-      +headerHtml
-      +'</tr></thead><tbody>'+body+'</tbody></table>'
-      +'</div>'
-      +panelCollapseBodyClose();
-  }
-  function renderRecentExactCodeFramework(data){
-    removeRecentExactCodeRowsFromMainTable();
-    var old=document.getElementById("recentExactCodeFrameworkBox");
-    var anchor=document.getElementById("positionColdCodeFrameworkBox")||rowById("wan");
-    var card=anchor&&(anchor.closest&&anchor.tagName&&anchor.tagName.toLowerCase()==="tr"?anchor.closest(".card"):anchor);
-    if(card&&card.tagName&&card.tagName.toLowerCase()==="tr")card=card.closest?card.closest(".card"):card.parentElement;
-    if(!card||!card.parentNode){
-      if(old&&old.parentNode)old.parentNode.removeChild(old);
-      return;
-    }
-    var box=old||document.createElement("div");
-    box.id="recentExactCodeFrameworkBox";
-    box.className="card";
-    box.style.cssText="grid-column:1/-1;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 5px rgba(0,0,0,.08);";
-    setHtml(box,recentExactCodeFrameworkHtml(data));
-    if(!old)card.parentNode.insertBefore(box,card.nextSibling);
-    else if(box.previousSibling!==card)card.parentNode.insertBefore(box,card.nextSibling);
-    if(typeof restorePanelCollapsibles==="function")restorePanelCollapsibles(box);
-  }
   function cooccurrenceInlineHtml(data,items){
     var parts=[];
     EXTRAS.filter(isCooccurrenceExtra).forEach(function(extra){
@@ -8224,41 +8001,45 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }
     return null;
   }
-  function frameworkLatestEvalHtml(latest,label){
+  function frameworkLatestEvalHtml(latest,label,settlementNote){
     if(!latest)return "";
+    var note=settlementNote||("按开奖前封存快照结算"+(latest.sealedBasePeriod?"（基准 "+latest.sealedBasePeriod+"）":"")+"，不是下方当前推荐码的即时回算。");
     return '<div style="margin-top:8px;border:1px solid '+(latest.success?"#86efac":"#fed7aa")+';background:'+(latest.success?"#dcfce7":"#fff7ed")+';color:'+(latest.success?"#166534":"#9a3412")+';border-radius:8px;padding:7px 9px;font-size:13px;font-weight:900;">'
       +(latest.success?"本期"+label+"全过":"本期"+label+"未全过")
       +'：'+esc(latest.period||"--")+' ｜ 通过 '+esc(latest.passed)+'/'+esc(latest.total)
       +(!latest.success&&latest.failed&&latest.failed.length?' ｜ 未过 '+esc(latest.failed.join("、")):"")
-      +'<div style="margin-top:4px;font-size:12px;font-weight:600;opacity:.92;">按开奖前封存快照结算'+(latest.sealedBasePeriod?'（基准 '+esc(latest.sealedBasePeriod)+'）':"")+'，不是下方当前推荐码的即时回算。</div>'
+      +'<div style="margin-top:4px;font-size:12px;font-weight:600;opacity:.92;">'+esc(note)+'</div>'
       +'</div>';
+  }
+  function threeDuishuLatestEvalHtml(latest){
+    if(!latest)return "";
+    var selectedPair=String(latest.selectedPair||"").replace(/\D/g,"").slice(0,2);
+    var pairs=(Array.isArray(latest.pairs)?latest.pairs:[]).map(function(pair){
+      return String(pair||"").replace(/\D/g,"").slice(0,2);
+    }).filter(function(pair){return /^\d{2}$/.test(pair);});
+    var note="按开奖前封存的本期单组排除号核算；三组候选不合并核算。";
+    if(/^\d{2}$/.test(selectedPair)){
+      note="按开奖前封存的本期单组排除号 "+selectedPair+" 核算"
+        +(latest.sealedBasePeriod?"（基准 "+latest.sealedBasePeriod+"）":"")
+        +"：开奖号码同时包含 "+selectedPair.charAt(0)+" 和 "+selectedPair.charAt(1)+" 才判未过；缺少任一数字即通过。"
+        +(pairs.length?"候选 "+pairs.join("|")+" 不合并核算。":"三组候选不合并核算。");
+    }
+    return frameworkLatestEvalHtml(latest,"三对数排除",note);
   }
   function latestRecommend2Evaluation(data){
     return latestFrameworkEvaluation(data,"recommend2",{version:PANEL_SNAPSHOT_VERSIONS.recommend2,total:8});
-  }
-  function latestColdFrameworkEvaluation(data){
-    return latestFrameworkEvaluation(data,"coldFramework",{versionPrefix:"backend-cold-framework-snapshot-",total:8});
-  }
-  function latestPick5000Evaluation(data){
-    return latestFrameworkEvaluation(data,"pick5000",{version:PANEL_SNAPSHOT_VERSIONS.pick5000,total:8});
-  }
-  function latestDingKillEvaluation(data){
-    return latestFrameworkEvaluation(data,"dingKill",{version:PANEL_SNAPSHOT_VERSIONS.dingKill,total:7});
   }
   function latestKillFrameworkEvaluation(data){
     return latestFrameworkEvaluation(data,"killFramework",{version:PANEL_SNAPSHOT_VERSIONS.killFramework,total:8});
   }
   function latestCompactAttackEvaluation(data){
-    return latestFrameworkEvaluation(data,"compactAttack",{version:PANEL_SNAPSHOT_VERSIONS.compactAttack,total:5});
+    return latestFrameworkEvaluation(data,"compactAttack",{version:PANEL_SNAPSHOT_VERSIONS.compactAttack,total:4});
   }
   function latestThreeDingTwoEvaluation(data){
     return latestFrameworkEvaluation(data,"threeDingTwo",{versionPrefix:"backend-three-ding-two-",total:5});
   }
   function latestThreeDingOneEvaluation(data){
-    return latestFrameworkEvaluation(data,"threeDingOne",{versionPrefix:"backend-three-ding-one-",total:6});
-  }
-  function latestSideStableEvaluation(data){
-    return latestFrameworkEvaluation(data,"sideStable",{version:PANEL_SNAPSHOT_VERSIONS.sideStable,total:8});
+    return latestFrameworkEvaluation(data,"threeDingOne",{versionPrefix:"backend-three-ding-one-",total:5});
   }
   function latestAutoTop6Evaluation(data){
     return latestFrameworkEvaluation(data,"autoTop6",{version:PANEL_SNAPSHOT_VERSIONS.autoTop6,total:6});
@@ -8274,7 +8055,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       var rec=ev.threeDuishu;
       if(!rec||typeof rec.success!=="boolean")continue;
       if(rec.truthEligible===false)continue;
-      if(rec.version&&String(rec.version).indexOf("backend-three-duishu-snapshot-")!==0)continue;
+      if(String(rec.version||"")!==PANEL_SNAPSHOT_VERSIONS.threeDuishu)continue;
       var failed=[];
       if(rec.success===false){
         failed.push("三对数"+String(rec.code||"")+(rec.shot?("("+String(rec.shot)+")"):""));
@@ -8285,6 +8066,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
         passed:Number(rec.passed!=null?rec.passed:(rec.success?1:0)),
         total:Number(rec.total||1),
         failed:failed,
+        selectedPair:String(rec.selectedPair||""),
+        pairs:Array.isArray(rec.pairs)?rec.pairs.slice(0,3):[],
         sealedBasePeriod:sealedBasePeriodText(rec.basePeriod||rec.sealedBaseUid||row.basePeriod||"")
       };
     }
@@ -8429,7 +8212,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
   }
   // 框架攻击语必须走保留码底稿口径（千…百…十…个…四定），不能改成「除千X」错格式。
   // 20260714：不再用 stripUntouched 删全量10码位段——该后处理会把「未匹配到定位排除」的位整段抹掉，排除结果失真。
-  // 三定框架例外：只输出系统挑中的3个位置 +「三定」标记，未挑中的位置整段不要。
+  // 三定框架例外：只输出系统挑中的位置 +「三定」标记，未挑中的位置整段不要。
   function threeDingAttackPositionLabel(item){
     if(!item||item.kind!=="position")return "";
     var pos=positionByKey(item.stateKey||item.key);
@@ -8454,7 +8237,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     while((match=regex.exec(text))){
       matches.push({label:match[1],digits:match[2],end:match.index+match[0].length});
     }
-    // 展示攻击语固定千百十三段；转TXT时补个位全码并升为四定底稿
+    // 展示攻击语可为千百十个中的任意三段；转TXT时补齐空位并升为四定底稿。
     if(matches.length<1||matches.length>4)return "";
     var seen={},order=["千","百","十","个"],byLabel={};
     matches.forEach(function(item){
@@ -8479,7 +8262,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(!list.length)return "";
     // 三定系列（原/A/B）攻击语只吃本框定位项单码：挑中位除对应码，未挑中位保留全码；
     // 禁止叠全局 positionKills 双码看板，否则会比模型多排除数字（A/B 各只除1码却变成除2码）。
-    var order=["千","百","十"];
+    var opts=options&&typeof options==="object"?options:{};
+    var anyThreeOfFour=opts.anyThreeOfFour===true;
+    var order=anyThreeOfFour?["千","百","十","个"]:["千","百","十"];
     var keepByLabel={};
     var picked=0;
     list.forEach(function(item){
@@ -8499,7 +8284,10 @@ var PANEL_SNAPSHOT_VERSIONS = {
     });
     // 至少要有1个定位排除（A=1 / B=2 / 原三定=3），否则攻击语无意义
     if(picked<1)return "";
-    var head=order.map(function(label){return label+(keepByLabel[label]||"1234567890");}).join("");
+    if(anyThreeOfFour&&Object.keys(keepByLabel).length!==3)return "";
+    var head=(anyThreeOfFour?order.filter(function(label){return !!keepByLabel[label];}):order).map(function(label){
+      return label+(keepByLabel[label]||"1234567890");
+    }).join("");
     var full="";
     try{
       full=String(buildPracticeModel(DEFAULT_PRACTICE_MODEL,list,{addReversePositionShapes:false,threeDingShapeAttack:true})||"");
@@ -8610,171 +8398,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
       +panelCollapseBodyClose()
       +'</div>';
   }
-  function coldFrameworkHtml(data){
-    var top=backendColdFrameworkItems(data);
-    if(!top||!top.length){
-      return '<div id="coldFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bbf7d0;">'
-        +panelCollapseHeadHtml('<b style="font-size:16px;">冷码综合框架</b><div class="small">等待远程生成</div>','coldFramework',true)
-        +panelCollapseBodyOpen('coldFramework')
-        +'<div style="border:1px solid #bbf7d0;border-radius:10px;padding:10px;background:#f0fdf4;color:#475569;font-size:13px;">冷码综合框架：等待远程生成 2个位置冷码、2个合尾冷码、近500/近800近期码择优、1个反向形态、二数合02468排1码、三数合。</div>'
-        +panelCollapseBodyClose()
-        +'</div>';
-    }
-    var combo=combinedRate(data,top,"coldFramework");
-    var todayStats=stableTodayStreakStats("coldFramework",combo&&combo.todayStats||{});
-    var repair=(top&&top.repairReport)||[];
-    var latestHtml=frameworkLatestEvalHtml(latestColdFrameworkEvaluation(data),"冷码综合框架");
-    function coldFrameworkCountNote(item){
-      if(item.generatedGroupCount==null)return "";
-      var generated=Number(item.generatedGroupCount||0);
-      var raw=item.rawGeneratedGroupCount!=null?Number(item.rawGeneratedGroupCount||0):generated;
-      var trimmed=Number(item.trimmedGroupCount||Math.max(0,raw-generated)||0);
-      if(trimmed>0){
-        return '<span style="font-size:11px;color:#64748b;">完整TXT '+esc(raw)+'组 ｜ 选型参考 '+esc(generated)+'组</span>';
-      }
-      return '<span style="font-size:11px;color:#64748b;">完整TXT约 '+esc(raw)+'组'+(item.groupCountDistance!=null?' ｜ 选型距5000 '+esc(item.groupCountDistance):'')+'</span>';
-    }
-    var rows=frameworkFormalItems(top).map(function(item,index){
-      var coldNote="";
-      if((item.kind==="position"||item.kind==="hewei")&&item.coldPool){
-        coldNote='<span style="font-size:11px;color:#64748b;">冷码 '+esc(String((item.coldPool||[])[0]||""))+' ｜ 热码 '+esc(String((item.hotPool||[])[0]||""))+'</span>';
-      }
-      var countNote=coldFrameworkCountNote(item);
-      return '<div style="display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap;margin:4px 0;">'
-        +'<span style="width:18px;color:#16a34a;font-weight:800;">'+esc(index+1)+'.</span>'
-        +'<span style="min-width:138px;font-weight:800;">'+esc(item.name)+'</span>'
-        +normalizePredictionItems(item.code).map(function(code){return '<span class="prediction-chip">'+esc(code)+'</span>';}).join("")
-        +frameworkItemTruthHtml(combo,item,data)
-        +frameworkItemBackupRefHtml(data,item)
-        +coldNote
-        +countNote
-        +'</div>';
-    }).join("");
-    return '<div id="coldFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #bbf7d0;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">冷码综合框架</b><div class="small">2个位置冷码 + 2个合尾冷码 + 近500/近800近期码择优 + 1个反向形态 + 二数合02468排1码 + 三数合，全通过才算中</div>','coldFramework',true)
-      +panelCollapseBodyOpen('coldFramework')
-      +'<div style="width:100%;box-sizing:border-box;border:1px solid #bbf7d0;border-radius:12px;padding:12px;background:#f0fdf4;color:#0f172a;">'
-      +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkPositionBoardHtml(data)
-      +frameworkAttackTextHtml("冷码框架",top,"frameworkAttackCold")
-      +latestHtml
-      +(repair.length?'<div style="margin-top:8px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
-        +'<b>冷码框架报告：</b>'+repair.slice(0,4).map(function(text){return '<div>'+esc(text)+'</div>';}).join("")
-        +(repair.length>4?'<div>其余 '+esc(repair.length-4)+' 条已折叠。</div>':"")+'</div>':"")
-      +frameworkTruthSummaryHtml(combo,"冷码框架","coldFramework")
-      +'</div>'
-      +panelCollapseBodyClose()
-      +'</div>';
-  }
-  function pick5000FrameworkHtml(data){
-    var top=backendPick5000Items(data);
-    if(!top||!top.length){
-      return '<div id="pick5000FrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #93c5fd;">'
-        +panelCollapseHeadHtml('<b style="font-size:16px;color:#1d4ed8;">看好5000组</b><div class="small">等待远程生成</div>','pick5000Framework',true)
-        +panelCollapseBodyOpen('pick5000Framework')
-        +'<div style="border:1px solid #93c5fd;border-radius:10px;padding:10px;background:#eff6ff;color:#475569;font-size:13px;">看好5000组：等待远程生成 2个位置冷码、2个合尾冷码、固定近500旧码、1个反向形态、二数合02468排1码、三数合（5000仅用于框架选型，TXT按攻击语完整展开）。</div>'
-        +panelCollapseBodyClose()
-        +'</div>';
-    }
-    var combo=combinedRate(data,top,"pick5000");
-    var repair=(top&&top.repairReport)||[];
-    var latestHtml=frameworkLatestEvalHtml(latestPick5000Evaluation(data),"看好5000组");
-    function pick5000CountNote(item){
-      if(item.generatedGroupCount==null)return "";
-      var generated=Number(item.generatedGroupCount||0);
-      var raw=item.rawGeneratedGroupCount!=null?Number(item.rawGeneratedGroupCount||0):generated;
-      var trimmed=Number(item.trimmedGroupCount||Math.max(0,raw-generated)||0);
-      if(trimmed>0){
-        return '<span style="font-size:11px;color:#64748b;">完整TXT '+esc(raw)+'组 ｜ 选型参考 '+esc(generated)+'组</span>';
-      }
-      return '<span style="font-size:11px;color:#64748b;">完整TXT约 '+esc(raw)+'组'+(item.groupCountDistance!=null?' ｜ 选型距5000 '+esc(item.groupCountDistance):'')+'</span>';
-    }
-    var rows=frameworkFormalItems(top).map(function(item,index){
-      var coldNote="";
-      if((item.kind==="position"||item.kind==="hewei")&&item.coldPool){
-        coldNote='<span style="font-size:11px;color:#64748b;">冷码 '+esc(String((item.coldPool||[])[0]||""))+' ｜ 热码 '+esc(String((item.hotPool||[])[0]||""))+'</span>';
-      }
-      var countNote=pick5000CountNote(item);
-      return '<div style="display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap;margin:4px 0;">'
-        +'<span style="width:18px;color:#1d4ed8;font-weight:800;">'+esc(index+1)+'.</span>'
-        +'<span style="min-width:138px;font-weight:800;">'+esc(item.name)+'</span>'
-        +normalizePredictionItems(item.code).map(function(code){return '<span class="prediction-chip">'+esc(code)+'</span>';}).join("")
-        +frameworkItemTruthHtml(combo,item,data)
-        +frameworkItemBackupRefHtml(data,item)
-        +coldNote
-        +countNote
-        +'</div>';
-    }).join("");
-    return '<div id="pick5000FrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #93c5fd;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;color:#1d4ed8;">看好5000组</b><div class="small">2个位置冷码 + 2个合尾冷码 + 固定近500旧码 + 1个反向形态 + 二数合02468排1码 + 三数合；5000仅用于选型，TXT按攻击语完整展开</div>','pick5000Framework',true)
-      +panelCollapseBodyOpen('pick5000Framework')
-      +'<div style="width:100%;box-sizing:border-box;border:1px solid #93c5fd;border-radius:12px;padding:12px;background:#eff6ff;color:#0f172a;">'
-      +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkPositionBoardHtml(data)
-      +frameworkAttackTextHtml("看好5000组",top,"frameworkAttackPick5000")
-      +latestHtml
-      +(repair.length?'<div style="margin-top:8px;border:1px solid #bfdbfe;background:#dbeafe;color:#1e3a8a;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
-        +'<b>看好5000报告：</b>'+repair.slice(0,4).map(function(text){return '<div>'+esc(text)+'</div>';}).join("")
-        +(repair.length>4?'<div>其余 '+esc(repair.length-4)+' 条已折叠。</div>':"")+'</div>':"")
-      +frameworkTruthSummaryHtml(combo,"看好5000组","pick5000")
-      +'</div>'
-      +panelCollapseBodyClose()
-      +'</div>';
-  }
-  function dingKillFrameworkHtml(data){
-    var top=backendDingKillItems(data);
-    if(!top||!top.length){
-      return '<div id="dingKillFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
-        +panelCollapseHeadHtml('<b style="font-size:16px;">四定定位杀码框架</b><div class="small">等待远程生成</div>','dingKillFramework',true)
-        +panelCollapseBodyOpen('dingKillFramework')
-        +'<div style="border:1px solid #fda4af;border-radius:10px;padding:10px;background:#fff1f2;color:#475569;font-size:13px;">四定定位杀码：等待远程生成 2个定位杀码、1个合尾、1个反向形态、二数合02468排1码、三数合、旧码回删（剩组约5000-5010）。</div>'
-        +panelCollapseBodyClose()
-        +'</div>';
-    }
-    var combo=combinedRate(data,top,"dingKill");
-    var todayStats=stableTodayStreakStats("dingKill",combo&&combo.todayStats||{});
-    var repair=(top&&top.repairReport)||[];
-    var snap=top.snapshot||{};
-    var txtSel=snap.txtSelection||{};
-    var latestHtml=frameworkLatestEvalHtml(latestDingKillEvaluation(data),"四定定位杀码");
-    function dingKillCountNote(item){
-      if(item.generatedGroupCount==null)return "";
-      var generated=Number(item.generatedGroupCount||0);
-      var raw=item.rawGeneratedGroupCount!=null?Number(item.rawGeneratedGroupCount||0):generated;
-      var trimmed=Number(item.trimmedGroupCount||Math.max(0,raw-generated)||0);
-      var bandMin=Number(txtSel.targetBandMin||5000);
-      var bandMax=Number(txtSel.targetBandMax||5010);
-      if(trimmed>0){
-        return '<span style="font-size:11px;color:#64748b;">完整TXT '+esc(raw)+'组 ｜ 选型参考 '+esc(generated)+'组 ｜ 目标带 '+esc(bandMin)+'-'+esc(bandMax)+'</span>';
-      }
-      return '<span style="font-size:11px;color:#64748b;">完整TXT约 '+esc(raw)+'组 ｜ 目标带 '+esc(bandMin)+'-'+esc(bandMax)+'</span>';
-    }
-    var rows=frameworkFormalItems(top).map(function(item,index){
-      return '<div style="display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap;margin:4px 0;">'
-        +'<span style="width:18px;color:#e11d48;font-weight:800;">'+esc(index+1)+'.</span>'
-        +'<span style="min-width:138px;font-weight:800;">'+esc(item.name)+'</span>'
-        +normalizePredictionItems(item.code).map(function(code){return '<span class="prediction-chip">'+esc(code)+'</span>';}).join("")
-        +frameworkItemTruthHtml(combo,item,data)
-        +frameworkItemBackupRefHtml(data,item)
-        +dingKillCountNote(item)
-        +'</div>';
-    }).join("");
-    return '<div id="dingKillFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">四定定位杀码框架</b><div class="small">2个定位杀码 + 1个合尾 + 1个反向形态 + 二数合02468排1码 + 三数合 + 旧码回删（剩组约5000-5010，期数目标不固定），全通过才算中</div>','dingKillFramework',true)
-      +panelCollapseBodyOpen('dingKillFramework')
-      +'<div style="width:100%;box-sizing:border-box;border:1px solid #fda4af;border-radius:12px;padding:12px;background:#fff1f2;color:#0f172a;">'
-      +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkPositionBoardHtml(data)
-      +frameworkAttackTextHtml("四定定位杀码",top,"frameworkAttackDingKill")
-      +latestHtml
-      +(repair.length?'<div style="margin-top:8px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
-        +'<b>四定定位杀码报告：</b>'+repair.slice(0,4).map(function(text){return '<div>'+esc(text)+'</div>';}).join("")
-        +(repair.length>4?'<div>其余 '+esc(repair.length-4)+' 条已折叠。</div>':"")+'</div>':"")
-      +frameworkTruthSummaryHtml(combo,"四定定位杀码","dingKill")
-      +'</div>'
-      +panelCollapseBodyClose()
-      +'</div>';
-  }
   function renderRecommend2BelowSubHewei(data){
     var root=document.getElementById("predictionPanel");
     if(!root)return;
@@ -8784,8 +8407,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
       mount.id="predictionFrameworkMount";
       root.appendChild(mount);
     }
-    // 取二兄弟紧挨冷码上方，同款攻击语卡片，避免被推荐2折叠区挡住找不到
-    setHtml(mount,recommend2FrameworkHtml(data)+brotherNumberFrameworkHtml(data)+coldFrameworkHtml(data)+pick5000FrameworkHtml(data)+dingKillFrameworkHtml(data)+killFrameworkHtml(data)+compactAttackFrameworkHtml(data)+threeDingTwoFrameworkHtml(data)+threeDingOneFrameworkHtml(data)+sideStableFrameworkHtml(data));
+    // 单独恢复对数模型；四定组合仍只保留取二兄弟，三定框架继续展示。
+    setHtml(mount,twoDigitAvoidGroupHtml(data,currentItems(data||{}))+brotherNumberFrameworkHtml(data)+compactAttackFrameworkHtml(data)+threeDingTwoFrameworkHtml(data)+threeDingOneFrameworkHtml(data));
     bindFrameworkAttackCopy(mount);
     if(typeof restorePanelCollapsibles==="function")restorePanelCollapsibles(mount);
     // 强制展开取二兄弟，避免历史折叠状态把它收成一行看不见
@@ -8797,7 +8420,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
         if(bToggle&&bBody&&typeof panelCollapseApply==="function")panelCollapseApply(bToggle,bBody,false);
       }
     }catch(e){}
-    showRecommend2Prompt(latestRecommend2Evaluation(data));
   }
   function translateReports(){
     return true;
@@ -8827,14 +8449,14 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var topCount=Array.isArray(top)?top.length:6;
     var hasReverse=(top||[]).some(function(item){return item&&item.kind==="derivedReverseShape";});
     var title=hasReverse?"推荐1框架（正式6项 + 反向形态仅参考）":"推荐1框架（自动推荐使用"+esc(topCount||6)+"项）";
-    var html=panelCollapseHeadHtml('<b style="font-size:17px;">'+title+'</b><div style="font-size:13px;color:#64748b;margin-top:4px;">固定规则：定位池挑3项，合尾池挑2项，两数共现（除对数）挑1项（正式共6项）。同框禁止定位/合尾单码相碰，两数共现优先错开已选单码。反向形态只作旁边参考，不进攻击语、不计入六项全过。推荐/主攻都可参选正式位；同一定位或同一合尾最多上2项。所有模型独立评分，低于安全阈值 '+esc(MODEL_REPAIR_RATE)+'% 自动暂停并用健康备用补位；第6项固定除对数，不改写成含对数。120期以下观察，120-1000期小修，1000期以上按稳定权重判断。当前：'+esc(phase)+'。</div>','autoTop6',false)
+    var html=panelCollapseHeadHtml('<b style="font-size:17px;">'+title+'</b><div style="font-size:13px;color:#64748b;margin-top:4px;">固定规则：定位池挑3项，合尾池挑2项，两数共现（除对数）挑1项（正式共6项）。同框禁止定位/合尾单码相碰，两数共现优先错开已选单码。反向形态只作旁边参考，不进攻击语、不计入六项全过。推荐/主攻都可参选正式位；同一定位或同一合尾最多上2项。所有模型独立评分，低于安全阈值 '+esc(MODEL_REPAIR_RATE)+'% 优先由备用项补位；第6项固定除对数，不改写成含对数。120期以下观察，120-1000期小修，1000期以上按稳定权重判断。当前：'+esc(phase)+'。</div>','autoTop6',false)
       +panelCollapseBodyOpen('autoTop6',false);
     var repair=(top&&top.repairReport)||[];
     if(repair.length){
       html+='<div style="margin-top:8px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:9px;padding:8px 10px;font-size:12px;line-height:1.65;">'
         +'<b>自动修复报告：</b>'
         +repair.slice(0,6).map(function(text){return '<div>'+esc(text)+'</div>';}).join("")
-        +(repair.length>6?'<div>其余 '+esc(repair.length-6)+' 条低命中记录已折叠。</div>':"")
+        +(repair.length>6?'<div>其余 '+esc(repair.length-6)+' 条观察记录已折叠。</div>':"")
         +'</div>';
     }else{
       html+='<div style="margin-top:8px;border:1px solid #bbf7d0;background:#f0fdf4;color:#166534;border-radius:9px;padding:8px 10px;font-size:12px;">自动修复报告：当前六项均通过安全阈值。</div>';
@@ -9081,9 +8703,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
       }else if(item.kind==="extra"&&item.key==="sizeRatioAvoid"){
         key="extra.sizeRatioAvoid";
         token="除大小比"+item.code;
-      }else if(item.kind==="extra"&&/^recentExactCodeAvoid(?:\d+|Max)$/.test(String(item.key||""))){
-        key="extra."+item.key;
-        token="除旧码"+recentExactCodeWindowValueFromKey(item.key,item.code);
       }else if(item.kind==="extra"&&item.key==="threeDigitAvoid"){
         key="extra.threeDigitAvoid";
         token="除对数"+item.code;
@@ -9106,9 +8725,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
         key="brotherNumber."+(item.code==="否"?"否":"有");
         token=item.code==="否"?"除两兄弟":"取二兄弟";
       }else if(item.kind==="threeDuishu"){
-        key="threeDuishu."+String(item.code||"");
+        key="threeDuishu."+String(item.code||"")+"."+String(item.selectedPair||"");
         var pairCodes=threeDuishuPairTokens(item);
-        // 三对数必须拆对子写入：除对数16除对数38除对数49，禁止只写除对数689
+        // 三组候选中只执行后端择出的对子，禁止把三组候选同时写入。
         pairCodes.forEach(function(pair){pushToken("除对数"+pair);});
         token="";
       }else if(item.kind==="shape"){
@@ -9144,7 +8763,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
   window.penta5EnsurePracticeShotGeTail=ensurePracticeShotGeTail;
   function practiceItemId(item){
     if(!item)return "";
-    if(item.kind==="threeDuishu")return [item.kind||"",item.key||"",item.side||"recommend",String(item.code||"")].join("|");
+    if(item.kind==="threeDuishu")return [item.kind||"",item.key||"",item.side||"recommend",String(item.code||""),String(item.selectedPair||"")].join("|");
     if(item.kind==="derivedReverseShape"){
       return [item.kind||"",item.key||"",item.side||"recommend",item.shapeKey||"",item.practiceSource||""].join("|");
     }
@@ -9208,8 +8827,9 @@ var PANEL_SNAPSHOT_VERSIONS = {
   function practiceDisplayCode(item){
     if(!item)return "";
     if(item.kind==="threeDuishu"){
-      var pairs=threeDuishuPairTokens(item);
-      return String(item.code||"")+(pairs.length?"("+pairs.join("-")+")":"");
+      var pairs=threeDuishuAllPairTokens(item);
+      var selectedPair=String(item.selectedPair||"");
+      return String(item.code||"")+(pairs.length?"(候选"+pairs.join("-")+(selectedPair?"→排除"+selectedPair:"")+")":"");
     }
     return String(item.code||"");
   }
@@ -9333,7 +8953,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       var code=saved&&(saved.value!=null?saved.value:(saved.code!=null?saved.code:null));
       var item={kind:"extra",key:extra.key,side:"recommend",name:extra.label,code:code!=null?String(code):chooseExtra(records(data),extra).value};
       if(saved&&Array.isArray(saved.codes)){
-        item.codes=saved.codes.slice(0,recentExactCodeCodeLimitForItem(item));
+        item.codes=saved.codes.slice(0,5000);
         item.codeCount=Number(saved.codeCount||item.codes.length);
       }
       addItem(item);
@@ -9415,29 +9035,15 @@ var PANEL_SNAPSHOT_VERSIONS = {
     return killFrameworkPickTop(data,pool,count,preferUniqueKey);
   }
   function compactAttackFrameworkPracticeItems(data){
-    // 三定框架：千百十合尾 + 三项定位固定千百十各除1码 + 二数合02468排1码
+    // 三定框架：千百十个中系统择优三位，各排1码；合尾独立择优1项。
     data=data||state||{};
     var pool=practicePoolItems();
     var positions=compactAttackPickTop(data,pool.filter(function(item){
-      return item&&item.kind==="position"&&item.side==="recommend"&&!item.practiceSource&&["wan","qian","bai"].indexOf(String(item.key))>=0;
+      return item&&item.kind==="position"&&item.side==="recommend"&&!item.practiceSource&&["wan","qian","bai","shi"].indexOf(String(item.key))>=0;
     }),3,true);
-    function findExtra(key){
-      var found=null;
-      pool.forEach(function(item){
-        if(found)return;
-        if(item&&item.kind==="extra"&&item.key===key&&!item.practiceSource&&item.code!=null&&String(item.code)!=="--"&&/^\d{5}$/.test(String(item.code))&&!isUniformParityDigitSet(String(item.code)))found=item;
-      });
-      return found;
-    }
-    function findHewei(key){
-      var found=null;
-      pool.forEach(function(item){
-        if(found)return;
-        if(item&&item.kind==="hewei"&&item.key===key&&!item.practiceSource&&item.code!=null&&String(item.code)!=="--"&&/^\d$/.test(String(item.code)))found=item;
-      });
-      return found;
-    }
-    var extras=[findHewei("wanQianBai"),findExtra("anyTwoHeweiHit")].filter(Boolean);
+    var extras=compactAttackPickTop(data,pool.filter(function(item){
+      return item&&item.kind==="hewei"&&!item.practiceSource&&["wanQianBai","qianBaiShi","wanQianBaiShi"].indexOf(String(item.key))>=0&&item.code!=null&&String(item.code)!=="--"&&/^\d$/.test(String(item.code));
+    }),1,true);
     var out=positions.concat(extras);
     return out.map(function(item){
       var copy=Object.assign({},item||{});
@@ -9454,7 +9060,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'<div id="section-three-ding-nav" class="section-anchor" style="scroll-margin-top:96px;height:0;overflow:hidden;" aria-hidden="true"></div>'
         +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架</b><div class="small">等待模型就绪</div>','compactAttackFramework',true)
         +panelCollapseBodyOpen('compactAttackFramework')
-        +'<div style="border:1px solid #c4b5fd;border-radius:10px;padding:10px;background:#f5f3ff;color:#475569;font-size:13px;">三定框架：千百十合尾1码 + 千/百/十各除1码（定位加强）+ 二数合02468排1码；二数合只按千百十两两合尾；不挂单双/形态项；共5项全过才算中。</div>'
+        +'<div style="border:1px solid #c4b5fd;border-radius:10px;padding:10px;background:#f5f3ff;color:#475569;font-size:13px;">三定框架：千、百、十、个中系统挑3位，每位排除1码，再独立推荐1个合尾；共4项全过才算中。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9472,11 +9078,11 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }).join("");
     return '<div id="compactAttackFrameworkBox" class="section-anchor" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #c4b5fd;">'
       +'<div id="section-three-ding-nav" class="section-anchor" style="scroll-margin-top:96px;height:0;overflow:hidden;" aria-hidden="true"></div>'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架</b><div class="small">千百十合尾 + 千百十各除1码（定位加强）+ 二数合02468排1码；二数合只按千百十两两合尾；同框禁同码；不挂单双形态；共5项，全通过才算中；攻击语在下方</div>','compactAttackFramework',false)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架</b><div class="small">千百十个中系统挑3位，各排1码 + 独立合尾1码；位置与合尾互不干预；共4项，全通过才算中</div>','compactAttackFramework',false)
       +panelCollapseBodyOpen('compactAttackFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #c4b5fd;border-radius:12px;padding:12px;background:#f5f3ff;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkAttackTextHtml("三定框架",top,"frameworkAttackCompact",{threeDing:true,data:data})
+      +frameworkAttackTextHtml("三定框架",top,"frameworkAttackCompact",{threeDing:true,anyThreeOfFour:true,data:data})
       +latestHtml
       +(repair.length?'<div style="margin-top:8px;border:1px solid #ddd6fe;background:#faf5ff;color:#6b21a8;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
         +'<b>三定框架报告：</b>'+repair.slice(0,4).map(function(text){return '<div>'+esc(text)+'</div>';}).join("")
@@ -9530,7 +9136,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       return '<div id="threeDingOneFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
         +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架B</b><div class="small">等待模型就绪</div>','threeDingOneFramework',true)
         +panelCollapseBodyOpen('threeDingOneFramework')
-        +'<div style="border:1px solid #fda4af;border-radius:10px;padding:10px;background:#fff1f2;color:#475569;font-size:13px;">三定框架B：从千百十挑2个位置各排除1码 + 千百十合尾 + 二数合02468排1码 + 排除形态(仅大小，禁用单双) + 对数避开1组；与A各算各的，尽量不同码；共6项全过才算中。</div>'
+        +'<div style="border:1px solid #fda4af;border-radius:10px;padding:10px;background:#fff1f2;color:#475569;font-size:13px;">三定框架B：从千百十挑2个位置各排除1码 + 千百十合尾 + 排除形态(仅大小，禁用单双) + 对数避开1组；与A各算各的，尽量不同码；共5项全过才算中。</div>'
         +panelCollapseBodyClose()
         +'</div>';
     }
@@ -9548,7 +9154,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'</div>';
     }).join("");
     return '<div id="threeDingOneFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #fda4af;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架B</b><div class="small">千百十挑2位 + 合尾 + 二数合02468排1码 + 排除形态(仅大小，禁用单双) + 对数避开；单码/二数合02468排1码尽量与A错开；共6项全过才算中</div>','threeDingOneFramework',false)
+      +panelCollapseHeadHtml('<b style="font-size:16px;">三定框架B</b><div class="small">千百十挑2位 + 合尾 + 排除形态(仅大小，禁用单双) + 对数避开；单码尽量与A错开；共5项全过才算中</div>','threeDingOneFramework',false)
       +panelCollapseBodyOpen('threeDingOneFramework')
       +'<div style="width:100%;box-sizing:border-box;border:1px solid #fda4af;border-radius:12px;padding:12px;background:#fff1f2;color:#0f172a;">'
       +'<div style="margin-top:0;">'+rows+'</div>'
@@ -9563,48 +9169,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
       +'</div>';
   }
 
-  function sideStableFrameworkPracticeItems(data){
-    return backendSideStableItems(data||state||{})||[];
-  }
-  function sideStableFrameworkHtml(data){
-    var top=backendSideStableItems(data)||sideStableFrameworkPracticeItems(data);
-    if(!top||!top.length){
-      return '<div id="sideStableFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #99f6e4;">'
-        +panelCollapseHeadHtml('<b style="font-size:16px;">旁路稳筛</b><div class="small">等待模型就绪</div>','sideStableFramework',true)
-        +panelCollapseBodyOpen('sideStableFramework')
-        +'<div style="border:1px solid #99f6e4;border-radius:10px;padding:10px;background:#f0fdfa;color:#475569;font-size:13px;">旁路稳筛：1定位 + 总合尾 + 千百十合尾 + 二码对数 + 和值避开 + 二数合02468排1码 + 三数合5码 + 固定近1300旧码回删。</div>'
-        +panelCollapseBodyClose()
-        +'</div>';
-    }
-    var combo=combinedRate(data,top,"sideStable");
-    var repair=(top&&top.repairReport)||[];
-    var latestHtml=frameworkLatestEvalHtml(latestSideStableEvaluation(data),"旁路稳筛");
-    var rows=frameworkFormalItems(top).map(function(item,index){
-      return '<div style="display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap;margin:4px 0;">'
-        +'<span style="width:18px;color:#0f766e;font-weight:800;">'+esc(index+1)+'.</span>'
-        +'<span style="min-width:112px;font-weight:800;">'+esc(panelExternalModelName(item,item.name))+'</span>'
-        +normalizePredictionItems(item.code).map(function(code){return '<span class="prediction-chip">'+esc(code)+'</span>';}).join("")
-        +frameworkItemTruthHtml(combo,item,data)
-        +'</div>';
-    }).join("");
-    return '<div id="sideStableFrameworkBox" style="width:100%;box-sizing:border-box;margin-top:10px;padding-top:9px;border-top:1px solid #99f6e4;">'
-      +panelCollapseHeadHtml('<b style="font-size:16px;">旁路稳筛</b><div class="small">1定位 + 总合尾 + 千百十合尾 + 二码对数 + 和值 + 二数合02468排1码 + 三数合5码 + 固定近1300旧码；TXT按攻击语完整展开</div>','sideStableFramework',true)
-      +panelCollapseBodyOpen('sideStableFramework')
-      +'<div style="width:100%;box-sizing:border-box;border:1px solid #5eead4;border-radius:12px;padding:12px;background:#f0fdfa;color:#0f172a;">'
-      +'<div style="margin-top:0;">'+rows+'</div>'
-      +frameworkAttackTextHtml("旁路稳筛",top,"frameworkAttackSideStable")
-      +latestHtml
-      +(repair.length?'<div style="margin-top:8px;border:1px solid #99f6e4;background:#ecfeff;color:#115e59;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;">'
-        +'<b>旁路稳筛报告：</b>'+repair.slice(0,4).map(function(text){return '<div>'+esc(text)+'</div>';}).join("")
-        +(repair.length>4?'<div>其余 '+esc(repair.length-4)+' 条已折叠。</div>':"")+'</div>':"")
-      +frameworkTruthSummaryHtml(combo,"旁路稳筛","sideStable")
-      +'</div>'
-      +panelCollapseBodyClose()
-      +'</div>';
-  }
-  function seedSideStableSelection(){
-    seedFrameworkCompositeSelection();
-  }
   function seedCompactAttackSelection(){
     seedFrameworkCompositeSelection();
   }
@@ -9679,37 +9243,13 @@ var PANEL_SNAPSHOT_VERSIONS = {
       +panelCollapseBodyClose()
       +'</div>';
   }
-  function oldCodePracticeItems(data){
-    // 旧码原位置回删五窗：近300/500/800/1000/最大，拆成单项目
-    var pool=practicePoolItems();
-    return pool.filter(function(item){
-      return item&&item.kind==="extra"&&/^recentExactCodeAvoid(?:\d+|Max)$/.test(String(item.key||""));
-    }).map(function(item){
-      var copy=Object.assign({},item||{});
-      copy.practiceSource="oldCode";
-      copy.name=String(copy.name||"").indexOf("旧码原位置回删")===0?copy.name:("旧码原位置回删"+recentExactCodeWindowValueFromKey(copy.key,copy.code));
-      return copy;
-    });
-  }
   function seedKillFilterSelection(){
     seedFrameworkCompositeSelection();
   }
   function seedKillFrameworkSelection(){
     seedFrameworkCompositeSelection();
   }
-  function seedOldCodeSelection(){
-    seedFrameworkCompositeSelection();
-  }
   function seedRecommend2Selection(){
-    seedFrameworkCompositeSelection();
-  }
-  function seedColdFrameworkSelection(){
-    seedFrameworkCompositeSelection();
-  }
-  function seedPick5000Selection(){
-    seedFrameworkCompositeSelection();
-  }
-  function seedDingKillSelection(){
     seedFrameworkCompositeSelection();
   }
   function frameworkCompositePracticeId(){
@@ -9727,18 +9267,13 @@ var PANEL_SNAPSHOT_VERSIONS = {
     seedSelectionFromItems(top||[]);
   }
   function isFrameworkSelectableMode(){
-    return practiceMode==="killFilter"||practiceMode==="killFramework"||practiceMode==="oldCode"||practiceMode==="recommend2"||practiceMode==="coldFramework"||practiceMode==="pick5000"||practiceMode==="dingKill"||practiceMode==="compactAttack"||practiceMode==="sideStable";
+    return practiceMode==="killFilter"||practiceMode==="killFramework"||practiceMode==="recommend2"||practiceMode==="compactAttack";
   }
   function frameworkSelectableItems(){
     if(practiceMode==="killFilter")return killFilterPracticeItems(state||{});
     if(practiceMode==="killFramework")return backendKillFrameworkItems(state||{})||killFrameworkPracticeItems(state||{});
-    if(practiceMode==="oldCode")return oldCodePracticeItems(state||{});
     if(practiceMode==="recommend2")return backendRecommend2Items(state||{})||[];
-    if(practiceMode==="coldFramework")return backendColdFrameworkItems(state||{})||[];
-    if(practiceMode==="pick5000")return backendPick5000Items(state||{})||[];
-    if(practiceMode==="dingKill")return backendDingKillItems(state||{})||[];
     if(practiceMode==="compactAttack")return compactAttackFrameworkPracticeItems(state||{});
-    if(practiceMode==="sideStable")return sideStableFrameworkPracticeItems(state||{});
     return [];
   }
   function currentPracticeItems(top){
@@ -9855,12 +9390,12 @@ var PANEL_SNAPSHOT_VERSIONS = {
   }
   function clonePracticeItemForSnapshot(item){
     var copy={};
-    ["kind","key","side","name","code","mode","extraKind","shapeKey","derivedFrom","rate","rate10","rate30","rate60","rate120","rate300","stableScore"].forEach(function(key){
+    ["kind","key","side","name","code","mode","extraKind","shapeKey","derivedFrom","rate","rate10","rate30","rate60","rate120","rate300","stableScore","selectedPair","selectedPairCode"].forEach(function(key){
       if(item&&item[key]!==undefined&&item[key]!==null)copy[key]=item[key];
     });
     if(item&&Array.isArray(item.pairs))copy.pairs=item.pairs.slice(0,3);
     if(item&&Array.isArray(item.pairCodes))copy.pairCodes=item.pairCodes.slice(0,3);
-    if(item&&Array.isArray(item.codes))copy.codes=item.codes.slice(0,recentExactCodeCodeLimitForItem(item));
+    if(item&&Array.isArray(item.codes))copy.codes=item.codes.slice(0,5000);
     if(item&&item.codeCount!==undefined)copy.codeCount=item.codeCount;
     return copy;
   }
@@ -10053,11 +9588,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
     while((sizeRatioMatch=sizeRatioRegex.exec(text))){
       add("大小比脚本",sizeRatioMatch[1],txtShotCodeSizeRatio(actual.join(""))!==sizeRatioMatch[1]);
     }
-    var oldCodeRegex=/除(?:旧码|重复码|历史码)(300|500|800|1000|1300|最大|全部|MAX)/gi,oldCodeMatch;
-    while((oldCodeMatch=oldCodeRegex.exec(text))){
-      var oldWindow=recentExactCodeWindowIsMax(oldCodeMatch[1])?"最大":oldCodeMatch[1];
-      add("旧码脚本",oldWindow,txtRecentExactCodeList(oldWindow).indexOf(actual.join(""))<0);
-    }
     var duishuRegex=/除对数(\d{2,3}(?:-\d{2,3})*)/g,duishuMatch;
     while((duishuMatch=duishuRegex.exec(text))){
       var actualText=actual.join("");
@@ -10125,7 +9655,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
       var extra=EXTRAS.filter(function(s){return s.key===item.key;})[0];
       if(!extra)return null;
       var extraRuntime=Object.assign({},extra);
-      if(Array.isArray(item.codes))extraRuntime.codes=item.codes.slice(0,recentExactCodeCodeLimitForItem(item));
+      if(Array.isArray(item.codes))extraRuntime.codes=item.codes.slice(0,5000);
       return extraSuccess(extraRuntime,extraMatches({numbers:actual},extraRuntime,code));
     }
     if(item.kind==="threeDuishu"){
@@ -10717,7 +10247,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var meta=document.getElementById("meta");
     if(meta){
       var syncText=sync.text||sync.at||latest.opentime||"--";
-      var historyCount=Array.isArray(data&&data.history)?data.history.length:0;
+      var historyCount=Number(data&&data.sharedHistoryCount||data&&data.historyCount||0);
+      if(!historyCount&&Array.isArray(data&&data.history))historyCount=data.history.length;
       setHtml(meta,"最后同步："+esc(syncText)+"<br>共享历史："+esc(historyCount)+"期");
     }
     var predMeta=document.getElementById("predMeta");
@@ -10806,7 +10337,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
         }
       },
       function(){renderLatest(nextState,calculationCache?calculationCache.top:[]);},
-      function(){if(calculationCache)renderTop(nextState,calculationCache.top,calculationCache.combo,calculationCache.items);},
       function(){renderPanelMetadata(nextState);},
       function(){renderRecentHistory(nextState);}
     ];
@@ -10815,8 +10345,6 @@ var PANEL_SNAPSHOT_VERSIONS = {
       function(){if(calculationCache)renderRows(nextState,calculationCache.items);},
       function(){if(calculationCache)renderExistingPredictionSections(nextState,calculationCache.items);},
       function(){renderPositionColdCodeFramework(nextState);},
-      function(){renderRecentExactCodeFramework(nextState);},
-      function(){if(calculationCache)ensurePracticeBox(calculationCache.top);},
       function(){if(calculationCache)renderCooccurrenceBox(nextState,calculationCache.items);translateReports();},
       function(){if(typeof restorePanelCollapsibles==="function")restorePanelCollapsibles(document);}
     ];
@@ -10964,6 +10492,8 @@ var PANEL_SNAPSHOT_VERSIONS = {
       var firstRender=!state;
       var keyChanged=previousKey!==nextKey;
       state=nextState;
+      // 三定调度必须读取每次轮询的最新 busy/期号状态，不能只依赖重模块重绘时的旧对象。
+      window.__penta5TxtState=nextState;
       if(keyChanged){calculationCache=null;evaluationCache={};}
       if(firstRender){
         renderAll({preserveView:false});
@@ -11026,27 +10556,94 @@ var PANEL_SNAPSHOT_VERSIONS = {
       refresh(forceRender===true,{source:source||"auto"});
     },280);
   }
-  function ensureExtendedHistoryCache(minCount){
+  function ensureExtendedHistoryCache(minCount,expectedPeriod,forceRefresh){
     var need=Math.max(1500,Number(minCount||1500)||1500);
     // 后端 /history 上限 5000；尽量拉满内存里的共享历史（当前约两千多期）
     var limit=Math.min(5000,Math.max(need,2000));
-    if(window.__penta5HistoryCache&&window.__penta5HistoryCache.length>=need)return Promise.resolve(window.__penta5HistoryCache);
+    var cached=Array.isArray(window.__penta5HistoryCache)?window.__penta5HistoryCache:[];
+    var cachedFirst=cached[0]||{};
+    var cachedFirstPeriod=String((cachedFirst.period!=null&&cachedFirst.period!=="")?cachedFirst.period:(cachedFirst.uid||""));
+    var cacheMatches=!expectedPeriod||cachedFirstPeriod===String(expectedPeriod);
+    if(!forceRefresh&&cached.length>=need&&cacheMatches)return Promise.resolve(cached);
     if(window.__penta5HistoryCachePromise)return window.__penta5HistoryCachePromise;
     window.__penta5HistoryCachePromise=panelFetch("/history?limit="+limit,{cache:"no-store"})
       .then(function(res){return res.json();})
       .then(function(payload){
         var rows=Array.isArray(payload&&payload.history)?payload.history:[];
-        if(rows.length)window.__penta5HistoryCache=rows;
+        if(!rows.length)throw new Error("RDS /history 返回空历史");
+        var first=rows[0]||{};
+        var firstPeriod=String((first.period!=null&&first.period!=="")?first.period:(first.uid||""));
+        if(expectedPeriod&&firstPeriod!==String(expectedPeriod)){
+          throw new Error("RDS /history 首期 "+(firstPeriod||"空")+" 与当前最新期 "+expectedPeriod+" 不一致");
+        }
+        window.__penta5HistoryCache=rows;
         return rows;
       })
       .catch(function(err){
         console.warn("extended history cache failed",err);
+        if(forceRefresh||expectedPeriod)throw err;
         return window.__penta5HistoryCache||[];
       })
       .finally(function(){window.__penta5HistoryCachePromise=null;});
     return window.__penta5HistoryCachePromise;
   }
   window.__penta5EnsureHistoryCache=ensureExtendedHistoryCache;
+  var verifiedConverterHistoryPromise=null;
+  var verifiedConverterHistoryPromiseKey="";
+  function verifiedConverterHistoryRows(payload,expectedPeriod){
+    var rows=Array.isArray(payload&&payload.history)?payload.history:[];
+    var sharedSource=String(payload&&payload.sharedHistorySource||"").toLowerCase();
+    var sharedPeriod=String(payload&&payload.sharedHistoryLatestPeriod||"");
+    var rdsPeriod=String(payload&&payload.sharedHistoryRdsLatestPeriod||"");
+    var first=rows[0]||{};
+    var firstPeriod=String((first.period!=null&&first.period!=="")?first.period:(first.uid||""));
+    if(!payload||payload.ok!==true)throw new Error(payload&&payload.error||"RDS 转换历史不可用");
+    if(sharedSource!=="rds")throw new Error("共享历史来源不是 RDS");
+    if(!rows.length)throw new Error("RDS 转换历史为空");
+    if(!sharedPeriod||!rdsPeriod||sharedPeriod!==rdsPeriod)throw new Error("共享历史期号尚未追平 RDS");
+    if(expectedPeriod&&(sharedPeriod!==String(expectedPeriod)||firstPeriod!==String(expectedPeriod))){
+      throw new Error("RDS 最新期 "+(sharedPeriod||firstPeriod||"空")+" 与当前期 "+expectedPeriod+" 不一致");
+    }
+    rows.forEach(function(row,index){
+      var period=String(row&&row.period||"");
+      var numbers=Array.isArray(row&&row.numbers)?row.numbers:[];
+      if(!/^\d+$/.test(period)||!String(row&&row.opentime||"").trim()||numbers.length!==4||numbers.some(function(value){return !/^\d$/.test(String(value));})){
+        throw new Error("RDS 转换历史第 "+(index+1)+" 条缺少真实期号、开奖时间或前四位号码");
+      }
+    });
+    return rows;
+  }
+  function fetchVerifiedConverterHistory(limit,expectedPeriod){
+    return panelFetch("/converter-history?limit="+Math.max(1,Math.min(5000,Number(limit||1))),{cache:"no-store"})
+      .then(function(res){return res.json();})
+      .then(function(payload){return verifiedConverterHistoryRows(payload,expectedPeriod);});
+  }
+  function ensureVerifiedConverterHistoryCache(minCount,expectedPeriod,forceRefresh){
+    var need=Math.max(1,Number(minCount||2000)||2000);
+    var limit=Math.min(5000,Math.max(need,2000));
+    var cached=Array.isArray(window.__penta5HistoryCache)?window.__penta5HistoryCache:[];
+    var first=cached[0]||{};
+    var cachedPeriod=String((first.period!=null&&first.period!=="")?first.period:(first.uid||""));
+    if(!forceRefresh&&cached.length>=need&&(!expectedPeriod||cachedPeriod===String(expectedPeriod)))return Promise.resolve(cached);
+    var requestKey=String(expectedPeriod||"")+"|"+String(limit);
+    if(verifiedConverterHistoryPromise&&verifiedConverterHistoryPromiseKey===requestKey)return verifiedConverterHistoryPromise;
+    var request=fetchVerifiedConverterHistory(limit,expectedPeriod).then(function(rows){
+      window.__penta5HistoryCache=rows;
+      return rows;
+    });
+    verifiedConverterHistoryPromise=request;
+    verifiedConverterHistoryPromiseKey=requestKey;
+    return request.finally(function(){
+      if(verifiedConverterHistoryPromise===request){
+        verifiedConverterHistoryPromise=null;
+        verifiedConverterHistoryPromiseKey="";
+      }
+    });
+  }
+  window.__penta5EnsureVerifiedConverterHistoryCache=ensureVerifiedConverterHistoryCache;
+  window.__penta5VerifyConverterHistoryPeriod=function(expectedPeriod){
+    return fetchVerifiedConverterHistory(1,expectedPeriod).then(function(rows){return rows[0]||null;});
+  };
   function startPanelLoop(){
     if(panelLoopStarted)return;
     panelLoopStarted=true;
@@ -11148,7 +10745,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     }
     var histEl=document.getElementById("summaryHistory");
     if(histEl){
-      var hc=data&&data.historyCount!=null?Number(data.historyCount):(Array.isArray(data&&data.history)?data.history.length:null);
+      var hc=data&&data.sharedHistoryCount!=null?Number(data.sharedHistoryCount):(data&&data.historyCount!=null?Number(data.historyCount):(Array.isArray(data&&data.history)?data.history.length:null));
       histEl.textContent=(hc!=null&&isFinite(hc))?(hc+"期"):"--";
     }
     var storm=data&&data.stormMode||{};
@@ -11169,10 +10766,15 @@ var PANEL_SNAPSHOT_VERSIONS = {
     if(tipReadyBanner){
       var tipReady=data&&data.tipReady;
       var tipIssues=Number(data&&data.tipReadyIssueCount||0);
+      var operationalReady=data&&data.operationalReady;
+      var degradedCount=Number(data&&data.algorithmProjectDegradedCount||0);
       if(tipReady===false){
         tipReadyBanner.className="tip-ready-banner is-on";
         tipReadyBanner.innerHTML="结构未完美：tipReady=false，已阻断射击发布。问题数 "+esc(tipIssues)
           +"。后端将自动修到八框架完整封存后才放行。";
+      }else if(tipReady===true&&operationalReady===false){
+        tipReadyBanner.className="tip-ready-banner is-on";
+        tipReadyBanner.innerHTML="结构已封存，但质量/运行未就绪：降级项目 "+esc(degradedCount)+" 个；tipReady=true 不等于模型有效。";
       }else if(tipReady===true){
         tipReadyBanner.className="tip-ready-banner is-on is-ok";
         tipReadyBanner.innerHTML="结构完美：八框架完整且开奖前封存有效，tipReady=true。";
