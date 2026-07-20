@@ -1215,6 +1215,9 @@ var TXT_POSITION_TASK_YIELD_MS = 72;
 var TXT_POSITION_THREE_TASK_YIELD_MS = 250;
 var TXT_POSITION_THREE_TARGET_YIELD_MS = 1000;
 var TXT_POSITION_VERIFY_DELAY_MS = 80 * 1000;
+var TXT_POSITION_HISTORY_FETCH_TIMEOUT_MS = 15 * 1000;
+var TXT_POSITION_RETRY_BASE_MS = 5 * 1000;
+var TXT_POSITION_RETRY_MAX_MS = 30 * 1000;
 var txtPositionOpenedMemo={};
 var txtPositionFrameworkLastResult = null;
 var txtPositionTwoLastResult = null;
@@ -1448,19 +1451,29 @@ function txtPositionParseTimeMs(value){
   var parsed=Date.parse(normalized);
   return isFinite(parsed)?parsed:0;
 }
+function txtPositionMakeError(message,code,retryable){
+  var err=new Error(String(message||"三定回删发生未知错误"));
+  err.code=String(code||"POSITION_DELETE_ERROR");
+  err.retryable=retryable===true;
+  return err;
+}
+function txtPositionValidationError(result){
+  result=result||{};
+  return txtPositionMakeError(result.message||"RDS 历史校验失败",result.code||"RDS_HISTORY_INVALID",result.retryable===true);
+}
 function txtPositionVerifyGate(data){
   var latest=data&&data.latestRecord||{};
   var period=txtPositionLatestPeriod(data);
   var openMs=txtPositionParseTimeMs(latest.opentime);
-  if(!period)return {ok:false,period:"",message:"最新期号为空，禁止启动回删旧码核算。"};
-  if(!openMs)return {ok:false,period:period,message:"最新期开奖时间无效，禁止启动回删旧码核算。"};
+  if(!period)return {ok:false,retryable:true,code:"LATEST_PERIOD_PENDING",period:"",message:"最新期号尚未落库，正在等待后端同步。"};
+  if(!openMs)return {ok:false,retryable:true,code:"LATEST_OPENTIME_PENDING",period:period,message:"最新期 "+period+" 的开奖时间尚未落库，正在等待后端同步。"};
   var now=Date.now();
   var slotDate=new Date(now);
   var slotMinute=slotDate.getMinutes()-(slotDate.getMinutes()%5);
   var expectedSlot=new Date(slotDate.getFullYear(),slotDate.getMonth(),slotDate.getDate(),slotDate.getHours(),slotMinute,12,0).getTime();
   if(expectedSlot>now)expectedSlot-=5*60*1000;
   if(expectedSlot-openMs>90*1000){
-    return {ok:false,period:period,message:"当前开奖时段尚未落库：RDS 最新仍是 "+period+"（"+String(latest.opentime||"无时间")+"），禁止拿上一期冒充本期核算。"};
+    return {ok:false,retryable:true,code:"LATEST_PERIOD_LAGGING",period:period,message:"当前开奖时段尚未落库：RDS 最新仍是 "+period+"（"+String(latest.opentime||"无时间")+"），正在等待追平。"};
   }
   var startAt=openMs+TXT_POSITION_VERIFY_DELAY_MS;
   return {ok:true,period:period,openMs:openMs,startAt:startAt,remainingMs:Math.max(0,startAt-now)};
@@ -1471,40 +1484,57 @@ function txtPositionHistoryRowPeriod(row){
 function txtPositionValidateHistoryRows(rows,data,requiredUnique){
   rows=Array.isArray(rows)?rows:[];
   var expected=txtPositionLatestPeriod(data||{});
-  if(!rows.length)return {ok:false,message:"RDS 历史为空，禁止核算。"};
+  if(!rows.length)return {ok:false,retryable:true,code:"RDS_HISTORY_EMPTY",message:"RDS 历史暂为空，正在等待重新灌注。"};
   var firstPeriod=txtPositionHistoryRowPeriod(rows[0]);
-  if(!expected)return {ok:false,message:"当前最新期号为空，无法核对 RDS 历史。"};
+  if(!expected)return {ok:false,retryable:true,code:"LATEST_PERIOD_PENDING",message:"当前最新期号为空，正在等待后端同步后再核对 RDS 历史。"};
   if(firstPeriod!==expected){
-    return {ok:false,message:"RDS 历史首期 "+(firstPeriod||"空")+" 与当前最新期 "+expected+" 不一致，禁止使用旧缓存核算。"};
+    return {ok:false,retryable:true,code:"RDS_PERIOD_LAGGING",message:"RDS 历史首期 "+(firstPeriod||"空")+" 与当前最新期 "+expected+" 不一致，正在等待追平。"};
   }
+  requiredUnique=Math.max(1,Number(requiredUnique||200));
+  var comboStates=txtPositionCombos(3).map(function(positions){
+    return {name:txtPositionComboName(positions),positions:positions.slice(),set:{},unique:0,scanned:0};
+  });
   var seenPeriods={};
+  var validatedHistoryCount=0;
   for(var i=0;i<rows.length;i++){
     var row=rows[i]||{};
     var period=txtPositionHistoryRowPeriod(row);
-    if(!period)return {ok:false,message:"RDS 历史第 "+(i+1)+" 条缺少期号，禁止核算。"};
-    if(seenPeriods[period])return {ok:false,message:"RDS 历史期号 "+period+" 重复，禁止核算。"};
+    if(!/^\d+$/.test(period))return {ok:false,retryable:false,code:"RDS_SOURCE_PERIOD_INVALID",message:"实际回删来源窗口第 "+(i+1)+" 条缺少真实期号，已停止发布。"};
+    if(seenPeriods[period])return {ok:false,retryable:false,code:"RDS_SOURCE_PERIOD_DUPLICATE",message:"实际回删来源窗口期号 "+period+" 重复，已停止发布。"};
     seenPeriods[period]=true;
-    if(!String(row.opentime||"").trim())return {ok:false,message:"RDS 历史期号 "+period+" 缺少真实开奖时间，禁止核算。"};
+    if(!String(row.opentime||"").trim())return {ok:false,retryable:false,code:"RDS_SOURCE_OPENTIME_INVALID",message:"实际回删来源期号 "+period+" 缺少真实开奖时间，已停止发布。"};
     var nums=Array.isArray(row.numbers)?row.numbers:[];
     if(nums.length<4||nums.slice(0,4).some(function(value){return !/^\d$/.test(String(value));})){
-      return {ok:false,message:"RDS 历史期号 "+period+" 的前四位号码不完整，禁止核算。"};
+      return {ok:false,retryable:false,code:"RDS_SOURCE_NUMBERS_INVALID",message:"实际回删来源期号 "+period+" 的前四位号码不完整，已停止发布。"};
     }
+    validatedHistoryCount=i+1;
+    comboStates.forEach(function(state){
+      if(state.unique>=requiredUnique)return;
+      var code=txtPositionCodeFromRow(row,state.positions);
+      if(!state.set[code]){
+        state.set[code]=true;
+        state.unique+=1;
+      }
+      if(state.unique>=requiredUnique)state.scanned=i+1;
+    });
+    if(comboStates.every(function(state){return state.unique>=requiredUnique;}))break;
   }
-  requiredUnique=Math.max(1,Number(requiredUnique||200));
-  var comboChecks=[];
-  var failedCombo=null;
-  txtPositionCombos(3).forEach(function(positions){
-    var opened=txtPositionUniqueOpenedFromRows(rows,positions,requiredUnique);
-    var check={name:txtPositionComboName(positions),positions:positions.slice(),unique:opened.unique,scanned:opened.scanned};
-    comboChecks.push(check);
-    if(!failedCombo&&opened.unique<requiredUnique)failedCombo=check;
+  var comboChecks=comboStates.map(function(state){
+    return {name:state.name,positions:state.positions.slice(),unique:state.unique,scanned:state.scanned||validatedHistoryCount};
   });
+  var failedCombo=comboChecks.filter(function(check){return check.unique<requiredUnique;})[0]||null;
   if(failedCombo){
-    return {ok:false,message:"RDS 真实"+failedCombo.name+"旧码不足：需要 "+requiredUnique+" 个唯一旧码，当前只有 "+failedCombo.unique+" 个；禁止补码、截断或伪造。",combos:comboChecks};
+    return {
+      ok:false,
+      retryable:rows.length<Math.max(2000,requiredUnique),
+      code:"RDS_UNIQUE_CODES_INSUFFICIENT",
+      message:"RDS 真实"+failedCombo.name+"旧码不足：需要 "+requiredUnique+" 个唯一旧码，当前只有 "+failedCombo.unique+" 个；禁止补码、截断或伪造。",
+      combos:comboChecks
+    };
   }
   var minUnique=comboChecks.length?Math.min.apply(null,comboChecks.map(function(check){return check.unique;})):0;
   var maxScanned=comboChecks.length?Math.max.apply(null,comboChecks.map(function(check){return check.scanned;})):0;
-  return {ok:true,expectedPeriod:expected,historyCount:rows.length,unique:minUnique,scanned:maxScanned,combos:comboChecks};
+  return {ok:true,expectedPeriod:expected,historyCount:rows.length,validatedHistoryCount:validatedHistoryCount,unique:minUnique,scanned:maxScanned,combos:comboChecks};
 }
 function txtPositionUniverseCount(size){
   return size===3?1000:100;
@@ -2054,6 +2084,34 @@ function txtPositionModelFrameItemFromRows(rows,size,day,positions,data,excludeT
     latest:latestRows[0]||{}
   };
 }
+function txtPositionAssertThreeComputedTargets(threeByTarget){
+  var target=TXT_POSITION_THREE_REMAIN_TARGET;
+  var expectedDelete=txtPositionDeleteCount(3,target);
+  var items=threeByTarget&&Array.isArray(threeByTarget[target])?threeByTarget[target]:[];
+  if(items.length!==TXT_POSITION_THREE_COMBOS.length){
+    throw txtPositionMakeError("四种三位组合结果不完整：应有 "+TXT_POSITION_THREE_COMBOS.length+" 项，实际 "+items.length+" 项","THREE_COMBO_COUNT_INVALID",false);
+  }
+  var expectedKeys={};
+  TXT_POSITION_THREE_COMBOS.forEach(function(positions){expectedKeys[positions.join(",")]=true;});
+  var seenKeys={};
+  items.forEach(function(item){
+    item=item||{};
+    var key=String(item.positionKey||(Array.isArray(item.positions)?item.positions.join(","):""));
+    if(!expectedKeys[key]||seenKeys[key]){
+      throw txtPositionMakeError("四种三位组合键异常："+(key||"空"),"THREE_COMBO_KEY_INVALID",false);
+    }
+    seenKeys[key]=true;
+    var sourceCount=Array.isArray(item.deletedSources)?item.deletedSources.length:0;
+    if(Number(item.remainTarget)!==target||Number(item.excludeTarget)!==target||Number(item.deleteTarget)!==expectedDelete||Number(item.excluded)!==expectedDelete||Number(item.left)!==target||sourceCount!==expectedDelete){
+      throw txtPositionMakeError(
+        txtPositionComboName(item.positions||[])+"数量断言失败：必须已删"+expectedDelete+"、现剩"+target+"，实际已删"+Number(item.excluded||0)+"、现剩"+Number(item.left||0)+"、来源"+sourceCount+"条",
+        "THREE_DELETE_COUNT_INVALID",
+        false
+      );
+    }
+  });
+  return true;
+}
 function txtPositionModelFrameItems(data,size,excludeTarget){
   var rows=txtRecords(data||{});
   var day=txtTodayKeyForData(data||{});
@@ -2440,6 +2498,7 @@ var txtPositionAutoTimer=null;
 var txtPositionAutoTimerKey="";
 var txtPositionRunState={active:false,period:"",target:null,token:0,pending:null,startedAt:0};
 var txtPositionCompletedKey="";
+var txtPositionRetryState={period:"",attempt:0,code:"",nextAt:0};
 function txtPositionRenderSourceDetails(details){
   if(!details||details.getAttribute("data-txt-position-sources-loaded")==="1")return;
   var id=details.getAttribute("data-txt-position-sources")||"";
@@ -2462,6 +2521,50 @@ function txtThreeRemainActionButtonsHtml(){
     +'<a href="#section-three-ding-nav" style="display:inline-flex;align-items:center;border-radius:8px;padding:7px 12px;background:#fff;border:1px solid #fdba74;color:#9a3412;font-weight:900;cursor:pointer;font-size:13px;text-decoration:none;">三定导航</a>'
     +'</div>';
 }
+function txtPositionClearRetryState(period){
+  var key=String(period||"");
+  if(key&&txtPositionRetryState.period&&txtPositionRetryState.period!==key)return;
+  txtPositionRetryState={period:key,attempt:0,code:"",nextAt:0};
+  if(txtPositionAutoTimer&&(!key||txtPositionAutoTimerKey===key)){
+    clearTimeout(txtPositionAutoTimer);
+    txtPositionAutoTimer=null;
+  }
+}
+function txtPositionScheduleRetry(period,target,message,code){
+  var key=String(period||txtPositionLatestPeriod(window.__penta5TxtState||{})||"");
+  if(txtPositionRetryState.period!==key){
+    txtPositionRetryState={period:key,attempt:0,code:"",nextAt:0};
+  }
+  if(txtPositionAutoTimer&&txtPositionAutoTimerKey===key){
+    return {attempt:txtPositionRetryState.attempt,delayMs:Math.max(0,txtPositionRetryState.nextAt-Date.now())};
+  }
+  if(txtPositionAutoTimer){
+    clearTimeout(txtPositionAutoTimer);
+    txtPositionAutoTimer=null;
+  }
+  txtPositionRetryState.attempt+=1;
+  txtPositionRetryState.code=String(code||"RDS_NOT_READY");
+  var delay=Math.min(TXT_POSITION_RETRY_MAX_MS,TXT_POSITION_RETRY_BASE_MS*Math.pow(2,Math.min(3,txtPositionRetryState.attempt-1)));
+  txtPositionRetryState.nextAt=Date.now()+delay;
+  txtPositionAutoTimerKey=key;
+  var seconds=Math.max(1,Math.ceil(delay/1000));
+  var content=$("txtThreeRemainContent");
+  var waitMessage=String(message||"RDS 数据暂未就绪");
+  if(content){
+    setHtml(content,'<div style="margin-top:6px;color:#9a3412;font-weight:800;">'+txtEsc(waitMessage)+'；约 '+txtEsc(seconds)+' 秒后自动重试（第 '+txtEsc(txtPositionRetryState.attempt)+' 次）。当前未发布任何回删结果。</div>'+txtThreeRemainActionButtonsHtml());
+  }
+  txtSetStatus(waitMessage+"；三定回删已进入自动重试，不把等待状态记作数量错误。");
+  txtPositionAutoTimer=setTimeout(function(){
+    txtPositionAutoTimer=null;
+    var latest=txtPositionLatestPeriod(window.__penta5TxtState||{});
+    if(key&&latest&&latest!==key){
+      txtSchedulePositionAutoRender(window.__penta5TxtState||{});
+      return;
+    }
+    txtRunPositionDetailRender(target,{auto:true,expectedPeriod:key||undefined});
+  },delay);
+  return {attempt:txtPositionRetryState.attempt,delayMs:delay};
+}
 var txtPositionProgressiveSeq=0;
 function txtPositionDetailCacheKey(data){
   var rows=txtRecords(data||{});
@@ -2472,7 +2575,11 @@ function txtPositionDetailCacheKey(data){
   return String(latestPeriod||first.period||first.uid||"")+"|"+String(rows.length)+"|three_800_single_queue_rds_v1|b"+backupSig;
 }
 function txtPositionWaitingForVerifyHtml(gate){
-  if(!gate||!gate.ok)return '<div style="margin-top:6px;color:#b91c1c;font-weight:800;">'+txtEsc(gate&&gate.message||"无法确定核算时间，已停止。")+'</div>';
+  if(!gate||!gate.ok){
+    var color=gate&&gate.retryable===true?"#9a3412":"#b91c1c";
+    var suffix=gate&&gate.retryable===true?" 页面会自动重试，当前未发布回删结果。":"";
+    return '<div style="margin-top:6px;color:'+color+';font-weight:800;">'+txtEsc(gate&&gate.message||"无法确定核算时间，已停止。")+txtEsc(suffix)+'</div>';
+  }
   var seconds=Math.max(1,Math.ceil(Number(gate.remainingMs||0)/1000));
   var startText=new Date(gate.startAt).toLocaleString();
   return '<div style="margin-top:6px;color:#9a3412;font-weight:800;">等待真实数据落库：最新期 '+txtEsc(gate.period)+'，将在 '+txtEsc(startText)+'（约 '+txtEsc(seconds)+' 秒后）强制重拉 RDS 历史并核算。</div>';
@@ -2480,14 +2587,18 @@ function txtPositionWaitingForVerifyHtml(gate){
 function txtSchedulePositionAutoRender(data){
   var gate=txtPositionVerifyGate(data||{});
   var content=$("txtThreeRemainContent");
-  if(!gate.ok){
-    if(content)setHtml(content,txtPositionWaitingForVerifyHtml(gate)+txtThreeRemainActionButtonsHtml());
-    return;
-  }
-  var key=gate.period;
+  var key=String(gate.period||txtPositionLatestPeriod(data||{})||"");
   if(txtPositionAutoTimer&&txtPositionAutoTimerKey!==key){
     clearTimeout(txtPositionAutoTimer);
     txtPositionAutoTimer=null;
+  }
+  if(txtPositionRetryState.period!==key){
+    txtPositionRetryState={period:key,attempt:0,code:"",nextAt:0};
+  }
+  if(!gate.ok){
+    if(gate.retryable===true)txtPositionScheduleRetry(key,null,gate.message,gate.code);
+    else if(content)setHtml(content,txtPositionWaitingForVerifyHtml(gate)+txtThreeRemainActionButtonsHtml());
+    return;
   }
   txtPositionAutoTimerKey=key;
   if(txtPositionCompletedKey===key)return;
@@ -2628,14 +2739,18 @@ function txtStartPositionProgressiveRender(data,twoBox,threeBox,onlyThreeTarget,
     function failRender(err){
       console.error("txt position detail render failed",err);
       var message=err&&err.message?err.message:String(err||"未知错误");
-      var errMsg='<div style="color:#b91c1c;font-weight:800;">三定真实回删核算已停止：'+txtEsc(message)+'。未发布本次结果。</div>'+txtThreeRemainActionButtonsHtml();
-      if(threeBox)setHtml(threeBox,errMsg);
-      else{var tc=$("txtThreeRemainContent");if(tc)setHtml(tc,errMsg);}
-      settle({ok:false,error:message,period:runPeriod});
+      var retryable=err&&err.retryable===true;
+      if(!retryable){
+        var errMsg='<div style="color:#b91c1c;font-weight:800;">三定真实回删核算已停止：'+txtEsc(message)+'。未发布本次结果。</div>'+txtThreeRemainActionButtonsHtml();
+        if(threeBox)setHtml(threeBox,errMsg);
+        else{var tc=$("txtThreeRemainContent");if(tc)setHtml(tc,errMsg);}
+      }
+      settle({ok:false,error:message,code:err&&err.code||"POSITION_RENDER_FAILED",retryable:retryable,period:runPeriod});
     }
     function finishAll(){
       if(cancelled()){settle({ok:false,cancelled:true,period:runPeriod});return;}
       try{
+        txtPositionAssertThreeComputedTargets(threeByTarget);
         if(!TXT_POSITION_TWO_LITE_MODE){
           TXT_POSITION_TWO_REMAIN_TARGETS.forEach(function(target){twoSystemStatsByTarget[target]=txtPositionRecommendSystemStats(data||{},2,target);});
         }
@@ -2696,9 +2811,12 @@ function txtRunPositionDetailRender(onlyThreeTarget,opts){
   var gate=txtPositionVerifyGate(data);
   var content=$("txtThreeRemainContent");
   if(!gate.ok){
-    if(content)setHtml(content,txtPositionWaitingForVerifyHtml(gate)+txtThreeRemainActionButtonsHtml());
-    txtSetStatus(gate.message||"回删核算已停止。");
-    return Promise.resolve({ok:false,blocked:true,message:gate.message||""});
+    if(gate.retryable===true)txtPositionScheduleRetry(gate.period,onlyThreeTarget,gate.message,gate.code);
+    else{
+      if(content)setHtml(content,txtPositionWaitingForVerifyHtml(gate)+txtThreeRemainActionButtonsHtml());
+      txtSetStatus(gate.message||"回删核算已停止。");
+    }
+    return Promise.resolve({ok:false,blocked:true,retryable:gate.retryable===true,code:gate.code||"VERIFY_GATE_BLOCKED",message:gate.message||""});
   }
   if(opts.expectedPeriod&&String(opts.expectedPeriod)!==gate.period){
     txtSchedulePositionAutoRender(data);
@@ -2713,14 +2831,12 @@ function txtRunPositionDetailRender(onlyThreeTarget,opts){
   onlyThreeTarget=onlyThreeTarget!=null&&isFinite(Number(onlyThreeTarget))?txtPositionNormalizeThreeRemainTarget(onlyThreeTarget):null;
   if(data&&((data.syncing===true)||(data.predictionBuildRunning===true))){
     var busyText=data.syncing===true?"后台正在同步开奖":"后台正在整理预测";
-    if(content)setHtml(content,'<div style="margin-top:6px;color:#9a3412;font-weight:800;">'+txtEsc(busyText)+'，三定回删将在 5 秒后重试，不与后台重任务堆叠。</div>'+txtThreeRemainActionButtonsHtml());
-    if(txtPositionAutoTimer)clearTimeout(txtPositionAutoTimer);
-    txtPositionAutoTimerKey=gate.period;
-    txtPositionAutoTimer=setTimeout(function(){
-      txtPositionAutoTimer=null;
-      txtRunPositionDetailRender(onlyThreeTarget,{auto:true,expectedPeriod:gate.period});
-    },5000);
+    txtPositionScheduleRetry(gate.period,onlyThreeTarget,busyText+"，三定回删暂缓执行","BACKEND_BUSY");
     return Promise.resolve({ok:false,deferred:true,reason:"backend-busy"});
+  }
+  if(txtPositionAutoTimer&&txtPositionAutoTimerKey===gate.period){
+    clearTimeout(txtPositionAutoTimer);
+    txtPositionAutoTimer=null;
   }
   var request={period:gate.period,target:onlyThreeTarget,auto:opts.auto===true};
   if(txtPositionRunState.active){
@@ -2759,22 +2875,34 @@ function txtRunPositionDetailRender(onlyThreeTarget,opts){
     var rows=Array.isArray(rowsFromRds)&&rowsFromRds.length?rowsFromRds:txtRecords(data||{});
     var requiredUnique=onlyThreeTarget!=null?txtPositionDeleteCount(3,txtPositionNormalizeThreeRemainTarget(onlyThreeTarget)):200;
     var validation=txtPositionValidateHistoryRows(rows,data,requiredUnique);
-    if(!validation.ok)throw new Error(validation.message);
+    if(!validation.ok)throw txtPositionValidationError(validation);
     if(twoBox){
       twoBox.setAttribute("data-txt-position-filled","1");
       setHtml(twoBox,txtPositionQuickModelFrameHtml(data||{},"two"));
     }
-    txtSetStatus("RDS 真实历史校验通过：首期 "+validation.expectedPeriod+"，共 "+validation.historyCount+" 期；已开始 "+progressLabel+"，每个回删旧码保留来源期号和开奖时间。");
+    txtSetStatus("RDS 真实历史校验通过：首期 "+validation.expectedPeriod+"，实际来源窗口 "+validation.validatedHistoryCount+" 期（库内共 "+validation.historyCount+" 期）；已开始 "+progressLabel+"，每个回删旧码保留来源期号和开奖时间。");
     return txtStartPositionProgressiveRender(data||{},twoBox,threeBox,onlyThreeTarget,{period:gate.period,token:runToken});
   }).catch(function(err){
-    if(threeContent){
-      setHtml(threeContent,'<div style="color:#b91c1c;font-weight:800;">真实回删核算已停止：'+txtEsc(err&&err.message?err.message:err)+'。没有生成任何替代码。</div>'+txtThreeRemainActionButtonsHtml());
-    }
-    txtSetStatus("真实 RDS 历史拉取或校验失败，已停止三定回删核算。");
-    return {ok:false,error:err&&err.message?err.message:String(err||"未知错误"),period:gate.period};
+    return {
+      ok:false,
+      error:err&&err.message?err.message:String(err||"未知错误"),
+      code:err&&err.code||"RDS_HISTORY_FAILED",
+      retryable:err&&err.retryable===true,
+      period:gate.period
+    };
   }).then(function(result){
     outcome=result||{ok:false,period:gate.period};
-    if(outcome.ok&&onlyThreeTarget==null)txtPositionCompletedKey=gate.period;
+    if(outcome.ok){
+      txtPositionClearRetryState(gate.period);
+      if(onlyThreeTarget==null)txtPositionCompletedKey=gate.period;
+    }else if(outcome.retryable===true){
+      txtPositionScheduleRetry(gate.period,onlyThreeTarget,outcome.error||"RDS 数据暂未就绪",outcome.code||"RDS_NOT_READY");
+    }else if(outcome.error){
+      if(threeContent){
+        setHtml(threeContent,'<div style="color:#b91c1c;font-weight:800;">真实回删核算已停止：'+txtEsc(outcome.error)+'。没有发布任何替代结果。</div>'+txtThreeRemainActionButtonsHtml());
+      }
+      txtSetStatus("三定真实回删已停止（"+String(outcome.code||"DATA_ERROR")+"）："+outcome.error);
+    }
     return outcome;
   }).finally(function(){
     txtPositionRunState.active=false;
@@ -10590,6 +10718,29 @@ var PANEL_SNAPSHOT_VERSIONS = {
   window.__penta5EnsureHistoryCache=ensureExtendedHistoryCache;
   var verifiedConverterHistoryPromise=null;
   var verifiedConverterHistoryPromiseKey="";
+  function txtPositionFetchJson(path,timeoutMs){
+    var controller=typeof AbortController==="function"?new AbortController():null;
+    var timer=controller?setTimeout(function(){controller.abort();},Math.max(1000,Number(timeoutMs||TXT_POSITION_HISTORY_FETCH_TIMEOUT_MS))):null;
+    var options={cache:"no-store"};
+    if(controller)options.signal=controller.signal;
+    return panelFetch(path,options).then(function(res){
+      if(!res||res.ok!==true){
+        var status=Number(res&&res.status||0);
+        if(status===401)throw txtPositionMakeError("面板登录已失效，请刷新页面重新登录","PANEL_AUTH_EXPIRED",false);
+        if(status===403)throw txtPositionMakeError("当前账号没有读取 RDS 转换历史的权限","PANEL_HISTORY_FORBIDDEN",false);
+        if(status===503)throw txtPositionMakeError("共享 RDS 历史尚未追平当前期","RDS_HISTORY_NOT_READY",true);
+        if(status===429)throw txtPositionMakeError("历史接口请求过快，正在退避重试","RDS_HISTORY_RATE_LIMITED",true);
+        throw txtPositionMakeError("RDS 转换历史接口返回 HTTP "+(status||"未知"),"RDS_HISTORY_HTTP_"+(status||"UNKNOWN"),status>=500||status===0);
+      }
+      return res.json().catch(function(){
+        throw txtPositionMakeError("RDS 转换历史接口返回了无效 JSON","RDS_HISTORY_JSON_INVALID",true);
+      });
+    }).catch(function(err){
+      if(err&&typeof err.retryable==="boolean")throw err;
+      if(err&&err.name==="AbortError")throw txtPositionMakeError("RDS 转换历史请求超过 15 秒","RDS_HISTORY_TIMEOUT",true);
+      throw txtPositionMakeError("RDS 转换历史请求失败："+(err&&err.message?err.message:String(err||"网络异常")),"RDS_HISTORY_NETWORK",true);
+    }).finally(function(){if(timer)clearTimeout(timer);});
+  }
   function verifiedConverterHistoryRows(payload,expectedPeriod){
     var rows=Array.isArray(payload&&payload.history)?payload.history:[];
     var sharedSource=String(payload&&payload.sharedHistorySource||"").toLowerCase();
@@ -10597,25 +10748,21 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var rdsPeriod=String(payload&&payload.sharedHistoryRdsLatestPeriod||"");
     var first=rows[0]||{};
     var firstPeriod=String((first.period!=null&&first.period!=="")?first.period:(first.uid||""));
-    if(!payload||payload.ok!==true)throw new Error(payload&&payload.error||"RDS 转换历史不可用");
-    if(sharedSource!=="rds")throw new Error("共享历史来源不是 RDS");
-    if(!rows.length)throw new Error("RDS 转换历史为空");
-    if(!sharedPeriod||!rdsPeriod||sharedPeriod!==rdsPeriod)throw new Error("共享历史期号尚未追平 RDS");
+    if(!payload||payload.ok!==true)throw txtPositionMakeError(payload&&payload.error||"RDS 转换历史不可用","RDS_HISTORY_NOT_READY",true);
+    if(sharedSource!=="rds")throw txtPositionMakeError("共享历史来源尚未切换到 RDS","RDS_SOURCE_NOT_READY",true);
+    if(!rows.length)throw txtPositionMakeError("RDS 转换历史为空","RDS_HISTORY_EMPTY",true);
+    if(!sharedPeriod||!rdsPeriod||sharedPeriod!==rdsPeriod)throw txtPositionMakeError("共享历史期号尚未追平 RDS","RDS_PERIOD_LAGGING",true);
     if(expectedPeriod&&(sharedPeriod!==String(expectedPeriod)||firstPeriod!==String(expectedPeriod))){
-      throw new Error("RDS 最新期 "+(sharedPeriod||firstPeriod||"空")+" 与当前期 "+expectedPeriod+" 不一致");
+      throw txtPositionMakeError("RDS 最新期 "+(sharedPeriod||firstPeriod||"空")+" 与当前期 "+expectedPeriod+" 不一致","RDS_PERIOD_LAGGING",true);
     }
-    rows.forEach(function(row,index){
-      var period=String(row&&row.period||"");
-      var numbers=Array.isArray(row&&row.numbers)?row.numbers:[];
-      if(!/^\d+$/.test(period)||!String(row&&row.opentime||"").trim()||numbers.length!==4||numbers.some(function(value){return !/^\d$/.test(String(value));})){
-        throw new Error("RDS 转换历史第 "+(index+1)+" 条缺少真实期号、开奖时间或前四位号码");
-      }
-    });
+    var firstNumbers=Array.isArray(first&&first.numbers)?first.numbers:[];
+    if(!/^\d+$/.test(firstPeriod)||!String(first&&first.opentime||"").trim()||firstNumbers.length<4||firstNumbers.slice(0,4).some(function(value){return !/^\d$/.test(String(value));})){
+      throw txtPositionMakeError("RDS 当前期记录尚未包含真实期号、开奖时间和前四位号码","RDS_LATEST_ROW_PENDING",true);
+    }
     return rows;
   }
   function fetchVerifiedConverterHistory(limit,expectedPeriod){
-    return panelFetch("/converter-history?limit="+Math.max(1,Math.min(5000,Number(limit||1))),{cache:"no-store"})
-      .then(function(res){return res.json();})
+    return txtPositionFetchJson("/converter-history?limit="+Math.max(1,Math.min(5000,Number(limit||1))),TXT_POSITION_HISTORY_FETCH_TIMEOUT_MS)
       .then(function(payload){return verifiedConverterHistoryRows(payload,expectedPeriod);});
   }
   function ensureVerifiedConverterHistoryCache(minCount,expectedPeriod,forceRefresh){
