@@ -1,0 +1,13 @@
+{
+  "sqltools.connections": [
+    {
+      "name": "Penta5 RDS (example)",
+      "driver": "MySQL",
+      "server": "127.0.0.1",
+      "port": 3306,
+      "database": "",
+      "username": "",
+      "password": ""
+    }
+  ]
+}
