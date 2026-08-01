@@ -1,5 +1,11 @@
 .env
 *.env.local
+.env.*
+!.env.example
+.roo/roo-code-settings.json
+.vscode/settings.json
+.vscode/settings.local.json
+.vscode/**/*.session.sql
 node_modules/
 api/node_modules/
 data/state.json
