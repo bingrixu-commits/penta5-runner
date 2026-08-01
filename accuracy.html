@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>五路横财 · 准确率看板</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#172033;--muted:#6b7280;--line:#dce3ed;
+      --blue:#2563eb;--blue-soft:#eaf1ff;--green:#087f5b;--green-soft:#e8f8f1;
+      --amber:#a15c00;--amber-soft:#fff5db;--red:#b42318;--red-soft:#ffebe9;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,"PingFang SC","Microsoft YaHei",Arial,sans-serif}
+    button,select{font:inherit}
+    .wrap{width:min(1320px,calc(100% - 28px));margin:0 auto;padding:22px 0 48px}
+    header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:14px}
+    h1{font-size:26px;margin:0 0 6px;letter-spacing:.02em}
+    .subtitle,.muted{color:var(--muted);font-size:13px}
+    .actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+    .btn{border:1px solid #b8c5d8;background:#fff;color:#25324a;border-radius:9px;padding:9px 13px;font-weight:700;cursor:pointer;text-decoration:none}
+    .btn:hover{border-color:var(--blue);color:var(--blue)}
+    .btn.primary{border-color:var(--blue);background:var(--blue);color:#fff}
+    .btn:disabled{opacity:.55;cursor:wait}
+    .status{min-height:22px;margin:0 0 10px;padding:0 2px;color:var(--muted);font-size:13px}
+    .status.error{color:var(--red);font-weight:700}
+    .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:15px}
+    .chip{display:flex;gap:7px;align-items:center;border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 11px;font-size:13px;box-shadow:0 1px 2px rgba(20,30,50,.03)}
+    .chip span{color:var(--muted)}
+    .chip b{font-weight:800}
+    .chip.good{border-color:#a8e1ca;background:var(--green-soft);color:var(--green)}
+    .chip.warn{border-color:#f0cf82;background:var(--amber-soft);color:var(--amber)}
+    .chip.bad{border-color:#f2aca7;background:var(--red-soft);color:var(--red)}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:17px;margin-bottom:14px;box-shadow:0 4px 18px rgba(28,39,58,.045)}
+    .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}
+    h2{font-size:18px;margin:0}
+    h3{font-size:14px;margin:16px 0 9px}
+    .day-control{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+    select{min-width:145px;border:1px solid #b8c5d8;border-radius:8px;background:#fff;padding:8px 10px;color:var(--ink)}
+    .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .metric{border:1px solid var(--line);border-radius:11px;padding:12px;background:#fbfcfe;min-width:0}
+    .metric .label{color:var(--muted);font-size:12px;margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .metric .value{font-size:21px;font-weight:850;letter-spacing:-.02em}
+    .metric .detail{color:var(--muted);font-size:12px;margin-top:5px;line-height:1.5}
+    .metric.good .value{color:var(--green)}
+    .metric.warn .value{color:var(--amber)}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}
+    table{width:100%;border-collapse:collapse;font-size:13px;min-width:760px}
+    th,td{padding:10px 11px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+    th{background:#f6f8fc;color:#536079;font-size:12px}
+    tr:last-child td{border-bottom:0}
+    td strong{font-size:14px}
+    .rate-pill{display:inline-flex;min-width:60px;justify-content:center;border-radius:999px;padding:4px 8px;background:var(--blue-soft);color:#194ca8;font-weight:800}
+    .empty{border:1px dashed #c5cfdd;border-radius:10px;padding:20px;text-align:center;color:var(--muted);font-size:13px;background:#fafbfd}
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .list{display:grid;gap:8px}
+    .list-item{border:1px solid var(--line);border-radius:9px;padding:10px 11px;background:#fbfcfe;font-size:13px;line-height:1.55}
+    .list-item b{display:block;margin-bottom:2px}
+    .alert{border-color:#f2aca7;background:var(--red-soft);color:#7a211a}
+    .ok{border-color:#a8e1ca;background:var(--green-soft);color:#155f48}
+    .code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+    footer{text-align:center;color:var(--muted);font-size:12px;padding-top:6px}
+    @media(max-width:980px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.split{grid-template-columns:1fr}}
+    @media(max-width:620px){
+      .wrap{width:min(100% - 18px,1320px);padding-top:14px}
+      header,.card-head{align-items:stretch;flex-direction:column}
+      .actions{justify-content:flex-start}.actions .btn{flex:1;text-align:center}
+      .grid{grid-template-columns:1fr 1fr;gap:7px}.card{padding:13px}
+      .metric{padding:10px}.metric .value{font-size:18px}
+      .day-control{justify-content:space-between}select{flex:1}
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <div>
+        <h1>准确率看板</h1>
+        <div class="subtitle">只读展示 · 真实封存样本与每日账本</div>
+      </div>
+      <div class="actions">
+        <a class="btn" href="/panel">返回面板</a>
+        <button class="btn" id="exportBtn" type="button">导出按日账</button>
+        <button class="btn primary" id="refreshBtn" type="button">刷新</button>
+      </div>
+    </header>
+
+    <div class="status" id="status">正在读取 /state…</div>
+    <section class="chips" id="metaChips" aria-label="开奖状态"></section>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2>按日百分比记</h2>
+          <div class="muted">浏览器日记保留最近 60 个业务日；后端账本直接读取，不向服务器写入。</div>
+        </div>
+        <label class="day-control">业务日
+          <select id="daySelect" aria-label="选择业务日"></select>
+        </label>
+      </div>
+      <h3>本机浏览器日记</h3>
+      <div id="diarySummary"></div>
+      <h3>后端 dailyStreakLedger</h3>
+      <div id="ledgerTable"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>今日核心</h2><span class="muted" id="coreDay"></span></div>
+      <div class="grid" id="coreGrid"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>进攻近窗</h2><span class="muted">当前封存模型条目的近窗统计，仅展示后端已有数值</span></div>
+      <div class="grid" id="attackGrid"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>过滤参考</h2><span class="muted">只读参考，不参与页面计算或预测</span></div>
+      <div class="split">
+        <div class="list" id="filterList"></div>
+        <div class="list" id="simList"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Watchdog 告警</h2><span class="muted" id="watchdogMeta"></span></div>
+      <div class="list" id="alertList"></div>
+    </section>
+
+    <footer>每 60 秒自动刷新 · 数据源 <span class="code">/state</span></footer>
+  </main>
+
+  <script>
+  (function(){
+    "use strict";
+    var STORAGE_KEY="penta5_accuracy_daily_v1";
+    var KEEP_DAYS=60;
+    var DEFAULT_RESET_HOUR=4;
+    var MODEL_ROWS=[
+      ["autoTop6","自动六项"],
+      ["recommend2","推荐二项"],
+      ["killFramework","杀码框架"],
+      ["threeDuishu","三对数"],
+      ["compactAttack","进攻框架"],
+      ["threeDingTwo","三定二"],
+      ["threeDingOne","三定一"],
+      ["twoDigitAvoidAllThree","二数避开三组全过"]
+    ];
+    var CORE_RATES=[
+      ["positionTotal","四定位双码"],
+      ["totalHewei","总合尾"],
+      ["threeFour","三四合尾"],
+      ["threeDuishu","三对数"],
+      ["twoDigitAvoid","二数避开 1"],
+      ["twoDigitAvoid2","二数避开 2"],
+      ["twoDigitAvoid3","二数避开 3"],
+      ["threeDigitAvoid","三数避开"]
+    ];
+    var state=null;
+    var selectedDay="";
+    var el=function(id){return document.getElementById(id);};
+    function esc(value){
+      return String(value==null?"":value).replace(/[&<>"']/g,function(c){
+        return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+      });
+    }
+    function finite(value){var n=Number(value);return isFinite(n)?n:null;}
+    function pct(value){
+      var n=finite(value);
+      return n===null?"--":n.toFixed(n%1?2:0)+"%";
+    }
+    function dateKey(value){
+      var text=String(value==null?"":value).trim();
+      var match=text.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+      if(match)return match[1]+"-"+String(match[2]).padStart(2,"0")+"-"+String(match[3]).padStart(2,"0");
+      match=text.match(/^(\d{4})(\d{2})(\d{2})/);
+      return match?match[1]+"-"+match[2]+"-"+match[3]:"";
+    }
+    function resetHourFor(data){
+      var prediction=data&&data.currentPrediction||{};
+      var scope=data&&data.positionDayScope!=null?data.positionDayScope:prediction.positionDayScope;
+      var candidates=[
+        data&&data.dayResetHour,data&&data.positionDayResetHour,
+        prediction.dayResetHour,prediction.positionDayResetHour,
+        scope&&typeof scope==="object"&&(scope.resetHour!=null?scope.resetHour:scope.dayResetHour)
+      ];
+      for(var i=0;i<candidates.length;i++){
+        var n=finite(candidates[i]);
+        if(n!==null&&n>=0&&n<=23)return Math.floor(n);
+      }
+      return DEFAULT_RESET_HOUR;
+    }
+    function browserBusinessDay(resetHour){
+      var now=new Date();
+      if(now.getHours()<resetHour)now=new Date(now.getTime()-86400000);
+      return now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
+    }
+    function positionScope(data){
+      var prediction=data&&data.currentPrediction||{};
+      return data&&data.positionDayScope!=null?data.positionDayScope:prediction.positionDayScope;
+    }
+    function scopeText(scope){
+      if(scope==null||scope==="")return "--";
+      if(typeof scope==="string"||typeof scope==="number")return String(scope);
+      if(scope.day||scope.date||scope.key)return String(scope.day||scope.date||scope.key);
+      try{return JSON.stringify(scope);}catch(_){return "--";}
+    }
+    function businessDayFor(data){
+      var scope=positionScope(data);
+      var scoped=dateKey(typeof scope==="object"?(scope.day||scope.date||scope.key||""):scope);
+      var latest=data&&data.latestRecord||{};
+      return scoped||dateKey(data&&data.stormMode&&data.stormMode.day)||dateKey(latest.opentime)||dateKey(latest.period)||browserBusinessDay(resetHourFor(data));
+    }
+    function readDiary(){
+      try{
+        var parsed=JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}");
+        if(!parsed||typeof parsed!=="object")return {version:1,days:{}};
+        if(!parsed.days||typeof parsed.days!=="object")parsed.days={};
+        parsed.version=1;
+        return parsed;
+      }catch(_){return {version:1,days:{}};}
+    }
+    function writeDiary(book){
+      try{localStorage.setItem(STORAGE_KEY,JSON.stringify(book));}catch(_){}
+    }
+    function coreRateSnapshot(data){
+      var counters=data&&data.counters||{},rates=data&&data.rates||{},out={};
+      CORE_RATES.forEach(function(spec){
+        var c=counters[spec[0]]||{},total=finite(c.total)||0,hit=finite(c.match)||0;
+        var rate=total>0?hit*100/total:finite(String(rates[spec[0]]||"").replace("%",""));
+        out[spec[0]]={label:spec[1],total:total,hit:hit,rate:rate};
+      });
+      return out;
+    }
+    function truthSnapshot(data){
+      var metrics=data&&data.modelAudit&&data.modelAudit.truthMetrics||{},out={};
+      Object.keys(metrics).forEach(function(key){
+        var item=metrics[key]||{};
+        out[key]={
+          method:item.method||"",version:item.version||"",total:finite(item.total)||0,
+          hit:finite(item.hit)||0,rate:finite(item.rate),nearRate:finite(item.nearRate),
+          avgPassRate:finite(item.avgPassRate),latestSettledPeriod:item.latestSettledPeriod||""
+        };
+      });
+      return out;
+    }
+    function captureDiary(data){
+      var day=businessDayFor(data),book=readDiary(),latest=data&&data.latestRecord||{};
+      var snapshot={
+        capturedAt:new Date().toISOString(),
+        updatedAt:data&&data.updatedAt||"",
+        period:String(latest.period||latest.uid||""),
+        numbers:Array.isArray(latest.numbers)?latest.numbers.slice():[],
+        coreRates:coreRateSnapshot(data),
+        truthMetrics:truthSnapshot(data)
+      };
+      var entry=book.days[day]&&typeof book.days[day]==="object"?book.days[day]:{day:day,snapshots:[]};
+      if(!Array.isArray(entry.snapshots))entry.snapshots=[];
+      var signature=snapshot.period+"|"+snapshot.updatedAt;
+      var previous=entry.snapshots[entry.snapshots.length-1];
+      var previousSignature=previous?(previous.period+"|"+previous.updatedAt):"";
+      if(signature!==previousSignature)entry.snapshots.push(snapshot);
+      else entry.snapshots[entry.snapshots.length-1]=snapshot;
+      entry.snapshots=entry.snapshots.slice(-200);
+      entry.latest=snapshot;
+      book.days[day]=entry;
+      Object.keys(book.days).sort().reverse().slice(KEEP_DAYS).forEach(function(key){delete book.days[key];});
+      writeDiary(book);
+      return day;
+    }
+    function ledgerStats(data,name,day){
+      var ledger=data&&data.dailyStreakLedger||{},group=ledger[name]||{};
+      return group[day]&&typeof group[day]==="object"?group[day]:null;
+    }
+    function allDays(data){
+      var seen={};
+      Object.keys(readDiary().days).forEach(function(day){if(dateKey(day))seen[day]=1;});
+      var ledger=data&&data.dailyStreakLedger||{};
+      MODEL_ROWS.forEach(function(spec){Object.keys(ledger[spec[0]]||{}).forEach(function(day){if(dateKey(day))seen[day]=1;});});
+      seen[businessDayFor(data)]=1;
+      return Object.keys(seen).sort().reverse().slice(0,KEEP_DAYS);
+    }
+    function renderDaySelect(data,preferred){
+      var days=allDays(data),select=el("daySelect");
+      selectedDay=days.indexOf(preferred)>=0?preferred:(days[0]||businessDayFor(data));
+      select.innerHTML=days.map(function(day){return '<option value="'+esc(day)+'"'+(day===selectedDay?" selected":"")+'>'+esc(day)+'</option>';}).join("");
+    }
+    function chip(label,value,kind){
+      return '<div class="chip '+(kind||"")+'"><span>'+esc(label)+'</span><b>'+esc(value==null?"--":value)+'</b></div>';
+    }
+    function renderMeta(data){
+      var latest=data&&data.latestRecord||{},numbers=Array.isArray(latest.numbers)?latest.numbers.join(" "):"--";
+      var storm=data&&data.stormMode||{},scope=positionScope(data),reset=resetHourFor(data);
+      el("metaChips").innerHTML=[
+        chip("期号",latest.period||latest.uid||"--"),
+        chip("开奖号码",numbers),
+        chip("tipReady",data&&data.tipReady?"是":"否",data&&data.tipReady?"good":"bad"),
+        chip("风暴",storm.active?"开启":"关闭",storm.active?"bad":"good"),
+        chip("业务日 positionDayScope",dateKey(scopeText(scope))||businessDayFor(data)),
+        chip("日切小时",String(reset).padStart(2,"0")+":00")
+      ].join("");
+    }
+    function renderDiary(){
+      var book=readDiary(),entry=book.days[selectedDay],snapshots=entry&&Array.isArray(entry.snapshots)?entry.snapshots:[];
+      if(!snapshots.length){el("diarySummary").innerHTML='<div class="empty">本机尚无该业务日快照。打开本页并成功刷新后会自动记录。</div>';return;}
+      var latest=entry.latest||snapshots[snapshots.length-1],core=latest.coreRates||{},truth=latest.truthMetrics||{};
+      var coreCards=CORE_RATES.map(function(spec){
+        var item=core[spec[0]]||{};
+        return '<div class="metric"><div class="label">'+esc(spec[1])+'</div><div class="value">'+pct(item.rate)+'</div><div class="detail">'+esc(item.hit||0)+' / '+esc(item.total||0)+'</div></div>';
+      }).join("");
+      var truthRows=MODEL_ROWS.filter(function(spec){return truth[spec[0]];}).map(function(spec){
+        var item=truth[spec[0]]||{};
+        return '<tr><td><strong>'+esc(spec[1])+'</strong></td><td>'+esc(item.hit||0)+' / '+esc(item.total||0)+'</td><td><span class="rate-pill">'+pct(item.rate)+'</span></td><td>'+pct(item.nearRate)+'</td><td>'+esc(item.latestSettledPeriod||"--")+'</td></tr>';
+      }).join("");
+      el("diarySummary").innerHTML=
+        '<div class="muted" style="margin-bottom:9px">最近快照：'+esc(new Date(latest.capturedAt).toLocaleString())+
+        ' ｜ 期号 '+esc(latest.period||"--")+' ｜ 当日共 '+esc(snapshots.length)+' 个状态快照</div>'+
+        '<div class="grid">'+coreCards+'</div>'+
+        '<h3>快照中的 truthMetrics</h3>'+
+        (truthRows?'<div class="table-wrap"><table><thead><tr><th>模型</th><th>命中 / 样本</th><th>全通过率</th><th>容错率</th><th>最新结算期</th></tr></thead><tbody>'+truthRows+'</tbody></table></div>':'<div class="empty">该快照没有 truthMetrics。</div>');
+    }
+    function renderLedger(data){
+      var rows=MODEL_ROWS.map(function(spec){
+        var item=ledgerStats(data,spec[0],selectedDay);
+        if(!item)return '<tr><td><strong>'+esc(spec[1])+'</strong><div class="muted code">'+esc(spec[0])+'</div></td><td colspan="6" class="muted">该日无后端记录</td></tr>';
+        var total=finite(item.total)||0,hit=finite(item.hit)||0,rate=finite(item.rate);
+        if(rate===null&&total>0)rate=hit*100/total;
+        return '<tr><td><strong>'+esc(spec[1])+'</strong><div class="muted code">'+esc(spec[0])+'</div></td>'+
+          '<td>'+esc(hit)+' / '+esc(total)+'</td><td><span class="rate-pill">'+pct(rate)+'</span></td>'+
+          '<td>'+esc(finite(item.currentWin)||0)+'</td><td>'+esc(finite(item.currentMiss)||0)+'</td>'+
+          '<td>'+esc(finite(item.maxWin)||0)+'</td><td>'+esc(finite(item.maxMiss)||0)+'</td></tr>';
+      }).join("");
+      el("ledgerTable").innerHTML='<div class="table-wrap"><table><thead><tr><th>模型</th><th>命中 / 总数</th><th>准确率</th><th>当前连中</th><th>当前连败</th><th>最高连中</th><th>最高连败</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    }
+    function metricCard(label,value,detail,kind){
+      return '<div class="metric '+(kind||"")+'"><div class="label">'+esc(label)+'</div><div class="value">'+esc(value)+'</div><div class="detail">'+esc(detail||"")+'</div></div>';
+    }
+    function renderCore(data){
+      var truth=data&&data.modelAudit&&data.modelAudit.truthMetrics||{};
+      el("coreDay").textContent=selectedDay;
+      el("coreGrid").innerHTML=MODEL_ROWS.slice(0,4).map(function(spec){
+        var ledger=ledgerStats(data,spec[0],selectedDay),metric=truth[spec[0]]||{};
+        var total=ledger?finite(ledger.total)||0:0,hit=ledger?finite(ledger.hit)||0:0;
+        var rate=ledger?finite(ledger.rate):null;
+        if(rate===null&&total)rate=hit*100/total;
+        var detail=total?("今日 "+hit+"/"+total+" · 连中 "+(finite(ledger.currentWin)||0)+" · 连败 "+(finite(ledger.currentMiss)||0)):("封存累计 "+(finite(metric.hit)||0)+"/"+(finite(metric.total)||0));
+        return metricCard(spec[1],rate!==null?pct(rate):pct(metric.rate),detail,rate!==null&&rate>=80?"good":"");
+      }).join("");
+    }
+    function snapshotItems(data,name){
+      var snapshot=data&&data.currentPrediction&&data.currentPrediction[name];
+      return snapshot&&Array.isArray(snapshot.items)?snapshot.items:[];
+    }
+    function average(items,key){
+      var nums=items.map(function(item){return finite(item&&item[key]);}).filter(function(n){return n!==null;});
+      return nums.length?nums.reduce(function(a,b){return a+b;},0)/nums.length:null;
+    }
+    function renderAttack(data){
+      var specs=MODEL_ROWS.slice(0,7);
+      el("attackGrid").innerHTML=specs.map(function(spec){
+        var items=snapshotItems(data,spec[0]),r30=average(items,"rate30"),r60=average(items,"rate60"),r120=average(items,"rate120"),r300=average(items,"rate300");
+        if(!items.length&&spec[0]==="threeDuishu"){
+          var rec=data&&data.currentPrediction&&data.currentPrediction.threeDuishu||{};
+          r30=finite(rec.rate30);r60=finite(rec.rate60);r120=finite(rec.rate120);r300=finite(rec.rate300);
+        }
+        var lead=r30!==null?r30:(r60!==null?r60:(r120!==null?r120:r300));
+        return metricCard(spec[1],pct(lead),"30窗 "+pct(r30)+" · 60窗 "+pct(r60)+" · 120窗 "+pct(r120)+" · 300窗 "+pct(r300),lead!==null&&lead>=80?"good":"");
+      }).join("");
+    }
+    function listItem(title,text,kind){return '<div class="list-item '+(kind||"")+'"><b>'+esc(title)+'</b>'+esc(text)+'</div>';}
+    function renderFilters(data){
+      var prediction=data&&data.currentPrediction||{};
+      var filter=prediction.stableMathFilter||data&&data.stableMathFilter||{};
+      var digits=Array.isArray(filter.exclude_digits)?filter.exclude_digits.join("、"):"--";
+      var shapes=Array.isArray(filter.exclude_shapes)?filter.exclude_shapes.join("、"):"--";
+      var spans=Array.isArray(filter.exclude_spans)?filter.exclude_spans.join("、"):"--";
+      el("filterList").innerHTML=[
+        listItem("稳定数学过滤 · 排除数字",digits),
+        listItem("稳定数学过滤 · 排除形态",shapes),
+        listItem("稳定数学过滤 · 排除跨度",spans),
+        listItem("过滤更新时间",filter.updatedAt||filter.generatedAt||"--")
+      ].join("");
+      var sim=data&&data.modelAudit&&data.modelAudit.simMetrics||{};
+      var simRows=Object.keys(sim).map(function(key){
+        var item=sim[key]||{},label=(MODEL_ROWS.filter(function(spec){return spec[0]===key;})[0]||[key,key])[1];
+        return listItem(label+" · 参考回测",pct(item.rate)+" ｜ "+(finite(item.hit)||0)+"/"+(finite(item.total)||0)+" ｜ 单项均过 "+pct(item.avgPassRate));
+      });
+      el("simList").innerHTML=simRows.length?simRows.join(""):listItem("参考回测","暂无数据");
+    }
+    function issueText(issue){
+      if(typeof issue==="string")return issue;
+      if(!issue||typeof issue!=="object")return String(issue||"未知告警");
+      return issue.message||issue.reason||issue.type||JSON.stringify(issue);
+    }
+    function renderAlerts(data){
+      var watchdog=data&&data.modelWatchdog||{},storm=data&&data.stormMode||{};
+      var issues=[];
+      (Array.isArray(data&&data.tipReadyIssues)?data.tipReadyIssues:[]).forEach(function(item){issues.push(["Tip 完整性",issueText(item)]);});
+      (Array.isArray(watchdog.lastIssues)?watchdog.lastIssues:[]).forEach(function(item){issues.push(["模型巡检",issueText(item)]);});
+      if(storm.active)issues.push(["风暴模式",storm.reason||"已开启"]);
+      el("watchdogMeta").textContent="最近巡检 "+(watchdog.lastCheckAt||"--")+" ｜ 累计修复 "+(finite(watchdog.totalRepairs)||0);
+      el("alertList").innerHTML=issues.length
+        ?issues.map(function(item){return listItem(item[0],item[1],"alert");}).join("")
+        :listItem("当前无告警","tipReady 与 watchdog 未报告异常。","ok");
+    }
+    function renderAll(data,preferredDay){
+      renderMeta(data);
+      renderDaySelect(data,preferredDay||selectedDay||businessDayFor(data));
+      renderDiary();
+      renderLedger(data);
+      renderCore(data);
+      renderAttack(data);
+      renderFilters(data);
+      renderAlerts(data);
+    }
+    async function refresh(){
+      var button=el("refreshBtn"),status=el("status");
+      button.disabled=true;
+      status.className="status";
+      status.textContent="正在刷新…";
+      try{
+        var response=await fetch("/state",{credentials:"same-origin",cache:"no-store"});
+        if(response.status===401){location.replace("/login?next=/accuracy");return;}
+        if(!response.ok)throw new Error("HTTP "+response.status);
+        state=await response.json();
+        var day=captureDiary(state);
+        renderAll(state,selectedDay||day);
+        status.textContent="已更新："+new Date().toLocaleString()+" ｜ 后端状态："+(state.ok===false?"异常":"正常");
+      }catch(error){
+        status.className="status error";
+        status.textContent="读取失败："+(error&&error.message?error.message:String(error));
+      }finally{button.disabled=false;}
+    }
+    function exportDiary(){
+      var book=readDiary();
+      var payload={
+        exportedAt:new Date().toISOString(),
+        storageKey:STORAGE_KEY,
+        selectedDay:selectedDay,
+        localDiary:book,
+        backendDailyStreakLedger:state&&state.dailyStreakLedger||{}
+      };
+      var blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json;charset=utf-8"});
+      var link=document.createElement("a");
+      link.href=URL.createObjectURL(blob);
+      link.download="penta5-accuracy-daily-"+(selectedDay||"export")+".json";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function(){URL.revokeObjectURL(link.href);},1000);
+    }
+    el("daySelect").addEventListener("change",function(){
+      selectedDay=this.value;
+      if(state){renderDiary();renderLedger(state);renderCore(state);}
+    });
+    el("refreshBtn").addEventListener("click",refresh);
+    el("exportBtn").addEventListener("click",exportDiary);
+    refresh();
+    setInterval(refresh,60000);
+  })();
+  </script>
+</body>
+</html>
