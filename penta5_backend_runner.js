@@ -12799,6 +12799,7 @@ function isViewerAllowedRequest(method, pathname) {
   return method === "GET" && (
     pathname === "/"
     || pathname === "/panel"
+    || isAccuracyPath(pathname)
     || pathname === "/state"
     || pathname === "/history"
     || pathname === "/health"
@@ -12806,7 +12807,24 @@ function isViewerAllowedRequest(method, pathname) {
   );
 }
 
+function isAccuracyPath(pathname) {
+  return pathname === "/accuracy" || pathname === "/accuracy.html";
+}
+
+function safeLoginNextPath(value) {
+  const pathname = String(value || "");
+  if (isAccuracyPath(pathname)) return "/accuracy";
+  return "/panel";
+}
+
+function sendAccuracyHtml(req, res) {
+  const html = fs.readFileSync(path.join(__dirname, "accuracy.html"), "utf8");
+  sendTextForRequest(req, res, 200, html, "text/html; charset=utf-8");
+}
+
 function sendPasswordLoginHtml(req, res, message) {
+  const loginUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const nextPath = safeLoginNextPath(loginUrl.searchParams.get("next"));
   const errorHtml = message ? `<div class="error">${String(message).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))}</div>` : "";
   const html = `<!doctype html>
 <html lang="zh-CN">
@@ -12850,7 +12868,7 @@ function sendPasswordLoginHtml(req, res, message) {
       try{
         var res=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:password})});
         if(!res.ok){ msg.textContent="密码不对"; btn.disabled=false; return; }
-        location.replace("/panel");
+        location.replace(${JSON.stringify(nextPath)});
       }catch(err){
         msg.textContent="网络异常，请重试";
         btn.disabled=false;
@@ -12967,6 +12985,15 @@ async function handleRequest(req, res) {
       sendPasswordLoginHtml(req, res, "");
       return;
     }
+    if (req.method === "GET" && isAccuracyPath(pathname)) {
+      res.writeHead(302, {
+        "Location": "/login?next=/accuracy",
+        "Cache-Control": "no-store",
+        "Connection": "close"
+      });
+      res.end("");
+      return;
+    }
     sendUnauthorized(res);
     return;
   }
@@ -13056,7 +13083,11 @@ async function handleRequest(req, res) {
       sendPanelHtml(req, res);
       return;
     }
-    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /history", "GET /stable-math-filter", "POST /sync", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "GET /backup"] });
+    if (req.method === "GET" && isAccuracyPath(pathname)) {
+      sendAccuracyHtml(req, res);
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /history", "GET /stable-math-filter", "GET /accuracy", "POST /sync", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "GET /backup"] });
   } catch (err) {
     sendJson(res, 500, { ok: false, error: err.message || String(err) });
   }
