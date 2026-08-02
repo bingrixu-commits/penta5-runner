@@ -14,9 +14,7 @@ RUNNER_RSS_SUSTAINED_SAMPLES="${PENTA5_RUNNER_RSS_SUSTAINED_SAMPLES:-3}"
 declare -A TAG_BY_PATTERN=(
   ["penta5_backend_runner.js"]="penta5-runner"
   ["api/server.js"]="penta5-rds-api"
-  ["remote_state_proxy.py"]="penta5-source-proxy"
   ["penta5_supervisor.py"]="penta5-supervisor"
-  ["source_proxy.js"]="penta5-source-proxy-js"
 )
 
 log_line() {

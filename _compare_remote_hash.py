@@ -2,7 +2,7 @@
 """阿里 runner 文件哈希 / 面板 marker 对照（加固版）。
 
 按 .clinerules：
-- 面板入口 http://8.210.5.221:3001/panel
+- 面板入口 http://8.210.5.221/panel
 - 阿里代码目录 /root/penta5-runner
 - 禁止把密码写入仓库；HTTP 拉 /panel 时可选读环境变量 PENTA5_PANEL_PASSWORD 登录
 
@@ -34,7 +34,7 @@ from urllib.parse import urlsplit, urlunsplit
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_REMOTE_ROOT = Path(os.environ.get("PENTA5_REMOTE_ROOT", "/root/penta5-runner"))
 DEFAULT_LOCAL_ROOT = SCRIPT_DIR / "current_source" / "penta5-runner"
-DEFAULT_PANEL_URL = os.environ.get("PENTA5_PANEL_URL", "http://8.210.5.221:3001/panel")
+DEFAULT_PANEL_URL = os.environ.get("PENTA5_PANEL_URL", "http://8.210.5.221/panel")
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("PENTA5_HTTP_TIMEOUT", "30"))
 TARGET_FILES = ("penta5_backend_runner.js", "panel.html")
 # 密码只读环境变量，禁止写入仓库

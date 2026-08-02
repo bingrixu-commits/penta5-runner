@@ -1,0 +1,29 @@
+{
+  "recommendations": [
+    "rooveterinaryinc.roo-cline",
+    "ms-python.python",
+    "anysphere.cursorpyright",
+    "ms-python.debugpy",
+    "charliermarsh.ruff",
+    "dbaeumer.vscode-eslint",
+    "humao.rest-client",
+    "mtxr.sqltools",
+    "mtxr.sqltools-driver-mysql",
+    "usernamehw.errorlens",
+    "ms-ceintl.vscode-language-pack-zh-hans",
+    "eamodio.gitlens"
+  ],
+  "unwantedRecommendations": [
+    "mt-idekit.mt-idekit-code",
+    "salesforce.salesforcedx-vscode-apex",
+    "salesforce.salesforcedx-vscode-apex-log",
+    "salesforce.salesforcedx-vscode-apex-replay-debugger",
+    "salesforce.salesforcedx-vscode-services",
+    "ms-toolsai.jupyter",
+    "ms-playwright.playwright",
+    "vitest.explorer",
+    "currents.currents",
+    "llvm-vs-code-extensions.lldb-dap",
+    "cweijan.vscode-database-client2"
+  ]
+}

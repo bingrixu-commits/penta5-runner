@@ -31,14 +31,14 @@ for k in ["wan","qian","bai","shi"]:
           "rec=", e.get("recommendDigit") or e.get("selectedDigit"),
           "main=", e.get("main") or e.get("primaryDigit") or e.get("mainDigit"),
           "backup=", e.get("originalBackupDigit") or e.get("backupAlgorithmDigit") or e.get("backup") or e.get("backupDigit"))
-for name in ["autoTop6","recommend2","killFramework","coldFramework"]:
+for name in ["autoTop6","recommend2","killFramework","compactAttack","threeDingTwo","threeDingOne","threeDuishu"]:
     snap=pred.get(name) or {}
     items=snap.get("items") if isinstance(snap, dict) else []
     print("---", name, "version=", snap.get("version"), "sealed=", snap.get("sealed"), "n=", len(items or []))
     for idx, it in enumerate(items or []):
         print(" ", idx+1, it.get("kind"), it.get("key"), "side="+str(it.get("side")), it.get("name"), "code=", it.get("code"))
 tm=(audit.get("truthMetrics") or {})
-for name in ["autoTop6","recommend2","killFramework","coldFramework"]:
+for name in ["autoTop6","recommend2","killFramework","compactAttack","threeDingTwo","threeDingOne","threeDuishu"]:
     m=tm.get(name) or {}
     print("TRUTH", name, "total=", m.get("total"), "hit=", m.get("hit"), "ver=", m.get("version"), "method=", m.get("method"))
 # residuals / watchdog

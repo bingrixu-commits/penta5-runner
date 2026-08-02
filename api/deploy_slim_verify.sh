@@ -3,7 +3,7 @@ set -e
 cp -f /tmp/penta5_backend_runner.js /root/penta5-runner/penta5_backend_runner.js
 cp -f /tmp/mirror_incremental.js /root/penta5-runner/api/mirror_incremental.js
 echo "=== file check ==="
-rg -n "compactRecentExactCodesInState|scheduleRdsMirrorAfterSave|killFrameworkItems" /root/penta5-runner/penta5_backend_runner.js | head -20
+rg -n "stripRetiredFourCodeArtifacts|scheduleRdsMirrorAfterSave|killFrameworkItems" /root/penta5-runner/penta5_backend_runner.js | head -20
 rg -n "JSON.stringify\(value\)" /root/penta5-runner/penta5_backend_runner.js | head -5
 echo "=== before size ==="
 ls -lh /root/penta5-runner/data/state.json

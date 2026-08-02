@@ -103,7 +103,8 @@ async function importDraws(conn, history) {
   return n;
 }
 
-async function importStates(conn, state) {
+async function importStates(conn, state, options) {
+  const opts = options && typeof options === "object" ? options : {};
   const modules = [
     ["modelWatchdog", "dict", state.modelWatchdog],
     ["modelSelectionLocks", "dict", state.modelSelectionLocks],
@@ -113,7 +114,30 @@ async function importStates(conn, state) {
     ["currentPrediction", "dict", state.currentPrediction],
     ["lastSync", "dict", state.lastSync],
     ["lastError", "dict", state.lastError],
+    ["algorithmProjectHealth", "dict", state.algorithmProjectHealth],
+    ["dailyStreakLedger", "dict", state.dailyStreakLedger],
+    ["tipReady", "scalar", state.tipReady],
   ];
+  const snaps = state && state.algorithmProjectSnapshots;
+  if (snaps && typeof snaps === "object") {
+    Object.keys(snaps).forEach((id) => {
+      if (snaps[id] === undefined) return;
+      modules.push(["algoProject:" + String(id), "dict", snaps[id]]);
+    });
+  } else if (opts.dataRoot) {
+    try {
+      const root = path.join(opts.dataRoot, "algorithm-projects");
+      if (fs.existsSync(root)) {
+        for (const name of fs.readdirSync(root)) {
+          const file = path.join(root, name, "state.json");
+          if (!fs.existsSync(file)) continue;
+          try {
+            modules.push(["algoProject:" + name, "dict", JSON.parse(fs.readFileSync(file, "utf8"))]);
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
   let n = 0;
   for (const [key, type, body] of modules) {
     if (body === undefined) continue;
@@ -125,7 +149,7 @@ async function importStates(conn, state) {
          state_type=VALUES(state_type),
          raw_json=VALUES(raw_json),
          updated_at=CURRENT_TIMESTAMP`,
-      [key, type, JSON.stringify(body)]
+      [String(key).slice(0, 191), type, JSON.stringify(body)]
     );
     n += 1;
   }
@@ -355,7 +379,15 @@ async function main() {
     );
 
     const draws = await importDraws(conn, history);
-    const states = await importStates(conn, state);
+    const dataRoot = (() => {
+      const resolved = path.resolve(filePath);
+      if (resolved.includes(`${path.sep}data${path.sep}`)) {
+        const idx = resolved.lastIndexOf(`${path.sep}data${path.sep}`);
+        return resolved.slice(0, idx + `${path.sep}data`.length);
+      }
+      return path.join("/root", "penta5-runner", "data");
+    })();
+    const states = await importStates(conn, state, { dataRoot });
     const counters = await importCounters(
       conn,
       state.counters || {},

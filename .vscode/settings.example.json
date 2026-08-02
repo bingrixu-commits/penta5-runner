@@ -1,0 +1,24 @@
+{
+  "roo-cline.autoImportSettingsPath": "${workspaceFolder}/.roo/roo-code-settings.json",
+  "roo-cline.useAgentRules": true,
+  "roo-cline.apiRequestTimeout": 600,
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "sqltools.useNodeRuntime": true,
+  "sqltools.connections": [
+    {
+      "name": "Penta5 RDS · 排除核对",
+      "driver": "MySQL",
+      "previewLimit": 50,
+      "server": "127.0.0.1",
+      "port": 3306,
+      "database": "penta5",
+      "username": "penta5",
+      "password": "",
+      "mysqlOptions": {
+        "authProtocol": "default",
+        "enableSsl": "Disabled"
+      },
+      "connectionTimeout": 30
+    }
+  ]
+}

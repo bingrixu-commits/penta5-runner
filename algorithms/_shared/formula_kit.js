@@ -7,6 +7,32 @@ const MODEL_LONG_WINDOW = Number(process.env.MODEL_LONG_WINDOW || process.env.MA
 const MODEL_STABLE_WINDOW = Number(process.env.MODEL_STABLE_WINDOW || 1000);
 const MODEL_LOW_HIT_RATE = Number(process.env.MODEL_LOW_HIT_RATE || 85);
 const MODEL_MIN_SAMPLE = Number(process.env.MODEL_MIN_SAMPLE || 8);
+// 用户主指标：千百十个「单定顶1」单码；双码 dual 仅观察
+const POSITION_MAIN_LOW_RATE = Number(process.env.POSITION_MAIN_LOW_RATE || 85);
+const POSITION_DUAL_LOW_RATE = Number(process.env.POSITION_DUAL_LOW_RATE || 80);
+const POSITION_DUAL_RANDOM_BASELINE = Number(process.env.POSITION_DUAL_RANDOM_BASELINE || 80);
+
+function isPositionDualKey(key) {
+  const raw = String(key || "");
+  const clean = raw.replace(/^extra\./, "");
+  return /^position\.(wan|qian|bai|shi)\.dual$/.test(raw) || /^(wan|qian|bai|shi)$/.test(clean);
+}
+
+function isPositionMainKey(key) {
+  return /^position\.(wan|qian|bai|shi)\.main$/.test(String(key || ""));
+}
+
+function modelLowRateForKey(key) {
+  const raw = String(key || "");
+  const clean = raw.replace(/^extra\./, "");
+  if (/^position\.(wan|qian|bai|shi)\.main$/.test(raw)) return POSITION_MAIN_LOW_RATE;
+  if (/^position\.(wan|qian|bai|shi)\.dual$/.test(raw)) return POSITION_DUAL_LOW_RATE;
+  if (/^position\.(wan|qian|bai|shi)\.backup$/.test(raw)) return POSITION_DUAL_LOW_RATE;
+  if (/^(wan|qian|bai|shi)$/.test(clean)) return POSITION_DUAL_LOW_RATE;
+  const meta = highBaselineScoreMeta(raw);
+  if (meta) return Number(meta.baseline) - 3;
+  return MODEL_LOW_HIT_RATE;
+}
 
 const HIGH_BASELINE_SCORE_META = {
   spanAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.5, hint: "极罕形态过滤" },
@@ -17,12 +43,12 @@ const HIGH_BASELINE_SCORE_META = {
   parityRatioAvoid: { scoreClass: "structural-rare-avoid", baseline: 93.0, hint: "极端奇偶比过滤" },
   sizeRatioAvoid: { scoreClass: "structural-rare-avoid", baseline: 93.0, hint: "极端大小比过滤" },
   anyTwoHeweiHit: { scoreClass: "wide-hit-baseline", baseline: 99.0, hint: "宽命中参考" },
-  anyThreeHeweiHit: { scoreClass: "wide-hit-baseline", baseline: 95.0, hint: "宽命中参考" },
+  anyThreeHeweiHit: { scoreClass: "wide-hit-baseline", baseline: 97.0, hint: "宽命中参考" },
   twoDigitHit: { scoreClass: "pair-avoid-baseline", baseline: 90.0, hint: "除对数（非共现命中）" }
 };
 
 function highBaselineScoreMeta(key) {
-  const clean = String(key || "").replace(/^extra\\./, "");
+  const clean = String(key || "").replace(/^extra\./, "");
   return HIGH_BASELINE_SCORE_META[clean] || null;
 }
 
@@ -36,6 +62,20 @@ function decorateTruthScoreFields(target, key, rate) {
     target.predictivePower = false;
     target.scoreHint = meta.hint;
     target.truthDisplay = "structural";
+  } else if (isPositionMainKey(key)) {
+    target.scoreClass = target.scoreClass || "predictive";
+    target.randomBaseline = 90;
+    target.edgeOverBaseline = rate == null ? null : Number((Number(rate) - 90).toFixed(2));
+    target.predictivePower = true;
+    target.scoreHint = "单定顶1 baseline 90";
+    target.truthDisplay = "predictive";
+  } else if (isPositionDualKey(key)) {
+    target.scoreClass = target.scoreClass || "predictive-secondary";
+    target.randomBaseline = POSITION_DUAL_RANDOM_BASELINE;
+    target.edgeOverBaseline = rate == null ? null : Number((Number(rate) - POSITION_DUAL_RANDOM_BASELINE).toFixed(2));
+    target.predictivePower = false;
+    target.scoreHint = "次要观察：双码排除随机基线约80%";
+    target.truthDisplay = "observe-secondary";
   } else {
     target.scoreClass = target.scoreClass || "predictive";
     target.predictivePower = target.predictivePower !== false;
@@ -48,6 +88,12 @@ function getModelStat(performance, key) {
   const raw = performance && performance[key] ? performance[key] : { total: 0, match: 0, rate: null, low: false, lastSuccess: null };
   const out = Object.assign({ key }, raw);
   decorateTruthScoreFields(out, key, out.rate);
+  if (out.rate !== null && out.rate !== undefined && Number(out.total || 0) >= MODEL_MIN_SAMPLE) {
+    const meta = highBaselineScoreMeta(key);
+    out.low = meta
+      ? Number(out.rate) < (Number(meta.baseline) - 3)
+      : Number(out.rate) < modelLowRateForKey(key);
+  }
   return out;
 }
 
@@ -60,7 +106,7 @@ function modelPerformanceSummary(performance, key) {
     match: Number(stat.match || 0),
     rate: stat.rate,
     low: !!stat.low,
-    threshold: meta ? Number(meta.baseline) - 3 : MODEL_LOW_HIT_RATE,
+    threshold: meta ? Number(meta.baseline) - 3 : modelLowRateForKey(key),
     minSample: MODEL_MIN_SAMPLE,
     scoreClass: stat.scoreClass || "",
     randomBaseline: stat.randomBaseline,
@@ -154,6 +200,12 @@ module.exports = {
   MODEL_STABLE_WINDOW,
   MODEL_LOW_HIT_RATE,
   MODEL_MIN_SAMPLE,
+  POSITION_MAIN_LOW_RATE,
+  POSITION_DUAL_LOW_RATE,
+  POSITION_DUAL_RANDOM_BASELINE,
+  isPositionMainKey,
+  isPositionDualKey,
+  modelLowRateForKey,
   highBaselineScoreMeta,
   getModelStat,
   modelPerformanceSummary,

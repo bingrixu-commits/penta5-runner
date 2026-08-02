@@ -1,0 +1,28 @@
+### Penta5 Runner 快捷请求（REST Client）
+### 用法：打开本文件 → 点击请求上方 “Send Request”
+### 鉴权：读 PANEL_USER / PANEL_PASSWORD
+### - 同目录 .env（/root/penta5-runner/.env）
+### - 或工作区根 /root/.env（已软链到项目 .env）
+
+@baseUrl = http://127.0.0.1:3001
+@user = {{$dotenv PANEL_USER}}
+@pass = {{$dotenv PANEL_PASSWORD}}
+
+### Health
+GET {{baseUrl}}/health
+
+### State（面板状态）
+GET {{baseUrl}}/state
+Authorization: Basic {{user}} {{pass}}
+
+### Manual Sync
+POST {{baseUrl}}/sync
+Authorization: Basic {{user}} {{pass}}
+Content-Type: application/json
+
+{
+  "trigger": "manual"
+}
+
+### RDS API Health
+GET http://127.0.0.1:8787/health

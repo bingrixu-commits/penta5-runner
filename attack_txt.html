@@ -33,6 +33,13 @@
     textarea:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.25)}
     .sec{margin-top:12px;padding-top:10px;border-top:1px dashed #334155}
     .sec-title{font-size:13px;font-weight:900;color:#fdba74;margin:0 0 8px}
+    .target-row{display:grid;grid-template-columns:minmax(0,1fr) 128px;align-items:center;gap:10px;margin:0 0 10px}
+    .target-row label{margin:0}
+    .target-row input{
+      width:100%;height:42px;border:1px solid #475569;border-radius:8px;background:#0b1220;color:var(--ink);
+      padding:0 10px;font-size:18px;font-weight:900;text-align:center;outline:none;
+    }
+    .target-row input:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.25)}
     .btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
     .btns .span2{grid-column:1 / -1}
     .toolbar{
@@ -75,7 +82,7 @@
     <div class="head">
       <div>
         <h1>三定/四定转TXT</h1>
-        <div class="sub">三定支持千百十 / 百十个 / 千十个(万十个) / 千百个，空位为 x；排除后按 RDS 真实旧码回删到 490–499；逗号隔开、各字收尾；数值升序不跳码。</div>
+        <div class="sub">三定四种：千百十 / 百十个 / 千十个(万十个) / 千百个，空位为 x；回删只扫阿里云最近 200 期真实旧码；达到规定组数立即停止并封存在服务器。</div>
       </div>
       <a class="link" href="/panel">回面板</a>
     </div>
@@ -84,23 +91,31 @@
       <div class="toolbar" id="quickToolbar">
         <button type="button" class="secondary" id="btnPaste">读取剪贴板</button>
         <button type="button" class="secondary" id="btnClear">清空</button>
+        <button type="button" class="secondary" id="btnSyncPanelDuishu">同步面板本期对数</button>
         <button type="button" class="secondary" id="btnPreviewCount">预览组数</button>
         <button type="button" class="green" id="btnDownload" disabled>确认生成TXT</button>
-        <button type="button" class="primary" id="btnCopyPage" disabled>复制本页（逗号+各）</button>
+        <button type="button" class="orange" id="btnCopyPart1" disabled>复制第1段(≤300)</button>
+        <button type="button" class="orange" id="btnCopyPart2" disabled>复制第2段(剩余)</button>
+        <button type="button" class="secondary" id="btnCopyAll" disabled>复制全部(备用)</button>
+        <button type="button" class="secondary" id="btnCopyPage" disabled>复制本页（仅预览）</button>
       </div>
 
       <label for="attackInput">攻击语</label>
-      <textarea id="attackInput" placeholder="粘贴三定/四定攻击语，例如：&#10;千123456789百234567890十134567890三定千百十合123456780千百十二数合34567除对数16-19各&#10;百十个：百134…+123…个123…三定千百十合…对数06各（空位输出 x）&#10;三定的千百十二数合只计算千、百、十两两合尾；也支持：千十个/万十个、千百个、千百个合…、对数16-19（可省略「除」）" autofocus></textarea>
+      <textarea id="attackInput" placeholder="粘贴三定/四定攻击语。对数只认面板「开奖号码」下「三对数排除 → 本期排除」；点「同步面板本期对数」或转换前自动对齐。&#10;示例：百012345689十1234567890个0123456789三定百十个合012345789二数合0468除对数49各" autofocus></textarea>
 
       <div class="sec">
-        <div class="sec-title">三定排除完成后，只用阿里 RDS 真实旧号回删到 490–499 组</div>
+        <div class="sec-title">三定四种格式 · 回删只扫阿里 RDS 最近 200 期</div>
+        <div class="target-row">
+          <label for="targetRemain">回删后剩余组数</label>
+          <input id="targetRemain" type="number" inputmode="numeric" min="1" max="1000" step="1" value="800">
+        </div>
         <div class="btns">
-          <button type="button" class="orange span2" id="btnThreeBackDelete">三定转换（回删490-499）</button>
+          <button type="button" class="orange span2" id="btnThreeBackDelete">三定生成并回删</button>
           <button type="button" class="primary span2" id="btnConvert">四定转换</button>
         </div>
       </div>
 
-      <div class="status" id="status">粘贴攻击语后点「三定转换」。结果按 000→999 升序；每页 250 组，用「复制本页」分段带走。</div>
+      <div class="status" id="status">正在读取服务器封存结果…</div>
       <div class="meta" id="meta" hidden></div>
 
       <div class="pager" id="pager" hidden>
@@ -117,19 +132,23 @@
       </div>
 
       <div class="btns" style="margin-top:10px">
-        <button type="button" class="green span2" id="btnOneClickCopy" disabled>一键复制本页（逗号+各）</button>
+        <button type="button" class="green" id="btnOneClickCopy" disabled>一键复制第1段(≤300)</button>
+        <button type="button" class="primary" id="btnOneClickCopy2" disabled>接着复制第2段</button>
       </div>
 
-      <div class="hint">确认生成TXT=下载文件；复制本页=当前页逗号分隔并以「各」收尾（每页250组）。攻击语与转换结果会保存在本机，刷新不丢；点「清空」才清除。</div>
+      <div class="hint">投注端一次顶多约 300 组：先复制第1段，粘贴完再复制第2段（剩余）。确认生成TXT=下载完整文件（无截断）。复制本页仅预览。封存结果保存在阿里服务器，关闭电脑后再次打开仍读取同一份结果。</div>
       <div class="install">添加到主屏幕：Safari/Chrome 菜单 →「添加到主屏幕」。</div>
     </div>
   </div>
 
-  <script src="/txt_attack_convert.js"></script>
+  <script src="/txt_attack_convert.js?v=20260724-sealed-target-v1"></script>
   <script>
 (function(){
   var PAGE_SIZE=250;
-  var STORE_KEY="penta5AttackTxtPageV1";
+  var ATTACK_COPY_CHUNK=300;
+  var STORE_KEY="penta5AttackTxtPageV2";
+  var STORE_VERSION=3;
+  var LEGACY_STORE_KEYS=["penta5AttackTxtPageV1"];
   var HISTORY_KEY="penta5AttackTxtHistoryV1";
   var HISTORY_TTL_MS=30*60*1000;
   var input=document.getElementById("attackInput");
@@ -140,107 +159,137 @@
   var pagerInfo=document.getElementById("pagerInfo");
   var btnPaste=document.getElementById("btnPaste");
   var btnClear=document.getElementById("btnClear");
+  var btnSyncPanelDuishu=document.getElementById("btnSyncPanelDuishu");
   var btnPreviewCount=document.getElementById("btnPreviewCount");
   var btnThree=document.getElementById("btnThreeBackDelete");
   var btnConvert=document.getElementById("btnConvert");
   var btnCopyPage=document.getElementById("btnCopyPage");
+  var btnCopyAll=document.getElementById("btnCopyAll");
+  var btnCopyPart1=document.getElementById("btnCopyPart1");
+  var btnCopyPart2=document.getElementById("btnCopyPart2");
   var btnOneClickCopy=document.getElementById("btnOneClickCopy");
+  var btnOneClickCopy2=document.getElementById("btnOneClickCopy2");
   var btnDownload=document.getElementById("btnDownload");
+  var targetRemain=document.getElementById("targetRemain");
   var btnPrevPage=document.getElementById("btnPrevPage");
   var btnNextPage=document.getElementById("btnNextPage");
   var lastResult=null;
   var pageIndex=0;
+  var multiActiveIndex=0;
   var txtGenerated=false;
   var lastMode="";
   var saveTimer=null;
   var api=window.Penta5AttackTxtConvert;
-  var historyCache=null,historyCacheAt=0;
+  var cachedPanelDuishuPair="";
+  var currentSnapshot=null;
 
   function setStatus(text,kind){
     statusEl.textContent=String(text||"");
     statusEl.className="status"+(kind==="ok"?" ok":kind==="err"?" err":"");
   }
-  function safeParse(raw){
-    try{return raw?JSON.parse(raw):null;}catch(e){return null;}
+  /** 只取开奖号码下「三对数排除 → 本期排除」，不取框架自选对数 */
+  function fetchPanelThreeDuishuPair(){
+    return fetch("/state",{credentials:"same-origin",cache:"no-store"}).then(function(res){
+      if(!res.ok)throw new Error("面板状态 HTTP "+res.status);
+      return res.json();
+    }).then(function(data){
+      var snap=data&&data.currentPrediction&&data.currentPrediction.threeDuishu;
+      var rec=data&&data.threeDuishuRecommendation;
+      var pair=String((snap&&snap.selectedPair)||(rec&&rec.selectedPair)||"").replace(/\D/g,"").slice(0,2);
+      if(!/^\d{2}$/.test(pair))throw new Error("面板本期对数尚未就绪（开奖号码下「三对数排除」）");
+      cachedPanelDuishuPair=pair;
+      return pair;
+    });
   }
-  function persistPage(){
+  function applyPanelDuishuToInput(pair){
+    if(!input||!api||typeof api.applyPanelThreeDuishuPair!=="function")return "";
+    var next=api.applyPanelThreeDuishuPair(input.value||"",pair);
+    input.value=next;
+    return next;
+  }
+  function ensurePanelDuishuBeforeConvert(){
+    return fetchPanelThreeDuishuPair().then(function(pair){
+      applyPanelDuishuToInput(pair);
+      return pair;
+    });
+  }
+  // 浏览器不保存回删结果；唯一持久结果来自阿里服务器封存文件。
+  function schedulePersist(){}
+  function clearLegacyPageSnapshots(){
+    // 只清理旧版曾写入的本应用缓存；新版不再写入任何浏览器存储。
     try{
-      var payload={
-        v:1,
-        savedAt:Date.now(),
-        attackText:String(input&&input.value||""),
-        pageIndex:pageIndex,
-        txtGenerated:!!txtGenerated,
-        mode:lastMode||"",
-        status:String(statusEl&&statusEl.textContent||""),
-        statusKind:/ok/.test(statusEl&&statusEl.className||"")?"ok":(/err/.test(statusEl&&statusEl.className||"")?"err":""),
-        result:null
-      };
-      if(lastResult&&lastResult.ok){
-        payload.result={
-          ok:true,
-          width:lastResult.width||null,
-          count:lastResult.count||0,
-          tokens:Array.isArray(lastResult.tokens)?lastResult.tokens.slice():tokensOf(lastResult),
-          text:String(lastResult.text||""),
-          fileName:String(lastResult.fileName||""),
-          label:String(lastResult.label||""),
-          note:String(lastResult.note||""),
-          afterFilter:lastResult.afterFilter!=null?lastResult.afterFilter:null,
-          targetRemain:lastResult.targetRemain!=null?lastResult.targetRemain:null,
-          deletedUnique:lastResult.deletedUnique!=null?lastResult.deletedUnique:null,
-          scanned:lastResult.scanned!=null?lastResult.scanned:null,
-          source:String(lastResult.source||"")
-        };
-      }
-      localStorage.setItem(STORE_KEY,JSON.stringify(payload));
+      [STORE_KEY,HISTORY_KEY].concat(LEGACY_STORE_KEYS).forEach(function(key){
+        localStorage.removeItem(key);
+      });
     }catch(e){}
   }
-  function schedulePersist(){
-    if(saveTimer)clearTimeout(saveTimer);
-    saveTimer=setTimeout(persistPage,200);
+  function isSealedTargetGroup(result,target){
+    if(!result||!result.ok||result.source!=="three-ding-backdelete-target"||!Array.isArray(result.tokens))return false;
+    var afterFilter=Number(result.afterFilter);
+    var count=Number(result.count);
+    var deleted=Number(result.deletedUnique||0);
+    target=Number(target);
+    if(!isFinite(afterFilter)||afterFilter<=0||!isFinite(target)||target<1)return false;
+    if(count!==target||Number(result.targetRemain)!==target||result.tokens.length!==count)return false;
+    if(deleted!==afterFilter-target)return false;
+    return new Set(result.tokens).size===result.tokens.length;
+  }
+  function isRestorableResult(result,mode,target){
+    if(!result||!result.ok)return false;
+    if(String(mode||"")!=="three")return true;
+    if(result.multiCombo===true){
+      return result.source==="three-ding-backdelete-multi-combo"&&
+        Array.isArray(result.groups)&&result.groups.length>0&&
+        result.groups.every(function(group){return isSealedTargetGroup(group,target);});
+    }
+    return isSealedTargetGroup(result,target);
+  }
+  function applySealedSnapshot(snapshot,restored){
+    var target=Number(snapshot&&snapshot.targetRemain);
+    var result=snapshot&&snapshot.result;
+    if(!snapshot||!/^[a-f0-9]{64}$/.test(String(snapshot.fingerprint||""))||!isRestorableResult(result,"three",target)){
+      throw new Error("服务器封存结果校验失败，已拒绝显示。");
+    }
+    currentSnapshot=snapshot;
+    lastMode="three";
+    if(input)input.value=String(snapshot.normalizedAttackText||"");
+    if(targetRemain)targetRemain.value=String(target);
+    cachedPanelDuishuPair=String(snapshot.panelThreeDuishuPair||"");
+    result.sealedFingerprint=String(snapshot.fingerprint||"");
+    result.sealedPeriod=String(snapshot.historyLatestPeriod||"");
+    result.sealedTargetPeriod=String(snapshot.panelTargetPeriod||"");
+    result.sealedPair=String(snapshot.panelThreeDuishuPair||"");
+    result.sealedAt=String(snapshot.createdAt||"");
+    applyResult(result);
+    setStatus(
+      (restored?"已恢复服务器封存结果":"已生成并封存到服务器")+
+      "：RDS "+result.sealedPeriod+" 期｜目标 "+target+" 组｜封存 "+result.sealedFingerprint.slice(0,12)+"。关闭电脑后再次打开仍是这份结果。",
+      "ok"
+    );
   }
   function restorePage(){
-    var snap=safeParse(localStorage.getItem(STORE_KEY));
-    if(!snap||snap.v!==1)return false;
-    if(input)input.value=String(snap.attackText||"");
-    pageIndex=Math.max(0,Number(snap.pageIndex||0)||0);
-    txtGenerated=!!snap.txtGenerated;
-    lastMode=String(snap.mode||"");
-    if(snap.result&&snap.result.ok){
-      lastResult=snap.result;
-      setMeta(lastResult);
-      renderPager();
-      var pages=pageCountOf(lastResult);
-      var msg=String(snap.status||"")||("已恢复上次结果："+(lastResult.label||"TXT")+"，"+lastResult.count+" 组｜共 "+pages+" 页。刷新未丢，可直接复制。");
-      setStatus(msg,snap.statusKind==="err"?"err":"ok");
-      return true;
-    }
-    if(String(snap.attackText||"").trim()){
-      setStatus(String(snap.status||"已恢复上次攻击语。刷新后仍保留，可直接再转换。"),snap.statusKind==="err"?"err":"ok");
-      return true;
-    }
-    return false;
+    clearLegacyPageSnapshots();
+    return fetch("/backdelete-state",{credentials:"same-origin",cache:"no-store"})
+      .then(function(res){
+        return res.json().catch(function(){return null;}).then(function(data){
+          if(!res.ok||!data||data.ok===false)throw new Error(String(data&&data.error||("HTTP "+res.status)));
+          return data;
+        });
+      })
+      .then(function(data){
+        if(data.snapshot){
+          applySealedSnapshot(data.snapshot,true);
+          return true;
+        }
+        setStatus("尚无服务器封存结果。粘贴攻击语、填写剩余组数后点「三定生成并回删」。");
+        return false;
+      })
+      .catch(function(error){
+        setStatus("读取服务器封存结果失败："+String(error&&error.message||error),"err");
+        return false;
+      });
   }
-  function persistHistory(rows){
-    try{
-      localStorage.setItem(HISTORY_KEY,JSON.stringify({
-        savedAt:Date.now(),
-        history:Array.isArray(rows)?rows:[]
-      }));
-    }catch(e){}
-  }
-  function restoreHistory(){
-    var snap=safeParse(localStorage.getItem(HISTORY_KEY));
-    if(!snap||!Array.isArray(snap.history)||!snap.history.length)return null;
-    if(snap.savedAt&&(Date.now()-Number(snap.savedAt))>HISTORY_TTL_MS)return null;
-    return snap.history;
-  }
-  function clearPersisted(){
-    try{
-      localStorage.removeItem(STORE_KEY);
-    }catch(e){}
-  }
+  function clearPersisted(){clearLegacyPageSnapshots();}
   function unmaskToken(token){
     if(api&&typeof api.threeDingUnmaskToken==="function")return api.threeDingUnmaskToken(token)||"";
     var t=String(token||"").replace(/各/g,"").trim();
@@ -250,7 +299,21 @@
     var digits=t.replace(/\D/g,"");
     return /^\d{3}$/.test(digits)?digits:t;
   }
+  function isMultiComboResult(result){
+    return !!(result&&result.multiCombo===true&&Array.isArray(result.groups)&&result.groups.length);
+  }
+  function activeResultOf(result){
+    if(!isMultiComboResult(result))return result;
+    if(multiActiveIndex<0||multiActiveIndex>=result.groups.length)multiActiveIndex=0;
+    return result.groups[multiActiveIndex]||result.groups[0]||null;
+  }
+  function activeComboLabel(result){
+    var active=activeResultOf(result);
+    if(!active)return "";
+    return String(active.comboName||active.label||"三定");
+  }
   function tokensOf(result){
+    result=activeResultOf(result);
     if(!result)return [];
     if(Array.isArray(result.tokens)&&result.tokens.length)return result.tokens.slice();
     var text=String(result.text||"").replace(/各+$/,"").trim();
@@ -270,6 +333,7 @@
     return toks.slice(start,start+PAGE_SIZE);
   }
   function pageText(result,idx){
+    result=activeResultOf(result);
     var slice=pageSlice(result,idx);
     if(!slice.length)return "";
     var allThree=slice.every(function(t){return /^\d{3}$/.test(String(t));});
@@ -295,14 +359,37 @@
     if(result.targetRemain!=null)chips.push('<span class="chip">目标剩 '+result.targetRemain+'</span>');
     if(result.deletedUnique!=null)chips.push('<span class="chip">已删旧码 '+result.deletedUnique+'</span>');
     if(result.scanned!=null)chips.push('<span class="chip">扫 '+result.scanned+' 期</span>');
+    if(result.sealedPeriod)chips.push('<span class="chip">RDS '+String(result.sealedPeriod)+'</span>');
+    if(result.sealedTargetPeriod)chips.push('<span class="chip">面板目标期 '+String(result.sealedTargetPeriod)+'</span>');
+    if(result.sealedPair)chips.push('<span class="chip">面板对数 '+String(result.sealedPair)+'</span>');
+    if(result.sealedFingerprint)chips.push('<span class="chip">封存 '+String(result.sealedFingerprint).slice(0,12)+'</span>');
+    if(isMultiComboResult(result)){
+      var active=activeResultOf(result);
+      chips.push('<span class="chip">'+result.groups.length+' 个位置组合</span>');
+      chips.push('<span class="chip">当前：'+activeComboLabel(result)+' '+String(active&&active.count||0)+' 组</span>');
+      var choices=result.groups.map(function(group,index){
+        var selected=index===multiActiveIndex;
+        var bg=selected?'#f97316':'#334155';
+        return '<button type="button" data-multi-combo-index="'+index+'" style="border:0;border-radius:7px;padding:6px 9px;background:'+bg+';color:white;font-weight:800;cursor:pointer;">'+String(group.comboName||('组合'+(index+1)))+' '+String(group.count||0)+'组</button>';
+      }).join('');
+      meta.innerHTML=chips.join('')+'<div style="width:100%;margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;"><b style="font-size:12px;">独立组合：</b>'+choices+'</div><div style="width:100%;margin-top:5px;color:var(--muted);font-size:12px;">当前选择的组合可使用上方复制、分页与下载；切换组合不会改变其他组合的回删结果。</div>';
+      return;
+    }
     meta.innerHTML=chips.join("");
   }
   function renderPager(){
+    var active=activeResultOf(lastResult);
     var pages=pageCountOf(lastResult);
-    var has=!!(lastResult&&lastResult.ok&&pages>0);
+    var has=!!(active&&active.ok&&pages>0);
     pager.hidden=!has;
     btnCopyPage.disabled=!has;
+    if(btnCopyAll)btnCopyAll.disabled=!has;
+    var parts=getCopyParts(lastResult);
+    var hasP2=!!(parts&&parts.part2Count>0);
+    if(btnCopyPart1)btnCopyPart1.disabled=!has;
+    if(btnCopyPart2)btnCopyPart2.disabled=!hasP2;
     if(btnOneClickCopy)btnOneClickCopy.disabled=!has;
+    if(btnOneClickCopy2)btnOneClickCopy2.disabled=!hasP2;
     btnDownload.disabled=!has;
     if(!has){
       preview.value="";
@@ -316,29 +403,39 @@
     var start=pageIndex*PAGE_SIZE+1;
     var end=Math.min((pageIndex+1)*PAGE_SIZE,tokensOf(lastResult).length);
     var checkNote=txtGenerated?"已生成TXT":"仅供核对，尚未生成TXT";
-    pagerInfo.textContent="完整计算结果（"+checkNote+"）｜第"+(pageIndex+1)+"/"+pages+"页（第"+start+"–"+end+"组；每页"+PAGE_SIZE+"组）";
+    var comboPrefix=isMultiComboResult(lastResult)
+      ?("独立组合 "+(multiActiveIndex+1)+"/"+lastResult.groups.length+"（"+activeComboLabel(lastResult)+"）｜")
+      :"";
+    pagerInfo.textContent=comboPrefix+"完整计算结果（"+checkNote+"）｜第"+(pageIndex+1)+"/"+pages+"页（第"+start+"–"+end+"组；每页"+PAGE_SIZE+"组）";
     btnPrevPage.disabled=pageIndex<=0;
     btnNextPage.disabled=pageIndex>=pages-1;
     preview.value=pageText(lastResult,pageIndex);
   }
   function setBusy(busy,mode){
-    [btnPaste,btnClear,btnPreviewCount,btnThree,btnConvert,btnPrevPage,btnNextPage].forEach(function(b){if(b)b.disabled=!!busy;});
+    [btnPaste,btnClear,btnPreviewCount,btnThree,btnConvert,btnPrevPage,btnNextPage,targetRemain].forEach(function(b){if(b)b.disabled=!!busy;});
     if(!busy){
-      btnThree.textContent="三定转换（回删490-499）";
+      btnThree.textContent="三定生成并回删";
       btnConvert.textContent="四定转换";
       renderPager();
       return;
     }
     btnCopyPage.disabled=true;
+    if(btnCopyAll)btnCopyAll.disabled=true;
+    if(btnCopyPart1)btnCopyPart1.disabled=true;
+    if(btnCopyPart2)btnCopyPart2.disabled=true;
     if(btnOneClickCopy)btnOneClickCopy.disabled=true;
+    if(btnOneClickCopy2)btnOneClickCopy2.disabled=true;
     btnDownload.disabled=true;
-    if(mode==="three")btnThree.textContent="回删中…";
+    if(mode==="three")btnThree.textContent="真实回删中…";
     else if(mode==="four")btnConvert.textContent="转换中…";
   }
   function applyResult(result,opts){
     opts=opts&&typeof opts==="object"?opts:{};
     lastResult=result&&result.ok?result:null;
-    if(!opts.keepPage)pageIndex=0;
+    if(!opts.keepPage){
+      pageIndex=0;
+      multiActiveIndex=0;
+    }
     if(!opts.keepGenerated)txtGenerated=false;
     if(!result||!result.ok){
       renderPager();
@@ -349,8 +446,16 @@
     }
     setMeta(result);
     renderPager();
+    var active=activeResultOf(lastResult);
     var pages=pageCountOf(lastResult);
-    setStatus("已转换："+result.label+"，"+result.count+" 组（升序不跳码）。共 "+pages+" 页，可用「复制本页」分段带走。"+(result.note?" "+result.note:""),"ok");
+    var parts=getCopyParts(active);
+    var partHint=parts&&parts.part2Count
+      ?("投注请分两段：第1段 "+parts.part1Count+" 组 → 第2段 "+parts.part2Count+" 组")
+      :("当前组合 "+(active&&active.count||0)+" 组，可一次复制第1段");
+    var multiHint=isMultiComboResult(result)
+      ?("共 "+result.groups.length+" 个位置组合、合计 "+result.count+" 组；当前为 "+activeComboLabel(result)+"。")
+      :("全量 "+result.count+" 组（升序无截断）。");
+    setStatus("已转换："+result.label+"，"+multiHint+partHint+"。"+(result.note?" "+result.note:""),"ok");
     schedulePersist();
   }
   function copyText(value,okMsg){
@@ -366,39 +471,6 @@
       preview.value=value;preview.focus();preview.select();
       try{document.execCommand("copy");done();}catch(e){setStatus("复制失败，请长按预览区手动复制。","err");}
     }
-  }
-  function loadConverterHistory(){
-    var now=Date.now();
-    if(historyCache&&(now-historyCacheAt)<60000)return Promise.resolve(historyCache);
-    var cached=restoreHistory();
-    if(cached&&cached.length){
-      historyCache=cached;
-      historyCacheAt=Date.now();
-      // 后台静默刷新，不挡本次转换
-      fetch("/converter-history?limit=1500",{credentials:"same-origin",cache:"no-store"})
-        .then(function(res){return res.ok?res.json():null;})
-        .then(function(data){
-          if(!data||data.ok===false)return;
-          var rows=Array.isArray(data.history)?data.history:[];
-          if(!rows.length)return;
-          historyCache=rows;historyCacheAt=Date.now();
-          persistHistory(rows);
-        }).catch(function(){});
-      return Promise.resolve(cached);
-    }
-    return fetch("/converter-history?limit=1500",{credentials:"same-origin",cache:"no-store"})
-      .then(function(res){
-        if(!res.ok)throw new Error("历史接口 HTTP "+res.status);
-        return res.json();
-      })
-      .then(function(data){
-        if(!data||data.ok===false)throw new Error((data&&data.error)||"RDS 共享历史未就绪");
-        var rows=Array.isArray(data.history)?data.history:[];
-        if(!rows.length)throw new Error("历史为空，无法回删旧码");
-        historyCache=rows;historyCacheAt=Date.now();
-        persistHistory(rows);
-        return rows;
-      });
   }
   function doPaste(){
     if(!(navigator.clipboard&&navigator.clipboard.readText)){
@@ -417,63 +489,185 @@
     input.value="";
     lastResult=null;
     pageIndex=0;
+    multiActiveIndex=0;
     txtGenerated=false;
     lastMode="";
+    currentSnapshot=null;
     setMeta(null);
     renderPager();
     clearPersisted();
-    setStatus("已清空（含本机缓存）。");
+    setStatus("页面已清空；服务器封存结果未删除，刷新页面可重新读取。");
   }
   function doPreviewCount(){
     if(!lastResult||!lastResult.ok){
       setStatus("请先转换，再预览组数。","err");
       return;
     }
+    var active=activeResultOf(lastResult);
     var pages=pageCountOf(lastResult);
     var start=pageIndex*PAGE_SIZE+1;
     var end=Math.min((pageIndex+1)*PAGE_SIZE,tokensOf(lastResult).length);
-    setStatus("共 "+lastResult.count+" 组｜"+pages+" 页｜当前第"+(pageIndex+1)+"页（第"+start+"–"+end+"组）"+(lastResult.targetRemain!=null?("｜目标剩 "+lastResult.targetRemain):""),"ok");
+    var prefix=isMultiComboResult(lastResult)?("组合 "+(multiActiveIndex+1)+"/"+lastResult.groups.length+"（"+activeComboLabel(lastResult)+"）｜"):"";
+    setStatus(prefix+"共 "+(active&&active.count||0)+" 组｜"+pages+" 页｜当前第"+(pageIndex+1)+"页（第"+start+"–"+end+"组）"+(active&&active.targetRemain!=null?("｜目标剩 "+active.targetRemain):""),"ok");
     schedulePersist();
   }
   function doConvert(){
     if(!api||typeof api.convert!=="function"){setStatus("转换脚本未加载，请刷新。","err");return;}
     lastMode="four";
     setBusy(true,"four");
-    setStatus("正在四定转换…");
-    setTimeout(function(){
+    setStatus("正在对齐面板本期对数并四定转换…");
+    ensurePanelDuishuBeforeConvert().then(function(pair){
       var result=null;
-      try{result=api.convert(input.value||"");}catch(err){result={ok:false,message:String(err&&err.message||err)};}
+      try{result=api.convert(input.value||"",{panelThreeDuishuPair:pair});}catch(err){result={ok:false,message:String(err&&err.message||err)};}
       applyResult(result);setBusy(false);
-    },30);
-  }
-  function doThreeBackDelete(){
-    if(!api||typeof api.convertThreeDingBackDelete!=="function"){setStatus("转换脚本未加载，请刷新。","err");return;}
-    lastMode="three";
-    setBusy(true,"three");
-    setStatus("正在拉取 RDS 旧码并回删到 490–499…");
-    loadConverterHistory().then(function(history){
-      var result=null;
-      try{result=api.convertThreeDingBackDelete(input.value||"",history);}catch(err){result={ok:false,message:String(err&&err.message||err)};}
-      applyResult(result);setBusy(false);
+      if(result&&result.ok)setStatus((statusEl.textContent||"")+"｜已用面板本期排除 "+pair,"ok");
     }).catch(function(err){
-      applyResult({ok:false,message:"拉取旧码失败："+String(err&&err.message||err)});
+      applyResult({ok:false,message:"同步面板本期对数失败："+String(err&&err.message||err)});
       setBusy(false);
     });
+  }
+  function doThreeBackDelete(){
+    var target=Number(targetRemain&&targetRemain.value);
+    if(!Number.isInteger(target)||target<1||target>1000){
+      setStatus("回删后剩余组数必须是 1-1000 的整数。","err");
+      return;
+    }
+    if(!String(input&&input.value||"").trim()){
+      setStatus("请先粘贴三定攻击语。","err");
+      return;
+    }
+    lastMode="three";
+    setBusy(true,"three");
+    setStatus("正在由阿里服务器生成，并从最新到最旧回删至 "+target+" 组…");
+    ensurePanelDuishuBeforeConvert().then(function(pair){
+      return fetch("/backdelete-generate",{
+        method:"POST",
+        credentials:"same-origin",
+        cache:"no-store",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          attackText:String(input.value||""),
+          target:target,
+          panelThreeDuishuPair:pair
+        })
+      }).then(function(res){
+        return res.json().catch(function(){return null;}).then(function(data){
+          if(!res.ok||!data||data.ok===false)throw new Error(String(data&&data.error||("HTTP "+res.status)));
+          return data;
+        });
+      }).then(function(data){
+        applySealedSnapshot(data.snapshot,false);
+        setBusy(false);
+      });
+    }).catch(function(err){
+      setStatus("生成回删失败："+String(err&&err.message||err),"err");
+      setBusy(false);
+    });
+  }
+  function doSyncPanelDuishu(){
+    setStatus("正在读取面板「开奖号码」下三对数本期排除…");
+    ensurePanelDuishuBeforeConvert().then(function(pair){
+      setStatus("已同步面板本期排除 "+pair+"（除对数"+pair+"）","ok");
+      schedulePersist();
+    }).catch(function(err){
+      setStatus("同步失败："+String(err&&err.message||err),"err");
+    });
+  }
+  function resultCombo(result){
+    if(!result)return null;
+    if(result.comboName)return {name:result.comboName,blankIndex:result.blankIndex,positions:result.positions};
+    if(result.blankIndex!=null)return result.blankIndex;
+    return null;
+  }
+  function fullResultText(result){
+    result=activeResultOf(result);
+    if(!result||!result.ok)return "";
+    if(result.text)return String(result.text);
+    var toks=tokensOf(result);
+    if(!toks.length)return "";
+    if(api&&typeof api.formatThreeDingGeList==="function"){
+      return api.formatThreeDingGeList(toks,null,resultCombo(result));
+    }
+    return toks.join(",")+"各";
+  }
+  function getCopyParts(result){
+    result=activeResultOf(result);
+    if(!result||!result.ok)return null;
+    if(result.copyParts&&result.copyParts.part1Text!=null)return result.copyParts;
+    var toks=tokensOf(result);
+    if(!toks.length)return null;
+    if(api&&typeof api.threeDingCopyParts==="function"){
+      var built=api.threeDingCopyParts(toks,ATTACK_COPY_CHUNK,resultCombo(result));
+      result.copyParts=built;
+      return built;
+    }
+    var n=Math.min(ATTACK_COPY_CHUNK,toks.length);
+    var p1=toks.slice(0,n);
+    var p2=toks.slice(n);
+    var fmt=function(list){
+      if(api&&typeof api.formatThreeDingGeList==="function")return api.formatThreeDingGeList(list,null,resultCombo(result));
+      return list.length?list.join(",")+"各":"";
+    };
+    var built2={
+      tokens:toks,
+      part1Tokens:p1,
+      part2Tokens:p2,
+      part1Text:fmt(p1),
+      part2Text:fmt(p2),
+      part1Count:p1.length,
+      part2Count:p2.length,
+      total:toks.length
+    };
+    result.copyParts=built2;
+    return built2;
+  }
+  function doCopyPart(which){
+    if(!lastResult||!lastResult.ok){setStatus("请先转换。","err");return;}
+    var parts=getCopyParts(lastResult);
+    if(!parts){setStatus("没有可分段复制的结果。","err");return;}
+    if(which===1){
+      if(!parts.part1Count){setStatus("第1段为空。","err");return;}
+      var msg1="已复制第1段 "+parts.part1Count+" 组（≤"+ATTACK_COPY_CHUNK+"，逗号+各）。";
+      if(parts.part2Count)msg1+="粘贴完后再点「复制第2段」（还有 "+parts.part2Count+" 组）。";
+      copyText(parts.part1Text,msg1);
+      return;
+    }
+    if(!parts.part2Count){setStatus("没有第2段（总数未超过 "+ATTACK_COPY_CHUNK+"）。","err");return;}
+    copyText(parts.part2Text,"已复制第2段 "+parts.part2Count+" 组（剩余·逗号+各）。两段合计 "+parts.total+" 组。");
+  }
+  function doCopyAll(){
+    if(!lastResult||!lastResult.ok){setStatus("请先转换。","err");return;}
+    var active=activeResultOf(lastResult);
+    var parts=getCopyParts(active);
+    if(parts&&parts.part2Count>0){
+      setStatus("投注端一次约 "+ATTACK_COPY_CHUNK+" 组，"+parts.total+" 组请用「复制第1段 / 第2段」，不要一次全贴。","err");
+      return;
+    }
+    var text=fullResultText(active);
+    var n=tokensOf(active).length;
+    if(!text||!n){setStatus("没有可复制的全量结果。","err");return;}
+    if(active.count!=null&&Number(active.count)!==n){
+      setStatus("组数不一致：标记 "+active.count+"，实际 "+n+"，已拒绝复制（防截断）。","err");
+      return;
+    }
+    copyText(text,"已复制全部 "+n+" 组（未超 "+ATTACK_COPY_CHUNK+"，可一次粘贴）。");
   }
   function doCopyPage(){
     if(!lastResult||!lastResult.ok){setStatus("请先转换。","err");return;}
     var text=pageText(lastResult,pageIndex);
     var slice=pageSlice(lastResult,pageIndex);
     if(!slice.length){setStatus("本页没有组。","err");return;}
-    copyText(text,"已复制本页 "+slice.length+" 组（逗号+各）｜第"+(pageIndex+1)+"/"+pageCountOf(lastResult)+"页。");
+    copyText(text,"已复制本页 "+slice.length+" 组（仅预览）｜第"+(pageIndex+1)+"/"+pageCountOf(lastResult)+"页。投注请用分段复制。");
   }
   function doDownload(){
     if(!lastResult||!api)return;
     try{
-      var name=api.download(lastResult.fileName||"attack.txt",lastResult.text||"");
+      var active=activeResultOf(lastResult);
+      if(!active||!active.ok)throw new Error("当前组合结果不存在");
+      var name=api.download(active.fileName||"attack.txt",fullResultText(active));
       txtGenerated=true;
       renderPager();
-      setStatus("已生成并下载："+name+"（"+lastResult.count+" 组）。","ok");
+      setStatus("已生成并下载："+name+"（"+activeComboLabel(lastResult)+" "+active.count+" 组）。","ok");
       schedulePersist();
     }catch(err){setStatus("下载失败："+String(err&&err.message||err),"err");}
   }
@@ -492,26 +686,39 @@
 
   btnPaste.addEventListener("click",doPaste);
   btnClear.addEventListener("click",doClear);
+  if(btnSyncPanelDuishu)btnSyncPanelDuishu.addEventListener("click",doSyncPanelDuishu);
   btnPreviewCount.addEventListener("click",doPreviewCount);
   btnThree.addEventListener("click",doThreeBackDelete);
   btnConvert.addEventListener("click",doConvert);
   btnCopyPage.addEventListener("click",doCopyPage);
-  if(btnOneClickCopy)btnOneClickCopy.addEventListener("click",doCopyPage);
+  if(btnCopyAll)btnCopyAll.addEventListener("click",doCopyAll);
+  if(btnCopyPart1)btnCopyPart1.addEventListener("click",function(){doCopyPart(1);});
+  if(btnCopyPart2)btnCopyPart2.addEventListener("click",function(){doCopyPart(2);});
+  if(btnOneClickCopy)btnOneClickCopy.addEventListener("click",function(){doCopyPart(1);});
+  if(btnOneClickCopy2)btnOneClickCopy2.addEventListener("click",function(){doCopyPart(2);});
   btnDownload.addEventListener("click",doDownload);
   btnPrevPage.addEventListener("click",doPrevPage);
   btnNextPage.addEventListener("click",doNextPage);
+  if(meta)meta.addEventListener("click",function(event){
+    var node=event&&event.target;
+    while(node&&node!==meta&&(!node.getAttribute||node.getAttribute("data-multi-combo-index")==null))node=node.parentNode;
+    if(!node||node===meta||!lastResult||!isMultiComboResult(lastResult))return;
+    var index=Number(node.getAttribute("data-multi-combo-index"));
+    if(!isFinite(index)||index<0||index>=lastResult.groups.length)return;
+    multiActiveIndex=index;
+    pageIndex=0;
+    txtGenerated=false;
+    setMeta(lastResult);
+    renderPager();
+    var active=activeResultOf(lastResult);
+    setStatus("已切换到 "+activeComboLabel(lastResult)+"："+(active&&active.count||0)+" 组；该组合独立回删，可单独复制或下载。","ok");
+    schedulePersist();
+  });
   if(input){
     input.addEventListener("input",schedulePersist);
     input.addEventListener("change",schedulePersist);
   }
-  window.addEventListener("beforeunload",persistPage);
-  window.addEventListener("pagehide",persistPage);
-
-  if(restorePage()){
-    // 已从本机缓存恢复
-  }else{
-    setStatus("粘贴攻击语后点「三定转换」。结果会保存在本机，刷新不丢；点「清空」才清除。");
-  }
+  restorePage();
 })();
   </script>
 </body>

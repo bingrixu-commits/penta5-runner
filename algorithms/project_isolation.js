@@ -4,31 +4,30 @@
  * Per-algorithm state isolation for the Penta5 runner.
  *
  * The shared RDS draw history remains the only source of official input.  Each
- * algorithm writes its derived prediction, evaluation, and health to its own
- * state file under data/algorithm-projects/<id>/state.json.  No algorithm
- * reads another algorithm's state file as an input.
+ * algorithm derives prediction/evaluation/health snapshots.  When
+ * ALGO_DURABLE_STORE=rds, snapshots stay in memory for RDS mirror and are NOT
+ * written under data/algorithm-projects/.  Otherwise legacy local state.json
+ * files are kept for compatibility.
  */
 
 const fs = require("fs");
 const path = require("path");
 
+function useRdsDurable() {
+  return String(process.env.ALGO_DURABLE_STORE || "local").toLowerCase() === "rds";
+}
 // Independent algorithm packages (L0 + L1). projects/* remain compatibility re-exports.
 const PROJECTS = Object.freeze([
-  require("./projects/core_runner"),
+  require("./core-runner"),
   require("./position-kills"),
+  require("./codex-stable"),
   require("./hewei"),
   require("./extra-kills"),
   require("./stable-math"),
+  require("./four-pos-exclude"),
   require("./auto-top6"),
   require("./recommend2"),
   require("./kill-framework"),
-  require("./compact-attack"),
-  require("./three-ding-two"),
-  require("./three-ding-one"),
-  require("./side-stable"),
-  require("./cold-framework"),
-  require("./ding-kill"),
-  require("./pick-5000"),
   require("./three-duishu")
 ]);
 
@@ -37,13 +36,6 @@ const SNAPSHOT_PROJECT_IDS = Object.freeze({
   autoTop6: "auto-top6",
   recommend2: "recommend2",
   killFramework: "kill-framework",
-  compactAttack: "compact-attack",
-  threeDingTwo: "three-ding-two",
-  threeDingOne: "three-ding-one",
-  sideStable: "side-stable",
-  coldFramework: "cold-framework",
-  dingKill: "ding-kill",
-  pick5000: "pick-5000",
   threeDuishu: "three-duishu"
 });
 
@@ -119,6 +111,7 @@ function projectIdForIssue(issue) {
   if (key.startsWith("hewei.")) return "hewei";
   if (key.startsWith("extra.")) return "extra-kills";
   if (key.startsWith("stableMath")) return "stable-math";
+  if (key.startsWith("fourPosExclude") || key.startsWith("four-pos-exclude")) return "four-pos-exclude";
   if (key.startsWith("snapshot.")) {
     const name = key.split(".")[1] || "";
     return SNAPSHOT_PROJECT_IDS[name] || "core-runner";
@@ -154,47 +147,65 @@ function projectHealth(projectId, healthMap, prediction) {
   };
 }
 
-function syncProjectStates(options) {
-  const opts = isObject(options) ? options : {};
-  const dataDir = safeString(opts.dataDir);
-  if (!dataDir) throw new Error("dataDir is required for algorithm project state sync");
+function buildProjectPayload(project, opts) {
   const currentPrediction = isObject(opts.currentPrediction) ? opts.currentPrediction : null;
   const predictions = Array.isArray(opts.predictions) ? opts.predictions.filter(isObject) : [];
   const historyLimit = Math.max(20, Math.min(300, Number(opts.historyLimit || 120) || 120));
   const healthMap = isObject(opts.projectHealth) ? opts.projectHealth : {};
   const latestRecord = isObject(opts.latestRecord) ? opts.latestRecord : {};
+  const evaluated = predictions
+    .filter((prediction) => prediction.evaluated === true)
+    .slice(0, historyLimit)
+    .map((prediction) => projectRecord(project.id, prediction));
+  return {
+    version: "algorithm-project-state-v1",
+    project: { id: project.id, label: project.label },
+    source: {
+      officialHistory: "rds-shared-read-only",
+      durableStore: useRdsDurable() ? "rds" : "local",
+      modelVersion: safeString(opts.modelVersion),
+      latestPeriod: safeString(latestRecord.period || latestRecord.uid),
+      syncedAt: isoNow()
+    },
+    health: projectHealth(project.id, healthMap, currentPrediction),
+    current: currentPrediction ? projectRecord(project.id, currentPrediction) : null,
+    history: evaluated
+  };
+}
+
+function syncProjectStates(options) {
+  const opts = isObject(options) ? options : {};
+  const dataDir = safeString(opts.dataDir);
+  if (!dataDir) throw new Error("dataDir is required for algorithm project state sync");
+  const snapshots = {};
   const results = [];
 
   PROJECTS.forEach((project) => {
-    const file = projectStateFile(dataDir, project.id);
-    const evaluated = predictions
-      .filter((prediction) => prediction.evaluated === true)
-      .slice(0, historyLimit)
-      .map((prediction) => projectRecord(project.id, prediction));
-    const payload = {
-      version: "algorithm-project-state-v1",
-      project: { id: project.id, label: project.label },
-      source: {
-        officialHistory: "rds-shared-read-only",
-        modelVersion: safeString(opts.modelVersion),
-        latestPeriod: safeString(latestRecord.period || latestRecord.uid),
-        syncedAt: isoNow()
-      },
-      health: projectHealth(project.id, healthMap, currentPrediction),
-      current: currentPrediction ? projectRecord(project.id, currentPrediction) : null,
-      history: evaluated
-    };
-    writeJsonAtomic(file, payload);
-    results.push({ id: project.id, file, historyCount: evaluated.length });
+    const payload = buildProjectPayload(project, opts);
+    snapshots[project.id] = payload;
+    if (!useRdsDurable()) {
+      const file = projectStateFile(dataDir, project.id);
+      writeJsonAtomic(file, payload);
+      results.push({ id: project.id, file, historyCount: (payload.history || []).length, durable: "local" });
+    } else {
+      results.push({ id: project.id, file: null, historyCount: (payload.history || []).length, durable: "rds" });
+    }
   });
-  return results;
+
+  if (typeof opts.onSnapshots === "function") {
+    opts.onSnapshots(snapshots);
+  }
+  return { results, snapshots, durableStore: useRdsDurable() ? "rds" : "local" };
 }
 
 function recordProjectIssue(dataDir, issue, prediction) {
   const projectId = projectIdForIssue(issue);
   const project = PROJECT_BY_ID.get(projectId) || PROJECT_BY_ID.get("core-runner");
   const file = projectStateFile(dataDir, project.id);
-  const existing = readJson(file, {});
+  const rdsMode = useRdsDurable();
+  const existing = rdsMode
+    ? (isObject(prediction && prediction.__algoProjectSnapshot) ? prediction.__algoProjectSnapshot : {})
+    : readJson(file, {});
   const oldHealth = isObject(existing.health) ? existing.health : {};
   const nextHealth = {
     status: "degraded",
@@ -207,18 +218,23 @@ function recordProjectIssue(dataDir, issue, prediction) {
   const payload = {
     version: "algorithm-project-state-v1",
     project: { id: project.id, label: project.label },
-    source: isObject(existing.source) ? existing.source : { officialHistory: "rds-shared-read-only" },
+    source: isObject(existing.source)
+      ? Object.assign({}, existing.source, { durableStore: rdsMode ? "rds" : "local" })
+      : { officialHistory: "rds-shared-read-only", durableStore: rdsMode ? "rds" : "local" },
     health: nextHealth,
     current: existing.current || (prediction ? projectRecord(project.id, prediction) : null),
     history: Array.isArray(existing.history) ? existing.history : []
   };
-  writeJsonAtomic(file, payload);
-  return { projectId: project.id, health: nextHealth, file };
+  if (!rdsMode) {
+    writeJsonAtomic(file, payload);
+  }
+  return { projectId: project.id, health: nextHealth, file: rdsMode ? null : file, payload, durable: rdsMode ? "rds" : "local" };
 }
 
 module.exports = {
   PROJECTS,
   SNAPSHOT_PROJECT_IDS,
+  useRdsDurable,
   projectIdForIssue,
   projectStateFile,
   syncProjectStates,

@@ -10,7 +10,7 @@ if [ -n "${PANEL_PASSWORD:-}" ]; then
 fi
 
 echo "===1 file markers==="
-grep -c "compactRecentExactCodesInState" penta5_backend_runner.js
+grep -c "stripRetiredFourCodeArtifacts" penta5_backend_runner.js
 grep -c "scheduleRdsMirrorAfterSave" penta5_backend_runner.js
 grep -c "killFrameworkItems" penta5_backend_runner.js
 grep -n 'JSON.stringify(value)' penta5_backend_runner.js | head -3
@@ -34,7 +34,7 @@ echo
 curl -s -o /dev/null -w "panel_http=%{http_code}\n" http://127.0.0.1:3001/panel
 curl -s --max-time 30 http://127.0.0.1:3001/panel | tr '\n' ' ' | grep -o "killFrameworkBox\|自动推荐使用6项\|今日六项最高连中\|PANEL_UI_VERSION" | sort -u
 
-echo "===3 state killFramework + disk compact==="
+echo "===3 state killFramework + retired cleanup==="
 curl -s --max-time 60 $AUTH http://127.0.0.1:3001/state > /tmp/st.json
 python3 - <<'PY'
 import json
@@ -51,28 +51,43 @@ ls -lh data/state.json
 node --max-old-space-size=4096 - <<'NODE'
 const fs=require("fs");
 const s=JSON.parse(fs.readFileSync("/root/penta5-runner/data/state.json","utf8"));
-let omitted=0, withCodes=0, evaluated=0;
-for (const p of (s.predictions||[])) {
-  if (!p || !p.evaluated) continue;
-  evaluated += 1;
-  const ek=p.extraKills||{};
-  for (const k of Object.keys(ek)) {
-    if (!/^recentExactCodeAvoid/.test(k)) continue;
-    const e=ek[k]||{};
-    if (e.codesOmitted) omitted += 1;
-    if (Array.isArray(e.codes) && e.codes.length) withCodes += 1;
-  }
+const retiredFrameworks=["sideStable","coldFramework","dingKill","pick5000"];
+const leaks=[];
+function has(obj,key){return !!obj&&Object.prototype.hasOwnProperty.call(obj,key);}
+function scanRetiredExtraBlock(label,block){
+  Object.keys(block||{}).filter((key)=>/^recentExactCodeAvoid(?:\d+|Max)$/i.test(key)).forEach((key)=>leaks.push(`${label}.${key}`));
+}
+function scanPrediction(label,p){
+  if(!p||typeof p!=="object")return;
+  const extraBlocks=[p.extraKills,p.detail&&p.detail.extraKills,p.evaluation&&p.evaluation.independentExtras,p.evaluation&&p.evaluation.previousExtraKills];
+  extraBlocks.forEach((block,index)=>scanRetiredExtraBlock(`${label}.extra[${index}]`,block));
+  ["autoTop6","recommend2","killFramework","compactAttack","threeDingTwo","threeDingOne","threeDuishu"].forEach((store)=>{
+    const snapshot=p[store]||{};
+    const items=Array.isArray(snapshot.items)?snapshot.items:(Array.isArray(p[`${store}Items`])?p[`${store}Items`]:[]);
+    items.forEach((item,index)=>{
+      if(/^recentExactCodeAvoid(?:\d+|Max)$/i.test(String(item&&item.key||"")))leaks.push(`${label}.${store}.items[${index}].${item.key}`);
+    });
+  });
+  retiredFrameworks.forEach((key)=>{
+    [key,`${key}Items`,`${key}RepairReport`].forEach((field)=>{if(has(p,field))leaks.push(`${label}.${field}`);});
+    if(has(p.evaluation,key))leaks.push(`${label}.evaluation.${key}`);
+  });
 }
 const cur=s.currentPrediction||{};
-const curHasCodes = !!(cur.extraKills && cur.extraKills.recentExactCodeAvoid300 && Array.isArray(cur.extraKills.recentExactCodeAvoid300.codes) && cur.extraKills.recentExactCodeAvoid300.codes.length);
+scanPrediction("currentPrediction",cur);
+(s.predictions||[]).forEach((prediction,index)=>scanPrediction(`predictions[${index}]`,prediction));
+scanRetiredExtraBlock("counters",s.counters);
+retiredFrameworks.forEach((key)=>{
+  if(has(s.dailyStreakLedger,key))leaks.push(`dailyStreakLedger.${key}`);
+  if(has(s.algorithmProjectHealth,key))leaks.push(`algorithmProjectHealth.${key}`);
+});
 console.log(JSON.stringify({
-  evaluatedPreds: evaluated,
-  recentExactOmittedSlots: omitted,
-  recentExactStillHasCodes: withCodes,
-  currentUnevaluatedHasCodes: !cur.evaluated && curHasCodes,
+  retiredLeakCount: leaks.length,
+  retiredLeaks: leaks.slice(0,50),
   predictionCount: (s.predictions||[]).length,
   historyCount: (s.history||[]).length
 }));
+if(leaks.length)process.exitCode=1;
 NODE
 
 echo "===4 rds vs 3001==="

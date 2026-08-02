@@ -27,6 +27,16 @@ function sha256Text(text) {
   return crypto.createHash("sha256").update(text).digest("hex");
 }
 
+function optsDataRootFromFile(filePath) {
+  // freeze 通常在 data/backups/；算法项目仍在 data/algorithm-projects/
+  const resolved = path.resolve(filePath);
+  if (resolved.includes(`${path.sep}data${path.sep}`)) {
+    const idx = resolved.lastIndexOf(`${path.sep}data${path.sep}`);
+    return resolved.slice(0, idx + `${path.sep}data`.length);
+  }
+  return path.join("/root", "penta5-runner", "data");
+}
+
 function toMysqlDateTime(value) {
   if (!value) return null;
   const d = new Date(value);
@@ -101,7 +111,36 @@ async function upsertDraws(conn, history) {
   return n;
 }
 
-async function upsertStates(conn, state) {
+function collectAlgoProjectModules(state) {
+  const out = [];
+  const snaps = state && state.algorithmProjectSnapshots;
+  if (snaps && typeof snaps === "object") {
+    Object.keys(snaps).forEach((id) => {
+      if (snaps[id] === undefined) return;
+      out.push(["algoProject:" + String(id), "dict", snaps[id]]);
+    });
+  }
+  return out;
+}
+
+function loadAlgoProjectsFromDisk(dataRoot) {
+  const out = {};
+  try {
+    const root = path.join(dataRoot, "algorithm-projects");
+    if (!fs.existsSync(root)) return out;
+    for (const name of fs.readdirSync(root)) {
+      const file = path.join(root, name, "state.json");
+      if (!fs.existsSync(file)) continue;
+      try {
+        out[name] = JSON.parse(fs.readFileSync(file, "utf8"));
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return out;
+}
+
+async function upsertStates(conn, state, options) {
+  const opts = options && typeof options === "object" ? options : {};
   const modules = [
     ["modelWatchdog", "dict", state.modelWatchdog],
     ["modelSelectionLocks", "dict", state.modelSelectionLocks],
@@ -111,7 +150,18 @@ async function upsertStates(conn, state) {
     ["currentPrediction", "dict", state.currentPrediction],
     ["lastSync", "dict", state.lastSync],
     ["lastError", "dict", state.lastError],
+    ["algorithmProjectHealth", "dict", state.algorithmProjectHealth],
+    ["dailyStreakLedger", "dict", state.dailyStreakLedger],
+    ["tipReady", "scalar", state.tipReady],
   ];
+  let algoMods = collectAlgoProjectModules(state);
+  if (!algoMods.length && opts.dataRoot) {
+    const fromDisk = loadAlgoProjectsFromDisk(opts.dataRoot);
+    Object.keys(fromDisk).forEach((id) => {
+      algoMods.push(["algoProject:" + id, "dict", fromDisk[id]]);
+    });
+  }
+  modules.push(...algoMods);
   let n = 0;
   for (const [key, type, body] of modules) {
     if (body === undefined) continue;
@@ -123,7 +173,7 @@ async function upsertStates(conn, state) {
          state_type=VALUES(state_type),
          raw_json=VALUES(raw_json),
          updated_at=CURRENT_TIMESTAMP`,
-      [key, type, JSON.stringify(body)]
+      [String(key).slice(0, 191), type, JSON.stringify(body)]
     );
     n += 1;
   }
@@ -317,7 +367,8 @@ async function importOneFile(conn, filePath) {
   );
 
   const draws = await upsertDraws(conn, history);
-  const states = await upsertStates(conn, state);
+  const dataRoot = optsDataRootFromFile(filePath);
+  const states = await upsertStates(conn, state, { dataRoot });
   const counters = await upsertCounters(
     conn,
     state.counters || {},

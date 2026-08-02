@@ -1,0 +1,10 @@
+{
+  "name": "penta5-runner-lint",
+  "private": true,
+  "scripts": {
+    "lint": "eslint algorithms api --ignore-pattern api/node_modules --max-warnings 1000"
+  },
+  "devDependencies": {
+    "eslint": "^9.32.0"
+  }
+}

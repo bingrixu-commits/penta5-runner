@@ -13,14 +13,8 @@ function txtTodayKey(){
   function p(n){return n<10?"0"+n:String(n);}
   return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate());
 }
-function txtRecentExactCodeList(limit){
-  if(typeof global.__penta5AttackTxtRecentExactCodeList==="function"){
-    try{return global.__penta5AttackTxtRecentExactCodeList(limit)||[];}catch(e){return [];}
-  }
-  return [];
-}
-function recentExactCodeWindowIsMax(value){
-  return String(value||"").toLowerCase()==="max"||/最大|全部|MAX/i.test(String(value||""));
+function txtShotHasRetiredFourCodeToken(text){
+  return /除(?:旧码|重复码|历史码)(?:300|500|800|1000|1300|最大|全部|MAX)/i.test(String(text||""));
 }
 
 function txtRandomDigitFileName(len){
@@ -220,6 +214,42 @@ function txtShotExcludePairs(text){
   return out;
 }
 
+/** 合尾「除百十个合6」→保留码「百十个合012345789」；裸「除05」→「除对数05」（定位池缩短口径，不改算法选型） */
+function txtCanonicalizeAttackHeweiAndDuishu(raw){
+  var text=String(raw==null?"":raw).replace(/\s+/g,"");
+  if(!text)return text;
+  text=text.replace(/除(千百十合|百十个合|千百个合|千十个合|千百十个合|万十个合)(\d)/g,function(_m,label,digit){
+    return label+("1234567890".split(String(digit)).join(""));
+  });
+  text=text.replace(/除(\d{2})(?!\d)/g,function(m,digits,offset){
+    var before=text.slice(Math.max(0,offset-6),offset);
+    if(/对数$/.test(before)||/跨度$/.test(before)||/和值$/.test(before)||/(?:^|[^和])值$/.test(before))return m;
+    if(/合$/.test(before))return m;
+    return "除对数"+digits;
+  });
+  return text;
+}
+
+/**
+ * 攻击语对数强制对齐面板「开奖号码下 · 三对数排除 · 本期排除」。
+ * pair 必须是两位数字；只改除对数片段，不动定位/合尾/二数合选型。
+ */
+function txtApplyPanelThreeDuishuPair(raw,pair){
+  var text=txtCanonicalizeAttackHeweiAndDuishu(raw);
+  var selected=String(pair==null?"":pair).replace(/\D/g,"").slice(0,2);
+  if(!/^\d{2}$/.test(selected))return text;
+  var hadTail=/各$/.test(text);
+  if(hadTail)text=text.replace(/各+$/,"");
+  // 清掉旧除对数/对数（保留含对数/中对数）
+  text=text.replace(/含对数\d{2,3}(?:[-.、~/]\d{2,3})*/g,"\u0001$&\u0001");
+  text=text.replace(/中对数\d{2,3}(?:[-.、~/]\d{2,3})*/g,"\u0002$&\u0002");
+  text=text.replace(/(?:除对数|对数)\d{2,3}(?:[-.、~/]\d{2,3})*/g,"");
+  text=text.replace(/\u0001/g,"").replace(/\u0002/g,"");
+  text=text+"除对数"+selected;
+  if(hadTail||/三定|四定/.test(text))text=text.replace(/各*$/,"")+"各";
+  return text;
+}
+
 function txtShotExcludeSums(text){
   var out=[],match,regex=/除(?:和值|值)(\d+)(?![\d到至-])/g;
   while((match=regex.exec(String(text||"")))){
@@ -278,15 +308,6 @@ function txtShotExcludeSizeRatios(text){
   return out;
 }
 
-function txtShotExcludeRecentExactWindows(text){
-  var out=[],match,regex=/除(?:旧码|重复码|历史码)(300|500|800|1000|1300|最大|全部|MAX)/gi;
-  while((match=regex.exec(String(text||"")))){
-    var value=recentExactCodeWindowIsMax(match[1])?"最大":match[1];
-    if(out.indexOf(value)<0)out.push(value);
-  }
-  return out;
-}
-
 function txtShotHitPairs(text){
   var out=[],match,regex=/(?:含对数|中对数)(\d{2,3}(?:[-.、~/]\d{2,3})*)/g;
   while((match=regex.exec(String(text||"")))){
@@ -307,16 +328,17 @@ function txtShotLooksLikeShortExclusionCommand(text){
   var raw=txtShotNormalize(text);
   if(!raw||txtShotLooksLikeFullModel(raw))return false;
   if(/(?:排除|避开|杀|除)/.test(raw))return true;
-  if(/(?:二数合|三数合|和值|跨度|旧码|重复码|历史码|对数)/.test(raw))return true;
+  if(/(?:二数合|三数合|和值|跨度|对数)/.test(raw))return true;
   return false;
 }
 
 function txtShotRuleFromText(text,options){
   var raw=txtShotNormalize(text);
+  if(txtShotHasRetiredFourCodeToken(raw))return {error:"完整四码旧码回删已下线，请删除该指令后重试。"};
   if(!txtShotLooksLikeFullModel(raw))return null;
   var opts=options&&typeof options==="object"?options:{};
   var tailEnds=["千百十二数合","二数合","三数合","取二兄弟","兄弟号","除","含","中","各"];
-  var heweiEnds=["千百十合","千百合","千百个合","百十个合","千百十个合"].concat(tailEnds);
+  var heweiEnds=["千百十合","千百合","千百个合","千十个合","万十个合","百十个合","千百十个合"].concat(tailEnds);
   var rule={
     raw:raw,
     qian:txtShotRequiredDigits(raw,"千",["百"]),
@@ -324,9 +346,11 @@ function txtShotRuleFromText(text,options){
     shi:txtShotRequiredDigits(raw,"十",["个"]),
     ge:txtShotRequiredDigits(raw,"个",["四定"].concat(heweiEnds)),
     // 千百十合；兼容别名「千百合」
-    qianBaiShiHewei:txtShotOptionalDigitsFirst(raw,["千百十合","千百合"],["千百个合","百十个合","千百十个合"].concat(tailEnds)),
+    qianBaiShiHewei:txtShotOptionalDigitsFirst(raw,["千百十合","千百合"],["千百个合","千十个合","万十个合","百十个合","千百十个合"].concat(tailEnds)),
     // 千百个合：千+百+个（跳过十位）
-    qianBaiGeHewei:txtShotOptionalDigits(raw,"千百个合",["百十个合","千百十个合"].concat(tailEnds)),
+    qianBaiGeHewei:txtShotOptionalDigits(raw,"千百个合",["千十个合","万十个合","百十个合","千百十个合"].concat(tailEnds)),
+    // 千十个合 / 万十个合：千+十+个（跳过百位）
+    wanBaiShiHewei:txtShotOptionalDigitsFirst(raw,["千十个合","万十个合"],["百十个合","千百十个合"].concat(tailEnds)),
     baiShiGeHewei:txtShotOptionalDigits(raw,"百十个合",["千百十个合"].concat(tailEnds)),
     qianBaiShiGeHewei:txtShotOptionalDigits(raw,"千百十个合",tailEnds),
     twoHeweiHit:(function(){
@@ -345,7 +369,6 @@ function txtShotRuleFromText(text,options){
     consecutiveAvoid:txtShotExcludeConsecutiveShapes(raw),
     parityRatioAvoid:txtShotExcludeParityRatios(raw),
     sizeRatioAvoid:txtShotExcludeSizeRatios(raw),
-    recentExactCodeAvoid:txtShotExcludeRecentExactWindows(raw),
     hitPairs:txtShotHitPairs(raw)
   };
   txtApplyShortShotExclusions(raw,rule);
@@ -518,17 +541,6 @@ function txtShotCodeSizeRatio(code){
   return String(big)+"大"+String(4-big)+"小";
 }
 
-function txtShotPrepareRecentExactLookups(rule){
-  var lookups=Object.create(null);
-  (rule&&Array.isArray(rule.recentExactCodeAvoid)?rule.recentExactCodeAvoid:[]).forEach(function(limit){
-    var key=String(limit);
-    var lookup=Object.create(null);
-    txtRecentExactCodeList(limit).forEach(function(code){lookup[String(code)]=true;});
-    lookups[key]=lookup;
-  });
-  return lookups;
-}
-
 function txtShotPassesRule(code,rule){
   var a=code.charAt(0),b=code.charAt(1),c=code.charAt(2),d=code.charAt(3);
   if(!txtShotContains(rule.qian,a))return false;
@@ -571,11 +583,6 @@ function txtShotPassesRule(code,rule){
   for(var sz=0;sz<rule.sizeRatioAvoid.length;sz++){
     if(txtShotCodeSizeRatio(code)===String(rule.sizeRatioAvoid[sz]))return false;
   }
-  for(var old=0;old<rule.recentExactCodeAvoid.length;old++){
-    var oldLimit=rule.recentExactCodeAvoid[old];
-    var oldLookup=rule._recentExactCodeLookups&&rule._recentExactCodeLookups[String(oldLimit)];
-    if(oldLookup?oldLookup[String(code)]===true:txtRecentExactCodeList(oldLimit).indexOf(String(code))>=0)return false;
-  }
   for(var j=0;j<rule.pairs.length;j++){
     if(txtShotCodeContainsPair(code,rule.pairs[j]))return false;
   }
@@ -587,16 +594,9 @@ function txtShotPassesRule(code,rule){
 
 function txtShotGenerateCodes(rule){
   var out=[];
-  var previousLookups=rule._recentExactCodeLookups;
-  rule._recentExactCodeLookups=txtShotPrepareRecentExactLookups(rule);
-  try{
-    for(var i=0;i<10000;i++){
-      var code=("0000"+i).slice(-4);
-      if(txtShotPassesRule(code,rule))out.push(code);
-    }
-  }finally{
-    if(previousLookups===undefined)delete rule._recentExactCodeLookups;
-    else rule._recentExactCodeLookups=previousLookups;
+  for(var i=0;i<10000;i++){
+    var code=("0000"+i).slice(-4);
+    if(txtShotPassesRule(code,rule))out.push(code);
   }
   return out;
 }
@@ -621,7 +621,6 @@ function txtShotRuleSummary(rule){
     +(rule.consecutiveAvoid.length?" 除"+rule.consecutiveAvoid.join("、除"):"")
     +(rule.parityRatioAvoid.length?" 除奇偶比"+rule.parityRatioAvoid.join("、除奇偶比"):"")
     +(rule.sizeRatioAvoid.length?" 除大小比"+rule.sizeRatioAvoid.join("、除大小比"):"")
-    +(rule.recentExactCodeAvoid.length?" 除旧码"+rule.recentExactCodeAvoid.join("、除旧码"):"")
     +(rule.pairs.length?" 除对数"+rule.pairs.join("-"):"")
     +(rule.hitPairs.length?" 含对数"+rule.hitPairs.join("-"):"");
 }
@@ -664,7 +663,8 @@ function txtShortShotResultFromInput(raw,day){
 function convertAttackText(raw,options){
   options=options&&typeof options==="object"?options:{};
   var day=options.day||txtTodayKey();
-  var text=String(raw==null?"":raw);
+  var text=txtCanonicalizeAttackHeweiAndDuishu(String(raw==null?"":raw));
+  if(options.panelThreeDuishuPair)text=txtApplyPanelThreeDuishuPair(text,options.panelThreeDuishuPair);
   if(!text.trim())return {ok:false,message:"请粘贴攻击语后再转换。"};
   var shot=txtShotResultFromInput(text,day,options);
   if(shot)return shot;
@@ -673,8 +673,15 @@ function convertAttackText(raw,options){
   return {ok:false,message:"未识别为完整攻击语。请粘贴含「千…百…十…个…四定」的文本，或短指令如「除千1除对数79」。"};
 }
 
-var THREE_DING_REMAIN_MIN=490;
-var THREE_DING_REMAIN_MAX=499;
+var THREE_DING_FULL_GROUP_SIZE=1000;
+var THREE_DING_DELETE_TARGET=200;
+var THREE_DING_REMAIN_TARGET=800;
+var THREE_DING_HISTORY_MIN=200;
+/** 回删只扫阿里云最近 N 期（四种三定统一） */
+var THREE_DING_HISTORY_SCAN_LIMIT=200;
+// Compatibility aliases for existing callers. The target is fixed and cannot be overridden.
+var THREE_DING_REMAIN_MIN=THREE_DING_REMAIN_TARGET;
+var THREE_DING_REMAIN_MAX=THREE_DING_REMAIN_TARGET;
 var THREE_DING_POS_KEYS=["qian","bai","shi","ge"];
 var THREE_DING_POS_LABELS=["千","百","十","个"];
 var THREE_DING_COMBOS=[
@@ -748,7 +755,8 @@ function txtThreeDingResolveCombo(text,found){
     var byPos=txtThreeDingComboByPositions(present);
     if(byPos)return byPos;
   }
-  if(present.length===4)return txtThreeDingComboByName("千百十");
+  // 四位齐全（抓码器常出千…百…十…个…四定）：回删默认按百十个，禁止静默丢掉「个」改走千百十
+  if(present.length===4)return txtThreeDingComboByName("百十个");
   if(has["百"]&&has["十"]&&has["个"]&&!has["千"])return txtThreeDingComboByName("百十个");
   if(has["千"]&&has["十"]&&has["个"]&&!has["百"])return txtThreeDingComboByName("千十个");
   if(has["千"]&&has["百"]&&has["个"]&&!has["十"])return txtThreeDingComboByName("千百个");
@@ -765,7 +773,7 @@ function txtThreeDingExtractTail(text){
     if(at>=0&&(idx<0||at<idx))idx=at;
   });
   if(idx>=0)return text.slice(idx);
-  var heweiMarks=["千百十合","千百合","千百个合","百十个合","千百十个合","千百十二数合","二数合","三数合","除","含对数","中对数","对数"];
+  var heweiMarks=["千百十合","百十合","千百合","千百个合","千十个合","万十个合","百十个合","千百十个合","千百十二数合","二数合","三数合","合","除","含对数","中对数","对数"];
   heweiMarks.forEach(function(mark){
     var at=txtShotSegmentStartIndex(text,mark);
     if(at<0)at=text.indexOf(mark);
@@ -782,7 +790,7 @@ function txtThreeDingExtractTail(text){
  * 返回 {ok, combo, normalized, found} 或 {error}
  */
 function txtNormalizeThreeDingAttackText(raw){
-  var prep=txtThreeDingPreprocess(raw);
+  var prep=txtThreeDingPreprocess(txtCanonicalizeAttackHeweiAndDuishu(raw));
   var text=prep.text;
   var found=prep.found;
   var combo=txtThreeDingResolveCombo(text,found);
@@ -807,6 +815,13 @@ function txtNormalizeThreeDingAttackText(raw){
   }else if(tail.indexOf("四定")<0){
     tail="四定"+tail;
   }
+  // 三定旧短写「百十合」按当前三位合尾处理；存入百十个合字段供三定过滤复用。
+  tail=tail.replace(/(^|[^千除])百十合(?=\d)/g,"$1百十个合");
+  if(/(^|[^千])百十合(?=\d)/.test(tail)){
+    return {error:"三定攻击语中的“百十合”位置不明确，已停止生成。"};
+  }
+  // 三定框架短写：合→千百十合（头已有千百十，展示不重复）；二数合保持短写即可
+  tail=tail.replace(/四定合(\d+)/,"四定千百十合$1");
   return {
     ok:true,
     combo:combo,
@@ -844,6 +859,9 @@ function txtFormatThreeDingGeList(tokens,limit,comboOrBlank){
     else if(comboOrBlank===0)combo=txtThreeDingComboByName("百十个");
     else if(comboOrBlank===1)combo=txtThreeDingComboByName("千十个");
     else if(comboOrBlank===2)combo=txtThreeDingComboByName("千百个");
+  }else if(typeof comboOrBlank==="string"){
+    // 桌面回删常传 comboName 字符串；以前忽略字符串会默认成千百十，千百个被画成 037x（错）
+    combo=txtThreeDingComboByName(comboOrBlank);
   }else if(comboOrBlank&&typeof comboOrBlank==="object"){
     combo=comboOrBlank.name?comboOrBlank:txtThreeDingComboByName(comboOrBlank.comboName||comboOrBlank.name)
       ||(comboOrBlank.positions?txtThreeDingComboByPositions(comboOrBlank.positions):null);
@@ -854,7 +872,8 @@ function txtFormatThreeDingGeList(tokens,limit,comboOrBlank){
     var t=txtThreeDingUnmaskToken(token);
     if(t&&!seen[t]){seen[t]=true;list.push(t);}
   });
-  list.sort(function(a,b){return Number(a)-Number(b);});
+  list.sort(function(a,b){return a<b?-1:a>b?1:0;});
+  // limit 只允许用于预览；正式输出必须传 null/undefined
   if(limit!=null)list=list.slice(0,Math.max(0,Number(limit||0)));
   if(!list.length)return "";
   return list.map(function(code){return txtThreeDingMaskToken(code,combo,"x");}).join(",")+"各";
@@ -866,11 +885,36 @@ function txtThreeDingSortTokens(tokens){
     var t=txtThreeDingUnmaskToken(token);
     if(t&&!seen[t]){seen[t]=true;list.push(t);}
   });
-  list.sort(function(a,b){return Number(a)-Number(b);});
+  // 三位定长数字串按字典序=数值升序，避免 Number() 丢前导零造成观感跳码
+  list.sort(function(a,b){return a<b?-1:a>b?1:0;});
   return list;
 }
 
-/** 499 组分两次复制：先 300，再剩余；每段独立「逗号+各」 */
+/** 校验：无重复、严格升序、组数吻合；任何截断/跳码一律失败 */
+function txtThreeDingAssertFullSorted(list,expectedCount,label){
+  list=Array.isArray(list)?list:[];
+  var tag=label||"三定结果";
+  if(expectedCount!=null&&list.length!==Number(expectedCount)){
+    return {ok:false,message:tag+"组数不符：期望 "+expectedCount+"，实际 "+list.length+"（疑似截断）。"};
+  }
+  var seen={};
+  for(var i=0;i<list.length;i++){
+    var code=String(list[i]||"");
+    if(!/^\d{3}$/.test(code)){
+      return {ok:false,message:tag+"含非法码："+code};
+    }
+    if(seen[code]){
+      return {ok:false,message:tag+"含重复码："+code+"（禁止跳码/截断伪装）。"};
+    }
+    seen[code]=true;
+    if(i>0&&!(list[i-1]<code)){
+      return {ok:false,message:tag+"未严格升序：…"+list[i-1]+","+code+"…（禁止跳码乱序）。"};
+    }
+  }
+  return {ok:true};
+}
+
+/** 最多 800 组分两次复制：先 300，再剩余；每段独立「逗号+各」 */
 function txtThreeDingCopyParts(tokens,firstSize,combo){
   var list=txtThreeDingSortTokens(tokens);
   var n=Math.max(1,Number(firstSize||300)||300);
@@ -914,6 +958,7 @@ function txtThreeDingPassesRule(code3,rule,combo){
   if(!txtShotContains(rule.qianBaiShiHewei,hewei))return false;
   if(!txtShotContains(rule.baiShiGeHewei,hewei))return false;
   if(!txtShotContains(rule.qianBaiGeHewei,hewei))return false;
+  if(!txtShotContains(rule.wanBaiShiHewei||"0123456789".split(""),hewei))return false;
   // 二数合按三定三位两两合尾
   if(!txtShotAnyTwoHeweiHit(code3+"0",rule.twoHeweiHit,[0,1,2]))return false;
   var shapes=rule.shapes||[];
@@ -971,10 +1016,31 @@ function txtThreeDingHistoryCode(row,combo){
   if(nums.length<3)return "";
   var needGe=combo.positions.indexOf(3)>=0;
   if(needGe&&nums.length<4)return "";
+  if(combo.positions.some(function(pos){return pos<0||pos>3;})){
+    return "";
+  }
   var code=combo.positions.map(function(pos){
     return String(nums[pos]==null?"":nums[pos]).replace(/\D/g,"").charAt(0)||"";
   }).join("");
   return /^\d{3}$/.test(code)?code:"";
+}
+function txtValidateThreeDingHistory(history){
+  var rows=Array.isArray(history)?history:[];
+  var periods=[];
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i]||{};
+    var period=String(row.period||row.issue||row.uid||"");
+    if(!/^\d+$/.test(period))return "RDS 历史第"+(i+1)+"条期号无效，已停止回删。";
+    if(!Array.isArray(row.numbers)||row.numbers.length<4||row.numbers.slice(0,4).some(function(value){return !/^\d$/.test(String(value));})){
+      return "RDS 历史第"+(i+1)+"条号码字段无效，已停止回删。";
+    }
+    periods.push(period);
+  }
+  if(Object.keys(periods.reduce(function(set,period){set[period]=true;return set;},{})).length!==periods.length){
+    return "RDS 历史存在重复期号，已停止回删。";
+  }
+  for(var j=1;j<periods.length;j++)if(Number(periods[j-1])<=Number(periods[j]))return "RDS 历史不是严格最新到最旧排序，已停止回删。";
+  return "";
 }
 
 function txtThreeDingResultMeta(combo,rule,extra){
@@ -992,14 +1058,53 @@ function txtThreeDingResultMeta(combo,rule,extra){
 }
 
 /**
- * 三定：先按攻击语排除，再用 RDS 真实旧码（对应三位）回删到 490–499。
+ * 将「各」封尾的多段三定攻击语拆开。多段输入必须逐段通过三定识别，
+ * 任一段无效都明确报错，禁止静默丢段后继续生成不完整组合。
+ */
+function txtThreeDingIndependentSegments(raw){
+  var source=String(raw==null?"":raw);
+  var rawParts=source.split(/各+/).map(function(part){return String(part||"").trim();}).filter(Boolean);
+  var parts=[];
+  rawParts.forEach(function(part){
+    if(parts.length){
+      var hasPositionBlock=/(?:千|百|十|个)\d/.test(part);
+      // 「各除...」「各含...」是上一段的追加尾条件，不是第二个三定组合。
+      // 只有合并后仍能通过完整三定解析，才允许自动并回；其他无效内容继续报错。
+      if(!hasPositionBlock&&txtNormalizeThreeDingAttackText(parts[parts.length-1]+part).ok){
+        parts[parts.length-1]+=part;
+        return;
+      }
+    }
+    parts.push(part);
+  });
+  if(parts.length<2)return {ok:true,segments:[parts[0]||source]};
+  var invalid=[];
+  parts.forEach(function(part,index){
+    var prepared=txtNormalizeThreeDingAttackText(part);
+    if(!prepared||!prepared.ok){
+      invalid.push("第"+(index+1)+"段"+(prepared&&prepared.error?("（"+prepared.error+"）"):""));
+    }
+  });
+  if(invalid.length){
+    return {
+      ok:false,
+      message:"多段三定存在无效内容："+invalid.join("、")+"。已停止转换，不会忽略该段；请修正后重试。"
+    };
+  }
+  return {ok:true,segments:parts};
+}
+
+/**
+ * 三定单组合：完整 1000 组用 RDS 真实旧码回删 200、剩 800；过滤后不超过 800 原样保留。
  * 支持千百十 / 百十个 / 千十个(万十个) / 千百个；空位输出 x。
  * history: [{period, numbers:[q,b,s,g]}, ...] 最新在前
  */
-function convertThreeDingBackDelete(raw,history,options){
+function convertThreeDingBackDeleteSingle(raw,history,options){
   options=options&&typeof options==="object"?options:{};
   var day=options.day||txtTodayKey();
   var text=String(raw==null?"":raw);
+  if(options.panelThreeDuishuPair)text=txtApplyPanelThreeDuishuPair(text,options.panelThreeDuishuPair);
+  else text=txtCanonicalizeAttackHeweiAndDuishu(text);
   if(!text.trim())return {ok:false,message:"请粘贴三定攻击语后再转换。"};
   var prepared=txtNormalizeThreeDingAttackText(text);
   if(prepared&&prepared.error)return {ok:false,message:prepared.error};
@@ -1012,40 +1117,8 @@ function convertThreeDingBackDelete(raw,history,options){
   var afterFilter=filtered.length;
   if(!afterFilter)return {ok:false,message:"排除后无剩余号码，请检查攻击语。"};
 
-  var remainMin=Number(options.remainMin!=null?options.remainMin:THREE_DING_REMAIN_MIN);
-  var remainMax=Number(options.remainMax!=null?options.remainMax:THREE_DING_REMAIN_MAX);
-  if(!isFinite(remainMin))remainMin=THREE_DING_REMAIN_MIN;
-  if(!isFinite(remainMax))remainMax=THREE_DING_REMAIN_MAX;
-  if(remainMax<remainMin){var swap=remainMin;remainMin=remainMax;remainMax=swap;}
-
-  var target;
-  if(options.target!=null&&isFinite(Number(options.target))){
-    target=Math.max(remainMin,Math.min(remainMax,Math.floor(Number(options.target))));
-  }else if(afterFilter<remainMin){
-    var tokensLow=txtThreeDingSortTokens(filtered);
-    var textLow=txtFormatThreeDingGeList(tokensLow,null,combo);
-    var partsLow=txtThreeDingCopyParts(tokensLow,300,combo);
-    return txtThreeDingResultMeta(combo,rule,{
-      count:tokensLow.length,
-      tokens:tokensLow,
-      text:textLow,
-      preview:txtFormatThreeDingGeList(tokensLow,120,combo),
-      attackText:textLow,
-      copyParts:partsLow,
-      fileName:txtFileNameByCount(3,day,tokensLow.length),
-      source:"three-ding-backdelete-underflow",
-      label:combo.name+"三定TXT（排除后不足490）",
-      afterFilter:afterFilter,
-      targetRemain:null,
-      deletedUnique:0,
-      scanned:0,
-      note:combo.name+"三定排除后仅剩 "+afterFilter+" 组，低于 "+remainMin+"，未做旧码回删；空位 x；输出数值升序不跳码；"+txtShotRuleSummary(rule)
-    });
-  }else if(afterFilter<=remainMax){
-    target=txtRandomIntInclusive(remainMin,afterFilter);
-  }else{
-    target=txtRandomIntInclusive(remainMin,remainMax);
-  }
+  // 旧版 options.target/remainMin/remainMax 不再影响结果，防止入口覆盖统一目标。
+  var target=Math.min(afterFilter,THREE_DING_REMAIN_TARGET);
 
   var set={};
   filtered.forEach(function(code){set[code]=true;});
@@ -1053,7 +1126,16 @@ function convertThreeDingBackDelete(raw,history,options){
   var deletedUnique=0;
   var scanned=0;
   var seenOld={};
-  var rows=Array.isArray(history)?history:[];
+  // 对齐面板：从最新往更早扫，重复旧码跳过并继续补扫，直到唯一删满目标或历史用尽（不限死只扫200行）
+  var rows=txtThreeDingEnsureNewestFirst(history);
+  var historyError=txtValidateThreeDingHistory(rows.slice(0,Math.min(rows.length,THREE_DING_HISTORY_SCAN_LIMIT)));
+  if(historyError)return {ok:false,message:historyError};
+  if(remaining>target&&rows.length<THREE_DING_HISTORY_MIN){
+    return {ok:false,message:"真实旧号不足：RDS 历史不足 "+THREE_DING_HISTORY_MIN+" 期，无法可靠完成真实旧码回删；当前仅 "+rows.length+" 期，已停止，不截断凑数。"};
+  }
+  if(remaining>target&&(!rows.length)){
+    return {ok:false,message:"无 RDS 历史，无法真实回删。禁止截断凑数。"};
+  }
 
   for(var i=0;i<rows.length&&remaining>target;i++){
     scanned+=1;
@@ -1066,16 +1148,34 @@ function convertThreeDingBackDelete(raw,history,options){
     deletedUnique+=1;
   }
 
-  if(remaining>target){
+  if(remaining!==target){
     return {
       ok:false,
-      message:"真实旧号不足：排除后 "+afterFilter+" 组，目标剩 "+target+" 组，已删唯一旧码 "+deletedUnique+" 个（扫 "+scanned+" 期），仍剩 "+remaining+" 组；不做截断、不伪造删号。请加大 /converter-history 窗口或减少排除。"
+      message:"真实旧号不足：排除后 "+afterFilter+" 组，目标剩 "+target+" 组，已删唯一旧码 "+deletedUnique+" 个（扫 "+scanned+" 期/池"+rows.length+"），仍剩 "+remaining+" 组；不做截断、不伪造删号、不跳码凑数。请加大历史窗口或减少排除。"
     };
+  }
+  if(afterFilter>target&&deletedUnique!==(afterFilter-target)){
+    return {ok:false,message:"回删未真正完成：应删 "+(afterFilter-target)+"，实删 "+deletedUnique+"；拒绝截断假结果。"};
   }
 
   var left=txtThreeDingSortTokens(Object.keys(set));
+  var assertLeft=txtThreeDingAssertFullSorted(left,target,"回删结果");
+  if(!assertLeft.ok)return {ok:false,message:assertLeft.message};
+  if(left.length!==target||deletedUnique!==(afterFilter-left.length)){
+    return {ok:false,message:"回删计数不一致：已删 "+deletedUnique+"，排除后 "+afterFilter+"，剩余 "+left.length+"，目标 "+target+"（拒绝截断结果）。"};
+  }
+  if(afterFilter===THREE_DING_FULL_GROUP_SIZE&&(
+    deletedUnique!==THREE_DING_DELETE_TARGET||left.length!==THREE_DING_REMAIN_TARGET
+  )){
+    return {
+      ok:false,
+      message:combo.name+"三定完整组断言失败：必须真实回删 "+THREE_DING_DELETE_TARGET+
+        " 组、现剩 "+THREE_DING_REMAIN_TARGET+" 组。"
+    };
+  }
   var outText=txtFormatThreeDingGeList(left,null,combo);
   var copyParts=txtThreeDingCopyParts(left,300,combo);
+  // 正式 text / attackText 必须全量；分段复制是额外字段，不是截断后的主结果
   return txtThreeDingResultMeta(combo,rule,{
     count:left.length,
     tokens:left,
@@ -1084,14 +1184,292 @@ function convertThreeDingBackDelete(raw,history,options){
     attackText:outText,
     copyParts:copyParts,
     fileName:txtFileNameByCount(3,day,left.length),
-    source:"three-ding-backdelete-490-499",
-    label:combo.name+"三定转换（回删"+remainMin+"-"+remainMax+"）",
+    source:"three-ding-backdelete-fixed-800",
+    label:combo.name+"三定转换（回删200剩800）",
     afterFilter:afterFilter,
     targetRemain:target,
     deletedUnique:deletedUnique,
     scanned:scanned,
-    note:combo.name+"三定排除后 "+afterFilter+" 组 → 旧码回删目标剩 "+target+"，已删唯一旧码 "+deletedUnique+"，扫 "+scanned+" 期，现剩 "+left.length+" 组；空位 x；输出数值升序不跳码；可分两段复制（先300再剩余）；"+txtShotRuleSummary(rule)
+    realBackDelete:deletedUnique>0,
+    truncated:false,
+    note:combo.name+"三定排除后 "+afterFilter+" 组 → "+(afterFilter>THREE_DING_REMAIN_TARGET?("真实旧码回删至 "+THREE_DING_REMAIN_TARGET):"不超过800原样保留")+"，已删唯一旧码 "+deletedUnique+"，扫 "+scanned+" 期（池"+rows.length+"，重复往更早补），现剩 "+left.length+" 组（完整1000组固定回删200剩800；不补码、无截断无跳码）；空位 x；复制请用「复制全部」或下载TXT；"+txtShotRuleSummary(rule)
   });
+}
+
+function txtThreeDingMultiBackDeleteResult(groups,day){
+  var list=(Array.isArray(groups)?groups:[]).filter(function(group){return group&&group.ok;});
+  var total=list.reduce(function(sum,group){return sum+Number(group.count||0);},0);
+  var afterFilter=list.reduce(function(sum,group){return sum+Number(group.afterFilter||0);},0);
+  var deletedUnique=list.reduce(function(sum,group){return sum+Number(group.deletedUnique||0);},0);
+  var scanned=list.reduce(function(sum,group){return sum+Number(group.scanned||0);},0);
+  return {
+    ok:true,
+    width:3,
+    multiCombo:true,
+    groups:list,
+    count:total,
+    fileName:txtFileNameByCount(3,day,total),
+    source:"three-ding-backdelete-multi-combo",
+    label:"三定多位置组合转换（独立真实回删）",
+    afterFilter:afterFilter,
+    deletedUnique:deletedUnique,
+    scanned:scanned,
+    truncated:false,
+    note:"已按位置组合独立过滤、独立使用对应三位 RDS 旧码回删；各组合不会交叉叠加删除条件。请选择下方组合后分别复制或下载。"
+  };
+}
+
+/**
+ * 多组合入口：官方攻击语以「各」封尾时，每个有效位置组合必须独立过滤、独立回删。
+ * 单组合仍走原返回格式，保持既有页面和复制逻辑兼容。
+ */
+function convertThreeDingBackDelete(raw,history,options){
+  options=options&&typeof options==="object"?options:{};
+  var split=txtThreeDingIndependentSegments(raw);
+  if(!split||!split.ok)return {ok:false,message:String(split&&split.message||"多段三定拆分失败。")};
+  var segments=split.segments;
+  if(segments.length<=1)return convertThreeDingBackDeleteSingle(raw,history,options);
+  var groups=[];
+  for(var i=0;i<segments.length;i++){
+    var result=convertThreeDingBackDeleteSingle(segments[i],history,options);
+    if(!result||!result.ok){
+      var prepared=txtNormalizeThreeDingAttackText(segments[i]);
+      var name=prepared&&prepared.combo&&prepared.combo.name?prepared.combo.name:("第"+(i+1)+"段");
+      return {ok:false,message:name+"三定独立回删失败："+String(result&&result.message||"未知错误")};
+    }
+    groups.push(result);
+  }
+  return txtThreeDingMultiBackDeleteResult(groups,options.day||txtTodayKey());
+}
+
+/**
+ * 本机回删口径（恢复旧手感）：
+ * 1) 本机先按攻击语生成/排除
+ * 2) 只删「今日」开奖命中（opentime 日期或期号前8位 YYYYMMDD）
+ * 3) 498 是底线：不少于 498；今日命中删完就停，不硬磨到 498
+ * 例：今日开过 485x，剩余有 485 → 删 485；若再删会低于 498 则不再删
+ */
+var THREE_DING_HIT_DELETE_FLOOR=498;
+
+function txtThreeDingEnsureNewestFirst(rows){
+  var list=Array.isArray(rows)?rows.slice():[];
+  list.sort(function(a,b){
+    return Number(String((b&&(b.period||b.issue||b.uid))||0)) - Number(String((a&&(a.period||a.issue||a.uid))||0));
+  });
+  return list;
+}
+
+/** 历史行归属日：优先 opentime 的 YYYY-MM-DD，否则期号前 8 位 */
+function txtThreeDingRowDayKey(row){
+  if(!row||typeof row!=="object")return "";
+  var ot=String(row.opentime||row.openTime||row.open_time||"");
+  var m=ot.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m)return m[1]+m[2]+m[3];
+  var p=String(row.period||row.issue||row.uid||"");
+  if(/^\d{8}/.test(p))return p.slice(0,8);
+  return "";
+}
+
+/** 今日日键：options.day → 最新一期归属日 → 本机日历日 */
+function txtThreeDingResolveTodayKey(rows,options){
+  options=options&&typeof options==="object"?options:{};
+  var forced=String(options.day||options.todayKey||"").replace(/\D/g,"");
+  if(/^\d{8}$/.test(forced))return forced;
+  var list=Array.isArray(rows)?rows:[];
+  for(var i=0;i<list.length;i++){
+    var k=txtThreeDingRowDayKey(list[i]);
+    if(/^\d{8}$/.test(k))return k;
+  }
+  return txtTodayKey();
+}
+
+function txtThreeDingFilterTodayRows(rows,dayKey){
+  var key=String(dayKey||"");
+  var list=Array.isArray(rows)?rows:[];
+  if(!/^\d{8}$/.test(key))return [];
+  return list.filter(function(row){return txtThreeDingRowDayKey(row)===key;});
+}
+
+function convertThreeDingHistoryHitDeleteSingle(raw,history,options){
+  options=options&&typeof options==="object"?options:{};
+  var floor=Math.max(0,Number(options.remainFloor!=null?options.remainFloor:THREE_DING_HIT_DELETE_FLOOR)||THREE_DING_HIT_DELETE_FLOOR);
+  var text=String(raw==null?"":raw);
+  if(options.panelThreeDuishuPair)text=txtApplyPanelThreeDuishuPair(text,options.panelThreeDuishuPair);
+  else text=txtCanonicalizeAttackHeweiAndDuishu(text);
+  if(!text.trim())return {ok:false,message:"请粘贴三定攻击语后再转换。"};
+  var prepared=txtNormalizeThreeDingAttackText(text);
+  if(prepared&&prepared.error)return {ok:false,message:prepared.error};
+  if(!prepared||!prepared.ok)return {ok:false,message:"未识别为三定攻击语。支持千百十 / 百十个 / 千十个(万十个) / 千百个；空位为 x。"};
+  var combo=prepared.combo;
+  var rule=txtShotRuleFromText(prepared.normalized,{twoHeweiScopeIndexes:[0,1,2]});
+  if(!rule)return {ok:false,message:"未识别为三定攻击语。"};
+  if(rule.error)return {ok:false,message:rule.error};
+  var filtered=txtThreeDingFilterCandidates(rule,combo);
+  var afterFilter=filtered.length;
+  if(!afterFilter)return {ok:false,message:"排除后无剩余号码，请检查攻击语。"};
+
+  var set={};
+  filtered.forEach(function(code){set[code]=true;});
+  var remaining=afterFilter;
+  var deletedUnique=0;
+  var scanned=0;
+  var hitSamples=[];
+  var stoppedAtFloor=false;
+  var seenOld={};
+  // 仍拉近 200 期做数据校验；真正删除只扫「今日」期
+  var pool=txtThreeDingEnsureNewestFirst(history).slice(0,THREE_DING_HISTORY_SCAN_LIMIT);
+  var historyError=txtValidateThreeDingHistory(pool);
+  if(historyError)return {ok:false,message:historyError};
+  if(!pool.length)return {ok:false,message:"无历史，无法回删。"};
+  if(pool.length<THREE_DING_HISTORY_MIN){
+    return {ok:false,message:"RDS 历史不足 "+THREE_DING_HISTORY_MIN+" 期（当前 "+pool.length+"），无法回删。"};
+  }
+  var day=txtThreeDingResolveTodayKey(pool,options);
+  var rows=txtThreeDingFilterTodayRows(pool,day);
+  if(!rows.length){
+    return {ok:false,message:"今日（"+day+"）无开奖记录可回删；请确认历史已刷新到当日。"};
+  }
+
+  for(var i=0;i<rows.length;i++){
+    scanned+=1;
+    var oldCode=txtThreeDingHistoryCode(rows[i],combo);
+    if(!oldCode)continue;
+    if(seenOld[oldCode])continue;
+    seenOld[oldCode]=true;
+    if(!set[oldCode])continue;
+    // 不少于 floor：再删会低于底线则停，不硬磨到 floor
+    if(remaining-1<floor){
+      stoppedAtFloor=true;
+      break;
+    }
+    delete set[oldCode];
+    remaining-=1;
+    deletedUnique+=1;
+    if(hitSamples.length<20){
+      hitSamples.push(String(rows[i].period||"")+"→"+oldCode);
+    }
+  }
+
+  var left=txtThreeDingSortTokens(Object.keys(set));
+  var outText=txtFormatThreeDingGeList(left,null,combo);
+  var copyParts=txtThreeDingCopyParts(left,300,combo);
+  var frontPeriod=rows[0]&&rows[0].period?String(rows[0].period):"";
+  var backPeriod=rows[rows.length-1]&&rows[rows.length-1].period?String(rows[rows.length-1].period):"";
+  return txtThreeDingResultMeta(combo,rule,{
+    count:left.length,
+    tokens:left,
+    codes:left,
+    text:outText,
+    preview:txtFormatThreeDingGeList(left,120,combo),
+    attackText:outText,
+    copyParts:copyParts,
+    fileName:txtFileNameByCount(3,day,left.length),
+    source:"three-ding-today-hit-delete-floor",
+    label:combo.name+"三定转换（今日命中删 · 不少于"+floor+"）",
+    afterFilter:afterFilter,
+    remainFloor:floor,
+    todayKey:day,
+    todayPeriodCount:rows.length,
+    deletedUnique:deletedUnique,
+    scanned:scanned,
+    scanFromPeriod:frontPeriod,
+    scanToPeriod:backPeriod,
+    hitSamples:hitSamples,
+    stoppedAtFloor:stoppedAtFloor,
+    realBackDelete:deletedUnique>0,
+    truncated:false,
+    note:combo.name+"本机排除后 "+afterFilter+" 组 → 今日"+day+"共"+rows.length+"期（"+frontPeriod+"→"+backPeriod+"）命中删 "+deletedUnique+" 组，现剩 "+left.length+" 组"+(stoppedAtFloor?("（触底线"+floor+"未再删）"):"（今日扫完，不少于"+floor+"）")+"；只删今日开过且仍在剩余里的码；"+txtShotRuleSummary(rule)
+  });
+}
+
+function convertThreeDingHistoryHitDelete(raw,history,options){
+  options=options&&typeof options==="object"?options:{};
+  var split=txtThreeDingIndependentSegments(raw);
+  if(!split||!split.ok)return {ok:false,message:String(split&&split.message||"多段三定拆分失败。")};
+  var segments=split.segments;
+  if(segments.length<=1)return convertThreeDingHistoryHitDeleteSingle(raw,history,options);
+  var groups=[];
+  for(var i=0;i<segments.length;i++){
+    var result=convertThreeDingHistoryHitDeleteSingle(segments[i],history,options);
+    if(!result||!result.ok){
+      var prepared=txtNormalizeThreeDingAttackText(segments[i]);
+      var name=prepared&&prepared.combo&&prepared.combo.name?prepared.combo.name:("第"+(i+1)+"段");
+      return {ok:false,message:name+"三定今日命中回删失败："+String(result&&result.message||"未知错误")};
+    }
+    groups.push(result);
+  }
+  var multi=txtThreeDingMultiBackDeleteResult(groups,options.day||txtTodayKey());
+  multi.source="three-ding-today-hit-delete-multi";
+  multi.label="三定多位置组合转换（今日命中删 · 不少于498）";
+  multi.note="本机先生成；各组合独立只删今日命中，不少于498。";
+  multi.remainFloor=THREE_DING_HIT_DELETE_FLOOR;
+  return multi;
+}
+
+/** 本机「先生成」：只按攻击语排除，不扫历史、不回删 */
+function convertThreeDingGenerateOnlySingle(raw,options){
+  options=options&&typeof options==="object"?options:{};
+  var day=options.day||txtTodayKey();
+  var text=String(raw==null?"":raw);
+  if(options.panelThreeDuishuPair)text=txtApplyPanelThreeDuishuPair(text,options.panelThreeDuishuPair);
+  else text=txtCanonicalizeAttackHeweiAndDuishu(text);
+  if(!text.trim())return {ok:false,message:"请粘贴三定攻击语后再转换。"};
+  var prepared=txtNormalizeThreeDingAttackText(text);
+  if(prepared&&prepared.error)return {ok:false,message:prepared.error};
+  if(!prepared||!prepared.ok)return {ok:false,message:"未识别为三定攻击语。支持千百十 / 百十个 / 千十个(万十个) / 千百个；空位为 x。"};
+  var combo=prepared.combo;
+  var rule=txtShotRuleFromText(prepared.normalized,{twoHeweiScopeIndexes:[0,1,2]});
+  if(!rule)return {ok:false,message:"未识别为三定攻击语。"};
+  if(rule.error)return {ok:false,message:rule.error};
+  var filtered=txtThreeDingFilterCandidates(rule,combo);
+  var afterFilter=filtered.length;
+  if(!afterFilter)return {ok:false,message:"排除后无剩余号码，请检查攻击语。"};
+  var left=txtThreeDingSortTokens(filtered);
+  var outText=txtFormatThreeDingGeList(left,null,combo);
+  var copyParts=txtThreeDingCopyParts(left,300,combo);
+  return txtThreeDingResultMeta(combo,rule,{
+    count:left.length,
+    tokens:left,
+    codes:left,
+    text:outText,
+    preview:txtFormatThreeDingGeList(left,120,combo),
+    attackText:outText,
+    copyParts:copyParts,
+    fileName:txtFileNameByCount(3,day,left.length),
+    source:"three-ding-generate-only",
+    label:combo.name+"三定生成（尚未回删）",
+    afterFilter:afterFilter,
+    deletedUnique:0,
+    scanned:0,
+    remainFloor:THREE_DING_HIT_DELETE_FLOOR,
+    realBackDelete:false,
+    truncated:false,
+    note:combo.name+"本机排除后 "+afterFilter+" 组（尚未回删；回删将只删今日命中、不少于"+THREE_DING_HIT_DELETE_FLOOR+"）；"+txtShotRuleSummary(rule)
+  });
+}
+
+function convertThreeDingGenerateOnly(raw,options){
+  options=options&&typeof options==="object"?options:{};
+  var split=txtThreeDingIndependentSegments(raw);
+  if(!split||!split.ok)return {ok:false,message:String(split&&split.message||"多段三定拆分失败。")};
+  var segments=split.segments;
+  if(segments.length<=1)return convertThreeDingGenerateOnlySingle(raw,options);
+  var groups=[];
+  for(var i=0;i<segments.length;i++){
+    var result=convertThreeDingGenerateOnlySingle(segments[i],options);
+    if(!result||!result.ok){
+      var prepared=txtNormalizeThreeDingAttackText(segments[i]);
+      var name=prepared&&prepared.combo&&prepared.combo.name?prepared.combo.name:("第"+(i+1)+"段");
+      return {ok:false,message:name+"三定生成失败："+String(result&&result.message||"未知错误")};
+    }
+    groups.push(result);
+  }
+  var multi=txtThreeDingMultiBackDeleteResult(groups,options.day||txtTodayKey());
+  multi.source="three-ding-generate-only-multi";
+  multi.label="三定多位置组合生成（尚未回删）";
+  multi.note="本机已生成候选；请再点回删（今日命中删 · 不少于498）。";
+  multi.remainFloor=THREE_DING_HIT_DELETE_FLOOR;
+  return multi;
 }
 
 function downloadTxt(fileName,text){
@@ -1109,18 +1487,30 @@ function downloadTxt(fileName,text){
   return name;
 }
 global.Penta5AttackTxtConvert={
+  THREE_DING_BACKDELETE_VERSION:"20260725",
   convert:convertAttackText,
   convertThreeDingBackDelete:convertThreeDingBackDelete,
+  convertThreeDingHistoryHitDelete:convertThreeDingHistoryHitDelete,
   formatThreeDingGeList:txtFormatThreeDingGeList,
   threeDingCopyParts:txtThreeDingCopyParts,
+  threeDingSortTokens:txtThreeDingSortTokens,
+  threeDingAssertFullSorted:txtThreeDingAssertFullSorted,
   threeDingMaskToken:txtThreeDingMaskToken,
   threeDingUnmaskToken:txtThreeDingUnmaskToken,
   looksLikeThreeDing:txtLooksLikeThreeDingAttack,
   download:downloadTxt,
   looksLikeFull:txtShotLooksLikeFullModel,
   looksLikeShort:txtShotLooksLikeShortExclusionCommand,
+  canonicalizeAttackText:txtCanonicalizeAttackHeweiAndDuishu,
+  applyPanelThreeDuishuPair:txtApplyPanelThreeDuishuPair,
+  THREE_DING_FULL_GROUP_SIZE:THREE_DING_FULL_GROUP_SIZE,
+  THREE_DING_DELETE_TARGET:THREE_DING_DELETE_TARGET,
+  THREE_DING_REMAIN_TARGET:THREE_DING_REMAIN_TARGET,
+  THREE_DING_HISTORY_MIN:THREE_DING_HISTORY_MIN,
+  THREE_DING_HISTORY_SCAN_LIMIT:THREE_DING_HISTORY_SCAN_LIMIT,
   THREE_DING_REMAIN_MIN:THREE_DING_REMAIN_MIN,
   THREE_DING_REMAIN_MAX:THREE_DING_REMAIN_MAX,
+  THREE_DING_HIT_DELETE_FLOOR:THREE_DING_HIT_DELETE_FLOOR,
   THREE_DING_COMBOS:THREE_DING_COMBOS
 };
 })(typeof window!=="undefined"?window:this);

@@ -1,0 +1,6 @@
+penta5_backend_runner.js
+panel.html
+data/**
+logs/**
+**/*.min.js
+api/node_modules/**

@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>命中率看板 · 独立只读</title>
+  <style>
+    :root{
+      --bg:#0b1220; --panel:#121a2b; --ink:#f1f5f9; --muted:#94a3b8;
+      --line:#243044; --ok:#34d399; --warn:#fbbf24; --bad:#f87171; --accent:#38bdf8;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:
+      radial-gradient(900px 360px at 12% 0%,rgba(56,189,248,.12),transparent 55%),
+      radial-gradient(700px 280px at 100% 8%,rgba(251,191,36,.08),transparent 50%),
+      var(--bg);color:var(--ink);font-family:"IBM Plex Sans","PingFang SC","Microsoft YaHei",sans-serif}
+    body{padding:18px 14px 40px}
+    .wrap{max-width:1100px;margin:0 auto}
+    .head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
+    h1{margin:0;font-size:22px;font-weight:800;letter-spacing:.04em}
+    .sub{margin-top:6px;color:var(--muted);font-size:13px;line-height:1.5}
+    .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    a.link,button.btn{
+      appearance:none;border:1px solid var(--line);background:#182235;color:#e2e8f0;
+      border-radius:10px;padding:9px 12px;font-size:13px;font-weight:700;text-decoration:none;cursor:pointer;
+    }
+    button.btn.primary{background:#0ea5e9;border-color:#0284c7;color:#082f49}
+    .meta{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+    .chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700;color:#cbd5e1}
+    .chip.ok{color:var(--ok);border-color:rgba(52,211,153,.35)}
+    .chip.bad{color:var(--bad);border-color:rgba(248,113,113,.35)}
+    .chip.warn{color:var(--warn);border-color:rgba(251,191,36,.35)}
+    section{margin:0 0 16px;background:rgba(18,26,43,.92);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+    section h2{margin:0;padding:12px 14px;font-size:14px;font-weight:800;border-bottom:1px solid var(--line);background:rgba(255,255,255,.02);display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+    section .note{padding:0 14px 10px;color:var(--muted);font-size:12px;line-height:1.5}
+    .day-bar{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);align-items:center}
+    .day-bar label{font-size:12px;font-weight:700;color:var(--muted)}
+    .day-bar select{
+      height:34px;border:1px solid var(--line);border-radius:8px;background:#0b1220;color:var(--ink);
+      padding:0 10px;font-size:13px;font-weight:700;
+    }
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:10px 12px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
+    th{color:#94a3b8;font-weight:700;font-size:12px}
+    td.rate{font-variant-numeric:tabular-nums;font-weight:800;white-space:nowrap}
+    td.rate.ok{color:var(--ok)}
+    td.rate.warn{color:var(--warn)}
+    td.rate.bad{color:var(--bad)}
+    td.muted{color:var(--muted)}
+    .status{margin-top:8px;padding:10px 12px;border-radius:10px;background:#182235;color:#cbd5e1;font-size:13px;line-height:1.5}
+    .status.err{background:rgba(220,38,38,.16);color:#fecaca}
+    .empty{padding:16px;color:var(--muted)}
+    .scroll{overflow:auto}
+    @media (max-width:640px){
+      th.hide-sm,td.hide-sm{display:none}
+      h1{font-size:18px}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <h1>命中率看板</h1>
+        <div class="sub">独立只读 · <code>/state</code> + 按日百分比账本 · 不改算法</div>
+      </div>
+      <div class="actions">
+        <a class="link" href="/panel">返回面板</a>
+        <button class="btn" id="exportBtn" type="button">导出按日账</button>
+        <button class="btn primary" id="refreshBtn" type="button">刷新</button>
+      </div>
+    </div>
+    <div class="meta" id="meta"></div>
+    <div id="status" class="status">加载中…</div>
+    <div id="sections"></div>
+  </div>
+  <script>
+(function(){
+  var AUTO_MS = 60000;
+  var DIARY_KEY = "penta5_accuracy_daily_v1";
+  var DIARY_KEEP_DAYS = 60;
+  var selectedDay = "";
+  var lastState = null;
+  var timer = null;
+
+  var MODEL_LABELS = {
+    autoTop6: "自动Top6",
+    recommend2: "推荐2",
+    killFramework: "杀框",
+    threeDuishu: "三对数",
+    compactAttack: "紧凑攻",
+    threeDingTwo: "三定二",
+    threeDingOne: "三定一",
+    twoDigitAvoidAllThree: "对数避开(三组)"
+  };
+
+  var CORE_SNAP_KEYS = [
+    ["wanMain", "万位单定", 90],
+    ["qianMain", "千位单定", 90],
+    ["baiMain", "百位单定", 90],
+    ["shiMain", "十位单定", 90],
+    ["wan", "万位双码", 80],
+    ["qian", "千位双码", 80],
+    ["bai", "百位双码", 80],
+    ["shi", "十位双码", 80],
+    ["threeDuishu", "三对数", null],
+    ["totalHewei", "总合尾", null],
+    ["threeFour", "三合尾避开", null]
+  ];
+
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c];
+    });
+  }
+
+  function num(v){
+    if (v == null || v === "") return null;
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    var m = String(v).match(/-?\d+(?:\.\d+)?/);
+    return m ? Number(m[0]) : null;
+  }
+
+  function rateClass(rate, baseline){
+    if (rate == null || baseline == null) return "";
+    if (rate >= baseline + 2) return "ok";
+    if (rate < baseline) return "bad";
+    return "warn";
+  }
+
+  function fmtRate(rate){
+    if (rate == null) return "—";
+    return Number(rate).toFixed(2).replace(/\.00$/, "") + "%";
+  }
+
+  function row(label, rate, total, baseline, note){
+    var cls = rateClass(rate, baseline);
+    var baseTxt = baseline == null ? "—" : ("基线 ~" + baseline + "%");
+    return "<tr>"
+      + "<td>" + esc(label) + (note ? "<div class=\"muted\" style=\"font-size:11px;margin-top:3px\">" + esc(note) + "</div>" : "") + "</td>"
+      + "<td class=\"rate " + cls + "\">" + esc(fmtRate(rate)) + "</td>"
+      + "<td class=\"hide-sm\">" + esc(total == null ? "—" : String(total)) + "</td>"
+      + "<td class=\"muted hide-sm\">" + esc(baseTxt) + "</td>"
+      + "</tr>";
+  }
+
+  function section(title, note, rowsHtml, extraTop){
+    return "<section><h2><span>" + esc(title) + "</span></h2>"
+      + (extraTop || "")
+      + (note ? "<div class=\"note\">" + esc(note) + "</div>" : "")
+      + "<div class=\"scroll\"><table><thead><tr><th>项目</th><th>命中率</th><th class=\"hide-sm\">样本</th><th class=\"hide-sm\">对照</th></tr></thead>"
+      + "<tbody>" + (rowsHtml || "<tr><td colspan=\"4\" class=\"empty\">无数据</td></tr>") + "</tbody></table></div></section>";
+  }
+
+  function detail(rateDetails, key){
+    var d = rateDetails && rateDetails[key];
+    if (!d) return { rate: null, total: null, label: key, hit: null };
+    return {
+      rate: num(d.rate),
+      total: d.total,
+      hit: d.hit != null ? d.hit : d.match,
+      label: d.label || key
+    };
+  }
+
+  function loadDiary(){
+    try{
+      var raw = localStorage.getItem(DIARY_KEY);
+      var obj = raw ? JSON.parse(raw) : {};
+      return obj && typeof obj === "object" ? obj : {};
+    }catch(_){ return {}; }
+  }
+
+  function saveDiary(diary){
+    try{
+      var days = Object.keys(diary).sort();
+      while (days.length > DIARY_KEEP_DAYS) {
+        delete diary[days.shift()];
+      }
+      localStorage.setItem(DIARY_KEY, JSON.stringify(diary));
+    }catch(_){}
+  }
+
+  function recordDailySnapshot(state){
+    var day = state.positionDayScope || "";
+    if (!day) return;
+    var rates = state.rates || {};
+    var rd = state.rateDetails || {};
+    var audit = state.modelAudit || {};
+    var truth = audit.truthMetrics || {};
+    var items = {};
+
+    CORE_SNAP_KEYS.forEach(function(pair){
+      var key = pair[0];
+      var d = null;
+      if (key === "wanMain") d = detail(rd, "position.wan.main");
+      else if (key === "qianMain") d = detail(rd, "position.qian.main");
+      else if (key === "baiMain") d = detail(rd, "position.bai.main");
+      else if (key === "shiMain") d = detail(rd, "position.shi.main");
+      else d = detail(rd, key);
+      var rate = d.rate != null ? d.rate : num(rates[key]);
+      items[key] = {
+        label: pair[1],
+        rate: rate,
+        total: d.total,
+        hit: d.hit,
+        baseline: pair[2],
+        source: "state-today"
+      };
+    });
+
+    Object.keys(truth).forEach(function(k){
+      var t = truth[k] || {};
+      items["truth." + k] = {
+        label: MODEL_LABELS[k] || k,
+        rate: num(t.rate),
+        total: t.total,
+        hit: t.hit,
+        baseline: 50,
+        source: "truthMetrics"
+      };
+    });
+
+    var ledger = state.dailyStreakLedger || {};
+    Object.keys(ledger).forEach(function(model){
+      if (model === "viewer-permission-test") return;
+      var dayRow = ledger[model] && ledger[model][day];
+      if (!dayRow) return;
+      items["ledger." + model] = {
+        label: (MODEL_LABELS[model] || model) + " · 后端日账",
+        rate: num(dayRow.rate),
+        total: dayRow.total,
+        hit: dayRow.hit,
+        currentWin: dayRow.currentWin,
+        currentMiss: dayRow.currentMiss,
+        maxWin: dayRow.maxWin,
+        maxMiss: dayRow.maxMiss,
+        lastPeriod: dayRow.lastPeriod || "",
+        source: dayRow.source || "dailyStreakLedger"
+      };
+    });
+
+    var diary = loadDiary();
+    diary[day] = {
+      day: day,
+      dayResetHour: state.positionDayResetHour,
+      updatedAt: state.updatedAt || new Date().toISOString(),
+      latestPeriod: (state.latestRecord && state.latestRecord.period) || "",
+      items: items
+    };
+    saveDiary(diary);
+  }
+
+  function allDays(state){
+    var set = {};
+    var diary = loadDiary();
+    Object.keys(diary).forEach(function(d){ set[d] = true; });
+    var ledger = (state && state.dailyStreakLedger) || {};
+    Object.keys(ledger).forEach(function(model){
+      Object.keys(ledger[model] || {}).forEach(function(d){
+        if (d && d.indexOf("2099") !== 0) set[d] = true;
+      });
+    });
+    if (state && state.positionDayScope) set[state.positionDayScope] = true;
+    return Object.keys(set).sort().reverse();
+  }
+
+  function buildDaySelector(days, current){
+    var opts = days.map(function(d){
+      return "<option value=\"" + esc(d) + "\"" + (d === current ? " selected" : "") + ">" + esc(d) + "</option>";
+    }).join("");
+    return "<div class=\"day-bar\">"
+      + "<label for=\"daySelect\">业务日</label>"
+      + "<select id=\"daySelect\">" + opts + "</select>"
+      + "<span class=\"chip\">按日百分比记 · 本地保留 " + DIARY_KEEP_DAYS + " 天</span>"
+      + "</div>";
+  }
+
+  function renderDailySection(state, day){
+    var diary = loadDiary();
+    var snap = diary[day];
+    var ledger = state.dailyStreakLedger || {};
+    var rows = "";
+
+    if (snap && snap.items) {
+      Object.keys(snap.items).forEach(function(k){
+        if (String(k).indexOf("ledger.") === 0) return;
+        var it = snap.items[k];
+        var note = "记于 " + (snap.updatedAt || "") + (it.source ? (" · " + it.source) : "");
+        if (it.hit != null && it.total != null) note = "命中 " + it.hit + "/" + it.total + " · " + note;
+        rows += row(it.label || k, num(it.rate), it.total, it.baseline, note);
+      });
+    }
+
+    Object.keys(MODEL_LABELS).forEach(function(model){
+      var dayRow = ledger[model] && ledger[model][day];
+      if (!dayRow) return;
+      var note = "后端 dailyStreakLedger";
+      if (dayRow.hit != null && dayRow.total != null) note = "命中 " + dayRow.hit + "/" + dayRow.total + " · 连对" + (dayRow.currentWin||0) + " / 连错" + (dayRow.currentMiss||0) + " · 峰对" + (dayRow.maxWin||0) + " / 峰错" + (dayRow.maxMiss||0);
+      if (dayRow.lastPeriod) note += " · 末期 " + dayRow.lastPeriod;
+      rows += row(MODEL_LABELS[model] + "（日账）", num(dayRow.rate), dayRow.total, null, note);
+    });
+
+    if (!rows) rows = "<tr><td colspan=\"4\" class=\"empty\">该日暂无记账（刷新后会写入今日快照）</td></tr>";
+
+    return section(
+      "按日百分比记 · " + day,
+      "定位类今日计数来自业务日（默认凌晨 " + (state.positionDayResetHour != null ? state.positionDayResetHour : 5) + " 点切日）。日账来自后端 dailyStreakLedger；本页另把当日百分比写入浏览器本地账本。",
+      rows,
+      buildDaySelector(allDays(state), day)
+    );
+  }
+
+  function render(state){
+    lastState = state;
+    recordDailySnapshot(state);
+
+    var rates = state.rates || {};
+    var rd = state.rateDetails || {};
+    var audit = state.modelAudit || {};
+    var wd = state.modelWatchdog || {};
+    var storm = state.stormMode || {};
+    var latest = state.latestRecord || {};
+    var truth = audit.truthMetrics || {};
+    var day = selectedDay || state.positionDayScope || allDays(state)[0] || "";
+    selectedDay = day;
+
+    var period = latest.period || (state.lastSync && state.lastSync.latestPeriod) || "—";
+    var nums = latest.numbers || (state.lastSync && state.lastSync.latestNumbers) || [];
+    var meta = [];
+    meta.push("<span class=\"chip\">期号 " + esc(period) + "</span>");
+    if (nums && nums.length) meta.push("<span class=\"chip\">开奖 " + esc(Array.isArray(nums) ? nums.join(" ") : nums) + "</span>");
+    meta.push("<span class=\"chip ok\">业务日 " + esc(state.positionDayScope || "—") + "</span>");
+    meta.push("<span class=\"chip\">切日 " + esc(String(state.positionDayResetHour != null ? state.positionDayResetHour : 5)) + ":00</span>");
+    meta.push("<span class=\"chip " + (state.tipReady ? "ok" : "bad") + "\">tipReady " + (state.tipReady ? "是" : "否") + "</span>");
+    meta.push("<span class=\"chip " + (storm.active ? "warn" : "ok") + "\">风暴 " + (storm.active ? "开" : "关") + "</span>");
+    meta.push("<span class=\"chip\">更新 " + esc(state.updatedAt || "—") + "</span>");
+    document.getElementById("meta").innerHTML = meta.join("");
+
+    var core = "";
+    [["position.wan.main", 90],["position.qian.main",90],["position.bai.main",90],["position.shi.main",90]].forEach(function(pair){
+      var d = detail(rd, pair[0]);
+      core += row(d.label || pair[0], d.rate, d.total, pair[1], "今日业务日");
+    });
+    [["wan",80],["qian",80],["bai",80],["shi",80]].forEach(function(pair){
+      var d = detail(rd, pair[0]);
+      core += row(d.label || pair[0], d.rate != null ? d.rate : num(rates[pair[0]]), d.total, pair[1], "今日双码排除");
+    });
+    var pt = detail(rd, "positionTotal");
+    core += row(pt.label || "定位双码总击", pt.rate != null ? pt.rate : num(rates.positionTotal), pt.total, null, "今日");
+    [["threeDuishu", null],["totalHewei", null],["threeFour", null],["wanQianBai", null],["qianBaiShi", null],["wanQianBaiShi", null]].forEach(function(pair){
+      var d = detail(rd, pair[0]);
+      core += row(d.label || pair[0], d.rate != null ? d.rate : num(rates[pair[0]]), d.total, pair[1], pair[0]==="threeDuishu"?"今日":"近窗累计");
+    });
+
+    var attack = "";
+    Object.keys(truth).forEach(function(k){
+      var t = truth[k] || {};
+      attack += row(MODEL_LABELS[k] || k, num(t.rate), t.total, 50, "近窗实绩");
+    });
+    if (!attack) attack = "<tr><td colspan=\"4\" class=\"empty\">暂无 truthMetrics</td></tr>";
+
+    var filters = "";
+    [
+      "sumAvoid","sumRangeAvoid","spanAvoid","repeatAvoid","consecutiveAvoid",
+      "parityRatioAvoid","sizeRatioAvoid","threeDigitAvoid","threeDigitAvoid2",
+      "twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3","twoDigitHit",
+      "anyTwoHeweiHit","anyThreeHeweiHit","threeDigitHit"
+    ].forEach(function(key){
+      var d = detail(rd, key);
+      var rate = d.rate != null ? d.rate : num(rates[key]);
+      var note = "高基线过滤 / 参考项";
+      if (key === "threeDigitHit") note = "偏低需盯";
+      filters += row(d.label || key, rate, d.total, key === "threeDigitHit" ? 85 : null, note);
+    });
+
+    var issues = (wd.lastIssues || []).map(function(it){
+      return row(
+        (it.label || it.key || "issue") + " · " + (it.action || ""),
+        num(it.rate),
+        it.total,
+        num(it.threshold),
+        it.type || ""
+      );
+    }).join("");
+    if (!issues) issues = "<tr><td colspan=\"4\" class=\"empty\">当前无 watchdog 低命中告警</td></tr>";
+
+    document.getElementById("sections").innerHTML =
+      renderDailySection(state, day) +
+      section("今日核心（业务日）", "定位/三对数已按业务日重算；合尾等仍可能是近窗累计。", core) +
+      section("进攻 / 推荐近窗", "来自 modelAudit.truthMetrics。", attack) +
+      section("过滤与参考项", "高基线高命中 ≠ 预测力。", filters) +
+      section("Watchdog 告警", "只读展示。", issues);
+
+    var sel = document.getElementById("daySelect");
+    if (sel) {
+      sel.onchange = function(){
+        selectedDay = sel.value;
+        render(lastState);
+      };
+    }
+  }
+
+  function exportDiary(){
+    var payload = {
+      exportedAt: new Date().toISOString(),
+      diary: loadDiary(),
+      ledger: lastState && lastState.dailyStreakLedger || null,
+      positionDayScope: lastState && lastState.positionDayScope || null
+    };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "penta5-accuracy-daily-" + (selectedDay || "export") + ".json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function load(){
+    var status = document.getElementById("status");
+    var btn = document.getElementById("refreshBtn");
+    btn.disabled = true;
+    status.className = "status";
+    status.textContent = "拉取 /state …";
+    try{
+      var res = await fetch("/state", { credentials: "same-origin", cache: "no-store" });
+      if (res.status === 401) {
+        location.replace("/login?next=" + encodeURIComponent("/accuracy"));
+        return;
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var state = await res.json();
+      if (!selectedDay) selectedDay = state.positionDayScope || "";
+      render(state);
+      status.textContent = "已刷新 · 自动 " + (AUTO_MS / 1000) + "s · 今日已写入按日账";
+    } catch (err) {
+      status.className = "status err";
+      status.textContent = "加载失败：" + (err && err.message ? err.message : String(err));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById("refreshBtn").addEventListener("click", load);
+  document.getElementById("exportBtn").addEventListener("click", exportDiary);
+  load();
+  timer = setInterval(load, AUTO_MS);
+})();
+  </script>
+</body>
+</html>

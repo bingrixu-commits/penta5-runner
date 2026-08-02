@@ -1,0 +1,42 @@
+/**
+ * qualified-picks 旁路：RDS+runner 交叉验真，sticky 单码 + dual 双位杀码，达标写 sealed output
+ * 用法: pm2 start ecosystem.qualified-picks.config.js
+ *
+ * 稳稳配置：更长锁定、更宽退出线、更严连挂防护、双位入池 90%
+ */
+module.exports = {
+  apps: [
+    {
+      name: "qualified-picks",
+      cwd: "/root/penta5-runner",
+      script: "algorithms/ai/qualified-picks/sidecar.js",
+      instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      max_memory_restart: "128M",
+      max_restarts: 20,
+      min_uptime: "20s",
+      restart_delay: 5000,
+      out_file: "/root/.pm2/logs/qualified-picks-out.log",
+      error_file: "/root/.pm2/logs/qualified-picks-error.log",
+      env: {
+        NODE_ENV: "production",
+        QUALIFIED_PICKS_POLL_MS: "60000",
+        QUALIFIED_PICKS_WINDOW: "100",
+        QUALIFIED_PICKS_MIN_RATE: "92",
+        QUALIFIED_PICKS_EXIT_MIN_RATE: "85",
+        QUALIFIED_PICKS_MIN_LOCK_PERIODS: "24",
+        QUALIFIED_PICKS_STICKY: "1",
+        QUALIFIED_PICKS_HISTORY_LIMIT: "500",
+        QUALIFIED_PICKS_HISTORY_URL: "http://127.0.0.1:3001/history?limit=500",
+        QUALIFIED_PICKS_DUAL_ENABLED: "1",
+        QUALIFIED_PICKS_DUAL_MIN_RATE: "90",
+        QUALIFIED_PICKS_DUAL_EXIT_MIN_RATE: "86",
+        QUALIFIED_PICKS_MAX_SHOW_STREAK: "0",
+        QUALIFIED_PICKS_MAX_ENTRY_CONSECUTIVE: "0",
+        QUALIFIED_PICKS_FAIL_COOLDOWN: "6",
+        QUALIFIED_PICKS_ENTRY_LOOKBACK: "12"
+      }
+    }
+  ]
+};

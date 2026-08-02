@@ -1,0 +1,29 @@
+{
+  "providerProfiles": {
+    "currentApiConfigName": "default",
+    "apiConfigs": {
+      "default": {
+        "id": "penta5sf001",
+        "apiProvider": "openai",
+        "openAiBaseUrl": "https://api.siliconflow.com/v1",
+        "openAiApiKey": "",
+        "openAiModelId": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        "openAiStreamingEnabled": true,
+        "includeMaxTokens": true
+      },
+      "siliconflow": {
+        "id": "penta5sf001",
+        "apiProvider": "openai",
+        "openAiBaseUrl": "https://api.siliconflow.com/v1",
+        "openAiApiKey": "",
+        "openAiModelId": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        "openAiStreamingEnabled": true,
+        "includeMaxTokens": true
+      }
+    }
+  },
+  "globalSettings": {
+    "useAgentRules": true,
+    "apiRequestTimeout": 600
+  }
+}

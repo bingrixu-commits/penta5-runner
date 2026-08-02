@@ -4,7 +4,7 @@
  * Penta5 阿里云后台常驻分析服务
  * - 不依赖浏览器 localStorage
  * - 开奖 history 以阿里 RDS 为主库（先写 RDS，再灌注内存）；state.json 只落账本/预测/锁，不落全量 history
- * - 默认从本机代理 http://127.0.0.1:3000/latest 取最新开奖 JSON
+ * - 默认直连官网 latest 取最新开奖 JSON（已废弃本机 source-proxy :3000）
  */
 
 const http = require("http");
@@ -14,14 +14,8 @@ const path = require("path");
 const zlib = require("zlib");
 const v8 = require("v8");
 const { spawn } = require("child_process");
-const stableMathFilterBridge = require("./algorithms/stable_math_filter_bridge");
-const codexStablePosition = require("./algorithms/codex_stable_position");
-const algorithmProjectIsolation = require("./algorithms/project_isolation");
-const l0Orchestrator = require("./algorithms/orchestrate_l0");
-const l1Orchestrator = require("./algorithms/orchestrate_l1");
-const frameworkItems = require("./algorithms/_shared/framework_items");
 
-// 启动时读阿里 /root/penta5-runner/.env（不覆盖已有 process.env，便于 pm2 注入）
+// 必须在依赖 ALGO_DURABLE_STORE 等开关的 algorithm 模块 require 之前加载 .env
 (function loadLocalEnvFile() {
   try {
     const envPath = process.env.PENTA5_ENV_PATH || path.join(__dirname, ".env");
@@ -38,13 +32,28 @@ const frameworkItems = require("./algorithms/_shared/framework_items");
       }
       if (process.env[key] === undefined) process.env[key] = value;
     }
-  } catch (err) {
-    console.error("[env] failed to parse env file", err && err.message);
-  }
+  } catch (_) {}
 })();
 
+const stableMathFilterBridge = require("./algorithms/stable_math_filter_bridge");
+const codexStablePosition = require("./algorithms/codex_stable_position");
+const algorithmProjectIsolation = require("./algorithms/project_isolation");
+const fourPosExcludeAlgo = require("./algorithms/four-pos-exclude");
+const algoOrchestrateL0 = require("./algorithms/orchestrate_l0");
+const algoOrchestrateL1 = require("./algorithms/orchestrate_l1");
+const qualifiedPicksScanner = require("./algorithms/qualified-picks/scanner");
+const qualifiedPicksAudit = require("./algorithms/qualified-picks/audit");
+const qualifiedPicksSeal = require("./algorithms/qualified-picks/seal");
+const qualifiedPicksSticky = require("./algorithms/qualified-picks/sticky");
+const qualifiedPicksDual = require("./algorithms/qualified-picks/dual-position");
+const qualifiedPicksSecureStore = require("./algorithms/qualified-picks/secure-store");
+const attackTxtConverter = require("./txt_attack_convert.js").Penta5AttackTxtConvert;
+const { createBackdeleteSnapshotStore } = require("./backdelete_snapshot_store");
+const FOUR_POS_EXCLUDE_SNAPSHOT_VERSION = fourPosExcludeAlgo.VERSION || "four-pos-exclude-v1";
+let algorithmOrchestratorsBound = false;
+
 const PORT = Number(process.env.PORT || 3001);
-const SOURCE_API_URL = process.env.SOURCE_API_URL || "http://127.0.0.1:3000/latest";
+const SOURCE_API_URL = process.env.SOURCE_API_URL || "https://www.uk-wl.net/Penta5Classic/0d2d48772cd48f41e761ef99f40e3ac0/latest";
 const REQUEST_TIMEOUT = Number(process.env.REQUEST_TIMEOUT || 10000);
 // 开奖时刻：每5分钟的 :12 秒（0/5/10/15…分），全天24小时。
 // 源站常在 :05 左右就出本期（opentime 仍标 :12），故从开奖前约7秒开始密拉，开奖后再补多档重试。
@@ -68,7 +77,7 @@ const MAX_HISTORY = Number(process.env.MAX_HISTORY || 5000);
 const MAX_PREDICTION_LOG = Number(process.env.MAX_PREDICTION_LOG || 1000);
 const PANEL_PREDICTION_LIMIT = Number(process.env.PANEL_PREDICTION_LIMIT || 300);
 const PANEL_STATE_PREDICTION_LIMIT = Number(process.env.PANEL_STATE_PREDICTION_LIMIT || 30);
-// 面板展示/冷热只需近百期；旧码大窗可走 GET /history。过大 history 会让前端 JSON.parse+重绘卡顿。
+// 面板展示/冷热只需近百期；完整历史可走 GET /history。过大 history 会让前端 JSON.parse+重绘卡顿。
 const PANEL_HISTORY_LIMIT = Number(process.env.PANEL_HISTORY_LIMIT || 120);
 const PANEL_STATE_CACHE_TTL_MS = Number(process.env.PANEL_STATE_CACHE_TTL_MS || 30 * 1000);
 const PANEL_LOG_LIMIT = Number(process.env.PANEL_LOG_LIMIT || 20);
@@ -76,8 +85,27 @@ const SERVER_REQUEST_TIMEOUT = Number(process.env.SERVER_REQUEST_TIMEOUT || 1500
 // /sync 会串行抓代理 + 结算 + hydrate，15s 会被掐断 → 监督报 Remote end closed
 const SYNC_REQUEST_TIMEOUT = Number(process.env.SYNC_REQUEST_TIMEOUT || Math.max(SERVER_REQUEST_TIMEOUT, 120000));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const QUALIFIED_PICKS_FILE = path.join(DATA_DIR, "qualified-picks.json");
+const QUALIFIED_PICKS_SEALED_FILE = path.join(DATA_DIR, "qualified-picks.sealed.json");
+const QUALIFIED_PICKS_LOCKS_FILE = path.join(DATA_DIR, "algorithm-projects", "qualified-picks", "locks.json");
+const QUALIFIED_PICKS_LOCKS_SEALED_FILE = path.join(DATA_DIR, "algorithm-projects", "qualified-picks", "locks.sealed.json");
+const QUALIFIED_PICKS_DUAL_LOCKS_FILE = path.join(DATA_DIR, "algorithm-projects", "qualified-picks", "dual-locks.json");
+const QUALIFIED_PICKS_DUAL_LOCKS_SEALED_FILE = path.join(DATA_DIR, "algorithm-projects", "qualified-picks", "dual-locks.sealed.json");
+const SHAPE_AVOID_3_STATE_FILE = path.join(DATA_DIR, "algorithm-projects", "shape-avoid-3", "state.json");
+const FOUR_FACTOR_RANK_STATE_FILE = path.join(DATA_DIR, "algorithm-projects", "four-factor-rank", "state.json");
+const FOUR_DING_SHAPE_SIZE_STATE_FILE = path.join(DATA_DIR, "algorithm-projects", "four-ding-shape-size", "state.json");
+const FOUR_DING_SHAPE_PARITY_STATE_FILE = path.join(DATA_DIR, "algorithm-projects", "four-ding-shape-parity", "state.json");
+// const WAN_AVOID_3_STATE_FILE retired
+const CLAUDE_ENSEMBLE_STATE_FILE = path.join(DATA_DIR, "algorithm-projects", "claude-ensemble", "state.json");
+const CLAUDE_STABLE_STATE_FILE = path.join(DATA_DIR, "algorithm-projects", "claude-stable", "state.json");
+const CLAUDE_ENSEMBLE_UPSTREAM = String(process.env.CLAUDE_ENSEMBLE_UPSTREAM || "http://127.0.0.1:3002").replace(/\/$/, "");
+const CLAUDE_STABLE_UPSTREAM = String(process.env.CLAUDE_STABLE_UPSTREAM || "http://127.0.0.1:3003").replace(/\/$/, "");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 const BACKUP_DIR = path.join(DATA_DIR, "backup");
+const backdeleteSnapshotStore = createBackdeleteSnapshotStore({
+  dataDir: DATA_DIR,
+  converter: attackTxtConverter
+});
 const BIND_HOST = String(process.env.PENTA5_BIND_HOST || "0.0.0.0").trim() || "0.0.0.0";
 const PANEL_SESSION_COOKIE = "penta5_panel_session";
 const PANEL_SESSION_MAX_AGE_MS = Number(process.env.PANEL_SESSION_MAX_AGE_MS || 12 * 60 * 60 * 1000);
@@ -88,21 +116,16 @@ const DIGIT_POOL = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 // 二数合统一规则：仅从 02468 中挑 4 个，等价于固定排除其中 1 个。
 const ANY_TWO_HEWEI_SOURCE_DIGITS = "02468";
 const ANY_TWO_HEWEI_CODE_SIZE = 4;
-const BACKEND_STATE_VERSION = "backend-truth-audit-v85-smart-robot-sync";
+// 三数合宽命中：混奇偶 6 码（由 5 码加密摸高，结构基线约 97）。
+const ANY_THREE_HEWEI_CODE_SIZE = 6;
+const BACKEND_STATE_VERSION = "backend-truth-audit-v86-remove-fourcode-oldcode";
 const FRAMEWORK_SNAPSHOT_STORE_KEYS = [
   "autoTop6",
   "recommend2",
-  "killFramework",
-  "compactAttack",
-  "threeDingTwo",
-  "threeDingOne",
-  "sideStable",
-  "coldFramework",
-  "dingKill",
-  "pick5000"
+  "killFramework"
 ];
-const MODEL_VERSION = "adaptive-independent-v69-isolated-projects-4digit";
-const THREE_DUISHU_SNAPSHOT_VERSION = "backend-three-duishu-snapshot-v1";
+const MODEL_VERSION = "adaptive-independent-v70-remove-fourcode-oldcode";
+const THREE_DUISHU_SNAPSHOT_VERSION = "backend-three-duishu-snapshot-v3-single-pair-rotation";
 const STORM_ENTER_AUTO_TOP6_MISS = Math.max(1, Number(process.env.STORM_ENTER_AUTO_TOP6_MISS || 4));
 const STORM_ENTER_THREE_DUISHU_MISS = Math.max(1, Number(process.env.STORM_ENTER_THREE_DUISHU_MISS || 5));
 const STORM_EXIT_WIN = Math.max(1, Number(process.env.STORM_EXIT_WIN || 2));
@@ -132,17 +155,44 @@ const FRAMEWORK_BACKFILL_GAP_MS = Math.max(1500, Number(process.env.FRAMEWORK_BA
 const PENTA5_PERIODS_PER_DAY = Math.max(1, Math.trunc(Number(process.env.PENTA5_PERIODS_PER_DAY || process.env.ROUNDS_PER_DAY || 288)));
 const MODEL_MIN_SAMPLE = Number(process.env.MODEL_MIN_SAMPLE || 8);
 const MODEL_LOW_HIT_RATE = Number(process.env.MODEL_LOW_HIT_RATE || 85);
+// 用户主指标：千百十个「单定顶1」单码；双码 dual 仅观察
+const POSITION_MAIN_LOW_RATE = Number(process.env.POSITION_MAIN_LOW_RATE || 85);
+const POSITION_DUAL_LOW_RATE = Number(process.env.POSITION_DUAL_LOW_RATE || 80);
+const POSITION_DUAL_RANDOM_BASELINE = Number(process.env.POSITION_DUAL_RANDOM_BASELINE || 80);
+
+function modelLowRateForKey(key) {
+  const raw = String(key || "");
+  const clean = raw.replace(/^extra\./, "");
+  if (/^position\.(wan|qian|bai|shi)\.main$/.test(raw)) return POSITION_MAIN_LOW_RATE;
+  if (/^position\.(wan|qian|bai|shi)\.dual$/.test(raw)) return POSITION_DUAL_LOW_RATE;
+  if (/^position\.(wan|qian|bai|shi)\.backup$/.test(raw)) return POSITION_DUAL_LOW_RATE;
+  // 官方账本键 wan/qian/bai/shi = 双码排除账本（非单定顶1）
+  if (/^(wan|qian|bai|shi)$/.test(clean)) return POSITION_DUAL_LOW_RATE;
+  const meta = highBaselineScoreMeta(raw);
+  if (meta) return Number(meta.baseline) - 3;
+  return MODEL_LOW_HIT_RATE;
+}
+
+function isPositionDualKey(key) {
+  const raw = String(key || "");
+  const clean = raw.replace(/^extra\./, "");
+  return /^position\.(wan|qian|bai|shi)\.dual$/.test(raw) || /^(wan|qian|bai|shi)$/.test(clean);
+}
+
+function isPositionMainKey(key) {
+  return /^position\.(wan|qian|bai|shi)\.main$/.test(String(key || ""));
+}
 // 高基线模型：原始通过率天然很高，禁止当成「强预测力」展示/评级
 const HIGH_BASELINE_SCORE_META = {
   spanAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.5, hint: "极罕形态过滤" },
+  sumAvoid: { scoreClass: "structural-rare-avoid", baseline: 97.0, hint: "单点和值过滤" },
+  sumRangeAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.0, hint: "极端区间过滤" },
   repeatAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.5, hint: "极罕形态过滤" },
   consecutiveAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.5, hint: "极罕形态过滤" },
-  sumRangeAvoid: { scoreClass: "structural-rare-avoid", baseline: 99.0, hint: "极端区间过滤" },
-  sumAvoid: { scoreClass: "structural-rare-avoid", baseline: 97.0, hint: "单点和值过滤" },
   parityRatioAvoid: { scoreClass: "structural-rare-avoid", baseline: 93.0, hint: "极端奇偶比过滤" },
   sizeRatioAvoid: { scoreClass: "structural-rare-avoid", baseline: 93.0, hint: "极端大小比过滤" },
   anyTwoHeweiHit: { scoreClass: "wide-hit-baseline", baseline: 99.0, hint: "宽命中参考" },
-  anyThreeHeweiHit: { scoreClass: "wide-hit-baseline", baseline: 95.0, hint: "宽命中参考" },
+  anyThreeHeweiHit: { scoreClass: "wide-hit-baseline", baseline: 97.0, hint: "宽命中参考" },
   twoDigitHit: { scoreClass: "pair-avoid-baseline", baseline: 90.0, hint: "除对数（非共现命中）" }
 };
 
@@ -184,6 +234,7 @@ const THREE_DUISHU_BLOCK_SIZE = Number(process.env.THREE_DUISHU_BLOCK_SIZE || 20
 const THREE_DUISHU_BLOCK_FLOOR = Number(process.env.THREE_DUISHU_BLOCK_FLOOR || 55);
 const THREE_DUISHU_SWITCH_MARGIN = Number(process.env.THREE_DUISHU_SWITCH_MARGIN || 4.5);
 const THREE_DUISHU_MIN_HOLD = Number(process.env.THREE_DUISHU_MIN_HOLD || 3);
+const THREE_DUISHU_PAIR_MAX_HOLD = Math.max(THREE_DUISHU_MIN_HOLD, Number(process.env.THREE_DUISHU_PAIR_MAX_HOLD || 8));
 const THREE_DUISHU_PAIRS = [
   { key: "05", digits: ["0", "5"], codes: ["0", "5"] },
   { key: "16", digits: ["1", "6"], codes: ["1", "6"] },
@@ -198,9 +249,7 @@ const POSITION_LIST = [
   { key: "shi", label: "个", index: 3 },
   { key: "ge", label: "末位", index: 4 }
 ];
-const RECENT_EXACT_CODE_WINDOWS = [300, 500, 800, 1000];
-const RECENT_EXACT_CODE_MAX_KEY = "recentExactCodeAvoidMax";
-const RECENT_EXACT_CODE_KEYS = RECENT_EXACT_CODE_WINDOWS.map((windowSize) => `recentExactCodeAvoid${windowSize}`).concat([RECENT_EXACT_CODE_MAX_KEY]);
+const RETIRED_FOUR_CODE_FRAMEWORK_KEYS = ["sideStable", "coldFramework", "dingKill", "pick5000"];
 const REQUIRED_EXTRA_KILL_KEYS = [
   "sumAvoid",
   "sumRangeAvoid",
@@ -209,13 +258,13 @@ const REQUIRED_EXTRA_KILL_KEYS = [
   "consecutiveAvoid",
   "parityRatioAvoid",
   "sizeRatioAvoid",
-  ...RECENT_EXACT_CODE_KEYS,
   "threeDigitAvoid",
   "twoDigitAvoid",
   "twoDigitAvoid2",
   "twoDigitAvoid3",
   "twoDigitHit",
   "threeDigitHit",
+  "threeDigitAvoid2",
   "anyTwoHeweiHit",
   "anyThreeHeweiHit"
 ];
@@ -270,7 +319,8 @@ function safeJsonStringify(value) {
 const CORE_PREDICTION_ISSUE_TYPES = new Set([
   "prediction-missing",
   "prediction-base-mismatch",
-  "prediction-version-mismatch"
+  "prediction-version-mismatch",
+  "stable-math-filter-lag"
 ]);
 
 function isCorePredictionIssue(issue) {
@@ -354,7 +404,13 @@ function markAlgorithmProjectIssue(issue) {
   entry.basePeriod = String(prediction && prediction.basePeriod || "");
   state.algorithmProjectHealth[projectId] = entry;
   try {
-    algorithmProjectIsolation.recordProjectIssue(DATA_DIR, issue, prediction);
+    const recorded = algorithmProjectIsolation.recordProjectIssue(DATA_DIR, issue, prediction);
+    if (recorded && recorded.payload) {
+      if (!state.algorithmProjectSnapshots || typeof state.algorithmProjectSnapshots !== "object") {
+        state.algorithmProjectSnapshots = {};
+      }
+      state.algorithmProjectSnapshots[recorded.projectId] = recorded.payload;
+    }
   } catch (error) {
     console.error("[AlgorithmProject] issue record failed", projectId, error && error.message ? error.message : error);
   }
@@ -363,10 +419,38 @@ function markAlgorithmProjectIssue(issue) {
   return { changed: true, projectId };
 }
 
+function reconcileAlgorithmProjectHealth(issues) {
+  if (!state || typeof state !== "object") return;
+  state.algorithmProjectHealth = normalizeAlgorithmProjectHealth(state.algorithmProjectHealth);
+  const activeByProject = Object.create(null);
+  (Array.isArray(issues) ? issues : []).forEach((issue) => {
+    if (!issue || isCorePredictionIssue(issue)) return;
+    // observe-only 不占用 degraded，避免挡住 qualityReady
+    if (String(issue.action || "") === "observe-only") return;
+    const projectId = algorithmProjectIsolation.projectIdForIssue(issue);
+    if (!projectId) return;
+    if (!activeByProject[projectId]) activeByProject[projectId] = [];
+    activeByProject[projectId].push(issue);
+  });
+  Object.keys(state.algorithmProjectHealth).forEach((projectId) => {
+    const entry = state.algorithmProjectHealth[projectId];
+    const active = activeByProject[projectId] || [];
+    if (active.length) return;
+    if (entry.status === "ok" && !entry.issueCount && !entry.lastIssue) return;
+    entry.status = "ok";
+    entry.issueCount = 0;
+    entry.lastIssue = null;
+    entry.signature = "";
+    entry.updatedAt = isoNow();
+  });
+}
+
 function markAlgorithmProjectIssues(issues, actions) {
   const changed = [];
+  reconcileAlgorithmProjectHealth(issues);
   (Array.isArray(issues) ? issues : []).forEach((issue) => {
     if (isCorePredictionIssue(issue)) return;
+    if (String(issue && issue.action || "") === "observe-only") return;
     const result = markAlgorithmProjectIssue(issue);
     if (!result.changed) return;
     const action = {
@@ -389,7 +473,7 @@ function scheduleAlgorithmProjectStateSync(reason) {
     try {
       if (!state || typeof state !== "object") return;
       state.algorithmProjectHealth = normalizeAlgorithmProjectHealth(state.algorithmProjectHealth);
-      algorithmProjectIsolation.syncProjectStates({
+      const syncResult = algorithmProjectIsolation.syncProjectStates({
         dataDir: DATA_DIR,
         currentPrediction: state.currentPrediction,
         predictions: state.predictions,
@@ -397,112 +481,97 @@ function scheduleAlgorithmProjectStateSync(reason) {
         modelVersion: MODEL_VERSION,
         projectHealth: state.algorithmProjectHealth,
         historyLimit: 120,
-        reason: String(reason || "state-save")
+        reason: String(reason || "state-save"),
+        onSnapshots: (snapshots) => {
+          state.algorithmProjectSnapshots = snapshots && typeof snapshots === "object" ? snapshots : {};
+        }
       });
+      if (syncResult && syncResult.snapshots) {
+        state.algorithmProjectSnapshots = syncResult.snapshots;
+      }
     } catch (error) {
       console.error("[AlgorithmProject] state sync failed", error && error.message ? error.message : error);
     }
   });
 }
 
-function isRecentExactCodeKey(key) {
-  return /^recentExactCodeAvoid(?:\d+|Max)$/.test(String(key || ""));
+function isRetiredFourCodeKey(key) {
+  return /^recentExactCodeAvoid(?:\d+|Max)$/i.test(String(key || ""));
 }
 
-function omitRecentExactCodesOnEntry(entry) {
-  if (!entry || typeof entry !== "object") return false;
-  if (!Array.isArray(entry.codes) || !entry.codes.length) {
-    if (entry.codesOmitted) return false;
-    return false;
-  }
-  const count = Number(entry.codeCount || entry.codes.length) || entry.codes.length;
-  entry.codeCount = count;
-  entry.codesOmitted = true;
-  delete entry.codes;
-  return true;
-}
-
-function compactRecentExactCodesOnPrediction(prediction, options) {
-  if (!prediction || typeof prediction !== "object") return 0;
-  const opts = options && typeof options === "object" ? options : {};
-  // 默认：已核算，或已封存的 tip（封存后不再需要 codes 数组，结算时按 baseUid+lookback 从 history 重建）
-  const allowUnevaluated = opts.force === true || prediction.evaluated || prediction.allSnapshotsSealed === true || prediction.snapshotsSealedAt;
-  if (!allowUnevaluated) return 0;
+function deleteRetiredKeys(block, keys) {
+  if (!block || typeof block !== "object") return 0;
   let changed = 0;
-  const extraKills = prediction.extraKills;
-  if (extraKills && typeof extraKills === "object") {
-    Object.keys(extraKills).forEach((key) => {
-      if (!isRecentExactCodeKey(key)) return;
-      if (omitRecentExactCodesOnEntry(extraKills[key])) changed += 1;
-    });
-  }
-  if (prediction.detail && prediction.detail.extraKills && typeof prediction.detail.extraKills === "object") {
-    Object.keys(prediction.detail.extraKills).forEach((key) => {
-      if (!isRecentExactCodeKey(key)) return;
-      if (omitRecentExactCodesOnEntry(prediction.detail.extraKills[key])) changed += 1;
-    });
-  }
-  ["autoTop6", "recommend2", "killFramework", "coldFramework", "compactAttack", "threeDingTwo", "threeDingOne", "sideStable", "dingKill", "pick5000"].forEach((storeName) => {
-    const snapshot = prediction[storeName];
-    const aliasItems = prediction[`${storeName}Items`];
-    const itemLists = [];
-    if (snapshot && typeof snapshot === "object" && Array.isArray(snapshot.items)) itemLists.push(snapshot.items);
-    // *Items 常是独立副本（非同一引用），必须同步 omit，否则封存后仍双倍占内存
-    if (Array.isArray(aliasItems) && aliasItems !== (snapshot && snapshot.items)) itemLists.push(aliasItems);
-    let itemChanged = false;
-    itemLists.forEach((items) => {
-      items.forEach((item) => {
-        if (!item || !isRecentExactCodeKey(item.key)) return;
-        if (omitRecentExactCodesOnEntry(item)) {
-          changed += 1;
-          itemChanged = true;
-        }
-      });
-    });
-    if (itemChanged && snapshot && snapshot.sealed === true) {
-      snapshot.codesCompacted = true;
-      snapshot.sealHash = snapshotSealHash(snapshot, prediction);
+  keys.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(block, key)) {
+      delete block[key];
+      changed += 1;
     }
   });
   return changed;
 }
 
-function historyRowsFromBaseUid(history, baseUid, basePeriod) {
-  const rows = Array.isArray(history) ? history : [];
-  const uid = String(baseUid || "");
-  const period = String(basePeriod || "").replace(/^period:/, "");
-  if (!uid && !period) return rows;
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (!row) continue;
-    if (uid && String(row.uid || "") === uid) return rows.slice(index);
-    const rowPeriod = String(row.period || "").replace(/^period:/, "");
-    if (period && rowPeriod && rowPeriod === period) return rows.slice(index);
-  }
-  return rows;
-}
-
-function resolveRecentExactCodeSet(entry, history, baseUid, basePeriod) {
-  if (entry && Array.isArray(entry.codes) && entry.codes.length) {
-    return new Set(entry.codes.map(String).filter((value) => /^\d{4}$/.test(value)));
-  }
-  const lookback = recentExactCodeWindowFromKey(
-    entry && entry.key,
-    entry && (entry.value || entry.code || entry.primary || entry.backup || entry.lookback)
-  );
-  const rows = historyRowsFromBaseUid(history, baseUid, basePeriod);
-  return recentExactCodeSet(rows, lookback);
-}
-
-function compactRecentExactCodesInState(target) {
-  if (!target || typeof target !== "object") return 0;
+function deleteRetiredFourCodeKeys(block) {
+  if (!block || typeof block !== "object") return 0;
   let changed = 0;
+  Object.keys(block).forEach((key) => {
+    if (!isRetiredFourCodeKey(key)) return;
+    delete block[key];
+    changed += 1;
+  });
+  return changed;
+}
+
+function stripRetiredFourCodeItems(items) {
+  if (!Array.isArray(items)) return 0;
+  const kept = items.filter((item) => !isRetiredFourCodeKey(item && item.key));
+  const changed = items.length - kept.length;
+  if (changed) items.splice(0, items.length, ...kept);
+  return changed;
+}
+
+function stripRetiredFourCodeArtifacts(prediction) {
+  if (!prediction || typeof prediction !== "object") return 0;
+  let changed = 0;
+  changed += deleteRetiredFourCodeKeys(prediction.extraKills);
+  changed += deleteRetiredFourCodeKeys(prediction.detail && prediction.detail.extraKills);
+  if (prediction.evaluation && typeof prediction.evaluation === "object") {
+    changed += deleteRetiredFourCodeKeys(prediction.evaluation.independentExtras);
+    changed += deleteRetiredFourCodeKeys(prediction.evaluation.previousExtraKills);
+    changed += deleteRetiredKeys(prediction.evaluation, RETIRED_FOUR_CODE_FRAMEWORK_KEYS);
+  }
+  FRAMEWORK_SNAPSHOT_STORE_KEYS.forEach((key) => {
+    const snapshot = prediction[key];
+    changed += stripRetiredFourCodeItems(snapshot && snapshot.items);
+    changed += stripRetiredFourCodeItems(prediction[`${key}Items`]);
+    changed += stripRetiredFourCodeItems(prediction.evaluation && prediction.evaluation[key] && prediction.evaluation[key].items);
+  });
+  RETIRED_FOUR_CODE_FRAMEWORK_KEYS.forEach((key) => {
+    [key, `${key}Items`, `${key}RepairReport`].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(prediction, field)) {
+        delete prediction[field];
+        changed += 1;
+      }
+    });
+    if (prediction.recommendationMeta && Object.prototype.hasOwnProperty.call(prediction.recommendationMeta, `${key}SnapshotVersion`)) {
+      delete prediction.recommendationMeta[`${key}SnapshotVersion`];
+      changed += 1;
+    }
+  });
+  return changed;
+}
+
+function stripRetiredFourCodeState(target) {
+  if (!target || typeof target !== "object") return 0;
+  let changed = stripRetiredFourCodeArtifacts(target.currentPrediction);
   if (Array.isArray(target.predictions)) {
     target.predictions.forEach((prediction) => {
-      changed += compactRecentExactCodesOnPrediction(prediction, { force: true });
+      changed += stripRetiredFourCodeArtifacts(prediction);
     });
   }
-  changed += compactRecentExactCodesOnPrediction(target.currentPrediction, { force: true });
+  changed += deleteRetiredFourCodeKeys(target.counters);
+  changed += deleteRetiredKeys(target.dailyStreakLedger, RETIRED_FOUR_CODE_FRAMEWORK_KEYS);
+  changed += deleteRetiredKeys(target.algorithmProjectHealth, RETIRED_FOUR_CODE_FRAMEWORK_KEYS);
   return changed;
 }
 
@@ -535,6 +604,20 @@ function decorateTruthScoreFields(target, key, rate) {
     out.predictivePower = false;
     out.edgeOverBaseline = rateNum === null ? null : Number((rateNum - Number(meta.baseline)).toFixed(2));
     out.truthDisplay = "structural-baseline";
+  } else if (isPositionMainKey(key)) {
+    out.scoreClass = out.scoreClass || "predictive";
+    out.randomBaseline = 90;
+    out.scoreHint = "单定顶1 baseline 90";
+    out.predictivePower = true;
+    out.edgeOverBaseline = rateNum === null ? null : Number((rateNum - 90).toFixed(2));
+    out.truthDisplay = "predictive";
+  } else if (isPositionDualKey(key)) {
+    out.scoreClass = out.scoreClass || "predictive-secondary";
+    out.randomBaseline = POSITION_DUAL_RANDOM_BASELINE;
+    out.scoreHint = "次要观察：双码排除随机基线约80%";
+    out.predictivePower = false;
+    out.edgeOverBaseline = rateNum === null ? null : Number((rateNum - POSITION_DUAL_RANDOM_BASELINE).toFixed(2));
+    out.truthDisplay = "observe-secondary";
   } else {
     out.scoreClass = out.scoreClass || "predictive";
     out.randomBaseline = null;
@@ -564,7 +647,7 @@ function buildCounterTruthRecord(counter, key) {
   if (record.predictivePower === false && rate !== null && total >= MODEL_MIN_SAMPLE) {
     record.low = rate < (Number(record.randomBaseline || 0) - 3);
   } else if (rate !== null && total >= MODEL_MIN_SAMPLE) {
-    record.low = rate < MODEL_LOW_HIT_RATE;
+    record.low = rate < modelLowRateForKey(key);
   } else {
     record.low = false;
   }
@@ -585,24 +668,9 @@ function counterRateText(counter, key) {
   return `${value}%｜相对基线${edgeText}（${meta.hint}，非预测力）`;
 }
 
-function recentExactCodeWindowFromKey(key, fallback) {
-  const text = `${String(key || "")} ${String(fallback === undefined || fallback === null ? "" : fallback)}`;
-  if (/recentExactCodeAvoidMax/i.test(text) || /最大|全部|MAX/i.test(text)) return Math.max(1, MAX_HISTORY || 5000);
-  const fromKey = String(key || "").match(/recentExactCodeAvoid(\d+)/);
-  if (fromKey) return Math.max(1, Number(fromKey[1]));
-  const fromFallback = String(fallback === undefined || fallback === null ? "" : fallback).match(/(\d+)/);
-  if (fromFallback) return Math.max(1, Number(fromFallback[1]));
-  return 500;
-}
-
-function recentExactCodeCodeLimit(entry) {
-  if (entry && String(entry.key || "") === RECENT_EXACT_CODE_MAX_KEY) return Math.max(1, Number(entry.codeCount || MAX_HISTORY || 5000));
-  return recentExactCodeWindowFromKey(entry && entry.key, entry && (entry.value || entry.code || entry.primary || entry.backup));
-}
-
 function createDefaultCounters() {
   return {
-    version: 8,
+    version: 10,
     updatedAt: "",
     positionTotal: { label: "万千百十定位双码总击", total: 0, match: 0 },
     wan: { label: "万位定位双码排除", total: 0, match: 0, mainMatch: 0 },
@@ -614,14 +682,19 @@ function createDefaultCounters() {
     wanQianBai: { label: "千百十合尾", total: 0, match: 0 },
     qianBaiShi: { label: "百十个合尾", total: 0, match: 0 },
     wanQianBaiShi: { label: "千百十个合尾", total: 0, match: 0 },
+    wanQianGe: { label: "千百个合尾(稳定)", total: 0, match: 0 },
+    wanQianGeFreq: { label: "千百个合尾(频次)", total: 0, match: 0 },
+    wanBaiShi: { label: "千十个合尾(稳定)", total: 0, match: 0 },
+    wanBaiShiFreq: { label: "千十个合尾(频次)", total: 0, match: 0 },
     threeDuishu: { label: "三对数排除", total: 0, match: 0 },
     sumAvoid: { label: "单点和值过滤（高基线）", total: 0, match: 0 },
-    threeDigitAvoid: { label: "对数共现避开", total: 0, match: 0 },
-    twoDigitAvoid: { label: "对数避开1组", total: 0, match: 0 },
-    twoDigitAvoid2: { label: "对数避开2组", total: 0, match: 0 },
-    twoDigitAvoid3: { label: "对数避开3组", total: 0, match: 0 },
-    twoDigitHit: { label: "两数共现除对数（基线参考）", total: 0, match: 0 },
-    threeDigitHit: { label: "三数共现命中", total: 0, match: 0 },
+    threeDigitAvoid: { label: "三数共现避开1组", total: 0, match: 0 },
+    twoDigitAvoid: { label: "四定对数避开1组", total: 0, match: 0 },
+    twoDigitAvoid2: { label: "四定对数避开2组", total: 0, match: 0 },
+    twoDigitAvoid3: { label: "四定对数避开3组", total: 0, match: 0 },
+    twoDigitHit: { label: "两数共现避开（基线参考）", total: 0, match: 0 },
+    threeDigitHit: { label: "三数共现避开2组", total: 0, match: 0 },
+    threeDigitAvoid2: { label: "三数共现避开3组", total: 0, match: 0 },
     anyTwoHeweiHit: { label: "二数合尾02468排1码命中（高基线参考）", total: 0, match: 0 },
     anyThreeHeweiHit: { label: "三数合尾宽命中（高基线参考）", total: 0, match: 0 },
     sumRangeAvoid: { label: "和值极端区间过滤（高基线）", total: 0, match: 0 },
@@ -629,23 +702,96 @@ function createDefaultCounters() {
     repeatAvoid: { label: "重号极罕形态过滤（高基线）", total: 0, match: 0 },
     consecutiveAvoid: { label: "连号极罕形态过滤（高基线）", total: 0, match: 0 },
     parityRatioAvoid: { label: "极端奇偶比过滤（高基线）", total: 0, match: 0 },
-    sizeRatioAvoid: { label: "极端大小比过滤（高基线）", total: 0, match: 0 },
-    recentExactCodeAvoid300: { label: "近300重复四码避开", total: 0, match: 0 },
-    recentExactCodeAvoid500: { label: "近500重复四码避开", total: 0, match: 0 },
-    recentExactCodeAvoid800: { label: "近800重复四码避开", total: 0, match: 0 },
-    recentExactCodeAvoid1000: { label: "近1000重复四码避开", total: 0, match: 0 },
-    recentExactCodeAvoidMax: { label: "最大旧码回删", total: 0, match: 0 }
+    sizeRatioAvoid: { label: "极端大小比过滤（高基线）", total: 0, match: 0 }
   };
+}
+
+const COUNTER_METRIC_KEYS = [
+  "positionTotal", "wan", "qian", "bai", "shi", "totalHewei", "threeFour",
+  "wanQianBai", "qianBaiShi", "wanQianBaiShi",
+  "wanQianGe", "wanQianGeFreq", "wanBaiShi", "wanBaiShiFreq",
+  "threeDuishu", "sumAvoid",
+  "threeDigitAvoid", "twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3",
+  "twoDigitHit", "threeDigitHit", "threeDigitAvoid2", "anyTwoHeweiHit", "anyThreeHeweiHit",
+  "sumRangeAvoid", "spanAvoid", "repeatAvoid", "consecutiveAvoid",
+  "parityRatioAvoid", "sizeRatioAvoid"
+];
+
+function currentCounterCohortDescriptor() {
+  const snapshotVersions = {
+    autoTop6: AUTO_TOP6_SNAPSHOT_VERSION,
+    recommend2: RECOMMEND2_SNAPSHOT_VERSION,
+    killFramework: KILL_FRAMEWORK_SNAPSHOT_VERSION,
+    compactAttack: COMPACT_ATTACK_SNAPSHOT_VERSION,
+    threeDingTwo: THREE_DING_TWO_SNAPSHOT_VERSION,
+    threeDingOne: THREE_DING_ONE_SNAPSHOT_VERSION,
+    threeDuishu: THREE_DUISHU_SNAPSHOT_VERSION
+  };
+  return {
+    schema: 1,
+    key: [MODEL_VERSION, ...Object.keys(snapshotVersions).sort().map((name) => `${name}=${snapshotVersions[name]}`)].join("|"),
+    algorithmVersion: MODEL_VERSION,
+    snapshotVersions,
+    startedAt: "",
+    startPeriod: "",
+    endPeriod: "",
+    appliedTargetPeriods: []
+  };
+}
+
+function normalizeCounterCohort(counters, base) {
+  const expected = currentCounterCohortDescriptor();
+  const existing = counters && counters.cohort && typeof counters.cohort === "object" ? counters.cohort : null;
+  if (existing && String(existing.key || "") === expected.key) {
+    counters.cohort = Object.assign({}, expected, existing, {
+      appliedTargetPeriods: Array.isArray(existing.appliedTargetPeriods)
+        ? existing.appliedTargetPeriods.map(String).filter(Boolean).slice(-MAX_HISTORY)
+        : []
+    });
+    return;
+  }
+  const archivedMetrics = {};
+  COUNTER_METRIC_KEYS.forEach((key) => {
+    const value = counters && counters[key];
+    if (!value || typeof value !== "object") return;
+    if (Number(value.total || 0) <= 0 && Number(value.match || 0) <= 0) return;
+    archivedMetrics[key] = {
+      label: value.label || key,
+      total: Number(value.total || 0),
+      match: Number(value.match || 0),
+      ...(Object.prototype.hasOwnProperty.call(value, "mainMatch") ? { mainMatch: Number(value.mainMatch || 0) } : {})
+    };
+  });
+  const legacy = Array.isArray(counters.legacyCohorts) ? counters.legacyCohorts.slice(-4) : [];
+  if (Object.keys(archivedMetrics).length) {
+    legacy.push({
+      key: existing && existing.key || `legacy-schema-v${Number(counters.version || 0)}`,
+      algorithmVersion: existing && existing.algorithmVersion || "unknown",
+      snapshotVersions: existing && existing.snapshotVersions || {},
+      startPeriod: existing && existing.startPeriod || "",
+      endPeriod: existing && existing.endPeriod || "",
+      archivedAt: isoNow(),
+      metrics: archivedMetrics
+    });
+  }
+  COUNTER_METRIC_KEYS.forEach((key) => {
+    counters[key] = Object.assign({}, base[key]);
+  });
+  counters.legacyCohorts = legacy.slice(-5);
+  counters.cohort = Object.assign({}, expected, { startedAt: isoNow() });
 }
 
 function normalizeCounters(input) {
   const base = createDefaultCounters();
   const counters = input && typeof input === "object" ? input : {};
-  const keys = ["positionTotal", "wan", "qian", "bai", "shi", "totalHewei", "threeFour", "wanQianBai", "qianBaiShi", "wanQianBaiShi", "threeDuishu", "sumAvoid", "threeDigitAvoid", "twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit", "threeDigitHit", "anyTwoHeweiHit", "anyThreeHeweiHit", "sumRangeAvoid", "spanAvoid", "repeatAvoid", "consecutiveAvoid", "parityRatioAvoid", "sizeRatioAvoid", ...RECENT_EXACT_CODE_KEYS];
-  keys.forEach((key) => {
+  normalizeCounterCohort(counters, base);
+  COUNTER_METRIC_KEYS.forEach((key) => {
     if (!counters[key] || typeof counters[key] !== "object") {
       counters[key] = Object.assign({}, base[key]);
     }
+    const prevTruthSource = String(counters[key].truthSource || "");
+    const prevDayScope = counters[key].dayScope;
+    const prevDayResetHour = counters[key].dayResetHour;
     counters[key].label = base[key].label || counters[key].label || key;
     counters[key].total = Number(counters[key].total || 0);
     counters[key].match = Number(counters[key].match || 0);
@@ -655,14 +801,23 @@ function normalizeCounters(input) {
     const rate = calcRateNumber(counters[key].total, counters[key].match);
     counters[key].rate = rate;
     decorateTruthScoreFields(counters[key], key, rate);
-    counters[key].truthSource = "official-counter-truth-eligible-only";
+    // 按天账本字段不可被 normalize 冲掉，否则面板会从「今日」跳回累计百分比
+    if (prevTruthSource.indexOf("daily") >= 0 || prevDayScope) {
+      counters[key].truthSource = prevTruthSource.indexOf("daily") >= 0
+        ? prevTruthSource
+        : "official-counter-truth-eligible-only-daily";
+      if (prevDayScope) counters[key].dayScope = prevDayScope;
+      if (prevDayResetHour != null) counters[key].dayResetHour = prevDayResetHour;
+    } else {
+      counters[key].truthSource = "official-counter-truth-eligible-only";
+    }
     if (counters[key].predictivePower === false) {
       counters[key].low = counters[key].total >= MODEL_MIN_SAMPLE && rate !== null && rate < (Number(counters[key].randomBaseline || 0) - 3);
     } else {
-      counters[key].low = counters[key].total >= MODEL_MIN_SAMPLE && rate !== null && rate < MODEL_LOW_HIT_RATE;
+      counters[key].low = counters[key].total >= MODEL_MIN_SAMPLE && rate !== null && rate < modelLowRateForKey(key);
     }
   });
-  counters.version = 9;
+  counters.version = 10;
   counters.updatedAt = counters.updatedAt || "";
   return counters;
 }
@@ -671,7 +826,7 @@ function buildRateDetailsFromCounters(counters) {
   const c = normalizeCounters(counters);
   const details = {};
   Object.keys(c).forEach((key) => {
-    if (key === "version" || key === "updatedAt") return;
+    if (["version", "updatedAt", "cohort", "legacyCohorts"].includes(key)) return;
     if (!c[key] || typeof c[key] !== "object") return;
     details[key] = buildCounterTruthRecord(c[key], key);
   });
@@ -693,6 +848,10 @@ function createDefaultModelWatchdog() {
     lastRepairAt: "",
     lastQualityRepairBaseUid: "",
     lastQualityRepairAt: "",
+    // Keep quality repairs idempotent across draw periods. A persistent low
+    // score is an observation until it clears; re-clearing the same lock each
+    // period only creates write amplification and prediction churn.
+    qualityRepairKeys: {},
     lastTrigger: "",
     lastIssues: [],
     lastActions: []
@@ -714,6 +873,18 @@ function normalizeModelWatchdog(input) {
   merged.totalRepairs = Number(merged.totalRepairs || 0);
   merged.lastQualityRepairBaseUid = String(merged.lastQualityRepairBaseUid || "");
   merged.lastQualityRepairAt = String(merged.lastQualityRepairAt || "");
+  merged.qualityRepairKeys = merged.qualityRepairKeys && typeof merged.qualityRepairKeys === "object"
+    ? Object.keys(merged.qualityRepairKeys).reduce((out, key) => {
+      const value = merged.qualityRepairKeys[key];
+      if (key && value && typeof value === "object") {
+        out[String(key)] = {
+          baseUid: String(value.baseUid || ""),
+          at: String(value.at || "")
+        };
+      }
+      return out;
+    }, {})
+    : {};
   merged.lastIssues = Array.isArray(merged.lastIssues) ? merged.lastIssues.slice(0, 80) : [];
   merged.lastActions = Array.isArray(merged.lastActions) ? merged.lastActions.slice(0, 80) : [];
   return merged;
@@ -829,7 +1000,7 @@ function evaluateAndApplyStormMode() {
     enterReasons.push(`三对数连败${threeDuishu.currentMiss}>=${STORM_ENTER_THREE_DUISHU_MISS}`);
   }
   const clearNow = autoTop6.currentMiss <= 0 && threeDuishu.currentMiss <= 0;
-  const winRecover = autoTop6.currentWin >= STORM_EXIT_WIN || threeDuishu.currentWin >= STORM_EXIT_WIN;
+  const winRecover = autoTop6.currentWin >= STORM_EXIT_WIN && threeDuishu.currentWin >= STORM_EXIT_WIN;
 
   if (!next.active && enterReasons.length) {
     next.active = true;
@@ -889,6 +1060,235 @@ function cleanDayKey(value) {
   if (match) return `${match[1]}-${match[2]}-${match[3]}`;
   match = text.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
   if (match) return `${match[1]}-${String(match[2]).padStart(2, "0")}-${String(match[3]).padStart(2, "0")}`;
+  return "";
+}
+
+const PENTA5_DAY_RESET_HOUR = Math.max(0, Math.min(23, Number(process.env.PENTA5_DAY_RESET_HOUR || 5)));
+
+function parseLocalDateTimeValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  let match = text.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (match) {
+    return new Date(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6] || 0),
+      0
+    );
+  }
+  match = text.match(/^(\d{4})(\d{2})(\d{2})(\d{3})$/);
+  if (match) {
+    const seq = Number(match[4]);
+    if (Number.isInteger(seq) && seq >= 1 && seq <= PENTA5_PERIODS_PER_DAY) {
+      const minutes = (seq - 1) * 5;
+      return new Date(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3]),
+        Math.floor(minutes / 60),
+        minutes % 60,
+        DRAW_SECOND,
+        0
+      );
+    }
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0);
+  }
+  const parsed = new Date(text);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function businessDayKey(value) {
+  const dt = parseLocalDateTimeValue(value);
+  if (dt && Number.isFinite(dt.getTime())) {
+    const shifted = new Date(dt.getTime() - PENTA5_DAY_RESET_HOUR * 60 * 60 * 1000);
+    const y = shifted.getFullYear();
+    const m = String(shifted.getMonth() + 1).padStart(2, "0");
+    const d = String(shifted.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return cleanDayKey(value);
+}
+
+function currentBusinessDayKey() {
+  return businessDayKey(new Date());
+}
+
+function currentLocalDayKey() {
+  return currentBusinessDayKey();
+}
+
+function predictionBusinessDayKey(prediction) {
+  const ev = prediction && prediction.evaluation ? prediction.evaluation : {};
+  const candidates = [
+    ev.targetOpenTime,
+    ev.evaluatedAtText,
+    ev.evaluatedAt,
+    ev.targetPeriod,
+    prediction && prediction.baseOpenTime,
+    prediction && prediction.basePeriod
+  ];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const key = businessDayKey(candidates[i]);
+    if (key) return key;
+  }
+  return "";
+}
+
+function filterDedupedEvaluatedPredictions(predictions, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const businessDay = opts.businessDay ? cleanDayKey(opts.businessDay) : "";
+  const limit = Number.isFinite(Number(opts.limit)) ? Math.max(0, Number(opts.limit)) : null;
+  const seenTargets = new Set();
+  const rows = [];
+  (Array.isArray(predictions) ? predictions : []).forEach((prediction) => {
+    if (!prediction || !prediction.evaluated || !prediction.evaluation) return;
+    if (opts.requireModelVersion && prediction.modelVersion !== MODEL_VERSION) return;
+    if (businessDay && predictionBusinessDayKey(prediction) !== businessDay) return;
+    const ev = prediction.evaluation || {};
+    const target = cleanPeriodKey(ev.targetUid || ev.targetPeriod || prediction.baseUid || prediction.basePeriod);
+    if (target) {
+      if (seenTargets.has(target)) return;
+      seenTargets.add(target);
+    }
+    rows.push(prediction);
+  });
+  return limit === null ? rows : rows.slice(0, limit);
+}
+
+function estimateBusinessDayElapsedPeriods(now) {
+  const dt = now instanceof Date ? now : new Date();
+  if (!Number.isFinite(dt.getTime())) return 0;
+  const shifted = new Date(dt.getTime() - PENTA5_DAY_RESET_HOUR * 60 * 60 * 1000);
+  const start = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate(), PENTA5_DAY_RESET_HOUR, 0, 0, 0);
+  const elapsedMs = Math.max(0, dt.getTime() - start.getTime());
+  // 五星约 5 分钟一期
+  return Math.floor(elapsedMs / (5 * 60 * 1000));
+}
+
+function memoryCanRebuildDailyCounters(predictions, day) {
+  const cleanDay = cleanDayKey(day) || currentBusinessDayKey();
+  const n = filterDedupedEvaluatedPredictions(predictions, { businessDay: cleanDay }).length;
+  const elapsed = estimateBusinessDayElapsedPeriods(new Date());
+  // 业务日刚开始：样本少是正常的，允许按天覆盖
+  if (elapsed <= 12) return true;
+  // 日中/日末若内存评价条数远少于已过期数，说明 tip-only 重启掏空了列表，禁止用几条样本假算成 100%
+  const minNeeded = Math.min(40, Math.max(12, Math.floor(elapsed * 0.2)));
+  return n >= minNeeded;
+}
+
+function summarizeDailyPositionCounters(predictions, day) {
+  const cleanDay = cleanDayKey(day) || currentBusinessDayKey();
+  const base = createDefaultCounters();
+  const keys = ["positionTotal", "wan", "qian", "bai", "shi"];
+  const tallies = {};
+  keys.forEach((key) => {
+    tallies[key] = {
+      total: 0,
+      match: 0,
+      mainMatch: key === "positionTotal" ? undefined : 0
+    };
+  });
+  filterDedupedEvaluatedPredictions(predictions, { businessDay: cleanDay }).forEach((prediction) => {
+    const ev = prediction.evaluation || {};
+    if (ev.truthEligible === false || ev.voided === true || prediction.counterSkipped) return;
+    if (typeof ev.positionTotalSuccess === "boolean") {
+      tallies.positionTotal.total += 1;
+      if (ev.positionTotalSuccess) tallies.positionTotal.match += 1;
+    }
+    ["wan", "qian", "bai", "shi"].forEach((key) => {
+      const item = ev.independentPosition && ev.independentPosition[key];
+      if (!item || typeof item.success !== "boolean") return;
+      tallies[key].total += 1;
+      if (item.success) tallies[key].match += 1;
+      if (item.mainSuccess) tallies[key].mainMatch += 1;
+    });
+  });
+  const out = {};
+  keys.forEach((key) => {
+    out[key] = Object.assign({}, base[key], tallies[key]);
+    const rate = calcRateNumber(out[key].total, out[key].match);
+    out[key].rate = rate;
+    decorateTruthScoreFields(out[key], key, rate);
+    out[key].truthSource = "official-counter-truth-eligible-only-daily";
+    out[key].dayScope = cleanDay;
+    out[key].dayResetHour = PENTA5_DAY_RESET_HOUR;
+  });
+  return out;
+}
+
+function summarizeDailyThreeDuishuCounter(predictions, day) {
+  const cleanDay = cleanDayKey(day) || currentBusinessDayKey();
+  const base = createDefaultCounters();
+  let total = 0;
+  let match = 0;
+  filterDedupedEvaluatedPredictions(predictions, { businessDay: cleanDay }).forEach((prediction) => {
+    const ev = prediction.evaluation || {};
+    const rec = ev.threeDuishu || {};
+    if (typeof rec.success !== "boolean") return;
+    if (rec.truthEligible !== true || rec.reconstructed === true) return;
+    if (rec.version && rec.version !== THREE_DUISHU_SNAPSHOT_VERSION) return;
+    total += 1;
+    if (rec.success) match += 1;
+  });
+  const rate = calcRateNumber(total, match);
+  const out = Object.assign({}, base.threeDuishu, { total, match, rate });
+  decorateTruthScoreFields(out, "threeDuishu", rate);
+  out.truthSource = "official-counter-truth-eligible-only-daily";
+  out.dayScope = cleanDay;
+  out.dayResetHour = PENTA5_DAY_RESET_HOUR;
+  return out;
+}
+
+function summarizeDailyHeweiHitCounters(predictions, day) {
+  const cleanDay = cleanDayKey(day) || currentBusinessDayKey();
+  const base = createDefaultCounters();
+  const keys = ["anyTwoHeweiHit", "anyThreeHeweiHit"];
+  const tallies = {};
+  keys.forEach((key) => {
+    tallies[key] = { total: 0, match: 0 };
+  });
+  filterDedupedEvaluatedPredictions(predictions, { businessDay: cleanDay }).forEach((prediction) => {
+    const ev = prediction.evaluation || {};
+    if (ev.truthEligible === false || ev.voided === true || prediction.counterSkipped) return;
+    const extras = ev.independentExtras || {};
+    keys.forEach((key) => {
+      const item = extras[key];
+      if (!item || typeof item.success !== "boolean") return;
+      tallies[key].total += 1;
+      if (item.success) tallies[key].match += 1;
+    });
+  });
+  const out = {};
+  keys.forEach((key) => {
+    out[key] = Object.assign({}, base[key], tallies[key]);
+    const rate = calcRateNumber(out[key].total, out[key].match);
+    out[key].rate = rate;
+    decorateTruthScoreFields(out[key], key, rate);
+    out[key].truthSource = "official-counter-truth-eligible-only-daily";
+    out[key].dayScope = cleanDay;
+    out[key].dayResetHour = PENTA5_DAY_RESET_HOUR;
+  });
+  return out;
+}
+
+function resolveSealedThreeDuishuBackupPair(rec) {
+  const source = rec && typeof rec === "object" ? rec : {};
+  const main = String(source.selectedPair || source.selectedPairCode || "").replace(/\D/g, "").slice(0, 2);
+  const pairSelection = source.pairSelection && typeof source.pairSelection === "object" ? source.pairSelection : {};
+  const scored = Array.isArray(pairSelection.candidates) ? pairSelection.candidates : [];
+  for (let i = 0; i < scored.length; i += 1) {
+    const cand = String(scored[i] && scored[i].pair || "").replace(/\D/g, "").slice(0, 2);
+    if (/^\d{2}$/.test(cand) && cand !== main) return cand;
+  }
+  const pairs = Array.isArray(source.pairs) ? source.pairs : [];
+  for (let j = 0; j < pairs.length; j += 1) {
+    const alt = String(pairs[j] || "").replace(/\D/g, "").slice(0, 2);
+    if (/^\d{2}$/.test(alt) && alt !== main) return alt;
+  }
   return "";
 }
 
@@ -1056,11 +1456,11 @@ function mergeDailyStreakStats(storeName, day, stats, source) {
   const isPanelSource = /^panel/i.test(incomingSource);
   const existingSource = String(existing.source || "");
   const existingIsBackend = existingSource.indexOf("backend-") === 0 || existingSource === "backend-evaluation";
-  const incomingSnapshot = incomingSource.indexOf("backend-auto-top6-snapshot") === 0 || incomingSource.indexOf("backend-recommend2-snapshot") === 0 || incomingSource.indexOf("backend-cold-framework-snapshot") === 0 || incomingSource.indexOf("backend-pick5000-snapshot") === 0 || incomingSource.indexOf("backend-three-ding-framework") === 0 || incomingSource.indexOf("backend-three-ding-two") === 0 || incomingSource.indexOf("backend-three-ding-one") === 0;
-  const existingSnapshot = existingSource.indexOf("backend-auto-top6-snapshot") === 0 || existingSource.indexOf("backend-recommend2-snapshot") === 0 || existingSource.indexOf("backend-cold-framework-snapshot") === 0 || existingSource.indexOf("backend-pick5000-snapshot") === 0 || existingSource.indexOf("backend-three-ding-framework") === 0 || existingSource.indexOf("backend-three-ding-two") === 0 || existingSource.indexOf("backend-three-ding-one") === 0;
+  const incomingSnapshot = incomingSource.indexOf("backend-auto-top6-snapshot") === 0 || incomingSource.indexOf("backend-recommend2-snapshot") === 0 || incomingSource.indexOf("backend-three-ding-framework") === 0 || incomingSource.indexOf("backend-three-ding-two") === 0 || incomingSource.indexOf("backend-three-ding-one") === 0;
+  const existingSnapshot = existingSource.indexOf("backend-auto-top6-snapshot") === 0 || existingSource.indexOf("backend-recommend2-snapshot") === 0 || existingSource.indexOf("backend-three-ding-framework") === 0 || existingSource.indexOf("backend-three-ding-two") === 0 || existingSource.indexOf("backend-three-ding-one") === 0;
   const threeDingStore = name === "compactAttack" || name === "threeDingTwo" || name === "threeDingOne";
-  const snapshotVersionChanged = (name === "autoTop6" || name === "recommend2" || name === "coldFramework" || name === "pick5000" || threeDingStore) && incomingSnapshot && existingSnapshot && incomingSource !== existingSource;
-  const replaceAutoTop6Snapshot = (name === "autoTop6" || name === "recommend2" || name === "coldFramework" || name === "pick5000" || threeDingStore) && incomingSnapshot && (snapshotVersionChanged || !existingSnapshot || incoming.total >= existing.total || existing.total === 0);
+  const snapshotVersionChanged = (name === "autoTop6" || name === "recommend2" || threeDingStore) && incomingSnapshot && existingSnapshot && incomingSource !== existingSource;
+  const replaceAutoTop6Snapshot = (name === "autoTop6" || name === "recommend2" || threeDingStore) && incomingSnapshot && (snapshotVersionChanged || !existingSnapshot || incoming.total >= existing.total || existing.total === 0);
   // A backend rebuild is calculated from sealed predictions for this exact
   // day. It must be able to replace a previously over-counted day ledger.
   const replaceBackendDailyRebuild = !isPanelSource && incomingCoherent && incoming.total > 0 && incoming.lastPeriod &&
@@ -1117,7 +1517,15 @@ function streakStatsFromResults(day, rows) {
   let maxMiss = 0;
   let lastResult = null;
   let lastPeriod = "";
-  (Array.isArray(rows) ? rows : []).forEach((row) => {
+  const seenPeriods = new Set();
+  (Array.isArray(rows) ? rows : []).filter((row) => {
+    if (!row || typeof row.success !== "boolean") return false;
+    const period = cleanPeriodKey(row.period || row.uid);
+    if (!period) return true;
+    if (seenPeriods.has(period)) return false;
+    seenPeriods.add(period);
+    return true;
+  }).forEach((row) => {
     if (!row || typeof row.success !== "boolean") return;
     total += 1;
     if (row.success) hit += 1;
@@ -1271,86 +1679,6 @@ function refreshBackendDailyStreaks() {
   if (threeDingOneRows.length || (state.currentPrediction && state.currentPrediction.threeDingOne)) {
     mergeDailyStreakStats("threeDingOne", day, streakStatsFromResults(day, threeDingOneRows), THREE_DING_ONE_SNAPSHOT_VERSION);
   }
-  const sideStableRows = state.predictions
-    .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation && predictionDateKey(prediction) === day)
-    .map((prediction) => {
-      const ev = prediction.evaluation || {};
-      const sideStable = ev.sideStable || {};
-      if (typeof sideStable.success !== "boolean") return null;
-      if (sideStable.truthEligible !== true) return null;
-      if (sideStable.reconstructed === true) return null;
-      if (sideStable.version && sideStable.version !== SIDE_STABLE_SNAPSHOT_VERSION) return null;
-      if (Number(sideStable.total || 0) !== SIDE_STABLE_ITEM_COUNT) return null;
-      return {
-        period: ev.targetPeriod || prediction.basePeriod || "",
-        success: sideStable.success
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => String(a.period).localeCompare(String(b.period)));
-  if (sideStableRows.length || (state.currentPrediction && state.currentPrediction.sideStable)) {
-    mergeDailyStreakStats("sideStable", day, streakStatsFromResults(day, sideStableRows), SIDE_STABLE_SNAPSHOT_VERSION);
-  }
-  const coldFrameworkRows = state.predictions
-    .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation && predictionDateKey(prediction) === day)
-    .map((prediction) => {
-      const ev = prediction.evaluation || {};
-      const coldFramework = ev.coldFramework || {};
-      if (typeof coldFramework.success !== "boolean") return null;
-      if (coldFramework.truthEligible !== true) return null;
-      if (coldFramework.reconstructed === true) return null;
-      if (coldFramework.version && coldFramework.version !== COLD_FRAMEWORK_SNAPSHOT_VERSION) return null;
-      if (Number(coldFramework.total || 0) !== COLD_FRAMEWORK_ITEM_COUNT) return null;
-      return {
-        period: ev.targetPeriod || prediction.basePeriod || "",
-        success: coldFramework.success
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => String(a.period).localeCompare(String(b.period)));
-  if (coldFrameworkRows.length || (state.currentPrediction && state.currentPrediction.coldFramework)) {
-    mergeDailyStreakStats("coldFramework", day, streakStatsFromResults(day, coldFrameworkRows), COLD_FRAMEWORK_SNAPSHOT_VERSION);
-  }
-  const dingKillRows = state.predictions
-    .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation && predictionDateKey(prediction) === day)
-    .map((prediction) => {
-      const ev = prediction.evaluation || {};
-      const dingKill = ev.dingKill || {};
-      if (typeof dingKill.success !== "boolean") return null;
-      if (dingKill.truthEligible !== true) return null;
-      if (dingKill.reconstructed === true) return null;
-      if (dingKill.version && dingKill.version !== DING_KILL_SNAPSHOT_VERSION) return null;
-      if (Number(dingKill.total || 0) !== DING_KILL_ITEM_COUNT) return null;
-      return {
-        period: ev.targetPeriod || prediction.basePeriod || "",
-        success: dingKill.success
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => String(a.period).localeCompare(String(b.period)));
-  if (dingKillRows.length || (state.currentPrediction && state.currentPrediction.dingKill)) {
-    mergeDailyStreakStats("dingKill", day, streakStatsFromResults(day, dingKillRows), DING_KILL_SNAPSHOT_VERSION);
-  }
-  const pick5000Rows = state.predictions
-    .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation && predictionDateKey(prediction) === day)
-    .map((prediction) => {
-      const ev = prediction.evaluation || {};
-      const pick5000 = ev.pick5000 || {};
-      if (typeof pick5000.success !== "boolean") return null;
-      if (pick5000.truthEligible !== true) return null;
-      if (pick5000.reconstructed === true) return null;
-      if (pick5000.version && pick5000.version !== PICK5000_SNAPSHOT_VERSION) return null;
-      if (Number(pick5000.total || 0) !== PICK5000_ITEM_COUNT) return null;
-      return {
-        period: ev.targetPeriod || prediction.basePeriod || "",
-        success: pick5000.success
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => String(a.period).localeCompare(String(b.period)));
-  if (pick5000Rows.length || (state.currentPrediction && state.currentPrediction.pick5000)) {
-    mergeDailyStreakStats("pick5000", day, streakStatsFromResults(day, pick5000Rows), PICK5000_SNAPSHOT_VERSION);
-  }
   const threePairRows = state.predictions
     .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation && predictionDateKey(prediction) === day)
     .map((prediction) => {
@@ -1452,6 +1780,12 @@ function createDefaultState() {
     rawJson: null,
     lastSync: null,
     lastError: null,
+    tipReady: false,
+    structureReady: false,
+    truthReady: false,
+    qualityReady: false,
+    operationalReady: false,
+    duishuCaptureAlarm: null,
     history: [],
     predictions: [],
     counters: createDefaultCounters(),
@@ -1497,6 +1831,7 @@ function loadState() {
     merged.pendingOfficialDraws = normalizePendingOfficialDraws(merged.pendingOfficialDraws);
     merged.rdsReadOnly = !!merged.rdsReadOnly;
     merged.logs = Array.isArray(merged.logs) ? merged.logs.slice(0, 200) : [];
+    stripRetiredFourCodeState(merged);
     // 临时挂到 state 以便回填新增账本键（合尾三项/三对数），随后由启动流程覆盖
     state = merged;
     restoreFrameworkItemAliases(state.currentPrediction);
@@ -1504,7 +1839,6 @@ function loadState() {
       state.predictions.forEach((prediction) => restoreFrameworkItemAliases(prediction));
     }
     rebuildMissingModelCountersFromPredictions();
-    compactRecentExactCodesInState(merged);
     normalizeStableMathFiltersInState(merged);
     return state;
   } catch (err) {
@@ -1719,9 +2053,7 @@ async function flushPendingOfficialDrawsToRds(reason) {
       addLog("RDS 待写入开奖已追平", { flushed, reason: reason || "catchup", pending: (state && state.pendingOfficialDraws || []).length });
       try {
         await hydrateSharedHistoryFromRds(state);
-      } catch (err) {
-        addLog("RDS 追平后历史回填失败", { error: err && err.message });
-      }
+      } catch (_) {}
     }
     return { ok: !hitReadOnly, flushed, pending: remain.length, readOnly: hitReadOnly };
   } finally {
@@ -1782,6 +2114,7 @@ async function hydrateSharedHistoryFromRds(targetState) {
       });
     }
     if (!mapped.length) return { ok: false, reason: "unmap" };
+    mapped.sort((a, b) => String(b.period || b.uid || "").localeCompare(String(a.period || a.uid || "")));
     const rdsLatest = health.body.latestPeriod || (mapped[0] && mapped[0].period);
     const rdsLatestStr = String(rdsLatest || "");
     const localExtras = [];
@@ -1823,12 +2156,123 @@ async function hydrateSharedHistoryFromRds(targetState) {
   }
 }
 
+async function hydrateAlgoDurableFromRds(targetState) {
+  if (!targetState) return { ok: false, reason: "no-state" };
+  if (!ALGO_RDS_DURABLE && !LOCAL_TIP_ONLY) return { ok: false, reason: "disabled" };
+  try {
+    const resp = await fetchJsonUrlSync(`${RDS_API_BASE}/state`, 60000);
+    if (!resp.body || resp.body.ok !== true) {
+      return { ok: false, reason: "state-fail", status: resp.status };
+    }
+    const body = resp.body;
+    const modules = body.modelModules && typeof body.modelModules === "object" ? body.modelModules : {};
+    const take = (key) => {
+      const row = modules[key];
+      return row && Object.prototype.hasOwnProperty.call(row, "state") ? row.state : undefined;
+    };
+    let applied = 0;
+    const preferRds = DATA_READ_MODE === "rds-primary" || LOCAL_TIP_ONLY;
+
+    if (body.counters && typeof body.counters === "object") {
+      const localTotal = Object.keys(targetState.counters || {}).reduce(
+        (sum, k) => sum + Number((targetState.counters[k] && targetState.counters[k].total) || 0),
+        0
+      );
+      const rdsTotal = Object.keys(body.counters).reduce(
+        (sum, k) => sum + Number((body.counters[k] && body.counters[k].total) || 0),
+        0
+      );
+      // tip-only 本地已落盘 counters 时不要被陈旧 RDS 账本冲掉（否则按天覆盖又只能靠重启后几条样本）
+      let takeCounters = false;
+      if (localTotal === 0) takeCounters = true;
+      else if (LOCAL_TIP_ONLY) takeCounters = false;
+      else if (preferRds || rdsTotal >= localTotal) takeCounters = true;
+      if (takeCounters) {
+        targetState.counters = normalizeCounters(Object.assign({}, body.counters));
+        applied += 1;
+      }
+    }
+    if (body.dailyStreakLedger && typeof body.dailyStreakLedger === "object") {
+      const localLedgerKeys = Object.keys(targetState.dailyStreakLedger || {}).length;
+      const takeLedger = localLedgerKeys === 0 || (!LOCAL_TIP_ONLY && (preferRds || !localLedgerKeys));
+      if (takeLedger) {
+        targetState.dailyStreakLedger = normalizeDailyStreakLedger(body.dailyStreakLedger);
+        applied += 1;
+      }
+    }
+
+    const dictKeys = [
+      "modelWatchdog",
+      "modelSelectionLocks",
+      "positionStrategyLocks",
+      "stable120Locks",
+      "threeDuishuSelectionLock",
+      "algorithmProjectHealth",
+      "lastSync",
+      "lastError"
+    ];
+    dictKeys.forEach((key) => {
+      const value = take(key);
+      if (value === undefined) return;
+      if (key === "modelWatchdog") {
+        targetState.modelWatchdog = normalizeModelWatchdog(value);
+      } else if (key === "algorithmProjectHealth") {
+        targetState.algorithmProjectHealth = normalizeAlgorithmProjectHealth(value);
+      } else {
+        targetState[key] = value;
+      }
+      applied += 1;
+    });
+
+    const tipReadyMod = take("tipReady");
+    if (typeof tipReadyMod === "boolean") {
+      targetState.tipReady = tipReadyMod;
+      applied += 1;
+    }
+
+    const rdsCurrent = take("currentPrediction");
+    if (rdsCurrent && typeof rdsCurrent === "object") {
+      const localCp = targetState.currentPrediction;
+      const rdsUid = String(rdsCurrent.baseUid || rdsCurrent.basePeriod || "");
+      const localUid = String((localCp && (localCp.baseUid || localCp.basePeriod)) || "");
+      if (preferRds || !localCp || (rdsUid && rdsUid >= localUid)) {
+        targetState.currentPrediction = rdsCurrent;
+        applied += 1;
+      }
+    }
+
+    const snapshots = {};
+    Object.keys(modules).forEach((key) => {
+      if (!String(key).startsWith("algoProject:")) return;
+      const id = String(key).slice("algoProject:".length);
+      const value = take(key);
+      if (value !== undefined) snapshots[id] = value;
+    });
+    if (Object.keys(snapshots).length) {
+      targetState.algorithmProjectSnapshots = snapshots;
+      applied += 1;
+    }
+
+    targetState.algoDurableHydratedAt = isoNow();
+    targetState.algoDurableSource = "rds";
+    return {
+      ok: true,
+      applied,
+      moduleCount: Object.keys(modules).length,
+      algoProjectCount: Object.keys(snapshots).length,
+      counterKeys: Object.keys(targetState.counters || {}).length
+    };
+  } catch (err) {
+    return { ok: false, reason: String(err && err.message ? err.message : err) };
+  }
+}
+
 function scrubReconstructedTruthFlags() {
   let changed = 0;
   (Array.isArray(state && state.predictions) ? state.predictions : []).forEach((prediction) => {
     const ev = prediction && prediction.evaluation;
     if (!ev || typeof ev !== "object") return;
-    ["autoTop6", "recommend2", "killFramework", "compactAttack", "threeDingTwo", "threeDingOne", "sideStable", "coldFramework", "dingKill", "pick5000", "threeDuishu"].forEach((storeName) => {
+    ["autoTop6", "recommend2", "killFramework", "threeDuishu"].forEach((storeName) => {
       const rec = ev[storeName];
       if (!rec || rec.reconstructed !== true) return;
       if (rec.truthEligible === true) {
@@ -1895,6 +2339,8 @@ function slimFrameworkEvaluationForPersist(block) {
   [
     "ok",
     "version",
+    "kind",
+    "label",
     "basePeriod",
     "success",
     "truthEligible",
@@ -1903,10 +2349,19 @@ function slimFrameworkEvaluationForPersist(block) {
     "sealHash",
     "passed",
     "total",
+    "hit",
+    "judged",
+    "rate",
+    "positions",
+    "items",
+    "shapeItems",
+    "complete",
     "code",
     "shot",
     "pairs",
     "pairCodes",
+    "selectedPair",
+    "selectedPairCode",
     "reconstructed",
     "reconstructedAt",
     "reason",
@@ -1918,7 +2373,7 @@ function slimFrameworkEvaluationForPersist(block) {
   return out;
 }
 
-function slimExtraKillForPersist(entry, keepCodes) {
+function slimExtraKillForPersist(entry) {
   if (!entry || typeof entry !== "object") return entry || null;
   const out = {};
   [
@@ -1942,23 +2397,10 @@ function slimExtraKillForPersist(entry, keepCodes) {
     "stage",
     "confidence",
     "recommendable",
-    "preferOverlap",
-    "codeCount",
-    "lookback",
-    "maxHistoryWindow",
-    "codesOmitted"
+    "preferOverlap"
   ].forEach((key) => {
     if (entry[key] !== undefined) out[key] = entry[key];
   });
-  // recentExactCode 的 codes 永不落盘/常驻：结算可按 lookback 重建；其它条目仍可按需保留短 codes
-  if (isRecentExactCodeKey(entry.key || out.key)) {
-    out.codesOmitted = true;
-    if (out.codeCount == null && Array.isArray(entry.codes)) out.codeCount = entry.codes.length;
-    return out;
-  }
-  if (keepCodes && Array.isArray(entry.codes)) {
-    out.codes = entry.codes.slice(0, recentExactCodeCodeLimit(entry));
-  }
   return out;
 }
 
@@ -2016,6 +2458,7 @@ function slimPredictionForDisk(prediction, keepRich) {
   if (keepRich) {
     // 当前 tip 必须保留完整封存快照（含三对数），禁止再削字段，否则 sealHash 校验会失败
     if (prediction.threeDuishu) out.threeDuishu = prediction.threeDuishu;
+    if (prediction.fourPosExclude) out.fourPosExclude = prediction.fourPosExclude;
     FRAMEWORK_SNAPSHOT_STORE_KEYS.forEach((key) => {
       if (prediction[key]) out[key] = prediction[key];
       const itemsKey = `${key}Items`;
@@ -2030,21 +2473,71 @@ function slimPredictionForDisk(prediction, keepRich) {
     if (prediction.stableMathFilter) {
       out.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(prediction.stableMathFilter);
     }
-  } else if (prediction.threeDuishu) {
-    out.threeDuishu = slimThreeDuishuSnapshot(prediction.threeDuishu);
+    // L0 门道字段：禁止被 tip-only 瘦身抹掉
+    if (prediction.hewei && typeof prediction.hewei === "object") out.hewei = prediction.hewei;
+    if (prediction.codexStable && typeof prediction.codexStable === "object") {
+      out.codexStable = prediction.codexStable;
+    }
+    if (prediction.orchestrateMeta && typeof prediction.orchestrateMeta === "object") {
+      out.orchestrateMeta = prediction.orchestrateMeta;
+    }
+  } else {
+    if (prediction.threeDuishu) out.threeDuishu = slimThreeDuishuSnapshot(prediction.threeDuishu);
+    if (prediction.fourPosExclude) out.fourPosExclude = slimFourPosExcludeSnapshot(prediction.fourPosExclude);
   }
   return out;
 }
 
 function buildPersistedStateForDisk(source) {
-  // 开奖 history / rawJson 只存在 RDS + 内存；磁盘 state.json 仅保留算法账本与预测。
-  // 历史预测只保留核算/封存真相字段，去掉算法树与框架明细，避免开奖后 saveState 把事件循环堵死。
+  // 开奖 history / rawJson 只存在 RDS + 内存。
+  // LOCAL_STATE_MODE=tip-only：不落开奖主库；但必须保留近期 predictions + counters + 日账，
+  // 否则重启后按天百分比只能用几条内存样本重算，会假显示 100%。
+  const sourceState = source || {};
+  if (LOCAL_TIP_ONLY) {
+    const currentId = sourceState.currentPrediction && sourceState.currentPrediction.id
+      ? String(sourceState.currentPrediction.id)
+      : "";
+    const currentUid = sourceState.currentPrediction && sourceState.currentPrediction.baseUid
+      ? String(sourceState.currentPrediction.baseUid)
+      : "";
+    return {
+      version: sourceState.version || BACKEND_STATE_VERSION,
+      updatedAt: sourceState.updatedAt || isoNow(),
+      tipReady: !!sourceState.tipReady,
+      currentPrediction: slimPredictionForDisk(sourceState.currentPrediction, true),
+      latestRecord: sourceState.latestRecord || null,
+      history: [],
+      rawJson: null,
+      predictions: (Array.isArray(sourceState.predictions) ? sourceState.predictions : [])
+        .slice(0, MAX_PREDICTION_LOG)
+        .map((prediction) => slimPredictionForDisk(
+          prediction,
+          predictionKeepRichForPersist(prediction, currentId, currentUid)
+        )),
+      counters: normalizeCounters(sourceState.counters),
+      dailyStreakLedger: normalizeDailyStreakLedger(sourceState.dailyStreakLedger),
+      historyPersistedInRds: true,
+      dataReadMode: DATA_READ_MODE,
+      algoDurableStore: ALGO_DURABLE_STORE,
+      localStateMode: "tip-only",
+      sharedHistorySource: sourceState.sharedHistorySource || "rds",
+      sharedHistoryLatestPeriod: sourceState.sharedHistoryLatestPeriod || null,
+      sharedHistoryCount: sourceState.sharedHistoryCount || null
+    };
+  }
+  return buildMirrorFreezeState(sourceState);
+}
+
+function buildMirrorFreezeState(source) {
+  // 镜像用全量内存快照（含 counters/locks/algoProject），与 tip-only 本地文件分离
   const sourceState = source || {};
   const disk = Object.assign({}, sourceState);
   disk.history = [];
   disk.rawJson = null;
   disk.historyPersistedInRds = true;
   disk.dataReadMode = String(process.env.DATA_READ_MODE || "rds-primary");
+  disk.algoDurableStore = ALGO_DURABLE_STORE;
+  disk.localStateMode = LOCAL_STATE_MODE;
   const currentId = sourceState.currentPrediction && sourceState.currentPrediction.id
     ? String(sourceState.currentPrediction.id)
     : "";
@@ -2061,7 +2554,6 @@ function buildPersistedStateForDisk(source) {
   if (disk.stableMathFilter) {
     disk.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(disk.stableMathFilter);
   }
-  // 参考回测只在内存/RDS 共享 history 上 walk，禁止落盘重复样本
   delete disk.frameworkSimLedger;
   delete disk.frameworkSimHistoryBackfill;
   return disk;
@@ -2071,6 +2563,7 @@ function saveState(options) {
   const opts = options && typeof options === "object" ? options : {};
   ensureDir(DATA_DIR);
   state.updatedAt = isoNow();
+  stripRetiredFourCodeState(state);
   state.counters = normalizeCounters(state.counters);
   state.modelWatchdog = normalizeModelWatchdog(state.modelWatchdog);
   state.dailyStreakLedger = normalizeDailyStreakLedger(state.dailyStreakLedger);
@@ -2081,7 +2574,6 @@ function saveState(options) {
     state.currentPrediction,
     state.latestRecord || (Array.isArray(state.history) && state.history[0]) || null
   );
-  compactRecentExactCodesInState(state);
   const tmp = path.join(
     DATA_DIR,
     `.state.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
@@ -2099,7 +2591,9 @@ function saveState(options) {
     // and its evaluated history have not changed.  Keep the expensive audit
     // cache in that case; its key below is based on actual audit inputs.
     invalidatePanelStateCache({ invalidateModelAudit: false });
-    if (opts.skipMirror !== true) scheduleRdsMirrorAfterSave();
+    // tip-only / RDS 持久化：禁止被 skipMirror 饿死
+    const mustMirror = LOCAL_TIP_ONLY || ALGO_RDS_DURABLE || opts.forceMirror === true;
+    if (opts.skipMirror !== true || mustMirror) scheduleRdsMirrorAfterSave();
   } catch (err) {
     try {
       if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
@@ -2117,6 +2611,10 @@ const RDS_MIRROR_ENABLED = String(process.env.RDS_MIRROR_ENABLED || "1") !== "0"
 const RDS_MIRROR_DEBOUNCE_MS = Math.max(30 * 1000, Number(process.env.RDS_MIRROR_DEBOUNCE_MS || 120 * 1000));
 const RDS_HYDRATE_AFTER_MIRROR_MS = Math.max(1000, Number(process.env.RDS_HYDRATE_AFTER_MIRROR_MS || 5000));
 const DATA_READ_MODE = String(process.env.DATA_READ_MODE || "rds-primary");
+const ALGO_DURABLE_STORE = String(process.env.ALGO_DURABLE_STORE || "local").toLowerCase();
+const LOCAL_STATE_MODE = String(process.env.LOCAL_STATE_MODE || "full").toLowerCase();
+const ALGO_RDS_DURABLE = ALGO_DURABLE_STORE === "rds";
+const LOCAL_TIP_ONLY = LOCAL_STATE_MODE === "tip-only";
 
 function scheduleSharedHistoryHydrate(reason) {
   if (!HISTORY_FROM_RDS || !state) return;
@@ -2169,12 +2667,50 @@ function scheduleRdsMirrorAfterSave() {
     try {
       const logDir = path.join(DATA_DIR, "logs");
       try { fs.mkdirSync(logDir, { recursive: true }); } catch (_) {}
+      const backupDir = path.join(DATA_DIR, "backups");
+      try { fs.mkdirSync(backupDir, { recursive: true }); } catch (_) {}
       const logFile = path.join(logDir, "rds-mirror.log");
       const logFd = fs.openSync(logFile, "a");
-      fs.writeSync(logFd, `\n==== mirror schedule ${new Date().toISOString()} ====\n`);
+      const mirrorHeapMb = Math.max(512, Number(process.env.RDS_MIRROR_HEAP_MB || 1536) || 1536);
+      // tip-only 本地文件不含账本：从内存打全量 freeze 再导入 RDS
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const freezePath = path.join(backupDir, `state_mirror_${stamp}.json`);
+      try {
+        // 确保项目快照最新再冻结
+        try {
+          const syncResult = algorithmProjectIsolation.syncProjectStates({
+            dataDir: DATA_DIR,
+            currentPrediction: state.currentPrediction,
+            predictions: state.predictions,
+            latestRecord: state.latestRecord,
+            modelVersion: MODEL_VERSION,
+            projectHealth: state.algorithmProjectHealth,
+            historyLimit: 120,
+            reason: "pre-mirror"
+          });
+          if (syncResult && syncResult.snapshots) state.algorithmProjectSnapshots = syncResult.snapshots;
+        } catch (syncErr) {
+          console.error("[RDS mirror] project sync failed", syncErr && syncErr.message ? syncErr.message : syncErr);
+        }
+        fs.writeFileSync(freezePath, safeJsonStringify(buildMirrorFreezeState(state)));
+      } catch (freezeErr) {
+        try { fs.closeSync(logFd); } catch (_) {}
+        rdsMirrorRunning = false;
+        console.error("[RDS mirror] freeze failed", freezeErr && freezeErr.message ? freezeErr.message : freezeErr);
+        return;
+      }
+      fs.writeSync(logFd, `\n==== mirror schedule ${new Date().toISOString()} heap=${mirrorHeapMb} freeze=${path.basename(freezePath)} ====\n`);
+      try {
+        addLog("RDS 镜像已调度", {
+          heapMb: mirrorHeapMb,
+          debounceMs: RDS_MIRROR_DEBOUNCE_MS,
+          freeze: path.basename(freezePath),
+          tipOnly: LOCAL_TIP_ONLY
+        });
+      } catch (_) {}
       const child = spawn(
         process.execPath,
-        ["--max-old-space-size=4096", script, "--from-live"],
+        [`--max-old-space-size=${mirrorHeapMb}`, script, "--file", freezePath],
         {
           cwd: path.join(__dirname, "api"),
           detached: true,
@@ -2485,6 +3021,9 @@ function calculateMetrics(numbers) {
     wanQianBaiHewei: String((n0 + n1 + n2) % 10),
     qianBaiShiHewei: String((n1 + n2 + n3) % 10),
     wanQianBaiShiHewei: String((n0 + n1 + n2 + n3) % 10),
+    // 千百个 / 千十个（独立三合尾）
+    wanQianGeHewei: String((n0 + n1 + n3) % 10),
+    wanBaiShiHewei: String((n0 + n2 + n3) % 10),
 
     // 保留旧字段名兼容旧页面，但计算口径严格限制在球一到球四。
     baiShiGeHewei: String((n1 + n2 + n3) % 10),
@@ -2616,7 +3155,7 @@ function finalizeModelStats(stats) {
       // 高基线：相对基线下滑才算弱，禁止用 85% 原始通过率误判
       item.low = item.total >= MODEL_MIN_SAMPLE && item.rate !== null && item.rate < (Number(item.randomBaseline || 0) - 3);
     } else {
-      item.low = item.total >= MODEL_MIN_SAMPLE && item.rate !== null && item.rate < MODEL_LOW_HIT_RATE;
+      item.low = item.total >= MODEL_MIN_SAMPLE && item.rate !== null && item.rate < modelLowRateForKey(key);
     }
   });
   return stats;
@@ -2718,61 +3257,6 @@ function firstFourSizeRatio(record) {
 function firstFourCode(record) {
   const nums = firstFourNumbers(record);
   return nums.length >= 4 ? nums.slice(0, 4).map(String).join("") : "";
-}
-
-function recentExactCodeSet(records, limit) {
-  const rows = (Array.isArray(records) ? records : []).slice(0, Math.max(1, Number(limit || 300)));
-  const set = new Set();
-  rows.forEach((record) => {
-    const code = firstFourCode(record);
-    if (/^\d{4}$/.test(code)) set.add(code);
-  });
-  return set;
-}
-
-function recentExactCodeAvoidStats(history, lookbackLimit, sampleLimit) {
-  const rows = (Array.isArray(history) ? history : []).filter((record) => /^\d{4}$/.test(firstFourCode(record)));
-  const lookback = Math.max(1, Number(lookbackLimit || 300));
-  const sample = Math.max(1, Number(sampleLimit || MODEL_RATE_WINDOW));
-  const maxRows = Math.min(sample, rows.length);
-  const codes = rows.slice(0, maxRows).map((record) => firstFourCode(record)).filter((code) => /^\d{4}$/.test(code));
-  const windowCounts = new Map();
-  const addToWindow = (idx) => {
-    if (idx < 0 || idx >= codes.length) return;
-    const code = codes[idx];
-    windowCounts.set(code, (windowCounts.get(code) || 0) + 1);
-  };
-  const removeFromWindow = (idx) => {
-    if (idx < 0 || idx >= codes.length) return;
-    const code = codes[idx];
-    const next = (windowCounts.get(code) || 0) - 1;
-    if (next <= 0) windowCounts.delete(code);
-    else windowCounts.set(code, next);
-  };
-  for (let j = 1; j <= lookback && j < codes.length; j += 1) addToWindow(j);
-  let total = 0;
-  let match = 0;
-  let lastSuccess = null;
-  for (let index = 0; index < maxRows; index += 1) {
-    const code = codes[index];
-    const previousCount = Math.min(lookback, Math.max(0, codes.length - index - 1));
-    if (/^\d{4}$/.test(code) && previousCount >= 1) {
-      const success = !windowCounts.has(code);
-      total += 1;
-      if (success) match += 1;
-      if (lastSuccess === null) lastSuccess = success;
-    }
-    removeFromWindow(index + 1);
-    addToWindow(index + 1 + lookback);
-  }
-  const rate = total ? Number(((match / total) * 100).toFixed(2)) : null;
-  return {
-    total,
-    match,
-    rate,
-    low: total >= MODEL_MIN_SAMPLE && rate !== null && rate < MODEL_LOW_HIT_RATE,
-    lastSuccess
-  };
 }
 
 function extraStructureMatched(record, key, candidate) {
@@ -2924,6 +3408,134 @@ function threeDuishuRecordHits(record, pairs) {
     const pairMask = threeDuishuPairMask(pair);
     return pairMask > 0 && (recordMask & pairMask) === pairMask;
   });
+}
+
+function selectThreeDuishuPair(records, candidate, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const applyLock = opts.applyLock === true;
+  const period = String(opts.period || "");
+  const pairs = resolveThreeDuishuPairs(candidate && candidate._pairs ? candidate._pairs : candidate && candidate.pairs);
+  if (!pairs.length) return null;
+  const scored = pairs.map((pair) => {
+    const windows = threeDuishuComboRateMultiWindow(records, [pair], [30, MODEL_NEAR_WINDOW, 120, MODEL_STABLE_WINDOW]);
+    const r30 = windows[30] || { total: 0, hit: 0, fail: 0, rate: null };
+    const r40 = windows[MODEL_NEAR_WINDOW] || r30;
+    const r120 = windows[120] || r40;
+    const r300 = windows[MODEL_STABLE_WINDOW] || r120;
+    const lower30 = wilsonLowerPercent(r30.hit, r30.total);
+    const lower40 = wilsonLowerPercent(r40.hit, r40.total);
+    const lower120 = wilsonLowerPercent(r120.hit, r120.total);
+    const lower300 = wilsonLowerPercent(r300.hit, r300.total);
+    const score = lower30 * 0.2 + lower40 * 0.25 + lower120 * 0.3 + lower300 * 0.15 + Number(r40.rate || 0) * 0.1;
+    return {
+      pair: pair.key,
+      pairCode: pair.codes.join(""),
+      rate30: r30.rate,
+      rate40: r40.rate,
+      rate120: r120.rate,
+      rate300: r300.rate,
+      lower30,
+      lower40,
+      lower120,
+      lower300,
+      sample30: r30.total,
+      sample40: r40.total,
+      sample120: r120.total,
+      sample300: r300.total,
+      fail30: r30.fail,
+      fail40: r40.fail,
+      score: Number(score.toFixed(4))
+    };
+  }).sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    if (right.lower120 !== left.lower120) return right.lower120 - left.lower120;
+    if (Number(right.rate120 || 0) !== Number(left.rate120 || 0)) return Number(right.rate120 || 0) - Number(left.rate120 || 0);
+    return left.pair.localeCompare(right.pair);
+  });
+  const primary = scored[0];
+  if (!primary) return null;
+  let selected = primary;
+  let selectionReason = "pair-primary-initial";
+  let holdCount = 1;
+  if (applyLock) {
+    if (!state.threeDuishuPairSelectionLock || typeof state.threeDuishuPairSelectionLock !== "object") {
+      state.threeDuishuPairSelectionLock = {};
+    }
+    const lock = state.threeDuishuPairSelectionLock;
+    const oldKey = String(lock.pairKey || "");
+    const old = oldKey ? scored.find((item) => item.pair === oldKey) : null;
+    const oldHold = Math.max(0, Number(lock.holdCount || 0));
+    const samePeriod = String(lock.period || "") === period;
+    if (old) {
+      if (oldHold < THREE_DUISHU_MIN_HOLD) {
+        selected = old;
+        selectionReason = "pair-min-hold-keep-current";
+      } else if (old.pair !== primary.pair) {
+        const scoreMargin = Number(primary.score || 0) - Number(old.score || 0);
+        if (scoreMargin >= THREE_DUISHU_SWITCH_MARGIN) {
+          selected = primary;
+          selectionReason = "pair-score-margin-switch";
+        } else if (oldHold >= THREE_DUISHU_PAIR_MAX_HOLD) {
+          selected = primary;
+          selectionReason = "pair-max-hold-switch-primary";
+        } else {
+          selected = old;
+          selectionReason = "pair-stable-keep-current";
+        }
+      } else if (oldHold >= THREE_DUISHU_PAIR_MAX_HOLD && scored.length > 1) {
+        selected = scored[1];
+        selectionReason = "pair-max-hold-rotate-runner-up";
+      } else {
+        selected = old;
+        selectionReason = "pair-current-primary";
+      }
+    }
+    holdCount = oldKey && selected.pair === oldKey
+      ? (samePeriod ? Math.max(1, oldHold) : oldHold + 1)
+      : 1;
+    state.threeDuishuPairSelectionLock = {
+      pairKey: selected.pair,
+      pairCode: selected.pairCode,
+      period,
+      holdCount,
+      reason: selectionReason,
+      selectedScore: Number(selected.score || 0),
+      primaryPair: primary.pair,
+      primaryScore: Number(primary.score || 0),
+      switchMargin: THREE_DUISHU_SWITCH_MARGIN,
+      minHold: THREE_DUISHU_MIN_HOLD,
+      maxHold: THREE_DUISHU_PAIR_MAX_HOLD,
+      updatedAt: isoNow()
+    };
+  }
+  return {
+    pair: selected.pair,
+    pairCode: selected.pairCode,
+    score: selected.score,
+    reason: `对子择一：${selected.pair}（每期复评，持有${holdCount}/${THREE_DUISHU_PAIR_MAX_HOLD}期）`,
+    selectionReason,
+    holdCount,
+    minHold: THREE_DUISHU_MIN_HOLD,
+    maxHold: THREE_DUISHU_PAIR_MAX_HOLD,
+    locked: selected.pair !== primary.pair,
+    primaryPair: primary.pair,
+    primaryScore: primary.score,
+    rate30: selected.rate30,
+    rate40: selected.rate40,
+    rate120: selected.rate120,
+    rate300: selected.rate300,
+    lower30: selected.lower30,
+    lower40: selected.lower40,
+    lower120: selected.lower120,
+    lower300: selected.lower300,
+    sample30: selected.sample30,
+    sample40: selected.sample40,
+    sample120: selected.sample120,
+    sample300: selected.sample300,
+    fail30: selected.fail30,
+    fail40: selected.fail40,
+    candidates: scored
+  };
 }
 
 function preprocessThreeDuishuHistoryMasks(records, limit) {
@@ -3226,7 +3838,9 @@ function walkForwardThreeDuishu(history) {
     if (train.length < THREE_DUISHU_MIN_TRAIN) continue;
     const selected = scoreThreeDuishuCandidates(train)[0];
     if (!selected) continue;
-    const success = !threeDuishuRecordHits(rows[index], selected._pairs);
+    const pairSelection = selectThreeDuishuPair(train, selected);
+    if (!pairSelection) continue;
+    const success = !threeDuishuRecordHits(rows[index], [pairSelection.pair]);
     if (success) {
       hit += 1;
     } else {
@@ -3238,6 +3852,8 @@ function walkForwardThreeDuishu(history) {
       code: selected.code,
       pairs: selected.pairs,
       shot: selected.shot,
+      selectedPair: pairSelection.pair,
+      selectedPairCode: pairSelection.pairCode,
       success
     });
   }
@@ -3355,6 +3971,7 @@ function threeDuishuHistorySignature(history, period) {
   const rows = Array.isArray(history) ? history : [];
   const first = rows[0];
   return [
+    THREE_DUISHU_SNAPSHOT_VERSION,
     String(period || ""),
     rows.length,
     first && first.uid ? first.uid : "",
@@ -3369,6 +3986,10 @@ function buildThreeDuishuRecommendationPayload(history, period) {
   if (!best) {
     return { ok: false, code: "", shot: "", pairs: [], error: "no candidate" };
   }
+  const pairSelection = selectThreeDuishuPair(history, best, { applyLock: true, period });
+  if (!pairSelection) {
+    return { ok: false, code: "", shot: "", pairs: [], error: "no pair candidate" };
+  }
   const walkForward = walkForwardThreeDuishu(history);
   const quality = threeDuishuQualityLabel(best, walkForward);
   const recommendable = quality !== "观察";
@@ -3378,9 +3999,12 @@ function buildThreeDuishuRecommendationPayload(history, period) {
     period,
     latestNumbers: state.latestRecord && Array.isArray(state.latestRecord.numbers) ? state.latestRecord.numbers.slice(0, 5) : [],
     code: best.code,
-    shot: best.shot,
+    shot: threeDuishuShotText([pairSelection.pair]),
     pairs: best.pairs,
     pairCodes: best.pairCodes,
+    selectedPair: pairSelection.pair,
+    selectedPairCode: pairSelection.pairCode,
+    pairSelection,
     rate30: best.rate30,
     rate40: best.rate40,
     rate60: best.rate60,
@@ -3456,15 +4080,324 @@ function threeDuishuSnapshotIsComplete(snapshot) {
   if (String(snapshot.version || "") !== THREE_DUISHU_SNAPSHOT_VERSION) return false;
   const pairs = (Array.isArray(snapshot.pairs) ? snapshot.pairs : []).map(String).filter((key) => /^\d{2}$/.test(key));
   const code = String(snapshot.code || "");
-  return pairs.length === 3 && /^\d{3}$/.test(code);
+  const selectedPair = String(snapshot.selectedPair || "");
+  return pairs.length === 3 && /^\d{3}$/.test(code) && /^\d{2}$/.test(selectedPair) && pairs.includes(selectedPair);
 }
 
 function buildThreeDuishuSnapshot(prediction) {
-  return frameworkItems.buildThreeDuishuSnapshot(prediction);
+  const rec = getThreeDuishuRecommendation();
+  if (!rec || !rec.ok || !rec.code) return null;
+  const pairs = (Array.isArray(rec.pairs) ? rec.pairs : []).map(String).filter((key) => /^\d{2}$/.test(key)).slice(0, 3);
+  if (pairs.length !== 3) return null;
+  const selectedPair = String(rec.selectedPair || "");
+  if (!/^\d{2}$/.test(selectedPair) || !pairs.includes(selectedPair)) return null;
+  const pairSelection = rec.pairSelection && typeof rec.pairSelection === "object" ? rec.pairSelection : {};
+  return {
+    version: THREE_DUISHU_SNAPSHOT_VERSION,
+    kind: "threeDuishu",
+    key: "threeDuishu",
+    side: "recommend",
+    name: "三对数排除",
+    code: String(rec.code || ""),
+    shot: threeDuishuShotText([selectedPair]),
+    pairs,
+    pairCodes: (Array.isArray(rec.pairCodes) ? rec.pairCodes : pairs.slice()).map(String).slice(0, 3),
+    selectedPair,
+    selectedPairCode: String(rec.selectedPairCode || selectedPair),
+    quality: rec.quality || "",
+    confidence: rec.confidence || "normal",
+    recommendable: rec.recommendable !== false,
+    rate30: pairSelection.rate30,
+    rate40: pairSelection.rate40,
+    rate120: pairSelection.rate120,
+    rate300: pairSelection.rate300,
+    sample40: pairSelection.sample40,
+    walkForwardRate: rec.walkForward && rec.walkForward.rate,
+    stableMathOverlap: Number(rec.stableMathOverlap || 0),
+    selectedReason: rec.selectedReason || "",
+    pairSelectionReason: pairSelection.reason || "",
+    pairSelectionMode: "min3-max8-periodic-rotation",
+    pairSelectionHoldCount: Number(pairSelection.holdCount || 0),
+    pairSelectionMaxHold: Number(pairSelection.maxHold || THREE_DUISHU_PAIR_MAX_HOLD),
+    selectedLocked: !!rec.selectedLocked,
+    sealed: false
+  };
 }
 
 function ensurePredictionThreeDuishuSnapshot(prediction) {
-  return frameworkItems.ensurePredictionThreeDuishuSnapshot(prediction);
+  if (!prediction || typeof prediction !== "object") return null;
+  // 一旦三对数码生成完整就冻结：只允许后续 seal，禁止未封存时被重算覆盖
+  if (threeDuishuSnapshotIsComplete(prediction.threeDuishu)) {
+    return prediction.threeDuishu;
+  }
+  const snapshot = buildThreeDuishuSnapshot(prediction);
+  if (!snapshot) return prediction.threeDuishu || null;
+  prediction.threeDuishu = snapshot;
+  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
+  prediction.recommendationMeta.threeDuishuSnapshotVersion = THREE_DUISHU_SNAPSHOT_VERSION;
+  return prediction.threeDuishu;
+}
+
+const DUISHU_PAIR_AVOID_KEYS = ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"];
+
+function frameworkHasDuishuPair(snapshot) {
+  const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
+  return items.some((item) => {
+    if (!item || item.side === "backup" || item.kind !== "extra") return false;
+    if (!DUISHU_PAIR_AVOID_KEYS.includes(String(item.key || ""))) return false;
+    return /^\d{2}$/.test(String(item.code || ""));
+  });
+}
+
+function resolveDuishuFallbackPair(prediction) {
+  const fromThree = String(prediction && prediction.threeDuishu && prediction.threeDuishu.selectedPair || "");
+  if (/^\d{2}$/.test(fromThree)) return fromThree;
+  const extras = (prediction && prediction.extraKills) ||
+    (prediction && prediction.detail && prediction.detail.extraKills) ||
+    {};
+  for (let index = 0; index < DUISHU_PAIR_AVOID_KEYS.length; index += 1) {
+    const item = extras[DUISHU_PAIR_AVOID_KEYS[index]];
+    const value = item && typeof item === "object"
+      ? String(item.value || item.code || item.killDigit || "")
+      : String(item || "");
+    if (/^\d{2}$/.test(value)) return value;
+  }
+  const cache = state && state.threeDuishuRecommendationCache;
+  const cachedPair = String(cache && cache.selectedPair || "");
+  return /^\d{2}$/.test(cachedPair) ? cachedPair : "";
+}
+
+function buildDuishuFallbackItem(pair, displayName) {
+  return {
+    kind: "extra",
+    key: "twoDigitAvoid",
+    side: "recommend",
+    name: displayName || "对数避开1组",
+    code: String(pair),
+    mode: "avoid",
+    derivedFrom: "duishu-auto-repair-fallback",
+    repairedIntoTop: true
+  };
+}
+
+function collectDuishuCaptureIssues(prediction) {
+  const issues = [];
+  const current = prediction && typeof prediction === "object" ? prediction : null;
+  if (!current) return issues;
+  if (!threeDuishuSnapshotIsComplete(current.threeDuishu)) {
+    issues.push({
+      type: "duishu-capture-missing",
+      key: "snapshot.threeDuishu",
+      label: "三对数未抓取",
+      action: "repair-duishu-capture",
+      severity: "alarm",
+      detail: current.threeDuishu ? "incomplete" : "missing"
+    });
+  }
+  [
+    ["recommend2", "推荐2缺对数"],
+    ["threeDingTwo", "三定A缺对数"],
+    ["threeDingOne", "三定B缺对数"]
+  ].forEach(([name, label]) => {
+    const snap = current[name];
+    if (!snap || typeof snap !== "object") return;
+    if (frameworkHasDuishuPair(snap)) return;
+    issues.push({
+      type: "duishu-capture-missing",
+      key: `snapshot.${name}.duishu`,
+      label,
+      action: "repair-duishu-capture",
+      severity: "alarm",
+      detail: "pair-missing"
+    });
+  });
+  return issues;
+}
+
+function forceOpenPredictionSealGate(prediction) {
+  if (!prediction || typeof prediction !== "object") return;
+  prediction.snapshotsSealedAt = "";
+  prediction.snapshotsSealedBaseUid = "";
+  prediction.allSnapshotsSealed = false;
+}
+
+function injectDuishuPairIntoSnapshot(prediction, snapshot, displayName) {
+  if (!snapshot || !Array.isArray(snapshot.items) || frameworkHasDuishuPair(snapshot)) return false;
+  const pair = resolveDuishuFallbackPair(prediction);
+  if (!/^\d{2}$/.test(pair)) return false;
+  snapshot.items = snapshot.items.concat([buildDuishuFallbackItem(pair, displayName)]);
+  snapshot.repairReport = Array.isArray(snapshot.repairReport) ? snapshot.repairReport.slice() : [];
+  snapshot.repairReport.push(`自动修复：补抓对数${pair}`);
+  snapshot.sealed = false;
+  snapshot.sealHash = "";
+  return true;
+}
+
+function repairDuishuCapture(actions) {
+  const list = Array.isArray(actions) ? actions : [];
+  const prediction = state && state.currentPrediction;
+  const history = state && Array.isArray(state.history) ? state.history : [];
+  if (!prediction || typeof prediction !== "object") {
+    list.push({ type: "repair-duishu-skip", reason: "no-prediction" });
+    return false;
+  }
+  if (prediction.evaluated === true) {
+    list.push({ type: "repair-duishu-skip", reason: "already-evaluated" });
+    return false;
+  }
+  if (!history.length) {
+    list.push({ type: "repair-duishu-skip", reason: "history-empty" });
+    return false;
+  }
+
+  let beforeIssues = collectDuishuCaptureIssues(prediction);
+  const tipDuishuIssues = collectPredictionIntegrityIssues(prediction, history[0] || state.latestRecord)
+    .filter((issue) => issue && issue.action === "repair-duishu-capture");
+  tipDuishuIssues.forEach((issue) => {
+    if (!beforeIssues.some((row) => row && row.key === issue.key)) {
+      beforeIssues.push(Object.assign({ severity: "alarm" }, issue));
+    }
+  });
+  if (!beforeIssues.length) return false;
+
+  addLog("【报警】对数抓取缺失，开始自动修复", {
+    baseUid: prediction.baseUid,
+    basePeriod: prediction.basePeriod,
+    targetPeriod: prediction.targetPeriod,
+    issues: beforeIssues.slice(0, 12)
+  });
+
+  const repairs = [];
+  let changed = false;
+
+  if (!threeDuishuSnapshotIsComplete(prediction.threeDuishu)) {
+    if (prediction.threeDuishu && typeof prediction.threeDuishu === "object") {
+      prediction.threeDuishu.sealed = false;
+      prediction.threeDuishu.sealHash = "";
+    }
+    prediction.threeDuishu = null;
+    forceOpenPredictionSealGate(prediction);
+    recomputeThreeDuishuRecommendation();
+    ensurePredictionThreeDuishuSnapshot(prediction);
+    if (!threeDuishuSnapshotIsComplete(prediction.threeDuishu)) {
+      recomputeThreeDuishuRecommendation();
+      ensurePredictionThreeDuishuSnapshot(prediction);
+    }
+    const ok = threeDuishuSnapshotIsComplete(prediction.threeDuishu);
+    repairs.push({
+      target: "threeDuishu",
+      ok,
+      pair: ok ? String(prediction.threeDuishu.selectedPair || "") : ""
+    });
+    changed = true;
+  }
+
+  const extras = prediction.extraKills || (prediction.detail && prediction.detail.extraKills);
+  if (extras && typeof extras === "object") {
+    const missingAll = DUISHU_PAIR_AVOID_KEYS.every((key) => {
+      const item = extras[key];
+      const value = item && typeof item === "object"
+        ? String(item.value || item.code || "")
+        : String(item || "");
+      return !/^\d{2}$/.test(value);
+    });
+    if (missingAll) {
+      try {
+        const modelPerformance = calculateModelPerformance(Array.isArray(state.predictions) ? state.predictions : []);
+        const fresh = calculateExtraAvoidKills(history, modelPerformance);
+        DUISHU_PAIR_AVOID_KEYS.forEach((key) => {
+          if (fresh && fresh[key]) extras[key] = fresh[key];
+        });
+        if (prediction.detail && typeof prediction.detail === "object") prediction.detail.extraKills = extras;
+        prediction.extraKills = extras;
+        repairs.push({ target: "extraKills.twoDigit*", ok: true });
+        changed = true;
+      } catch (err) {
+        repairs.push({
+          target: "extraKills.twoDigit*",
+          ok: false,
+          error: err && err.message ? err.message : String(err)
+        });
+      }
+    }
+  }
+
+  function rebuildFramework(name, ensureFn, displayName) {
+    const snap = prediction[name];
+    if (snap && frameworkHasDuishuPair(snap)) return;
+
+    forceOpenPredictionSealGate(prediction);
+    if (snap && typeof snap === "object" && snap.sealed === true) {
+      snap.sealed = false;
+      snap.sealHash = "";
+    }
+    prediction[name] = null;
+    ensureFn(prediction, history);
+    let rebuilt = prediction[name];
+    if (rebuilt && !frameworkHasDuishuPair(rebuilt)) {
+      injectDuishuPairIntoSnapshot(prediction, rebuilt, displayName);
+      if (name === "recommend2") prediction.recommend2Items = rebuilt.items;
+      if (name === "threeDingTwo") prediction.threeDingTwoItems = rebuilt.items;
+      if (name === "threeDingOne") prediction.threeDingOneItems = rebuilt.items;
+    }
+    const ok = frameworkHasDuishuPair(prediction[name]);
+    const pairItem = ok
+      ? (prediction[name].items || []).find((item) => item && DUISHU_PAIR_AVOID_KEYS.includes(String(item.key || "")))
+      : null;
+    repairs.push({
+      target: name,
+      ok,
+      pair: pairItem ? String(pairItem.code || "") : ""
+    });
+    changed = true;
+  }
+
+  const needsRecommend2 = beforeIssues.some((issue) => String(issue.key || "").indexOf("recommend2") >= 0);
+  const needsThreeDingTwo = false; // retired
+  const needsThreeDingOne = false; // retired
+  if (needsRecommend2 || (prediction.recommend2 && !frameworkHasDuishuPair(prediction.recommend2))) {
+    rebuildFramework("recommend2", ensurePredictionRecommend2Snapshot, "对数2位避开");
+  }
+  if (needsThreeDingTwo || (prediction.threeDingTwo && !frameworkHasDuishuPair(prediction.threeDingTwo))) {
+    rebuildFramework("threeDingTwo", ensurePredictionThreeDingTwoSnapshot, "对数避开1组");
+  }
+  if (needsThreeDingOne || (prediction.threeDingOne && !frameworkHasDuishuPair(prediction.threeDingOne))) {
+    rebuildFramework("threeDingOne", ensurePredictionThreeDingOneSnapshot, "对数避开1组");
+  }
+
+  if (!changed) {
+    list.push({ type: "repair-duishu-skip", reason: "no-mutable-target", issues: beforeIssues.slice(0, 8) });
+    return false;
+  }
+
+  sealPredictionSnapshots(prediction, history[0]);
+  invalidatePanelStateCache();
+  const remaining = collectDuishuCaptureIssues(prediction);
+  const resolved = remaining.length === 0;
+  state.duishuCaptureAlarm = {
+    at: isoNow(),
+    baseUid: String(prediction.baseUid || ""),
+    basePeriod: String(prediction.basePeriod || ""),
+    beforeCount: beforeIssues.length,
+    before: beforeIssues.slice(0, 12),
+    repairs: repairs.slice(0, 12),
+    remaining: remaining.slice(0, 12),
+    resolved
+  };
+  addLog(resolved ? "【报警】对数抓取已自动修复" : "【报警】对数自动修复未完全成功，继续观察", {
+    baseUid: prediction.baseUid,
+    basePeriod: prediction.basePeriod,
+    repairs,
+    remaining: remaining.slice(0, 12),
+    resolved
+  });
+  list.push({
+    type: "repair-duishu-capture",
+    repairs,
+    remaining: remaining.length,
+    resolved
+  });
+  return resolved;
 }
 
 function evaluateThreeDuishuSnapshot(prediction, actualRecord) {
@@ -3484,8 +4417,8 @@ function evaluateThreeDuishuSnapshot(prediction, actualRecord) {
       truthEligible: false
     };
   }
-  const pairs = resolveThreeDuishuPairs(snapshot.pairs);
-  const success = !threeDuishuRecordHits(actualRecord, pairs);
+  const selectedPair = String(snapshot.selectedPair || "");
+  const success = !threeDuishuRecordHits(actualRecord, [selectedPair]);
   return {
     ok: true,
     success,
@@ -3495,6 +4428,7 @@ function evaluateThreeDuishuSnapshot(prediction, actualRecord) {
     code: snapshot.code,
     shot: snapshot.shot,
     pairs: snapshot.pairs,
+    selectedPair,
     truthEligible: true,
     sealedAt: snapshot.sealedAt,
     sealedBaseUid: snapshot.sealedBaseUid,
@@ -3505,14 +4439,20 @@ function evaluateThreeDuishuSnapshot(prediction, actualRecord) {
 
 function calculateModelPerformance(predictions) {
   const stats = {};
-  const evaluated = (Array.isArray(predictions) ? predictions : [])
-    .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation)
-    .slice(0, MODEL_RATE_WINDOW);
+  const businessDay = currentBusinessDayKey();
+  const evaluatedToday = filterDedupedEvaluatedPredictions(predictions, {
+    requireModelVersion: true,
+    businessDay
+  });
+  const evaluated = filterDedupedEvaluatedPredictions(predictions, {
+    requireModelVersion: true,
+    limit: MODEL_RATE_WINDOW
+  });
 
   let latestExtraPairChecked = false;
   let latestExtraPairMissed = false;
 
-  evaluated.forEach((prediction) => {
+  evaluatedToday.forEach((prediction) => {
     const ev = prediction.evaluation || {};
     const actualNumbers = Array.isArray(ev.actualNumbers) ? ev.actualNumbers.map(String) : [];
     ["wan", "qian", "bai", "shi"].forEach((key, index) => {
@@ -3522,7 +4462,26 @@ function calculateModelPerformance(predictions) {
       if (actual !== undefined && kills[1] !== undefined) addModelStat(stats, `position.${key}.backup`, actual !== String(kills[1]));
       if (actual !== undefined && kills.length) addModelStat(stats, `position.${key}.dual`, !kills.includes(String(actual)));
     });
+    const threeDuishu = ev.threeDuishu || {};
+    if (
+      threeDuishu.truthEligible === true &&
+      typeof threeDuishu.success === "boolean" &&
+      (!threeDuishu.version || threeDuishu.version === THREE_DUISHU_SNAPSHOT_VERSION)
+    ) {
+      const backupPair = resolveSealedThreeDuishuBackupPair(threeDuishu);
+      if (/^\d{2}$/.test(backupPair)) {
+        const actualRecord = actualNumbers.length >= 4
+          ? { numbers: actualNumbers.slice(0, 4) }
+          : (prediction && prediction.actualRecord ? prediction.actualRecord : null);
+        if (actualRecord) {
+          addModelStat(stats, "threeDuishu.backup", !threeDuishuRecordHits(actualRecord, [backupPair]));
+        }
+      }
+    }
+  });
 
+  evaluated.forEach((prediction) => {
+    const ev = prediction.evaluation || {};
     addModelStat(stats, "hewei.total", ev.independentTotalHeweiSuccess);
     addModelStat(stats, "hewei.unified", ev.independentThreeFourSuccess);
     ["wanQianBai", "qianBaiShi", "wanQianBaiShi"].forEach((key) => {
@@ -3538,17 +4497,13 @@ function calculateModelPerformance(predictions) {
     const consecutive = extras.consecutiveAvoid;
     const parityRatio = extras.parityRatioAvoid;
     const sizeRatio = extras.sizeRatioAvoid;
-    const recent300 = extras.recentExactCodeAvoid300;
-    const recent500 = extras.recentExactCodeAvoid500;
-    const recent800 = extras.recentExactCodeAvoid800;
-    const recent1000 = extras.recentExactCodeAvoid1000;
-    const recentMax = extras.recentExactCodeAvoidMax;
     const three = extras.threeDigitAvoid;
     const two = extras.twoDigitAvoid;
     const two2 = extras.twoDigitAvoid2;
     const two3 = extras.twoDigitAvoid3;
     const twoHit = extras.twoDigitHit;
     const threeHit = extras.threeDigitHit;
+    const threeAvoid2 = extras.threeDigitAvoid2;
     const anyTwoHewei = extras.anyTwoHeweiHit;
     const anyThreeHewei = extras.anyThreeHeweiHit;
     if (sum && typeof sum.success === "boolean") addModelStat(stats, "extra.sumAvoid", sum.success);
@@ -3558,17 +4513,13 @@ function calculateModelPerformance(predictions) {
     if (consecutive && typeof consecutive.success === "boolean") addModelStat(stats, "extra.consecutiveAvoid", consecutive.success);
     if (parityRatio && typeof parityRatio.success === "boolean") addModelStat(stats, "extra.parityRatioAvoid", parityRatio.success);
     if (sizeRatio && typeof sizeRatio.success === "boolean") addModelStat(stats, "extra.sizeRatioAvoid", sizeRatio.success);
-    if (recent300 && typeof recent300.success === "boolean") addModelStat(stats, "extra.recentExactCodeAvoid300", recent300.success);
-    if (recent500 && typeof recent500.success === "boolean") addModelStat(stats, "extra.recentExactCodeAvoid500", recent500.success);
-    if (recent800 && typeof recent800.success === "boolean") addModelStat(stats, "extra.recentExactCodeAvoid800", recent800.success);
-    if (recent1000 && typeof recent1000.success === "boolean") addModelStat(stats, "extra.recentExactCodeAvoid1000", recent1000.success);
-    if (recentMax && typeof recentMax.success === "boolean") addModelStat(stats, "extra.recentExactCodeAvoidMax", recentMax.success);
     if (three && typeof three.success === "boolean") addModelStat(stats, "extra.threeDigitAvoid", three.success);
     if (two && typeof two.success === "boolean") addModelStat(stats, "extra.twoDigitAvoid", two.success);
     if (two2 && typeof two2.success === "boolean") addModelStat(stats, "extra.twoDigitAvoid2", two2.success);
     if (two3 && typeof two3.success === "boolean") addModelStat(stats, "extra.twoDigitAvoid3", two3.success);
     if (twoHit && typeof twoHit.success === "boolean") addModelStat(stats, "extra.twoDigitHit", twoHit.success);
     if (threeHit && typeof threeHit.success === "boolean") addModelStat(stats, "extra.threeDigitHit", threeHit.success);
+    if (threeAvoid2 && typeof threeAvoid2.success === "boolean") addModelStat(stats, "extra.threeDigitAvoid2", threeAvoid2.success);
     if (anyTwoHewei && typeof anyTwoHewei.success === "boolean") addModelStat(stats, "extra.anyTwoHeweiHit", anyTwoHewei.success);
     if (anyThreeHewei && typeof anyThreeHewei.success === "boolean") addModelStat(stats, "extra.anyThreeHeweiHit", anyThreeHewei.success);
     if (!latestExtraPairChecked && sum && three && typeof sum.success === "boolean" && typeof three.success === "boolean") {
@@ -3588,13 +4539,18 @@ function getModelStat(performance, key) {
   const raw = performance && performance[key] ? performance[key] : { total: 0, match: 0, rate: null, low: false, lastSuccess: null };
   const out = Object.assign({ key }, raw);
   decorateTruthScoreFields(out, key, out.rate);
+  if (out.rate !== null && out.rate !== undefined && Number(out.total || 0) >= MODEL_MIN_SAMPLE) {
+    if (out.predictivePower === false) {
+      out.low = Number(out.rate) < (Number(out.randomBaseline || 0) - 3);
+    } else {
+      out.low = Number(out.rate) < modelLowRateForKey(key);
+    }
+  }
   return out;
 }
 
 function shouldUseBackupAlgorithm(performance, key) {
-  // 三数共现命中天然低通过率，若按 85% 阈值切 backup 会每期换码；两数共现已改为除对数，走普通避开阈值
-  if (/^extra\.threeDigitHit$/.test(String(key || ""))) return false;
-  // 高基线模型不按「原始高通过率=强」切主备
+  // 高基线模型不按「原始高通过率=强」切主备；三数共现已改为避开，走普通避开阈值
   if (isHighBaselineScoreKey(key)) return false;
   const stat = getModelStat(performance, key);
   return !!stat.low;
@@ -3609,7 +4565,7 @@ function modelPerformanceSummary(performance, key) {
     match: Number(stat.match || 0),
     rate: stat.rate,
     low: !!stat.low,
-    threshold: meta ? Number(meta.baseline) - 3 : MODEL_LOW_HIT_RATE,
+    threshold: meta ? Number(meta.baseline) - 3 : modelLowRateForKey(key),
     minSample: MODEL_MIN_SAMPLE,
     scoreClass: stat.scoreClass || "",
     randomBaseline: stat.randomBaseline,
@@ -3622,10 +4578,14 @@ function modelPerformanceSummary(performance, key) {
 
 function modelKeyLabel(key) {
   const labels = {
-    "position.wan.dual": "万位定位双码",
-    "position.qian.dual": "千位定位双码",
-    "position.bai.dual": "百位定位双码",
-    "position.shi.dual": "十位定位双码",
+    "position.wan.main": "千位单定顶1",
+    "position.qian.main": "百位单定顶1",
+    "position.bai.main": "十位单定顶1",
+    "position.shi.main": "个位单定顶1",
+    "position.wan.dual": "千位定位双码（观察）",
+    "position.qian.dual": "百位定位双码（观察）",
+    "position.bai.dual": "十位定位双码（观察）",
+    "position.shi.dual": "个位定位双码（观察）",
     "hewei.total": "总合尾",
     "hewei.unified": "三个合尾统一",
     "hewei.wanQianBai": "千百十合尾",
@@ -3638,48 +4598,87 @@ function modelKeyLabel(key) {
     "extra.consecutiveAvoid": "连号极罕形态过滤（高基线）",
     "extra.parityRatioAvoid": "极端奇偶比过滤（高基线）",
     "extra.sizeRatioAvoid": "极端大小比过滤（高基线）",
-    "extra.recentExactCodeAvoid300": "近300重复四码避开",
-    "extra.recentExactCodeAvoid500": "近500重复四码避开",
-    "extra.recentExactCodeAvoid800": "近800重复四码避开",
-    "extra.recentExactCodeAvoid1000": "近1000重复四码避开",
-    "extra.recentExactCodeAvoidMax": "最大旧码回删",
-    "extra.threeDigitAvoid": "对数共现避开",
-    "extra.twoDigitAvoid": "对数避开1组",
-    "extra.twoDigitAvoid2": "对数避开2组",
-    "extra.twoDigitAvoid3": "对数避开3组",
-    "extra.twoDigitHit": "两数共现除对数（基线参考）",
-    "extra.threeDigitHit": "三数共现命中",
+    "extra.threeDigitAvoid": "三数共现避开1组",
+    "extra.twoDigitAvoid": "四定对数避开1组",
+    "extra.twoDigitAvoid2": "四定对数避开2组",
+    "extra.twoDigitAvoid3": "四定对数避开3组",
+    "extra.twoDigitHit": "两数共现避开（基线参考）",
+    "extra.threeDigitHit": "三数共现避开2组",
+    "extra.threeDigitAvoid2": "三数共现避开3组",
     "extra.anyTwoHeweiHit": "二数合尾02468排1码命中（高基线参考）",
-    "extra.anyThreeHeweiHit": "三数合尾宽命中（高基线参考）"
+    "extra.anyThreeHeweiHit": "三数合尾宽命中（高基线参考）",
+    "threeDuishu.backup": "三对数备用对"
   };
   return labels[key] || key;
 }
 
 function watchdogThresholdForModel(key) {
   if (!key) return null;
-  if (/^position\.(wan|qian|bai|shi)\.dual$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
+  if (/^position\.(wan|qian|bai|shi)\.main$/.test(key)) return POSITION_MAIN_LOW_RATE;
+  if (/^position\.(wan|qian|bai|shi)\.dual$/.test(key)) return POSITION_DUAL_LOW_RATE;
   if (key === "hewei.total") return MODEL_WATCHDOG_LOW_RATE;
   if (key === "hewei.unified") return HEWEI_UNIFIED_GUARD_RATE;
-  if (/^hewei\.(wanQianBai|qianBaiShi|wanQianBaiShi)$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
-  if (/^extra\.(sumAvoid|sumRangeAvoid|spanAvoid|repeatAvoid|consecutiveAvoid|parityRatioAvoid|sizeRatioAvoid|recentExactCodeAvoid\d+|threeDigitAvoid|twoDigitAvoid|twoDigitAvoid2|twoDigitAvoid3|twoDigitHit)$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
-  if (key === "extra.threeDigitHit") return 5;
+  if (/^hewei\.(wanQianBai|qianBaiShi|wanQianBaiShi|wanQianGe|wanBaiShi)$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
+  if (/^extra\.(sumAvoid|sumRangeAvoid|spanAvoid|repeatAvoid|consecutiveAvoid|parityRatioAvoid|sizeRatioAvoid|threeDigitAvoid|threeDigitAvoid2|twoDigitAvoid|twoDigitAvoid2|twoDigitAvoid3|twoDigitHit|threeDigitHit)$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
   if (/^extra\.(anyTwoHeweiHit|anyThreeHeweiHit)$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
+  return null;
+}
+
+function officialCounterKeyForWatchdog(watchdogKey) {
+  const key = String(watchdogKey || "");
+  const mapped = {
+    "position.wan.main": "position.wan.main",
+    "position.qian.main": "position.qian.main",
+    "position.bai.main": "position.bai.main",
+    "position.shi.main": "position.shi.main",
+    "position.wan.dual": "position.wan.dual",
+    "position.qian.dual": "position.qian.dual",
+    "position.bai.dual": "position.bai.dual",
+    "position.shi.dual": "position.shi.dual",
+    "hewei.total": "totalHewei",
+    "hewei.unified": "threeFour",
+    "hewei.wanQianBai": "wanQianBai",
+    "hewei.qianBaiShi": "qianBaiShi",
+    "hewei.wanQianBaiShi": "wanQianBaiShi",
+    "hewei.wanQianGe": "wanQianGe",
+    "hewei.wanBaiShi": "wanBaiShi"
+  };
+  if (mapped[key]) return mapped[key];
+  if (key.startsWith("extra.") && key !== "extraPair") return key.slice("extra.".length);
   return null;
 }
 
 function collectPerformanceIssues(performance) {
   const issues = [];
   const stats = performance && typeof performance === "object" ? performance : {};
+  const counters = normalizeCounters(state && state.counters);
+  // 合尾/extra：短窗易误报；官方长账本样本充足且达标时，不以近窗判定 degraded
+  const counterPreferMin = Math.max(Number(MODEL_WATCHDOG_MIN_SAMPLE || 8), 60);
   Object.keys(stats).forEach((key) => {
     if (key === "extraPair") return;
     const threshold = watchdogThresholdForModel(key);
     if (threshold === null) return;
-    const stat = stats[key] || {};
-    const total = Number(stat.total || 0);
-    const rate = stat.rate === null || stat.rate === undefined ? null : Number(stat.rate);
+    let total = Number((stats[key] && stats[key].total) || 0);
+    let rate = stats[key] && stats[key].rate !== null && stats[key].rate !== undefined
+      ? Number(stats[key].rate)
+      : null;
+    const counterKey = officialCounterKeyForWatchdog(key);
+    if (counterKey && counters[counterKey]) {
+      const cTotal = Number(counters[counterKey].total || 0);
+      const cRate = counters[counterKey].rate === null || counters[counterKey].rate === undefined
+        ? null
+        : Number(counters[counterKey].rate);
+      if (cTotal >= counterPreferMin && cRate !== null && Number.isFinite(cRate)) {
+        // 用长账本覆盖短窗统计，避免 15 期噪声误报
+        total = cTotal;
+        rate = cRate;
+      }
+    }
     if (total >= MODEL_WATCHDOG_MIN_SAMPLE && rate !== null && Number.isFinite(rate) && rate < threshold) {
-      // 高基线 / 宽命中 / 三数共现：只观察，禁止因原始通过率触发「强预测力」式清锁重建
-      const observeOnly = isHighBaselineScoreKey(key) || /^extra\.(threeDigitHit|anyTwoHeweiHit|anyThreeHeweiHit)$/.test(key);
+      // 高基线 / 宽命中：只观察。threeDigitHit 已改避开逻辑，允许清锁换码（历史曾被 123 粘死）
+      const observeOnly = isHighBaselineScoreKey(key) ||
+        /^extra\.(anyTwoHeweiHit|anyThreeHeweiHit)$/.test(key) ||
+        /^position\.(wan|qian|bai|shi)\.(dual|backup)$/.test(key);
       issues.push({
         type: "low-performance",
         key,
@@ -3688,7 +4687,10 @@ function collectPerformanceIssues(performance) {
         rate: Number(rate.toFixed(2)),
         threshold,
         scoreClass: (highBaselineScoreMeta(key) && highBaselineScoreMeta(key).scoreClass) || "",
-        action: observeOnly ? "observe-only" : "clear-lock-and-regenerate"
+        action: observeOnly ? "observe-only" : "clear-lock-and-regenerate",
+        truthSource: counterKey && Number(counters[counterKey] && counters[counterKey].total || 0) >= counterPreferMin
+          ? "official-counter"
+          : "recent-window"
       });
     }
   });
@@ -3771,24 +4773,17 @@ function extraModelIntegrityReason(key, item) {
   const value = predictionExtraValue(item);
   if (!item || typeof item !== "object") return "missing-object";
   if (!value) return "missing-value";
-  if (/^recentExactCodeAvoid(?:\d+|Max)$/.test(key)) {
-    if (item.codesOmitted === true && Number(item.codeCount || 0) > 0) return "";
-    const codes = Array.isArray(item.codes) ? item.codes : [];
-    if (!codes.length) return "missing-codes";
-    if (codes.some((code) => !/^\d{4}$/.test(String(code)))) return "invalid-four-code";
-    if (Number(item.codeCount || codes.length) < codes.length) return "invalid-code-count";
-  }
   if (["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit"].includes(key)) {
     if (!/^\d{2}$/.test(value) || new Set(value.split("")).size !== 2) return "invalid-two-digit-code";
   }
-  if (["threeDigitAvoid", "threeDigitHit"].includes(key)) {
+  if (["threeDigitAvoid", "threeDigitHit", "threeDigitAvoid2"].includes(key)) {
     if (!/^\d{3}$/.test(value) || new Set(value.split("")).size !== 3) return "invalid-three-digit-code";
   }
   if (key === "anyTwoHeweiHit") {
     if (!isAnyTwoHeweiCode(value)) return "invalid-two-hewei-code";
   }
   if (key === "anyThreeHeweiHit") {
-    if (!/^\d{5}$/.test(value) || new Set(value.split("")).size !== 5) return "invalid-three-hewei-code";
+    if (!/^\d{6}$/.test(value) || new Set(value.split("")).size !== ANY_THREE_HEWEI_CODE_SIZE) return "invalid-three-hewei-code";
     if (isUniformParityDigitSet(value)) return "invalid-three-hewei-uniform-parity";
   }
   if (key === "sumRangeAvoid" && !/^\d{1,2}-\d{1,2}$/.test(value)) return "invalid-sum-range";
@@ -3808,13 +4803,6 @@ const TIP_STRUCTURE_SNAPSHOT_SPECS = [
   ["autoTop6", "自动推荐快照", () => autoTop6SnapshotIsComplete],
   ["recommend2", "推荐2快照", () => recommend2SnapshotIsComplete],
   ["killFramework", "杀码框架快照", () => killFrameworkSnapshotIsComplete],
-  ["compactAttack", "三定框架快照", () => compactAttackSnapshotIsComplete],
-  ["threeDingTwo", "三定框架A快照", () => threeDingTwoSnapshotIsComplete],
-  ["threeDingOne", "三定框架B快照", () => threeDingOneSnapshotIsComplete],
-  ["sideStable", "旁路稳筛快照", () => sideStableSnapshotIsComplete],
-  ["coldFramework", "冷码综合框架快照", () => coldFrameworkSnapshotIsComplete],
-  ["dingKill", "四定定位杀码框架快照", () => dingKillSnapshotIsComplete],
-  ["pick5000", "看好5000组快照", () => pick5000SnapshotIsComplete],
   ["threeDuishu", "三对数快照", () => threeDuishuSnapshotIsComplete]
 ];
 
@@ -3906,6 +4894,9 @@ function collectPredictionIntegrityIssues(prediction, latest) {
     const snapshot = current[name];
     const isComplete = getComplete();
     if (!isComplete(snapshot)) {
+      const duishuFamily = name === "threeDuishu" ||
+        ((name === "recommend2" || name === "threeDingTwo" || name === "threeDingOne") &&
+          snapshot && !frameworkHasDuishuPair(snapshot));
       issues.push({
         type: `${name}-snapshot-incomplete`,
         key: `snapshot.${name}`,
@@ -3913,7 +4904,7 @@ function collectPredictionIntegrityIssues(prediction, latest) {
         expectedVersion: name === "threeDuishu" ? THREE_DUISHU_SNAPSHOT_VERSION : (snapshot && snapshot.version) || "",
         actualVersion: snapshot && snapshot.version || "",
         sealed: !!(snapshot && snapshot.sealed),
-        action: "regenerate-current-prediction"
+        action: duishuFamily ? "repair-duishu-capture" : "regenerate-current-prediction"
       });
       return;
     }
@@ -3929,6 +4920,23 @@ function collectPredictionIntegrityIssues(prediction, latest) {
     }
   });
 
+  collectDuishuCaptureIssues(current).forEach((issue) => {
+    const already = issues.some((row) => row && row.key === issue.key && row.action === issue.action);
+    if (!already) issues.push(issue);
+  });
+
+  // tip 更稳期号必须对齐 basePeriod，否则滤网是摆设
+  if (tipStableMathFilterLagging(current)) {
+    issues.push({
+      type: "stable-math-filter-lag",
+      key: "prediction.stableMathFilter.latest_period",
+      label: "更稳数学排除期号",
+      expected: current.basePeriod || "",
+      actual: current.stableMathFilter && current.stableMathFilter.latest_period || "",
+      action: "regenerate-current-prediction"
+    });
+  }
+
   return issues;
 }
 
@@ -3941,12 +4949,18 @@ function applyTipReadyState(prediction, latest, issues) {
   const coreIssues = list.filter(isCorePredictionIssue);
   const projectIssues = list.filter((issue) => !isCorePredictionIssue(issue));
   const projectHealthSummary = summarizeAlgorithmProjectHealth(state && state.algorithmProjectHealth);
-  // A degraded algorithm is visible in its own project state, but must not
-  // revoke the valid output of independent algorithms or stop the whole runner.
-  const ok = coreIssues.length === 0;
+  const stabilityIssues = prediction ? collectCurrentPredictionStabilityIssues(prediction) : [];
+  const structureReady = coreIssues.length === 0;
+  const truthReady = structureReady && projectIssues.length === 0;
+  const qualityReady = truthReady && projectHealthSummary.degradedProjectCount === 0 && stabilityIssues.length === 0;
+  const operationalReady = qualityReady;
   if (prediction && typeof prediction === "object") {
-    prediction.tipStructurePerfect = ok;
-    prediction.tipReady = ok;
+    prediction.tipStructurePerfect = structureReady;
+    prediction.tipReady = structureReady;
+    prediction.structureReady = structureReady;
+    prediction.truthReady = truthReady;
+    prediction.qualityReady = qualityReady;
+    prediction.operationalReady = operationalReady;
     prediction.algorithmProjectIssueCount = projectIssues.length;
     prediction.algorithmProjectIssues = projectIssues.slice(0, 40);
     prediction.algorithmProjectDegradedCount = projectHealthSummary.degradedProjectCount;
@@ -3954,7 +4968,11 @@ function applyTipReadyState(prediction, latest, issues) {
     prediction.algorithmProjectDegradedIds = projectHealthSummary.degradedProjectIds;
   }
   if (state) {
-    state.tipReady = ok;
+    state.tipReady = structureReady;
+    state.structureReady = structureReady;
+    state.truthReady = truthReady;
+    state.qualityReady = qualityReady;
+    state.operationalReady = operationalReady;
     state.tipReadyCheckedAt = isoNow();
     state.tipReadyIssueCount = coreIssues.length;
     state.tipReadyIssues = coreIssues.slice(0, 40);
@@ -3966,10 +4984,10 @@ function applyTipReadyState(prediction, latest, issues) {
     state.algorithmProjectDegradedCount = projectHealthSummary.degradedProjectCount;
     state.algorithmProjectDegradedIssueCount = projectHealthSummary.degradedIssueCount;
     state.algorithmProjectDegradedIds = projectHealthSummary.degradedProjectIds;
-    if (ok) state.tipReadyFailedAt = "";
+    if (structureReady) state.tipReadyFailedAt = "";
     else if (!state.tipReadyFailedAt) state.tipReadyFailedAt = isoNow();
   }
-  return ok;
+  return structureReady;
 }
 
 function collectRuntimeIssues() {
@@ -4044,7 +5062,6 @@ function trimRuntimeCaches(actions) {
       if (row && row.rawJson != null) row.rawJson = null;
     });
   }
-  compactRecentExactCodesInState(state);
   if (typeof global.gc === "function") {
     try { global.gc(); } catch (_) {}
   }
@@ -4068,6 +5085,7 @@ function regenerateCurrentPredictionForWatchdog(actions) {
   }
   predictionBuildRunning = true;
   try {
+    const duishuBefore = collectDuishuCaptureIssues(state.currentPrediction);
     const latest = state.history[0];
     const regenerated = fillPredictionDetail(generateBigDataPrediction(state.history), state.history);
     state.predictions = [
@@ -4078,30 +5096,184 @@ function regenerateCurrentPredictionForWatchdog(actions) {
     ].slice(0, MAX_PREDICTION_LOG);
     state.currentPrediction = regenerated;
     resetAlgorithmProjectHealthForPrediction(regenerated);
-    ensurePredictionAutoTop6Snapshot(regenerated, state.history);
-    ensurePredictionRecommend2Snapshot(regenerated, state.history);
-    ensurePredictionKillFrameworkSnapshot(regenerated, state.history);
-    ensurePredictionCompactAttackSnapshot(regenerated, state.history);
-    ensurePredictionThreeDingTwoSnapshot(regenerated, state.history);
-    ensurePredictionThreeDingOneSnapshot(regenerated, state.history);
-    ensurePredictionSideStableSnapshot(regenerated, state.history);
-    ensurePredictionColdFrameworkSnapshot(regenerated, state.history);
-    ensurePredictionDingKillSnapshot(regenerated, state.history);
-    ensurePredictionPick5000Snapshot(regenerated, state.history);
-    recomputeThreeDuishuRecommendation();
-    ensurePredictionThreeDuishuSnapshot(regenerated);
+    ensurePredictionFrameworkSnapshots(regenerated, state.history);
     sealPredictionSnapshots(regenerated, latest);
     invalidatePanelStateCache();
+    if (duishuBefore.length) {
+      const remaining = collectDuishuCaptureIssues(regenerated);
+      state.duishuCaptureAlarm = {
+        at: isoNow(),
+        baseUid: String(regenerated.baseUid || ""),
+        basePeriod: String(regenerated.basePeriod || ""),
+        beforeCount: duishuBefore.length,
+        before: duishuBefore.slice(0, 12),
+        repairs: [{ target: "watchdog-regenerate", ok: remaining.length === 0 }],
+        remaining: remaining.slice(0, 12),
+        resolved: remaining.length === 0,
+        via: "watchdog-regenerate"
+      };
+      addLog(remaining.length === 0
+        ? "【报警】对数抓取缺失，巡检整包重生已补齐"
+        : "【报警】对数抓取缺失，巡检整包重生后仍有残留", {
+        before: duishuBefore.slice(0, 12),
+        remaining: remaining.slice(0, 12)
+      });
+    }
     actions.push({
       type: "regenerate-current-prediction",
       baseUid: regenerated.baseUid,
       basePeriod: regenerated.basePeriod,
-      modelVersion: regenerated.modelVersion
+      modelVersion: regenerated.modelVersion,
+      repairedDuishu: duishuBefore.length > 0
     });
     return true;
   } finally {
     predictionBuildRunning = false;
   }
+}
+
+function snapshotPositionKillDigits(prediction) {
+  const pk = prediction && prediction.positionKills && typeof prediction.positionKills === "object"
+    ? prediction.positionKills
+    : {};
+  const out = {};
+  ["wan", "qian", "bai", "shi"].forEach((key) => {
+    const entry = pk[key] && typeof pk[key] === "object" ? pk[key] : {};
+    out[key] = {
+      killDigits: Array.isArray(entry.killDigits) ? entry.killDigits.slice(0, 2) : [],
+      main: entry.main != null ? entry.main : entry.recommendDigit,
+      backup: entry.backup != null ? entry.backup : entry.originalBackupDigit,
+      reason: entry.reason || "",
+      algorithm: entry.algorithm || ""
+    };
+  });
+  return out;
+}
+
+function clearPositionStabilityLocks(actions) {
+  if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+  const removed = [];
+  Object.keys(state.stable120Locks).forEach((key) => {
+    if (!/^v4[23]:position:(wan|qian|bai|shi)$/.test(String(key))) return;
+    deleteLockIfPresent(state.stable120Locks, key, actions, key, "force-regenerate-tip");
+    removed.push(key);
+  });
+  ["wan", "qian", "bai", "shi"].forEach((pos) => {
+    deleteLockIfPresent(state.stable120Locks, `v42:position:${pos}`, actions, `position.${pos}`, "force-regenerate-tip");
+    deleteLockIfPresent(state.stable120Locks, `v43:position:${pos}`, actions, `position.${pos}`, "force-regenerate-tip");
+  });
+  return removed;
+}
+
+function forceSwitchPositionKills(bannedPairs) {
+  const positionKillsAlgo = require("./algorithms/position-kills");
+  const history = Array.isArray(state.history) ? state.history : [];
+  const modelPerformance = calculateModelPerformance(Array.isArray(state.predictions) ? state.predictions : []);
+  const result = positionKillsAlgo.compute({
+    history,
+    modelPerformance,
+    forceUnlock: true,
+    bannedPairs: bannedPairs || {},
+    lockApi: {
+      getStable120Locks: () => ({}),
+      setStable120Locks: () => {}
+    }
+  });
+  return result && result.payload && typeof result.payload === "object" ? result.payload : null;
+}
+
+/** Admin-only: clear position locks + rebuild sealed tip so定位排除可换号 */
+function forceRegenerateTipForAdmin(options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const actions = [];
+  if (syncRunning) {
+    return { ok: false, error: "sync-running", actions };
+  }
+  if (predictionBuildRunning) {
+    return { ok: false, error: "prediction-build-running", actions };
+  }
+  if (!Array.isArray(state.history) || !state.history.length) {
+    return { ok: false, error: "history-empty", actions };
+  }
+  const storm = normalizeStormMode(state.stormMode);
+  if (storm && storm.active && storm.lockFreeze) {
+    return { ok: false, error: "storm-lock-freeze", actions };
+  }
+  const before = snapshotPositionKillDigits(state.currentPrediction);
+  const bannedPairs = {};
+  ["wan", "qian", "bai", "shi"].forEach((key) => {
+    bannedPairs[key] = (before[key] && before[key].killDigits) || [];
+  });
+  if (opts.clearPositionLocks !== false) {
+    clearPositionStabilityLocks(actions);
+  }
+  const regenerated = regenerateCurrentPredictionForWatchdog(actions);
+  if (!regenerated) {
+    return { ok: false, error: "regenerate-failed-or-busy", before, actions };
+  }
+  // 内联 generate 会先写回锁，L0 又 keep-min-hold；这里强制换掉旧对
+  if (opts.clearPositionLocks !== false) {
+    clearPositionStabilityLocks(actions);
+  }
+  const switched = forceSwitchPositionKills(bannedPairs);
+  if (switched && state.currentPrediction) {
+    state.currentPrediction.positionKills = switched;
+    if (!state.currentPrediction.detail || typeof state.currentPrediction.detail !== "object") {
+      state.currentPrediction.detail = {};
+    }
+    state.currentPrediction.detail.positionKills = switched;
+    // 写入新锁（hold=1），避免下一轮又粘回旧对；不沿用 keep 逻辑
+    if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+    const latestPeriod = state.history[0] ? String(state.history[0].period || state.history[0].uid || "") : "";
+    ["wan", "qian", "bai", "shi"].forEach((pos) => {
+      const entry = switched[pos] || {};
+      const pair = Array.isArray(entry.killDigits) ? entry.killDigits.slice(0, 2) : [];
+      if (pair.length !== 2) return;
+      state.stable120Locks[`v42:position:${pos}`] = {
+        pair,
+        hold: 1,
+        period: latestPeriod,
+        reason: entry.reason || "force-unlock-switch-pair",
+        updatedAt: isoNow()
+      };
+    });
+    actions.push({ type: "force-switch-position-kills", bannedPairs });
+    invalidatePanelStateCache();
+  }
+  // 重新封存，避免面板仍读旧 immutable 快照
+  try {
+    const latest = state.history[0];
+    if (state.currentPrediction && latest) {
+      state.currentPrediction.allSnapshotsSealed = false;
+      if (state.currentPrediction.recommendationMeta) {
+        delete state.currentPrediction.recommendationMeta.snapshotsSealed;
+      }
+      sealPredictionSnapshots(state.currentPrediction, latest);
+    }
+  } catch (err) {
+    actions.push({ type: "reseal-error", error: String(err && err.message || err) });
+  }
+  saveState();
+  const after = snapshotPositionKillDigits(state.currentPrediction);
+  addLog("管理员强制整包重生 tip", {
+    clearedLocks: actions.filter((item) => item && item.type === "delete-lock").length,
+    tipReady: state.tipReady === true,
+    baseUid: state.currentPrediction && state.currentPrediction.baseUid,
+    before,
+    after
+  });
+  return {
+    ok: true,
+    tipReady: state.tipReady === true,
+    tipStructurePerfect: !!(state.currentPrediction && state.currentPrediction.tipStructurePerfect),
+    baseUid: state.currentPrediction && state.currentPrediction.baseUid || "",
+    basePeriod: state.currentPrediction && state.currentPrediction.basePeriod || "",
+    targetPeriod: state.currentPrediction && state.currentPrediction.targetPeriod || "",
+    before,
+    after,
+    changed: JSON.stringify(before) !== JSON.stringify(after),
+    actions: actions.slice(0, 40)
+  };
 }
 
 let modelWatchdogRunning = false;
@@ -4137,29 +5309,53 @@ function runModelWatchdog(trigger, options) {
   const storm = normalizeStormMode(state.stormMode);
   const triggerText = String(trigger || "");
   const syncOwned = triggerText.indexOf("sync") >= 0 || triggerText === "manual-sync";
-  // 开奖后延后巡检 / 启动巡检：只修完整性，禁止因低胜率清锁整包重生（那会把结算后几秒再次堵死面板）
-  const deferSettleSafe = triggerText.indexOf("deferred") >= 0 ||
+  // 开奖后延后巡检 / 启动巡检：默认只修完整性，禁止因低胜率整包重生（会堵面板）
+  // qualityLockReleaseOnly：允许只清算法锁、禁止 regenerate（老化及时更新）
+  const qualityLockReleaseOnly = opts.qualityLockReleaseOnly === true;
+  const deferSettleSafe = !qualityLockReleaseOnly && (
+    triggerText.indexOf("deferred") >= 0 ||
     triggerText === "startup" ||
-    opts.integrityOnly === true;
+    opts.integrityOnly === true
+  );
   const baseUid = String(
     state.currentPrediction && state.currentPrediction.baseUid ||
     latest && latest.uid ||
     ""
   );
-  const qualityRepairAlreadyHandled = !!baseUid && state.modelWatchdog.lastQualityRepairBaseUid === baseUid;
+  const qualityRepairKeys = state.modelWatchdog.qualityRepairKeys && typeof state.modelWatchdog.qualityRepairKeys === "object"
+    ? state.modelWatchdog.qualityRepairKeys
+    : (state.modelWatchdog.qualityRepairKeys = {});
+  const actionableQualityIssues = qualityIssues.filter((issue) => issue && issue.action && issue.action !== "observe-only");
+  const activeQualityRepairKeys = new Set(actionableQualityIssues.map((issue) => {
+    return `${String(issue.type || "")}:${String(issue.key || "")}`;
+  }));
+  Object.keys(qualityRepairKeys).forEach((key) => {
+    if (!activeQualityRepairKeys.has(key)) delete qualityRepairKeys[key];
+  });
   // A quality repair only releases locks owned by the affected algorithm.
   // It deliberately does not rebuild the shared current prediction: that
   // output is sealed for this draw and other algorithms remain independent.
-  const effectiveQualityIssues = !deferSettleSafe && !qualityRepairAlreadyHandled
-    ? qualityIssues.filter((issue) => issue && issue.action && issue.action !== "observe-only")
+  // Same tip baseUid: clear once. New tip period: allow clear again (aging refresh).
+  const effectiveQualityIssues = !deferSettleSafe
+    ? actionableQualityIssues.filter((issue) => {
+      const repairKey = `${String(issue.type || "")}:${String(issue.key || "")}`;
+      const prev = qualityRepairKeys[repairKey];
+      if (prev && String(prev.baseUid || "") === baseUid) return false;
+      return true;
+    })
     : [];
-  const repairableIssues = [...coreIntegrityIssues, ...runtimeIssues, ...effectiveQualityIssues]
-    .filter((issue) => issue && issue.action && issue.action !== "observe-only");
-  const urgentPeriodRepair = coreIntegrityIssues.length > 0;
+  const duishuIssues = integrityIssues.filter((issue) => issue && issue.action === "repair-duishu-capture");
+  const repairableIssues = (qualityLockReleaseOnly
+    ? [...effectiveQualityIssues]
+    : [...coreIntegrityIssues, ...runtimeIssues, ...effectiveQualityIssues]
+  ).filter((issue) => issue && issue.action && issue.action !== "observe-only");
+  const urgentPeriodRepair = !qualityLockReleaseOnly && coreIntegrityIssues.length > 0;
+  const urgentDuishuRepair = !qualityLockReleaseOnly && duishuIssues.length > 0;
   const lastRepairMs = state.modelWatchdog.lastRepairAt ? Date.parse(state.modelWatchdog.lastRepairAt) : 0;
   const cooldownMs = Number(state.modelWatchdog.repairCooldownMs || MODEL_WATCHDOG_REPAIR_COOLDOWN);
-  const inCooldown = repairableIssues.length > 0 &&
+  const inCooldown = (repairableIssues.length > 0 || urgentDuishuRepair) &&
     !urgentPeriodRepair &&
+    !urgentDuishuRepair &&
     lastRepairMs > 0 &&
     Number.isFinite(lastRepairMs) &&
     Date.now() - lastRepairMs < cooldownMs &&
@@ -4167,16 +5363,22 @@ function runModelWatchdog(trigger, options) {
     String(trigger || "") !== "startup";
 
   if (!inCooldown) {
+    if (urgentDuishuRepair) {
+      repairDuishuCapture(actions);
+    }
     repairableIssues.forEach((issue) => {
-      if (issue.type === "memory-pressure") trimRuntimeCaches(actions);
-      else clearLocksForIssue(issue, actions);
+      if (issue.type === "memory-pressure") {
+        if (!qualityLockReleaseOnly) trimRuntimeCaches(actions);
+      } else clearLocksForIssue(issue, actions);
     });
 
     const clearedModelLock = actions.some((action) => action && action.type === "delete-lock");
-    const forcedRegenerate = coreIntegrityIssues.some((issue) => issue && issue.action === "regenerate-current-prediction");
-    const needsRegenerate = forcedRegenerate || (clearedModelLock && repairableIssues.some((issue) => {
+    const forcedRegenerate = !qualityLockReleaseOnly &&
+      coreIntegrityIssues.some((issue) => issue && issue.action === "regenerate-current-prediction");
+    // 质量清锁只影响下一期选码，禁止整包重生当期已封存预测
+    const needsRegenerate = !qualityLockReleaseOnly && (forcedRegenerate || (clearedModelLock && repairableIssues.some((issue) => {
       return issue.type !== "memory-pressure" && !effectiveQualityIssues.includes(issue);
-    }));
+    })));
     if (needsRegenerate) {
       if (syncRunning && !syncOwned) {
         actions.push({ type: "regenerate-skip", reason: "sync-running" });
@@ -4192,6 +5394,13 @@ function runModelWatchdog(trigger, options) {
   if (qualityRepairAttempted) {
     state.modelWatchdog.lastQualityRepairBaseUid = baseUid;
     state.modelWatchdog.lastQualityRepairAt = isoNow();
+    effectiveQualityIssues.forEach((issue) => {
+      const repairKey = `${String(issue.type || "")}:${String(issue.key || "")}`;
+      qualityRepairKeys[repairKey] = {
+        baseUid,
+        at: state.modelWatchdog.lastQualityRepairAt
+      };
+    });
     actions.push({
       type: "quality-lock-release",
       baseUid,
@@ -4212,11 +5421,11 @@ function runModelWatchdog(trigger, options) {
       cooldownMs,
       lastRepairAt: state.modelWatchdog.lastRepairAt
     }];
-  } else if (qualityRepairAlreadyHandled && qualityIssues.length > 0 && !actions.length) {
+  } else if (actionableQualityIssues.length > 0 && !effectiveQualityIssues.length && !actions.length) {
     state.modelWatchdog.lastActions = [{
-      type: "same-period-quality-repair-skip",
-      baseUid,
-      issueCount: qualityIssues.length,
+      type: "active-quality-repair-skip",
+      issueCount: actionableQualityIssues.length,
+      issueKeys: actionableQualityIssues.map((issue) => `${String(issue.type || "")}:${String(issue.key || "")}`),
       lastQualityRepairAt: state.modelWatchdog.lastQualityRepairAt
     }];
   }
@@ -4224,7 +5433,8 @@ function runModelWatchdog(trigger, options) {
     "delete-lock",
     "trim-runtime-cache",
     "regenerate-current-prediction",
-    "quality-lock-release"
+    "quality-lock-release",
+    "repair-duishu-capture"
   ].includes(action.type));
   if (actualRepairActions.length) {
     state.modelWatchdog.totalRepairs += 1;
@@ -4236,11 +5446,36 @@ function runModelWatchdog(trigger, options) {
       issues: issues.slice(0, 20),
       actions: actions.slice(0, 20)
     });
-  } else if (issues.length && !inCooldown && !qualityRepairAlreadyHandled) {
+  } else if (issues.length && !inCooldown && !effectiveQualityIssues.length) {
     addLog("模型巡检发现观察项，暂不切换", {
       trigger,
       issueCount: issues.length,
       issues: issues.slice(0, 20)
+    });
+  }
+
+  // 定时/常规巡检：命中率偏低时打醒目偏差告警（不改账本数字）
+  const driftIssues = actionableQualityIssues.filter((issue) => {
+    const key = String(issue && issue.key || "");
+    if (!issue || issue.type !== "low-performance") return false;
+    if (/^position\.(wan|qian|bai|shi)\.main$/.test(key)) return true;
+    if (key.indexOf("hewei.") === 0 || key.indexOf("extra.") === 0) return true;
+    return false;
+  });
+  if (driftIssues.length) {
+    addLog("【单定顶1偏差告警】命中率低于阈值，已按规则清锁/观察", {
+      trigger: String(trigger || ""),
+      count: driftIssues.length,
+      items: driftIssues.slice(0, 12).map((issue) => ({
+        key: issue.key,
+        rate: issue.rate,
+        total: issue.total,
+        threshold: issue.threshold,
+        action: issue.action,
+        truthSource: issue.truthSource || ""
+      })),
+      repaired: actualRepairActions.filter((a) => a && (a.type === "delete-lock" || a.type === "quality-lock-release")).length,
+      nextPredictionOnly: true
     });
   }
 
@@ -4896,39 +6131,6 @@ function sizeRatioCandidates() {
   return ["0大4小", "1大3小", "2大2小", "3大1小", "4大0小"];
 }
 
-function recentExactCodeCandidate(limit, history) {
-  const maxMode = String(limit || "").toLowerCase() === "max";
-  const n = maxMode ? Math.max(1, Array.isArray(history) ? history.length : (MAX_HISTORY || 5000)) : Math.max(1, Number(limit || 300));
-  const codes = Array.from(recentExactCodeSet(history, n)).sort();
-  const performance = recentExactCodeAvoidStats(history, n, MODEL_RATE_WINDOW);
-  const rate30 = recentExactCodeAvoidStats(history, n, 30);
-  const rate120 = recentExactCodeAvoidStats(history, n, 120);
-  const rate300 = recentExactCodeAvoidStats(history, n, MODEL_STABLE_WINDOW);
-  return {
-    key: maxMode ? RECENT_EXACT_CODE_MAX_KEY : `recentExactCodeAvoid${n}`,
-    label: maxMode ? "最大旧码回删" : `近${n}重复四码避开`,
-    value: maxMode ? "最大" : String(n),
-    code: maxMode ? "最大" : String(n),
-    primary: maxMode ? "最大" : String(n),
-    backup: maxMode ? "最大" : String(n),
-    lookback: n,
-    maxHistoryWindow: maxMode,
-    codeCount: codes.length,
-    codes,
-    algorithm: "rolling-recent-exact-code-avoid",
-    hitMode: false,
-    matchMode: "avoid-if-current-first-four-code-not-in-previous-window",
-    dynamicEveryPrediction: true,
-    performance,
-    rate30: rate30.rate,
-    rate120: rate120.rate,
-    rate300: rate300.rate,
-    stats30: rate30,
-    stats120: rate120,
-    stats300: rate300
-  };
-}
-
 function threeDigitAvoidCandidates() {
   const out = [];
   for (let a = 0; a < 8; a++) {
@@ -5012,6 +6214,49 @@ function isAnyTwoHeweiCode(value) {
   if (code.length !== ANY_TWO_HEWEI_CODE_SIZE) return false;
   if (new Set(code.split("")).size !== ANY_TWO_HEWEI_CODE_SIZE) return false;
   return code.split("").every((digit) => ANY_TWO_HEWEI_SOURCE_DIGITS.includes(digit));
+}
+
+function anyTwoHeweiFiveMixedCandidates() {
+  return digitSetCandidatesMixedParity(5);
+}
+
+function isAnyTwoHeweiFiveMixedCode(value) {
+  const code = String(value || "").replace(/\D/g, "");
+  if (!/^\d{5}$/.test(code)) return false;
+  if (new Set(code.split("")).size !== 5) return false;
+  return !isUniformParityDigitSet(code);
+}
+
+function anyTwoMaskFromDigitCode(code) {
+  let mask = 0;
+  String(code || "").replace(/\D/g, "").split("").forEach((digit) => {
+    const n = Number(digit);
+    if (Number.isFinite(n) && n >= 0 && n <= 9) mask |= (1 << n);
+  });
+  return mask;
+}
+
+function threeDingPairTailsTemplate1000() {
+  const out = [];
+  for (let m = 0; m < 1000; m += 1) {
+    const a = Math.floor(m / 100) % 10;
+    const b = Math.floor(m / 10) % 10;
+    const c = m % 10;
+    out.push([(a + b) % 10, (a + c) % 10, (b + c) % 10]);
+  }
+  return out;
+}
+
+function threeDingAnyTwoStructBasePercent(code) {
+  const mask = anyTwoMaskFromDigitCode(code);
+  if (!mask) return 100;
+  const tripleTails = threeDingPairTailsTemplate1000();
+  let structHit = 0;
+  for (let i = 0; i < 1000; i += 1) {
+    const t = tripleTails[i];
+    if (((mask >> t[0]) & 1) || ((mask >> t[1]) & 1) || ((mask >> t[2]) & 1)) structHit += 1;
+  }
+  return structHit / 10;
 }
 
 function compareCandidateValue(left, right) {
@@ -5157,22 +6402,199 @@ function scoreHitCandidates(history, candidates, matcher, prior) {
 }
 
 function calculateExtraAvoidKills(history, performance) {
-  const formula = require("./algorithms/extra-kills/formula");
-  const heweiFormula = require("./algorithms/hewei/formula");
-  heweiFormula.bindRuntime({
-    getStable120Locks() {
-      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
-      return state.stable120Locks;
-    },
-    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
-    getStableMathFilter() { return state && state.stableMathFilter || null; },
-    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
-  });
-  formula.bindRuntime({
-    getState() { return state; },
-    getStableMathExcludeDigitSet() { return heweiFormula.getStableMathExcludeDigitSet(); }
-  });
-  return formula.calculateExtraAvoidKills(history, performance);
+  function stableDynamicIndex(records, size) {
+    if (!size) return 0;
+    const latest = records && records[0] ? records[0] : {};
+    const periodTail = Number(String(latest.period || latest.uid || "0").replace(/\D/g, "").slice(-4) || 0);
+    const nums = Array.isArray(latest.numbers) ? latest.numbers : [];
+    const numberSeed = nums.reduce((sum, n, index) => sum + Number(n || 0) * (index + 3), 0);
+    return Math.abs(periodTail + numberSeed) % size;
+  }
+
+  function calculateOne(key, label, candidates, matcher, prior, mode, options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const hitMode = mode === "hit";
+    const blockedValues = new Set((Array.isArray(opts.excludeValues) ? opts.excludeValues : []).map((value) => String(value)));
+    const preferDigits = new Set((Array.isArray(opts.preferDigits) ? opts.preferDigits : []).map((digit) => String(digit)).filter((digit) => /^\d$/.test(digit)));
+    const overlapCount = (value) => {
+      if (!preferDigits.size) return 0;
+      const text = String(value == null ? "" : value).replace(/\D/g, "");
+      if (!text) return 0;
+      let n = 0;
+      const seen = new Set();
+      for (const ch of text) {
+        if (seen.has(ch)) continue;
+        seen.add(ch);
+        if (preferDigits.has(ch)) n += 1;
+      }
+      return n;
+    };
+    let scored = hitMode ? scoreHitCandidates(history, candidates, matcher, prior) : scoreAvoidCandidates(history, candidates, matcher, prior);
+    if (blockedValues.size) {
+      scored = scored.filter((item) => !blockedValues.has(String(item && item.value !== undefined ? item.value : "")));
+    }
+    scored = scored.filter((item) => Number(item && item.sampleTotal || 0) > 0);
+    if (preferDigits.size) {
+      scored = scored.map((item) => {
+        const overlap = overlapCount(item && item.value);
+        const bonus = hitMode ? overlap * 0.22 : overlap * 0.85;
+        return Object.assign({}, item, {
+          preferOverlap: overlap,
+          score: Number((Number(item.score || 0) + bonus).toFixed(4))
+        });
+      });
+      scored.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    }
+    if (!scored.length) {
+      return {
+        key,
+        label,
+        value: "",
+        code: "",
+        primary: "",
+        backup: "",
+        algorithm: "unavailable-no-real-sample",
+        hardnessScore: null,
+        rate30: null,
+        rate60: null,
+        rate120: null,
+        rate300: null,
+        maxMiss120: null,
+        maxMissLong: null,
+        lower120: null,
+        stage: "暂无真实样本",
+        hitMode,
+        matchMode: "unavailable",
+        jointSwitchAllowed: false,
+        dynamicEveryPrediction: false,
+        rotationPool: [],
+        rotationIndex: null,
+        rotationMaxGap: null,
+        performance: null,
+        truthAvailable: false,
+        confidence: null,
+        recommendable: false,
+        preferOverlap: 0
+      };
+    }
+    const lowRaw = shouldUseBackupAlgorithm(performance, `extra.${key}`);
+    // 账本若被历史烂码拖低，但当前候选 rate120 已很高：禁止强制 backup（否则会粘死次优，如 threeDigitHit 长期锁 123/backup）
+    const topRate120 = Number(scored[0] && scored[0].rate120);
+    const low = !!(lowRaw && !(Number.isFinite(topRate120) && topRate120 >= 90));
+    let picked = pickByRank(scored, low, `extra.${key}`, opts.rankOptions || null);
+    const firstRealCandidate = scored[0];
+    let selected = picked.selected || firstRealCandidate;
+    let primary = picked.primary || firstRealCandidate;
+    let backup = picked.backup || primary;
+    let algorithm = hitMode ? (low ? "dynamic-cooccur-hit-backup-low-hit-rate" : "dynamic-cooccur-hit-primary") : (key === "sumAvoid" ? (low ? "dynamic-practical-sum-backup" : "dynamic-practical-sum-rotation") : (low ? "independent-backup-low-hit-rate" : "dynamic-big-data-primary"));
+    let rotationPool = [];
+    let rotationIndex = null;
+    let rotationMaxGap = null;
+    if (!hitMode && key === "sumAvoid" && scored.length) {
+      const dynamicPool = scored.slice(0, Math.min(6, scored.length));
+      const dynamicPick = dynamicPool[stableDynamicIndex(history, dynamicPool.length)] || selected;
+      selected = low ? (dynamicPool[1] || dynamicPick) : dynamicPick;
+      primary = dynamicPool[0] || primary;
+      backup = dynamicPool[1] || primary;
+    }
+  if (hitMode && (key === "anyTwoHeweiHit" || key === "anyThreeHeweiHit") && scored.length) {
+      // 二/三数合：尽量锁住上一期数字；仅当旧码掉出近顶分差才换（不要换数字）。
+      const prevExtra = ((((state || {}).currentPrediction || {}).extraKills || {})[key]) || {};
+      const prevCode = String(prevExtra.code || prevExtra.value || "").replace(/\D/g, "");
+      const bestScore = Number(scored[0] && scored[0].score || 0);
+      const keepGap = 1.0;
+      const prevItem = prevCode
+        ? scored.find((item) => String(item && item.value || "").replace(/\D/g, "") === prevCode)
+        : null;
+      const prevScore = prevItem ? Number(prevItem.score || 0) : NaN;
+      const keepPrev = !!(prevItem && Number.isFinite(prevScore) && Number.isFinite(bestScore) && (bestScore - prevScore) <= keepGap);
+      selected = keepPrev ? prevItem : scored[0];
+      primary = scored[0];
+      backup = scored[1] || scored[0];
+      rotationPool = [];
+      rotationIndex = null;
+      rotationMaxGap = null;
+      algorithm = keepPrev
+        ? (key === "anyTwoHeweiHit" ? "sticky-hold-two-hewei" : "sticky-hold-three-hewei")
+        : (key === "anyTwoHeweiHit" ? "sticky-top1-two-hewei" : "sticky-top1-three-hewei");
+    }
+    const selectedValue = String(selected.value !== undefined ? selected.value : (selected.candidate !== undefined ? selected.candidate : ""));
+    const primaryValue = String(primary.value !== undefined ? primary.value : (primary.candidate !== undefined ? primary.candidate : selectedValue));
+    const backupValue = String(backup.value !== undefined ? backup.value : (backup.candidate !== undefined ? backup.candidate : primaryValue));
+    const baselineMeta = highBaselineScoreMeta(key);
+    const recommendThreshold = hitMode ? 52 : 78;
+    const recommendable = Number(selected.rate120 || selected.rate60 || selected.rate30 || 0) >= recommendThreshold
+      && Number(selected.lower120 || 0) >= (hitMode ? 45 : 65);
+    const confidence = recommendable ? "normal" : "low";
+    return {
+      key,
+      label,
+      value: selectedValue,
+      code: selectedValue,
+      primary: primaryValue,
+      backup: backupValue,
+      algorithm,
+      hardnessScore: Number(selected.score || 0),
+      rate30: selected.rate30,
+      rate60: selected.rate60,
+      rate120: selected.rate120,
+      rate300: selected.rate300,
+      maxMiss120: selected.maxMiss120,
+      maxMissLong: selected.maxMissLong,
+      lower120: selected.lower120,
+      stage: selected.stage,
+      hitMode,
+      matchMode: key === "anyTwoHeweiHit" ? "hit-if-any-two-hewei-tail-in-02468-exclude-one" : (key === "anyThreeHeweiHit" ? "hit-if-any-three-hewei-tail-in-selected-six" : (hitMode ? "hit-if-all-digits-in-first-four" : "avoid-if-not-matched")),
+      scoreClass: baselineMeta ? baselineMeta.scoreClass : (hitMode ? "predictive-hit" : "predictive-avoid"),
+      randomBaseline: baselineMeta ? baselineMeta.baseline : null,
+      scoreHint: baselineMeta ? `${baselineMeta.hint}，非预测力` : "",
+      predictivePower: !baselineMeta,
+      jointSwitchAllowed: false,
+      dynamicEveryPrediction: true,
+      rotationPool,
+      rotationIndex,
+      rotationMaxGap,
+      performance: getModelStat(performance, `extra.${key}`) || null,
+      confidence,
+      recommendable,
+      preferOverlap: Number(selected.preferOverlap || 0)
+    };
+  }
+
+  const stablePreferDigits = Array.from(getStableMathExcludeDigitSet());
+  const twoAvoidCandidates = twoDigitAvoidCandidates();
+  const twoAvoidPicked = [];
+  const twoAvoidRankOptions = { poolSize: 8, keepGap: 10, unlockGap: 16, backupKeepGap: 8, minHold: 12 };
+  const twoAvoid1 = calculateOne("twoDigitAvoid", "四定对数避开1组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  if (twoAvoid1.value) twoAvoidPicked.push(twoAvoid1.value);
+  const twoAvoid2 = calculateOne("twoDigitAvoid2", "四定对数避开2组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  if (twoAvoid2.value) twoAvoidPicked.push(twoAvoid2.value);
+  const twoAvoid3 = calculateOne("twoDigitAvoid3", "四定对数避开3组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  const threeCandidates = threeDigitAvoidCandidates();
+  const threePicked = [];
+  const threeAvoid1 = calculateOne("threeDigitAvoid", "三数共现避开1组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  if (threeAvoid1.value) threePicked.push(threeAvoid1.value);
+  const threeAvoid2 = calculateOne("threeDigitHit", "三数共现避开2组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  if (threeAvoid2.value) threePicked.push(threeAvoid2.value);
+  const threeAvoid3 = calculateOne("threeDigitAvoid2", "三数共现避开3组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  return {
+    sumAvoid: calculateOne("sumAvoid", "单点和值过滤（高基线）", sumAvoidCandidates(), (record, value) => firstFourSum(record) === Number(value), 0.8),
+    sumRangeAvoid: calculateOne("sumRangeAvoid", "和值极端区间过滤（高基线）", sumRangeAvoidCandidates(), (record, value) => firstFourSumInRange(record, value), 0.55),
+    spanAvoid: calculateOne("spanAvoid", "跨度极罕形态过滤（高基线）", spanAvoidCandidates(), (record, value) => extraStructureMatched(record, "spanAvoid", value), 0.55),
+    repeatAvoid: calculateOne("repeatAvoid", "重号极罕形态过滤（高基线）", repeatAvoidCandidates(), (record, value) => extraStructureMatched(record, "repeatAvoid", value), 0.55),
+    consecutiveAvoid: calculateOne("consecutiveAvoid", "连号极罕形态过滤（高基线）", consecutiveAvoidCandidates(), (record, value) => extraStructureMatched(record, "consecutiveAvoid", value), 0.55),
+    parityRatioAvoid: calculateOne("parityRatioAvoid", "极端奇偶比过滤（高基线）", parityRatioCandidates(), (record, value) => extraStructureMatched(record, "parityRatioAvoid", value), 0.55),
+    sizeRatioAvoid: calculateOne("sizeRatioAvoid", "极端大小比过滤（高基线）", sizeRatioCandidates(), (record, value) => extraStructureMatched(record, "sizeRatioAvoid", value), 0.55),
+    threeDigitAvoid: threeAvoid1,
+    twoDigitAvoid: twoAvoid1,
+    twoDigitAvoid2: twoAvoid2,
+    twoDigitAvoid3: twoAvoid3,
+    twoDigitHit: calculateOne("twoDigitHit", "两数共现避开（基线参考）", twoDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.45, null, { rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits }),
+    threeDigitHit: threeAvoid2,
+    threeDigitAvoid2: threeAvoid3,
+    anyTwoHeweiHit: calculateOne("anyTwoHeweiHit", "二数合尾02468排1码命中（高基线参考）", anyTwoHeweiCandidates(), (record, value) => anyHeweiCombinationHit(record, value, 2, 1), 0.55, "hit"),
+    anyThreeHeweiHit: calculateOne("anyThreeHeweiHit", "三数合尾宽命中（高基线参考）", digitSetCandidatesMixedParity(ANY_THREE_HEWEI_CODE_SIZE), (record, value) => anyHeweiCombinationHit(record, value, 3, 1), 0.62, "hit")
+  };
 }
 
 const AUTO_TOP6_POSITIONS = [
@@ -5185,6 +6607,8 @@ const AUTO_TOP6_HEWEI = [
   { key: "total", label: "总合尾综合", index: -2 },
   { key: "wanQianBai", label: "千百十合尾", index: 0 },
   { key: "qianBaiShi", label: "百十个合尾", index: 1 },
+  { key: "wanQianGe", label: "千百个合尾", index: -3 },
+  { key: "wanBaiShi", label: "千十个合尾", index: -4 },
   { key: "wanQianBaiShi", label: "千百十个合尾", index: 2 },
   { key: "unified", label: "三个合尾统一", index: -1 }
 ];
@@ -5196,17 +6620,13 @@ const AUTO_TOP6_EXTRAS = [
   { key: "consecutiveAvoid", label: "连号极罕形态过滤（高基线）", mode: "avoid", kind: "structure", scoreClass: "structural-rare-avoid" },
   { key: "parityRatioAvoid", label: "极端奇偶比过滤（高基线）", mode: "avoid", kind: "ratio", scoreClass: "structural-rare-avoid" },
   { key: "sizeRatioAvoid", label: "极端大小比过滤（高基线）", mode: "avoid", kind: "ratio", scoreClass: "structural-rare-avoid" },
-  { key: "recentExactCodeAvoid300", label: "近300重复四码避开", mode: "avoid", kind: "recentExactCode" },
-  { key: "recentExactCodeAvoid500", label: "近500重复四码避开", mode: "avoid", kind: "recentExactCode" },
-  { key: "recentExactCodeAvoid800", label: "近800重复四码避开", mode: "avoid", kind: "recentExactCode" },
-  { key: "recentExactCodeAvoid1000", label: "近1000重复四码避开", mode: "avoid", kind: "recentExactCode" },
-  { key: "recentExactCodeAvoidMax", label: "最大旧码回删", mode: "avoid", kind: "recentExactCode" },
-  { key: "threeDigitAvoid", label: "对数共现避开", mode: "avoid", kind: "digits" },
-  { key: "twoDigitAvoid", label: "对数避开1组", mode: "avoid", kind: "digits" },
-  { key: "twoDigitAvoid2", label: "对数避开2组", mode: "avoid", kind: "digits" },
-  { key: "twoDigitAvoid3", label: "对数避开3组", mode: "avoid", kind: "digits" },
-  { key: "twoDigitHit", label: "两数共现除对数（基线参考）", mode: "avoid", kind: "digits", scoreClass: "pair-avoid-baseline" },
-  { key: "threeDigitHit", label: "三数共现命中", mode: "hit", kind: "digits" },
+  { key: "threeDigitAvoid", label: "三数共现避开1组", mode: "avoid", kind: "digits" },
+  { key: "twoDigitAvoid", label: "四定对数避开1组", mode: "avoid", kind: "digits" },
+  { key: "twoDigitAvoid2", label: "四定对数避开2组", mode: "avoid", kind: "digits" },
+  { key: "twoDigitAvoid3", label: "四定对数避开3组", mode: "avoid", kind: "digits" },
+  { key: "twoDigitHit", label: "两数共现避开（基线参考）", mode: "avoid", kind: "digits", scoreClass: "pair-avoid-baseline" },
+  { key: "threeDigitHit", label: "三数共现避开2组", mode: "avoid", kind: "digits" },
+  { key: "threeDigitAvoid2", label: "三数共现避开3组", mode: "avoid", kind: "digits" },
   { key: "anyTwoHeweiHit", label: "二数合尾02468排1码命中（高基线参考）", mode: "hit", kind: "heweiTails", scoreClass: "wide-hit-baseline" },
   { key: "anyThreeHeweiHit", label: "三数合尾宽命中（高基线参考）", mode: "hit", kind: "heweiTails", scoreClass: "wide-hit-baseline" }
 ];
@@ -5220,7 +6640,6 @@ function autoTop6SafetyThreshold(item) {
   const key = String(item && item.key || "");
   if (item && item.kind === "hewei" && key === "unified") return HEWEI_UNIFIED_GUARD_RATE;
   if (item && item.kind === "hewei") return HEWEI_GUARD_RATE;
-  if (item && item.kind === "extra" && key === "threeDigitHit") return 5;
   // 高基线模型不用 85% 原始通过率冒充「健康/强预测」
   if (item && item.kind === "extra" && isHighBaselineScoreKey(key)) {
     const meta = highBaselineScoreMeta(key);
@@ -5231,13 +6650,11 @@ function autoTop6SafetyThreshold(item) {
 
 function autoTop6LongFloor(item, threshold) {
   if (item && item.kind === "hewei" && item.key === "unified") return Math.max(55, Number(threshold || 0) - 6);
-  if (item && item.kind === "extra" && item.key === "threeDigitHit") return Math.max(0, Number(threshold || 0) - 4);
   return Math.max(70, Number(threshold || 0) - AUTO_TOP6_LONG_FLOOR_OFFSET);
 }
 
 function autoTop6LowerFloor(item, threshold) {
   if (item && item.kind === "hewei" && item.key === "unified") return Math.max(50, Number(threshold || 0) - 14);
-  if (item && item.kind === "extra" && item.key === "threeDigitHit") return 0;
   return Math.max(68, Number(threshold || 0) - AUTO_TOP6_LOWER_FLOOR_OFFSET);
 }
 
@@ -5459,6 +6876,21 @@ function autoTop6RecordSuccess(item, record) {
       if (!/^\d$/.test(actual)) return null;
       return actual !== code;
     }
+    // 后加的千百个/千十个：不走三位组合下标，直接用真实合尾字段。
+    if (item.key === "wanQianGe" || item.key === "wanQianGeFreq") {
+      const nums = Array.isArray(record.numbers) ? record.numbers : [];
+      if (nums.length < 4) return null;
+      const actual = String(calculateMetrics(nums).wanQianGeHewei);
+      if (!/^\d$/.test(actual)) return null;
+      return actual !== code;
+    }
+    if (item.key === "wanBaiShi" || item.key === "wanBaiShiFreq") {
+      const nums = Array.isArray(record.numbers) ? record.numbers : [];
+      if (nums.length < 4) return null;
+      const actual = String(calculateMetrics(nums).wanBaiShiHewei);
+      if (!/^\d$/.test(actual)) return null;
+      return actual !== code;
+    }
     const group = getCompositeHeweiGroup(record).map(String);
     if (item.key === "unified") return group.length >= 3 ? !group.includes(code) : null;
     const meta = AUTO_TOP6_HEWEI.find((entry) => entry.key === item.key);
@@ -5475,29 +6907,12 @@ function autoTop6RecordSuccess(item, record) {
       item.key === "parityRatioAvoid" ||
       item.key === "sizeRatioAvoid"
     ) return !extraStructureMatched(record, item.key, code);
-    if (/^recentExactCodeAvoid(?:\d+|Max)$/.test(String(item.key || ""))) {
-      const actualCode = firstFourCode(record);
-      if (!/^\d{4}$/.test(actualCode)) return null;
-      // 优先用 tip 内冻结 codes；已 omit 时按条目 lookback 对「该历史行之前」的窗口重建（回测）
-      let codeSet = null;
-      if (Array.isArray(item.codes) && item.codes.length) {
-        codeSet = new Set(item.codes.map(String).filter((value) => /^\d{4}$/.test(value)));
-      } else if (item.codesOmitted || Number(item.codeCount || 0) > 0 || item.lookback != null) {
-        const lookback = recentExactCodeWindowFromKey(item.key, item.value || item.code || item.lookback);
-        const history = (typeof state !== "undefined" && state && Array.isArray(state.history)) ? state.history : [];
-        const idx = history.indexOf(record);
-        const previousRows = idx >= 0 ? history.slice(idx + 1) : history;
-        codeSet = recentExactCodeSet(previousRows, lookback);
-      }
-      if (!codeSet || !codeSet.size) return null;
-      return !codeSet.has(actualCode);
-    }
     let matched = false;
     if (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") {
       const size = item.key === "anyTwoHeweiHit" ? 2 : 3;
       const isValidCode = item.key === "anyTwoHeweiHit"
-        ? isAnyTwoHeweiCode(code)
-        : (/^\d{5}$/.test(code) && new Set(code.split("")).size === 5);
+        ? (isAnyTwoHeweiCode(code) || isAnyTwoHeweiFiveMixedCode(code))
+        : (/^\d{6}$/.test(code) && new Set(code.split("")).size === ANY_THREE_HEWEI_CODE_SIZE);
       if (!isValidCode) return null;
       const scope = (Array.isArray(item.heweiScopeIndexes) ? item.heweiScopeIndexes : [])
         .map((value) => Number(value))
@@ -5528,6 +6943,14 @@ function autoTop6RecordSuccess(item, record) {
     const actualShape = autoTop6PatternOf(record, shapeKey);
     if (!actualShape) return null;
     if (scopeLen === 3) {
+      const scopeIndexes = (Array.isArray(item.shapeScopeIndexes) ? item.shapeScopeIndexes : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 0 && value <= 3);
+      if (scopeIndexes.length === 3) {
+        const actualScoped = scopeIndexes.map((index) => actualShape.charAt(index)).join("");
+        const codeScoped = scopeIndexes.map((index) => codeText.charAt(index)).join("");
+        if (/^[大小单双]{3}$/.test(codeScoped)) return actualScoped !== codeScoped;
+      }
       return actualShape.slice(0, 3) !== codeText.slice(0, 3);
     }
     return actualShape !== codeText;
@@ -5688,7 +7111,7 @@ function autoTop6DecorateItem(history, item, evaluatedCount) {
     }
   }
   if (item && item.kind === "hewei" && item.recommendable === false) {
-    stableReasons.push("算法标记低置信合尾");
+    stableReasons.push("算法标记观察合尾");
   }
 
   const stableGate = stableReasons.length === 0;
@@ -5731,12 +7154,11 @@ function autoTop6CandidateItems(prediction) {
   const positionKills = prediction && prediction.positionKills || {};
   AUTO_TOP6_POSITIONS.forEach((pos) => {
     const entry = positionKills[pos.key] || {};
+    // 组码主链路只用单定顶1（recommend/main）；dual/backup 仍记账，不进候选池
     const recommend = entry.recommendDigit !== undefined ? entry.recommendDigit : (entry.selectedDigit !== undefined ? entry.selectedDigit : (entry.main !== undefined ? entry.main : (entry.killDigits && entry.killDigits[0])));
     const main = entry.primaryDigit !== undefined ? entry.primaryDigit : (entry.mainAlgorithmDigit !== undefined ? entry.mainAlgorithmDigit : (entry.mainDigit !== undefined ? entry.mainDigit : entry.main));
-    const backup = entry.originalBackupDigit !== undefined ? entry.originalBackupDigit : (entry.backupAlgorithmDigit !== undefined ? entry.backupAlgorithmDigit : (entry.backup !== undefined ? entry.backup : (entry.backupDigit !== undefined ? entry.backupDigit : (entry.killDigits && entry.killDigits[1]))));
     add({ kind: "position", key: pos.key, side: "recommend", name: `${pos.label}推荐`, code: recommend });
     add({ kind: "position", key: pos.key, side: "main", name: `${pos.label}主攻`, code: main });
-    add({ kind: "position", key: pos.key, side: "backup", name: `${pos.label}备用`, code: backup });
   });
 
   const independentHeweiKills = prediction && prediction.independentHeweiKills || {};
@@ -5762,47 +7184,297 @@ function autoTop6CandidateItems(prediction) {
     const saved = extraKills[extra.key];
     const code = saved && typeof saved === "object" ? (saved.value !== undefined ? saved.value : saved.code) : saved;
     const extraItem = { kind: "extra", key: extra.key, side: "recommend", name: extra.label, code, mode: extra.mode, extraKind: extra.kind };
-    if (saved && typeof saved === "object" && Array.isArray(saved.codes)) {
-      extraItem.codes = saved.codes.slice(0, recentExactCodeCodeLimit({ key: extra.key, value: code }));
-      extraItem.codeCount = Number(saved.codeCount || extraItem.codes.length);
-    }
     add(extraItem);
   });
   return list;
 }
 
 function buildAutoTop6Snapshot(prediction, history) {
-  return frameworkItems.buildAutoTop6Snapshot(prediction, history);
+  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
+  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
+  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
+  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
+  const chosen = [];
+  const used = new Set();
+  const repairReport = [];
+  const comboRows = safeHistory.slice(0, Math.min(MODEL_STABLE_WINDOW, safeHistory.length));
+  let targetItemCount = 6;
+
+  function order(a, b) {
+    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
+    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
+    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
+    if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  }
+
+  function comboStats(items) {
+    let total = 0;
+    let hit = 0;
+    let nearHit = 0;
+    let validChecks = 0;
+    let successChecks = 0;
+    comboRows.forEach((record) => {
+      const results = (items || []).map((item) => autoTop6RecordSuccess(item, record)).filter((value) => typeof value === "boolean");
+      if (results.length !== (items || []).length || !results.length) return;
+      total += 1;
+      const wins = results.filter(Boolean).length;
+      validChecks += results.length;
+      successChecks += wins;
+      if (wins === results.length) hit += 1;
+      if (results.length > 1 && wins >= results.length - 1) nearHit += 1;
+    });
+    return {
+      total,
+      hit,
+      nearHit,
+      rate: total ? hit * 100 / total : null,
+      nearRate: total ? nearHit * 100 / total : null,
+      avgRate: validChecks ? successChecks * 100 / validChecks : null
+    };
+  }
+
+  function comboPickScore(item) {
+    const stats = comboStats(chosen.concat([item]));
+    const full = stats.rate === null ? -1 : Number(stats.rate || 0);
+    const near = stats.nearRate === null ? full : Number(stats.nearRate || 0);
+    const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
+    return full * 10000 + near * 100 + avg + Number(item.stableScore || 0) / 100;
+  }
+
+  function pickBest(pool, maxPerSameModel, allowSameExcludeDigit) {
+    const modelCount = {};
+    chosen.forEach((item) => {
+      const modelKey = `${item.kind}:${item.key}`;
+      modelCount[modelKey] = Number(modelCount[modelKey] || 0) + 1;
+    });
+    let best = null;
+    let bestScore = -Infinity;
+    (pool || []).forEach((item) => {
+      const id = autoTop6ItemId(item);
+      const modelKey = `${item.kind}:${item.key}`;
+      if (used.has(id)) return;
+      if (Number(modelCount[modelKey] || 0) >= Number(maxPerSameModel || 2)) return;
+      if (frameworkConflictsSameHeweiDigit(chosen, item)) return;
+      // 定位/合尾单码同框禁止相碰；无替代时才允许放宽
+      if (!allowSameExcludeDigit && frameworkConflictsSameExcludeDigit(chosen, item)) return;
+      const score = comboPickScore(item);
+      if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
+        best = item;
+        bestScore = score;
+      }
+    });
+    if (!best) return false;
+    used.add(autoTop6ItemId(best));
+    chosen.push(best);
+    return true;
+  }
+
+  function noteLow(pool, label) {
+    (pool || []).forEach((item) => {
+      if (item.lowConfidence) {
+        const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
+        const reason = item.stabilityReason ? `，原因 ${item.stabilityReason}` : "";
+        repairReport.push(`${label}暂停低稳：${item.name} ${item.code}，安全率 ${rate}${reason}`);
+      }
+    });
+  }
+
+  const positionPool = candidates.filter((item) => item.kind === "position");
+  const heweiPool = candidates.filter((item) => item.kind === "hewei");
+  noteLow(positionPool, "定位池");
+  noteLow(heweiPool, "合尾池");
+
+  let before = chosen.length;
+  const formalPositionHealthy = healthy.filter((item) => item.kind === "position" && item.side !== "backup");
+  const formalPositionPool = positionPool.filter((item) => item.side !== "backup");
+  while (chosen.length - before < 3 && pickBest(formalPositionHealthy.slice().sort(order), 2, false)) {}
+  while (chosen.length - before < 3 && pickBest(formalPositionPool.slice().sort(order), 2, false)) {
+    const item = chosen[chosen.length - 1];
+    item.repairedIntoTop = true;
+    repairReport.push(`定位池安全阈值内不足，明确加入观察项：${item.name} ${item.code}。`);
+  }
+  while (chosen.length - before < 3 && pickBest(formalPositionPool.slice().sort(order), 2, true)) {
+    const item = chosen[chosen.length - 1];
+    item.repairedIntoTop = true;
+    repairReport.push(`定位池无错开同码替代，被迫保留同码：${item.name} ${item.code}。`);
+  }
+  if (chosen.length - before < 3) repairReport.push(`定位池结构不完整：需要3项正式排除（不含替补），实际${chosen.length - before}项。`);
+
+  const reversePool = autoTop6ReverseShapeCandidatesFromPositions(chosen.filter((item) => item.kind === "position"), safeHistory)
+    .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
+    .sort(order);
+  noteLow(reversePool, "反向形态池");
+  const healthyReverse = reversePool.filter((item) => item && item.stabilityGate === true);
+  if (healthyReverse.length) {
+    const picked = healthyReverse.slice().sort((a, b) => {
+      const delta = comboPickScore(b) - comboPickScore(a);
+      return delta || order(a, b);
+    })[0];
+    if (!used.has(autoTop6ItemId(picked))) {
+      // 反向形态只作参考（side=backup）：不进正式六项全过、不进攻击语；正式结构恒为 3+2+1=6
+      picked.side = "backup";
+      picked.name = String(picked.name || "反向形态") + "（参考）";
+      used.add(autoTop6ItemId(picked));
+      chosen.push(picked);
+      targetItemCount = 7;
+      repairReport.push(`反向形态作参考项保留：${picked.code}；不参与六项全过统计。`);
+    }
+  } else if (reversePool.length) {
+    repairReport.push("反向形态池两路均未达安全阈值，暂不计入本期自动推荐。");
+  }
+
+  before = chosen.length;
+  const formalHeweiHealthy = healthy.filter((item) => item.kind === "hewei" && item.side !== "backup");
+  const formalHeweiPool = heweiPool.filter((item) => item.side !== "backup");
+  while (chosen.length - before < 2 && pickBest(formalHeweiHealthy.slice().sort(order), 2, false)) {}
+  while (chosen.length - before < 2 && pickBest(formalHeweiPool.slice().sort(order), 2, false)) {
+    const item = chosen[chosen.length - 1];
+    item.repairedIntoTop = true;
+    repairReport.push(`合尾池安全阈值内不足，明确加入观察项：${item.name} ${item.code}。`);
+  }
+  while (chosen.length - before < 2 && pickBest(formalHeweiPool.slice().sort(order), 2, true)) {
+    const item = chosen[chosen.length - 1];
+    item.repairedIntoTop = true;
+    repairReport.push(`合尾与定位同码相碰无替代，被迫保留同码：${item.name} ${item.code}。`);
+  }
+  if (chosen.length - before < 2) repairReport.push(`合尾池结构不完整：需要2项正式排除（不含替补），实际${chosen.length - before}项。`);
+
+  // 第6项固定为两数共现避开，绝不写成含对数；也不用对数避开1/2/3组冒充
+  const cooccur = candidates
+    .filter((item) => item.kind === "extra" && item.key === "twoDigitHit")
+    .sort(order);
+  noteLow(cooccur, "两数共现池");
+  const healthyCooccur = cooccur.filter((item) => item && item.stabilityGate === true);
+  if (cooccur.length) {
+    const source = healthyCooccur.length ? healthyCooccur : cooccur;
+    const picked = source.slice().sort((a, b) => {
+      const overlapDelta = frameworkTwoDigitOverlapWithSingles(chosen, a) - frameworkTwoDigitOverlapWithSingles(chosen, b);
+      if (overlapDelta) return overlapDelta;
+      const delta = comboPickScore(b) - comboPickScore(a);
+      return delta || order(a, b);
+    })[0];
+    picked.name = "两数共现";
+    picked.mode = "avoid";
+    const overlap = frameworkTwoDigitOverlapWithSingles(chosen, picked);
+    if (overlap > 0) {
+      repairReport.push(`两数共现 ${picked.code} 与已选单码重叠${overlap}位，候选池无更优错开项时保留。`);
+    }
+    if (!picked.stabilityGate) {
+      picked.repairedIntoTop = true;
+      repairReport.push(`两数共现未达安全阈值，仍保留第6项除对数：${picked.code}；不改写成含对数。`);
+    }
+    if (!used.has(autoTop6ItemId(picked))) {
+      used.add(autoTop6ItemId(picked));
+      chosen.push(picked);
+    }
+  } else {
+    repairReport.push("两数共现模型缺失，当前快照保持不完整并交由完整性巡检重建，不用对数避开1/2/3组冒充补位。");
+  }
+  if (chosen.length < targetItemCount) repairReport.push(`框架结构不足${targetItemCount}项，当前仅生成 ${chosen.length} 项；完整性巡检会拒绝并重建，不以无关模型补位。`);
+
+  return {
+    version: AUTO_TOP6_SNAPSHOT_VERSION,
+    generatedAt: isoNow(),
+    basePeriod: prediction && prediction.basePeriod || "",
+    itemCount: Math.min(chosen.length, targetItemCount),
+    baseItemCount: 6,
+    reverseShapeCount: chosen.some((item) => item.kind === "derivedReverseShape") ? 1 : 0,
+    formalItemCount: 6,
+    framework: {
+      positionCount: 3,
+      heweiCount: 2,
+      pairHitCount: 1,
+      reverseShapeCount: chosen.some((item) => item.kind === "derivedReverseShape") ? 1 : 0,
+      semantics: "formal-6=3pos+2hewei+1cooccur-avoid; reverse-shape=backup-reference-only"
+    },
+    items: chosen.slice(0, targetItemCount).map((item, index) => ({
+      rank: index + 1,
+      kind: item.kind,
+      key: item.key,
+      side: item.side || "recommend",
+      name: item.name,
+      code: item.code,
+      mode: item.mode || "avoid",
+      rate: item.rate,
+      stableScore: item.stableScore,
+      rate30: item.rate30,
+      rate60: item.rate60,
+      rate120: item.rate120,
+      rate300: item.rate300,
+      safetyRate: item.safetyRate,
+      safetyThreshold: item.safetyThreshold,
+      longFloor: item.longFloor,
+      lower120: item.lower120,
+      recentMissStreak: item.recentMissStreak,
+      maxMissStreak120: item.maxMissStreak120,
+      maxMissStreak1000: item.maxMissStreak1000,
+      hardnessScore: item.hardnessScore,
+      stabilityGate: !!item.stabilityGate,
+      stabilityReason: item.stabilityReason || "",
+      stageLabel: item.stageLabel,
+      lowConfidence: !!item.lowConfidence,
+      repairedIntoTop: !!item.repairedIntoTop,
+      shapeKey: item.shapeKey || "",
+      derivedFrom: item.derivedFrom || ""
+    })),
+    repairReport
+  };
 }
 
 const AUTO_TOP6_SNAPSHOT_VERSION = "backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit";
 const RECOMMEND2_SNAPSHOT_VERSION = "backend-recommend2-snapshot-v16-formal-anytwo4-pool02468-label-v2";
 const KILL_FRAMEWORK_SNAPSHOT_VERSION = "backend-kill-framework-snapshot-v8-formal-anytwo4-pool02468-label-v2";
 const KILL_FRAMEWORK_ITEM_COUNT = 8;
-const COMPACT_ATTACK_SNAPSHOT_VERSION = "backend-three-ding-framework-v9-no-shape-anytwo4-pool02468-label-v2";
-const COMPACT_ATTACK_ITEM_COUNT = 5;
-const THREE_DING_QBS_KEYS = new Set(["wan", "qian", "bai"]);
-const THREE_DING_TWO_SNAPSHOT_VERSION = "backend-three-ding-two-v12-force-unique-digit-anytwo4-pool02468-label-v3";
-const THREE_DING_TWO_ANY_TWO_SEED = ANY_TWO_HEWEI_SOURCE_DIGITS;
+const COMPACT_ATTACK_SNAPSHOT_VERSION = "backend-three-ding-framework-v12-pos-aligned-hewei";
+const COMPACT_ATTACK_ITEM_COUNT = 4;
+const THREE_DING_TWO_POSITION_KEYS = ["wan", "qian", "bai"]; // 千百十
+const THREE_DING_ONE_POSITION_KEYS = ["qian", "bai", "shi"]; // 百十个
+const THREE_DING_TWO_POSITION_KEY_SET = new Set(THREE_DING_TWO_POSITION_KEYS);
+const THREE_DING_ONE_POSITION_KEY_SET = new Set(THREE_DING_ONE_POSITION_KEYS);
+const THREE_DING_QBS_KEYS = THREE_DING_TWO_POSITION_KEY_SET; // 兼容旧名：框架A=千百十
+const THREE_DING_ALL_POSITION_KEYS = new Set(["wan", "qian", "bai", "shi"]);
+const THREE_DING_TWO_HEWEI_KEY = "wanQianBai";
+const THREE_DING_ONE_HEWEI_KEY = "qianBaiShi";
+const THREE_DING_TWO_SCOPE_INDEXES = [0, 1, 2];
+const THREE_DING_ONE_SCOPE_INDEXES = [1, 2, 3];
+const THREE_DING_TWO_COMBO_LABEL = "千百十";
+const THREE_DING_ONE_COMBO_LABEL = "百十个";
+const THREE_DING_POSITION_ORDER = ["wan", "qian", "bai", "shi"];
+const THREE_DING_INDEPENDENT_HEWEI_KEYS = new Set(["wanQianBai", "qianBaiShi", "wanQianGe", "wanBaiShi", "wanQianBaiShi"]);
+
+/** 三位位置组合 → 对应合尾模型。 */
+function threeDingHeweiKeyForPositions(positionKeys) {
+  const set = new Set((Array.isArray(positionKeys) ? positionKeys : []).map(String));
+  const has = (key) => set.has(key);
+  if (has("wan") && has("qian") && has("bai") && set.size === 3) return "wanQianBai"; // 千百十
+  if (has("qian") && has("bai") && has("shi") && set.size === 3) return "qianBaiShi"; // 百十个
+  if (has("wan") && has("qian") && has("shi") && set.size === 3) return "wanQianGe"; // 千百个
+  if (has("wan") && has("bai") && has("shi") && set.size === 3) return "wanBaiShi"; // 千十个
+  return "";
+}
+
+function threeDingShapeScopeIndexesFromPositionKeys(positionKeys) {
+  return (Array.isArray(positionKeys) ? positionKeys : [])
+    .map((key) => {
+      const pos = AUTO_TOP6_POSITIONS.find((entry) => entry.key === key);
+      return pos ? pos.index : null;
+    })
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 3);
+}
+
+function threeDingShapeCodeForPositionKeys(code, positionKeys) {
+  const text = String(code || "");
+  const indexes = threeDingShapeScopeIndexesFromPositionKeys(positionKeys);
+  if (indexes.length !== 3 || !/^[大小单双]{3,4}$/.test(text)) return text.slice(0, 3);
+  return indexes.map((index) => text.charAt(index)).join("");
+}
+const THREE_DING_TWO_SNAPSHOT_VERSION = "backend-three-ding-two-v14-anytwo5-mixed-v1";
+const THREE_DING_ANYTWO_MAX_BASE = Number(process.env.THREE_DING_ANYTWO_MAX_BASE || 92);
 const THREE_DING_TWO_ITEM_COUNT = 5;
-const THREE_DING_ONE_SNAPSHOT_VERSION = "backend-three-ding-one-v10-force-unique-digit-anytwo4-pool02468-label-v2";
-const THREE_DING_ONE_ITEM_COUNT = 6;
-const SIDE_STABLE_SNAPSHOT_VERSION = "backend-side-stable-snapshot-v5-1pos-2hewei-2digit-sum-anytwo4-pool02468-three5-old1300-label-v2";
-const SIDE_STABLE_ITEM_COUNT = 8;
-const SIDE_STABLE_TARGET_MIN = 4900;
-const SIDE_STABLE_TARGET_MAX = 5000;
+const THREE_DING_ONE_SNAPSHOT_VERSION = "backend-three-ding-one-v14-pos-derived-shape-v1";
+const THREE_DING_ONE_ITEM_COUNT = 5;
 const BROTHER_NUMBER_PAIRS = ["01", "12", "23", "34", "45", "56", "67", "78", "89", "09"];
-const COLD_FRAMEWORK_SNAPSHOT_VERSION = "backend-cold-framework-snapshot-v6-anytwo4-pool02468-label-v2";
-const COLD_FRAMEWORK_ITEM_COUNT = 8;
-const COLD_FRAMEWORK_COLD_WINDOW = Number(process.env.COLD_FRAMEWORK_COLD_WINDOW || 60);
-const COLD_FRAMEWORK_TARGET_GROUP_COUNT = 5000;
-const DING_KILL_SNAPSHOT_VERSION = "backend-ding-kill-snapshot-v4-anytwo4-pool02468-label-v2";
-const DING_KILL_ITEM_COUNT = 7;
-const DING_KILL_TARGET_MIN = 5000;
-const DING_KILL_TARGET_MAX = 5010;
-const PICK5000_SNAPSHOT_VERSION = "backend-pick5000-snapshot-v4-anytwo4-pool02468-stagger-label-v2";
-const PICK5000_ITEM_COUNT = 8;
-const PICK5000_TARGET_GROUP_COUNT = 5000;
 
 function autoTop6SnapshotIsComplete(snapshot) {
   const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
@@ -5833,8 +7505,8 @@ function recommend2SnapshotIsComplete(snapshot) {
   const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
   const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  // 二数合固定为 02468 中排除 1 个的 4 码；三数合仍为 5 码。
-  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
+  // 二数合固定为 02468 中排除 1 个的 4 码；三数合为混奇偶 6 码。
+  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{6}$/.test(String(item.code || ""))).length;
   const pairAvoidCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(item.key)).length;
   return !!(
     snapshot &&
@@ -5858,7 +7530,7 @@ function killFrameworkSnapshotIsComplete(snapshot) {
   const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
   const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
+  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{6}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
     snapshot.version === KILL_FRAMEWORK_SNAPSHOT_VERSION &&
@@ -5885,12 +7557,8 @@ function brotherNumberResultFromCode(code) {
 function compactAttackSnapshotIsComplete(snapshot) {
   const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
   const formal = items.filter((item) => item && item.side !== "backup");
-  const positions = formal.filter((item) => item && item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || "")));
-  const heweiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai" && /^\d$/.test(String(item.code || ""))).length;
-  const anyTwoCount = formal.filter((item) => {
-    if (!item || item.kind !== "extra" || item.key !== "anyTwoHeweiHit") return false;
-    return isAnyTwoHeweiCode(item.code);
-  }).length;
+  const positions = formal.filter((item) => item && item.kind === "position" && THREE_DING_ALL_POSITION_KEYS.has(String(item.key || "")));
+  const heweiCount = formal.filter((item) => item && item.kind === "hewei" && THREE_DING_INDEPENDENT_HEWEI_KEYS.has(String(item.key || "")) && /^\d$/.test(String(item.code || ""))).length;
   const uniquePositionKeys = new Set(positions.map((item) => String(item.key || "")));
   return !!(
     snapshot &&
@@ -5899,9 +7567,8 @@ function compactAttackSnapshotIsComplete(snapshot) {
     items.length === COMPACT_ATTACK_ITEM_COUNT &&
     positions.length === 3 &&
     uniquePositionKeys.size === 3 &&
-    ["wan", "qian", "bai"].every((key) => uniquePositionKeys.has(key)) &&
+    Array.from(uniquePositionKeys).every((key) => THREE_DING_ALL_POSITION_KEYS.has(key)) &&
     heweiCount === 1 &&
-    anyTwoCount === 1 &&
     formal.every((item) => !(item && item.kind === "derivedReverseShape")) &&
     formal.every((item) => !(item && item.kind === "shape"))
   );
@@ -5913,8 +7580,8 @@ function threeDingTwoSnapshotIsComplete(snapshot) {
   const positions = formal.filter((item) => item && item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || "")));
   const uniquePositionKeys = new Set(positions.map((item) => String(item.key || "")));
   const heweiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai" && /^\d$/.test(String(item.code || ""))).length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小]{3,4}$/.test(String(item.code || "")) && !/^[单双]{3,4}$/.test(String(item.code || ""))).length;
+  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiFiveMixedCode(item.code)).length;
   const pairCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(String(item.key || "")) && /^\d{2}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
@@ -5924,8 +7591,8 @@ function threeDingTwoSnapshotIsComplete(snapshot) {
     positions.length === 1 &&
     uniquePositionKeys.size === 1 &&
     heweiCount === 1 &&
-    anyTwoCount === 1 &&
     reverseCount === 1 &&
+    anyTwoCount === 1 &&
     pairCount === 1
   );
 }
@@ -5933,10 +7600,9 @@ function threeDingTwoSnapshotIsComplete(snapshot) {
 function threeDingOneSnapshotIsComplete(snapshot) {
   const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
   const formal = items.filter((item) => item && item.side !== "backup");
-  const positions = formal.filter((item) => item && item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || "")));
+  const positions = formal.filter((item) => item && item.kind === "position" && THREE_DING_ONE_POSITION_KEY_SET.has(String(item.key || "")));
   const uniquePositionKeys = new Set(positions.map((item) => String(item.key || "")));
-  const heweiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai" && /^\d$/.test(String(item.code || ""))).length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
+  const heweiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === THREE_DING_ONE_HEWEI_KEY && /^\d$/.test(String(item.code || ""))).length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape" && /^[大小]{3,4}$/.test(String(item.code || "")) && !/^[单双]{3,4}$/.test(String(item.code || ""))).length;
   const pairCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(String(item.key || "")) && /^\d{2}$/.test(String(item.code || ""))).length;
   return !!(
@@ -5947,223 +7613,11 @@ function threeDingOneSnapshotIsComplete(snapshot) {
     positions.length === 2 &&
     uniquePositionKeys.size === 2 &&
     heweiCount === 1 &&
-    anyTwoCount === 1 &&
     reverseCount === 1 &&
     pairCount === 1
   );
 }
 
-function sideStableSnapshotIsComplete(snapshot) {
-  const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
-  const formal = items.filter((item) => item && item.side !== "backup");
-  const positionCount = formal.filter((item) => item && item.kind === "position").length;
-  const totalHeweiCount = formal.filter((item) => item && item.kind === "hewei" && (item.key === "total" || item.key === "totalHewei")).length;
-  const wanQianBaiCount = formal.filter((item) => item && item.kind === "hewei" && item.key === "wanQianBai").length;
-  const twoDigitAvoidCount = formal.filter((item) => item && item.kind === "extra" && item.key === "twoDigitAvoid" && /^\d{2}$/.test(String(item.code || ""))).length;
-  const sumAvoidCount = formal.filter((item) => item && item.kind === "extra" && item.key === "sumAvoid").length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
-  // 封存后 compactRecentExactCodesOnPrediction 会省略 codes。codeCount 是实际
-  // 命中的旧码条数，并不等于 1300 期窗口长度；用它作 >=1000 门槛会把有效的
-  // 4900~5000 组选型误判为不完整，进而使整个预测无法完成封存。
-  const recentCount = formal.filter((item) => {
-    if (!item || item.kind !== "extra" || item.key !== "recentExactCodeAvoid1300") return false;
-    if (String(item.code || "") !== "1300") return false;
-    const generatedGroupCount = Number(item.generatedGroupCount || 0);
-    const targetGroupCount = Number(item.targetGroupCount || 0);
-    if (!Number.isFinite(generatedGroupCount) || generatedGroupCount < SIDE_STABLE_TARGET_MIN) return false;
-    if (!Number.isFinite(targetGroupCount) || targetGroupCount < SIDE_STABLE_TARGET_MIN) return false;
-    if (item.codesOmitted === true) return true;
-    return Array.isArray(item.codes) && item.codes.length > 0;
-  }).length;
-  const txt = snapshot && snapshot.txtSelection || {};
-  const rawCount = Number(txt.rawCount || 0);
-  const selectedCount = Number(txt.selectedCount || 0);
-  const txtValid = txt.strategy === "ascending-first-n" && selectedCount > 0 && rawCount >= selectedCount && (rawCount === selectedCount || /^\d{4}$/.test(String(txt.cutoffCode || "")));
-  return !!(
-    snapshot &&
-    snapshot.version === SIDE_STABLE_SNAPSHOT_VERSION &&
-    formal.length === SIDE_STABLE_ITEM_COUNT &&
-    items.length === SIDE_STABLE_ITEM_COUNT &&
-    positionCount === 1 &&
-    totalHeweiCount === 1 &&
-    wanQianBaiCount === 1 &&
-    twoDigitAvoidCount === 1 &&
-    sumAvoidCount === 1 &&
-    anyTwoCount === 1 &&
-    anyThreeCount === 1 &&
-    recentCount === 1 &&
-    txtValid
-  );
-}
-
-function sideStablePeriodTarget(basePeriod) {
-  const text = String(basePeriod || "0");
-  let hash = 2166136261;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  const span = SIDE_STABLE_TARGET_MAX - SIDE_STABLE_TARGET_MIN + 1;
-  return SIDE_STABLE_TARGET_MIN + ((hash >>> 0) % span);
-}
-
-function sideStableChooseRecentExactCandidate(baseItems, recentCandidates, tailItems, target) {
-  const bandMin = SIDE_STABLE_TARGET_MIN;
-  const bandMax = SIDE_STABLE_TARGET_MAX;
-  const want = Math.max(bandMin, Math.min(bandMax, Number(target || bandMin)));
-  const candidates = (Array.isArray(recentCandidates) ? recentCandidates : []).filter((item) => item && item.code);
-  if (!candidates.length) return null;
-  const base = (Array.isArray(baseItems) ? baseItems : []).filter((item) => item && item.code);
-  const tail = (Array.isArray(tailItems) ? tailItems : []).filter((item) => item && item.code);
-  const compared = candidates.map((item) => {
-    // 一次扫描：目标带内只需知道是否够 want；超 bandMax 时用 early-stop 的 raw 下界即可
-    const groupInfo = coldFrameworkGeneratedGroupInfo(base.concat([item], tail), want);
-    const selectedCount = Number(groupInfo.selectedCount || 0);
-    const earlyStopped = groupInfo.earlyStopped === true;
-    const rawGeneratedGroupCount = earlyStopped
-      ? Math.max(Number(groupInfo.rawCount || 0), want + 1)
-      : Number(groupInfo.rawCount || 0);
-    let cutoffCode = String(groupInfo.cutoffCode || "");
-    let trimmedGroupCount = Math.max(0, rawGeneratedGroupCount - selectedCount);
-    let distance = 0;
-    if (rawGeneratedGroupCount > bandMax) {
-      distance = rawGeneratedGroupCount - want;
-    } else if (rawGeneratedGroupCount < bandMin) {
-      distance = (bandMin - rawGeneratedGroupCount) + 10000;
-    } else {
-      distance = Math.abs(rawGeneratedGroupCount - want);
-    }
-    return {
-      key: item.key,
-      name: item.name,
-      code: item.code,
-      rawGeneratedGroupCount,
-      generatedGroupCount: selectedCount,
-      trimmedGroupCount,
-      cutoffCode,
-      trimStrategy: "ascending-first-n",
-      distance,
-      inBand: rawGeneratedGroupCount >= bandMin && rawGeneratedGroupCount <= bandMax,
-      stableScore: Number(item.stableScore || item.rate || 0)
-    };
-  }).sort((a, b) => {
-    if (a.distance !== b.distance) return a.distance - b.distance;
-    if (!!b.inBand !== !!a.inBand) return (b.inBand ? 1 : 0) - (a.inBand ? 1 : 0);
-    if (b.stableScore !== a.stableScore) return b.stableScore - a.stableScore;
-    return String(a.key || "").localeCompare(String(b.key || ""));
-  });
-  const best = compared[0];
-  const source = candidates.filter((item) => item && item.key === best.key)[0] || candidates[0];
-  const reason = best.trimmedGroupCount > 0
-    ? `旁路稳筛旧码择优，目标带${bandMin}-${bandMax}（本期目标${want}），攻击语完整展开${best.rawGeneratedGroupCount}组；${best.generatedGroupCount}组及截止${best.cutoffCode}仅作选型参考，不裁TXT`
-    : `旁路稳筛旧码择优，目标带${bandMin}-${bandMax}（本期目标${want}），当前${best.generatedGroupCount}组`;
-  return Object.assign({}, source, {
-    targetGroupCount: want,
-    targetBandMin: bandMin,
-    targetBandMax: bandMax,
-    rawGeneratedGroupCount: best.rawGeneratedGroupCount,
-    generatedGroupCount: best.generatedGroupCount,
-    trimmedGroupCount: best.trimmedGroupCount,
-    generatedCodeCutoff: best.cutoffCode,
-    trimStrategy: best.trimStrategy,
-    groupCountDistance: best.distance,
-    choiceReason: reason,
-    choiceCompared: compared
-  });
-}
-
-function coldFrameworkSnapshotIsComplete(snapshot) {
-  const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
-  const coldPositionCount = items.filter((item) => item && item.kind === "position" && item.side === "cold").length;
-  const coldHeweiCount = items.filter((item) => item && item.kind === "hewei" && item.side === "cold").length;
-  const recentCount = items.filter((item) => item && item.kind === "extra" && ["recentExactCodeAvoid500", "recentExactCodeAvoid800"].includes(item.key)).length;
-  const reverseCount = items.filter((item) => item && item.kind === "derivedReverseShape").length;
-  const anyTwoCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  const anyThreeCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
-  return !!(
-    snapshot &&
-    snapshot.version === COLD_FRAMEWORK_SNAPSHOT_VERSION &&
-    items.length === COLD_FRAMEWORK_ITEM_COUNT &&
-    coldPositionCount === 2 &&
-    coldHeweiCount === 2 &&
-    recentCount === 1 &&
-    reverseCount === 1 &&
-    anyTwoCount === 1 &&
-    anyThreeCount === 1
-  );
-}
-
-function dingKillSnapshotIsComplete(snapshot) {
-  const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
-  const formal = items.filter((item) => item && item.side !== "backup");
-  const positionCount = formal.filter((item) => item && item.kind === "position").length;
-  const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
-  const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
-  const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
-  const recentCount = formal.filter((item) => item && item.kind === "extra" && /^recentExactCodeAvoid(?:\d+|Max)$/.test(String(item.key || "")) && Number.isFinite(Number(item.generatedGroupCount))).length;
-  const txt = snapshot && snapshot.txtSelection ? snapshot.txtSelection : {};
-  const selectedCount = Number(txt.selectedCount || 0);
-  const rawCount = Number(txt.rawCount || 0);
-  const txtValid = txt.strategy === "ascending-first-n"
-    && selectedCount > 0
-    && rawCount >= selectedCount
-    && (rawCount === selectedCount || /^\d{4}$/.test(String(txt.cutoffCode || "")));
-  return !!(
-    snapshot &&
-    snapshot.version === DING_KILL_SNAPSHOT_VERSION &&
-    formal.length === DING_KILL_ITEM_COUNT &&
-    items.length === DING_KILL_ITEM_COUNT &&
-    positionCount === 2 &&
-    heweiCount === 1 &&
-    reverseCount === 1 &&
-    anyTwoCount === 1 &&
-    anyThreeCount === 1 &&
-    recentCount === 1 &&
-    txtValid
-  );
-}
-
-function pick5000SnapshotIsComplete(snapshot) {
-  const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
-  const coldPositionCount = items.filter((item) => item && item.kind === "position" && item.side === "cold").length;
-  const coldHeweiCount = items.filter((item) => item && item.kind === "hewei" && item.side === "cold").length;
-  const recentCount = items.filter((item) => item && item.kind === "extra" && item.key === "recentExactCodeAvoid500" && Number.isFinite(Number(item.generatedGroupCount))).length;
-  const reverseCount = items.filter((item) => item && item.kind === "derivedReverseShape").length;
-  const anyTwoCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  const anyThreeCount = items.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
-  const txt = snapshot && snapshot.txtSelection ? snapshot.txtSelection : {};
-  const rawCount = Number(txt.rawCount || 0);
-  const selectedCount = Number(txt.selectedCount || 0);
-  const txtValid = txt.strategy === "ascending-first-n"
-    && selectedCount > 0
-    && rawCount >= selectedCount
-    && (rawCount === selectedCount || /^\d{4}$/.test(String(txt.cutoffCode || "")));
-  return !!(
-    snapshot &&
-    snapshot.version === PICK5000_SNAPSHOT_VERSION &&
-    items.length === PICK5000_ITEM_COUNT &&
-    coldPositionCount === 2 &&
-    coldHeweiCount === 2 &&
-    recentCount === 1 &&
-    reverseCount === 1 &&
-    anyTwoCount === 1 &&
-    anyThreeCount === 1 &&
-    txtValid
-  );
-}
-
-function dingKillPeriodTarget(basePeriod) {
-  const text = String(basePeriod || "0");
-  let hash = 2166136261;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  const span = DING_KILL_TARGET_MAX - DING_KILL_TARGET_MIN + 1;
-  return DING_KILL_TARGET_MIN + ((hash >>> 0) % span);
-}
 
 function snapshotSealPayload(snapshot, prediction) {
   const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
@@ -6196,7 +7650,9 @@ function snapshotSealPayload(snapshot, prediction) {
       code: String(snapshot.code || ""),
       shot: String(snapshot.shot || ""),
       pairs: (Array.isArray(snapshot.pairs) ? snapshot.pairs : []).map(String),
-      pairCodes: (Array.isArray(snapshot.pairCodes) ? snapshot.pairCodes : []).map(String)
+      pairCodes: (Array.isArray(snapshot.pairCodes) ? snapshot.pairCodes : []).map(String),
+      selectedPair: String(snapshot.selectedPair || ""),
+      selectedPairCode: String(snapshot.selectedPairCode || "")
     };
   }
   return payload;
@@ -6260,16 +7716,10 @@ function sealPredictionSnapshots(prediction, latest) {
   if (!prediction || prediction.evaluated) return false;
   if (!latest || String(prediction.baseUid || "") !== String(latest.uid || "")) return false;
   const frameworkSeals = [
+    ["fourPosExclude", (snap) => fourPosExcludeAlgo.snapshotIsComplete(snap)],
     ["autoTop6", autoTop6SnapshotIsComplete],
     ["recommend2", recommend2SnapshotIsComplete],
     ["killFramework", killFrameworkSnapshotIsComplete],
-    ["compactAttack", compactAttackSnapshotIsComplete],
-    ["threeDingTwo", threeDingTwoSnapshotIsComplete],
-    ["threeDingOne", threeDingOneSnapshotIsComplete],
-    ["sideStable", sideStableSnapshotIsComplete],
-    ["coldFramework", coldFrameworkSnapshotIsComplete],
-    ["dingKill", dingKillSnapshotIsComplete],
-    ["pick5000", pick5000SnapshotIsComplete],
     ["threeDuishu", threeDuishuSnapshotIsComplete]
   ];
   let sealedCount = 0;
@@ -6277,10 +7727,22 @@ function sealPredictionSnapshots(prediction, latest) {
     const snapshot = prediction[key];
     if (!isComplete(snapshot)) return;
     if (snapshot.sealed === true) {
-      if (snapshotSealIsValid(snapshot, prediction)) sealedCount += 1;
-      return;
+      if (snapshotSealIsValid(snapshot, prediction)) {
+        sealedCount += 1;
+        return;
+      }
+      // 半成品封存（缺 hash / 期号字段）允许重签一次，否则 allSnapshotsSealed 永久卡住
+      snapshot.sealed = false;
+      snapshot.sealHash = "";
     }
-    sealSnapshot(snapshot, prediction);
+    if (key === "fourPosExclude") {
+      fourPosExcludeAlgo.sealSnapshot(snapshot, prediction);
+      // 四位排除本地 seal 不写 hash：统一补齐宿主封签字段
+      snapshot.sealed = false;
+      sealSnapshot(snapshot, prediction);
+    } else {
+      sealSnapshot(snapshot, prediction);
+    }
     if (snapshotSealIsValid(snapshot, prediction)) sealedCount += 1;
   });
   const allSealed = sealedCount === frameworkSeals.length;
@@ -6288,8 +7750,6 @@ function sealPredictionSnapshots(prediction, latest) {
     prediction.snapshotsSealedAt = isoNow();
     prediction.snapshotsSealedBaseUid = String(prediction.baseUid || "");
     prediction.allSnapshotsSealed = allSealed;
-    // 封存完成后立刻丢掉 recentExactCode 的 codes 大数组（单 tip 可达数千×5 份副本）
-    compactRecentExactCodesOnPrediction(prediction, { force: true });
   } else {
     prediction.allSnapshotsSealed = false;
   }
@@ -6297,23 +7757,558 @@ function sealPredictionSnapshots(prediction, latest) {
 }
 
 function ensurePredictionAutoTop6Snapshot(prediction, history) {
-  return frameworkItems.ensurePredictionAutoTop6Snapshot(prediction, history);
+  if (!prediction || typeof prediction !== "object") return null;
+  if (autoTop6SnapshotIsComplete(prediction.autoTop6)) return prediction.autoTop6;
+  prediction.autoTop6 = buildAutoTop6Snapshot(prediction, history);
+  prediction.autoTop6Items = prediction.autoTop6.items;
+  prediction.autoTop6RepairReport = prediction.autoTop6.repairReport;
+  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
+  prediction.recommendationMeta.autoTop6SnapshotVersion = prediction.autoTop6.version;
+  return prediction.autoTop6;
 }
 
 function buildRecommend2Snapshot(prediction, history) {
-  return frameworkItems.buildRecommend2Snapshot(prediction, history);
+  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
+  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
+  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
+  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
+  const chosen = [];
+  const used = new Set();
+  const repairReport = [];
+  const comboRows = safeHistory.slice(0, Math.min(MODEL_STABLE_WINDOW, safeHistory.length));
+
+  function order(a, b) {
+    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
+    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
+    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
+    if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  }
+
+  function comboStats(items) {
+    let total = 0;
+    let hit = 0;
+    let validChecks = 0;
+    let successChecks = 0;
+    comboRows.forEach((record) => {
+      const results = (items || []).map((item) => autoTop6RecordSuccess(item, record)).filter((value) => typeof value === "boolean");
+      if (results.length !== (items || []).length || !results.length) return;
+      total += 1;
+      const wins = results.filter(Boolean).length;
+      validChecks += results.length;
+      successChecks += wins;
+      if (wins === results.length) hit += 1;
+    });
+    return {
+      total,
+      hit,
+      rate: total ? hit * 100 / total : null,
+      avgRate: validChecks ? successChecks * 100 / validChecks : null
+    };
+  }
+
+  function comboPickScore(item) {
+    const stats = comboStats(chosen.concat([item]));
+    const full = stats.rate === null ? -1 : Number(stats.rate || 0);
+    const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
+    return full * 10000 + avg * 100 + Number(item.stableScore || 0);
+  }
+
+  function pickBest(pool, maxPerSameModel, allowSameExcludeDigit) {
+    const modelCount = {};
+    chosen.forEach((item) => {
+      const modelKey = `${item.kind}:${item.key}`;
+      modelCount[modelKey] = Number(modelCount[modelKey] || 0) + 1;
+    });
+    let best = null;
+    let bestScore = -Infinity;
+    (pool || []).forEach((item) => {
+      const id = autoTop6ItemId(item);
+      const modelKey = `${item.kind}:${item.key}`;
+      if (used.has(id)) return;
+      if (Number(modelCount[modelKey] || 0) >= Number(maxPerSameModel || 1)) return;
+      if (frameworkConflictsSameHeweiDigit(chosen, item)) return;
+      if (!allowSameExcludeDigit && frameworkConflictsSameExcludeDigit(chosen, item)) return;
+      const score = comboPickScore(item);
+      if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
+        best = item;
+        bestScore = score;
+      }
+    });
+    if (!best) return false;
+    used.add(autoTop6ItemId(best));
+    chosen.push(best);
+    return true;
+  }
+
+  function noteLow(pool, label) {
+    (pool || []).forEach((item) => {
+      if (item.lowConfidence) {
+        const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
+        const reason = item.stabilityReason ? `，原因 ${item.stabilityReason}` : "";
+        repairReport.push(`${label}暂停低稳：${item.name} ${item.code}，安全率 ${rate}${reason}`);
+      }
+    });
+  }
+
+  const positionPool = candidates.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
+  const heweiPool = candidates.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
+  noteLow(positionPool, "推荐2定位池");
+  noteLow(heweiPool, "推荐2合尾池");
+
+  const positionHealthy = healthy.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
+  let before = chosen.length;
+  while (chosen.length - before < 2 && pickBest(positionHealthy, 1, false)) {}
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(positionHealthy, 2, false)) {}
+  }
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(positionPool, 2, false)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+      repairReport.push(`推荐2定位健康项不足，已用正式观察项补齐：${item.name} ${item.code}。`);
+    }
+  }
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(positionPool, 2, true)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+      repairReport.push(`推荐2定位同码相碰无替代，被迫保留：${item.name} ${item.code}。`);
+    }
+  }
+  if (chosen.length - before < 2) repairReport.push(`推荐2定位正式项不足2个（不含替补），当前定位启用 ${chosen.length - before} 个。`);
+
+  const heweiHealthy = healthy.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
+  before = chosen.length;
+  while (chosen.length - before < 2 && pickBest(heweiHealthy, 1, false)) {}
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(heweiHealthy, 2, false)) {}
+  }
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(heweiPool, 2, false)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+      repairReport.push(`推荐2合尾健康项不足，已用正式观察项补齐：${item.name} ${item.code}。`);
+    }
+  }
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(heweiPool, 2, true)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+      repairReport.push(`推荐2合尾与定位同码相碰无替代，被迫保留：${item.name} ${item.code}。`);
+    }
+  }
+  if (chosen.length - before < 2) repairReport.push(`推荐2合尾正式项不足2个（不含替补），当前合尾启用 ${chosen.length - before} 个。`);
+
+  const reverseBase = chosen.filter((item) => item.kind === "position");
+  const reversePool = autoTop6ReverseShapeCandidatesFromPositions(reverseBase, safeHistory)
+    .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
+    .sort(order);
+  noteLow(reversePool, "推荐2反向形态池");
+  const reverseHealthy = reversePool.filter((item) => item && item.stabilityGate === true);
+  let reversePicked = null;
+  if (reverseHealthy.length) {
+    reversePicked = reverseHealthy.slice().sort((a, b) => {
+      const delta = comboPickScore(b) - comboPickScore(a);
+      return delta || order(a, b);
+    })[0];
+  } else if (reversePool.length) {
+    reversePicked = reversePool.slice().sort((a, b) => {
+      const delta = comboPickScore(b) - comboPickScore(a);
+      return delta || order(a, b);
+    })[0];
+    if (reversePicked) {
+      reversePicked.repairedIntoTop = true;
+      repairReport.push(`推荐2反向形态未达安全阈值，暂用最优观察项：${reversePicked.name} ${reversePicked.code}。`);
+    }
+  }
+  if (reversePicked && !used.has(autoTop6ItemId(reversePicked))) {
+    used.add(autoTop6ItemId(reversePicked));
+    chosen.push(reversePicked);
+  } else if (!reversePicked) {
+    repairReport.push("推荐2反向形态暂缺，等待定位项稳定后自动恢复。");
+  }
+
+  ["anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((extraKey) => {
+    const pool = candidates.filter((item) => item && item.kind === "extra" && item.key === extraKey).sort((a, b) => {
+      if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
+      return order(a, b);
+    });
+    const picked = pool[0] || null;
+    if (!picked) {
+      repairReport.push(`推荐2固定模型缺失：${extraKey}`);
+      return;
+    }
+    if (picked.lowConfidence) {
+      const rate = picked.safetyRate === null ? "样本不足" : `${Number(picked.safetyRate).toFixed(2)}%`;
+      repairReport.push(`推荐2固定加入观察项：${picked.name} ${picked.code}，安全率 ${rate}${picked.stabilityReason ? "，原因 " + picked.stabilityReason : ""}`);
+    }
+    if (!used.has(autoTop6ItemId(picked))) {
+      used.add(autoTop6ItemId(picked));
+      chosen.push(picked);
+    }
+  });
+
+  const pairAvoidKeys = ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"];
+  const pairAvoidPool = candidates
+    .filter((item) => item && item.kind === "extra" && pairAvoidKeys.includes(item.key))
+    .sort((a, b) => {
+      if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
+      const delta = comboPickScore(b) - comboPickScore(a);
+      return delta || order(a, b);
+    });
+  let pairAvoidSource = pairAvoidPool[0] || null;
+  if (!pairAvoidSource) {
+    const fallbackPair = resolveDuishuFallbackPair(prediction);
+    if (/^\d{2}$/.test(fallbackPair)) {
+      pairAvoidSource = buildDuishuFallbackItem(fallbackPair, "对数2位避开");
+      repairReport.push(`推荐2对数池空，已从三对数/独立组补抓 ${fallbackPair}`);
+    } else {
+      repairReport.push("推荐2固定模型缺失：对数2位避开");
+    }
+  }
+  if (pairAvoidSource) {
+    const pairAvoidPicked = Object.assign({}, pairAvoidSource, { name: "对数2位避开" });
+    if (pairAvoidPicked.lowConfidence) {
+      const rate = pairAvoidPicked.safetyRate === null ? "样本不足" : `${Number(pairAvoidPicked.safetyRate).toFixed(2)}%`;
+      repairReport.push(`推荐2固定加入观察项：${pairAvoidPicked.name} ${pairAvoidPicked.code}，安全率 ${rate}${pairAvoidPicked.stabilityReason ? "，原因 " + pairAvoidPicked.stabilityReason : ""}`);
+    }
+    if (!used.has(autoTop6ItemId(pairAvoidPicked))) {
+      used.add(autoTop6ItemId(pairAvoidPicked));
+      chosen.push(pairAvoidPicked);
+    }
+  }
+
+  return {
+    version: RECOMMEND2_SNAPSHOT_VERSION,
+    generatedAt: isoNow(),
+    basePeriod: prediction && prediction.basePeriod || "",
+    itemCount: Math.min(chosen.length, 8),
+    framework: {
+      positionCount: 2,
+      heweiCount: 2,
+      reverseShapeCount: 1,
+      heweiComboCount: 2,
+      pairAvoidCount: 1
+    },
+    items: chosen.slice(0, 8).map((item, index) => ({
+      rank: index + 1,
+      kind: item.kind,
+      key: item.key,
+      side: item.side || "recommend",
+      name: item.name,
+      code: item.code,
+      mode: item.mode || "avoid",
+      rate: item.rate,
+      stableScore: item.stableScore,
+      rate30: item.rate30,
+      rate60: item.rate60,
+      rate120: item.rate120,
+      rate300: item.rate300,
+      safetyRate: item.safetyRate,
+      safetyThreshold: item.safetyThreshold,
+      longFloor: item.longFloor,
+      lower120: item.lower120,
+      recentMissStreak: item.recentMissStreak,
+      maxMissStreak120: item.maxMissStreak120,
+      maxMissStreak1000: item.maxMissStreak1000,
+      hardnessScore: item.hardnessScore,
+      stabilityGate: !!item.stabilityGate,
+      stabilityReason: item.stabilityReason || "",
+      stageLabel: item.stageLabel,
+      lowConfidence: !!item.lowConfidence,
+      repairedIntoTop: !!item.repairedIntoTop,
+      shapeKey: item.shapeKey || "",
+      derivedFrom: item.derivedFrom || ""
+    })),
+    repairReport
+  };
 }
 
 function ensurePredictionRecommend2Snapshot(prediction, history) {
-  return frameworkItems.ensurePredictionRecommend2Snapshot(prediction, history);
+  if (!prediction || typeof prediction !== "object") return null;
+  if (recommend2SnapshotIsComplete(prediction.recommend2)) return prediction.recommend2;
+  prediction.recommend2 = buildRecommend2Snapshot(prediction, history);
+  prediction.recommend2Items = prediction.recommend2.items;
+  prediction.recommend2RepairReport = prediction.recommend2.repairReport;
+  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
+  prediction.recommendationMeta.recommend2SnapshotVersion = prediction.recommend2.version;
+  return prediction.recommend2;
 }
 
 function buildKillFrameworkSnapshot(prediction, history, options) {
-  return frameworkItems.buildKillFrameworkSnapshot(prediction, history, options);
+  // 杀码框架：2定位 + 2合尾 + 2反向形态 + 二数合02468排1码 + 三数合6码（无对数避开）
+  const opts = options && typeof options === "object" ? options : {};
+  const comboWindow = Math.max(30, Math.min(MODEL_STABLE_WINDOW, Number(opts.comboWindow || MODEL_STABLE_WINDOW)));
+  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
+  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
+  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
+  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
+  const chosen = [];
+  const used = new Set();
+  const repairReport = [];
+  const comboRows = safeHistory.slice(0, Math.min(comboWindow, safeHistory.length));
+
+  function order(a, b) {
+    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
+    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
+    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
+    if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  }
+
+  function comboStats(items) {
+    let total = 0;
+    let hit = 0;
+    let validChecks = 0;
+    let successChecks = 0;
+    comboRows.forEach((record) => {
+      const results = (items || []).map((item) => autoTop6RecordSuccess(item, record)).filter((value) => typeof value === "boolean");
+      if (results.length !== (items || []).length || !results.length) return;
+      total += 1;
+      const wins = results.filter(Boolean).length;
+      validChecks += results.length;
+      successChecks += wins;
+      if (wins === results.length) hit += 1;
+    });
+    return {
+      total,
+      hit,
+      rate: total ? hit * 100 / total : null,
+      avgRate: validChecks ? successChecks * 100 / validChecks : null
+    };
+  }
+
+  function comboPickScore(item) {
+    const stats = comboStats(chosen.concat([item]));
+    const full = stats.rate === null ? -1 : Number(stats.rate || 0);
+    const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
+    return full * 10000 + avg * 100 + Number(item.stableScore || 0);
+  }
+
+  function pickBest(pool, maxPerSameModel, allowSameExcludeDigit) {
+    const modelCount = {};
+    chosen.forEach((item) => {
+      const modelKey = `${item.kind}:${item.key}`;
+      modelCount[modelKey] = Number(modelCount[modelKey] || 0) + 1;
+    });
+    let best = null;
+    let bestScore = -Infinity;
+    (pool || []).forEach((item) => {
+      const id = autoTop6ItemId(item);
+      const modelKey = `${item.kind}:${item.key}`;
+      if (used.has(id)) return;
+      if (Number(modelCount[modelKey] || 0) >= Number(maxPerSameModel || 1)) return;
+      if (frameworkConflictsSameHeweiDigit(chosen, item)) return;
+      if (!allowSameExcludeDigit && frameworkConflictsSameExcludeDigit(chosen, item)) return;
+      const score = comboPickScore(item);
+      if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
+        best = item;
+        bestScore = score;
+      }
+    });
+    if (!best) return false;
+    used.add(autoTop6ItemId(best));
+    chosen.push(best);
+    return true;
+  }
+
+  function noteLow(pool, label) {
+    (pool || []).forEach((item) => {
+      if (item.lowConfidence) {
+        const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
+        const reason = item.stabilityReason ? `，原因 ${item.stabilityReason}` : "";
+        repairReport.push(`${label}暂停低稳：${item.name} ${item.code}，安全率 ${rate}${reason}`);
+      }
+    });
+  }
+
+  const positionPool = candidates.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
+  const heweiPool = candidates.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
+  noteLow(positionPool, "杀码框架定位池");
+  noteLow(heweiPool, "杀码框架合尾池");
+
+  // 正式 2定位/2合尾：始终只从非 backup 池补齐；allowUnhealthy 仅影响是否允许观察项（已默认允许）
+  void opts.allowUnhealthy;
+  const positionHealthy = healthy.filter((item) => item.kind === "position" && item.side !== "backup").sort(order);
+  let before = chosen.length;
+  while (chosen.length - before < 2 && pickBest(positionHealthy, 1, false)) {}
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(positionHealthy, 2, false)) {}
+  }
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(positionPool, 2, false)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+    }
+    if (chosen.length - before >= 2) repairReport.push("杀码框架定位健康项不足，已用正式观察项补齐（不含替补）。");
+  }
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(positionPool, 2, true)) {
+      chosen[chosen.length - 1].repairedIntoTop = true;
+      repairReport.push(`杀码框架定位同码相碰无替代，被迫保留：${chosen[chosen.length - 1].name} ${chosen[chosen.length - 1].code}。`);
+    }
+  }
+  if (chosen.length - before < 2) repairReport.push(`杀码框架定位正式项不足2个（不含替补），当前定位启用 ${chosen.length - before} 个。`);
+
+  const heweiHealthy = healthy.filter((item) => item.kind === "hewei" && item.side !== "backup").sort(order);
+  before = chosen.length;
+  while (chosen.length - before < 2 && pickBest(heweiHealthy, 1, false)) {}
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(heweiHealthy, 2, false)) {}
+  }
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(heweiPool, 2, false)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+    }
+    if (chosen.length - before >= 2) repairReport.push("杀码框架合尾健康项不足，已用正式观察项补齐（不含替补）。");
+  }
+  if (chosen.length - before < 2) {
+    while (chosen.length - before < 2 && pickBest(heweiPool, 2, true)) {
+      chosen[chosen.length - 1].repairedIntoTop = true;
+      repairReport.push(`杀码框架合尾与定位同码相碰无替代，被迫保留：${chosen[chosen.length - 1].name} ${chosen[chosen.length - 1].code}。`);
+    }
+  }
+  if (chosen.length - before < 2) repairReport.push(`杀码框架合尾正式项不足2个（不含替补），当前合尾启用 ${chosen.length - before} 个。`);
+
+  const reverseBase = chosen.filter((item) => item.kind === "position");
+  // reverse 候选可能为 null（无定位锁）；缺项时必须空数组，避免 .map 抛错堵死事件循环
+  const reversePool = (autoTop6ReverseShapeCandidatesFromPositions(reverseBase, safeHistory) || [])
+    .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
+    .sort(order);
+  noteLow(reversePool, "杀码框架反向形态池");
+  const reverseHealthy = reversePool.filter((item) => item && item.stabilityGate === true);
+  // 先吃健康项，不足 2 再用全池观察项补齐。
+  // 旧逻辑 `healthy.length ? healthy : pool` 在只过闸 1 路时会永久缺第 2 项，导致 tipReady 卡死。
+  function pushKillReverse(item, forceObserve) {
+    if (!item || used.has(autoTop6ItemId(item))) return false;
+    if (chosen.filter((row) => row && row.kind === "derivedReverseShape").length >= 2) return false;
+    if (forceObserve || !item.stabilityGate) {
+      item.repairedIntoTop = true;
+      repairReport.push(`杀码框架反向形态未达安全阈值，暂用观察项：${item.name} ${item.code}。`);
+    }
+    used.add(autoTop6ItemId(item));
+    chosen.push(item);
+    return true;
+  }
+  reverseHealthy.slice().sort((a, b) => {
+    const delta = comboPickScore(b) - comboPickScore(a);
+    return delta || order(a, b);
+  }).forEach((item) => pushKillReverse(item, false));
+  if (chosen.filter((row) => row && row.kind === "derivedReverseShape").length < 2) {
+    reversePool.slice().sort((a, b) => {
+      const delta = comboPickScore(b) - comboPickScore(a);
+      return delta || order(a, b);
+    }).forEach((item) => pushKillReverse(item, true));
+  }
+  if (chosen.filter((row) => row && row.kind === "derivedReverseShape").length < 2) {
+    repairReport.push("杀码框架反向形态不足2个，等待定位项稳定后自动恢复。");
+  }
+
+  const killAnyTwo = pickStructuralAnyTwoHeweiHit(
+    safeHistory,
+    evaluatedCount,
+    heweiScopeIndexesFromItems(chosen),
+    chosen,
+    prediction,
+    new Set(),
+    resolveStableMathAssist(prediction)
+  );
+  if (!killAnyTwo) {
+    repairReport.push("杀码框架固定模型缺失：anyTwoHeweiHit");
+  } else if (!used.has(autoTop6ItemId(killAnyTwo))) {
+    repairReport.push(`杀码框架二数合结构对齐：${killAnyTwo.code}`);
+    used.add(autoTop6ItemId(killAnyTwo));
+    chosen.push(killAnyTwo);
+  }
+
+  const killFrameworkAnyThree = digitSetCandidatesMixedParity(ANY_THREE_HEWEI_CODE_SIZE)
+    .map((code) => autoTop6DecorateItem(safeHistory, {
+      kind: "extra",
+      key: "anyThreeHeweiHit",
+      side: "recommend",
+      name: "全码池三数合尾6码命中",
+      code,
+      mode: "hit",
+      algorithm: "kill-framework-any-three-hewei-selected-six",
+      hitMode: true,
+      matchMode: "hit-if-any-three-hewei-tail-in-selected-six",
+      dynamicEveryPrediction: true
+    }, evaluatedCount))
+    .sort((a, b) => {
+      if (!!b.stabilityGate !== !!a.stabilityGate) return (b.stabilityGate ? 1 : 0) - (a.stabilityGate ? 1 : 0);
+      return order(a, b);
+    })[0] || null;
+  if (killFrameworkAnyThree) {
+    if (killFrameworkAnyThree.lowConfidence) {
+      const rate = killFrameworkAnyThree.safetyRate === null ? "样本不足" : `${Number(killFrameworkAnyThree.safetyRate).toFixed(2)}%`;
+      repairReport.push(`杀码框架三数合6码观察加入：${killFrameworkAnyThree.code}，安全率 ${rate}`);
+      killFrameworkAnyThree.repairedIntoTop = true;
+    }
+    if (!used.has(autoTop6ItemId(killFrameworkAnyThree))) {
+      used.add(autoTop6ItemId(killFrameworkAnyThree));
+      chosen.push(killFrameworkAnyThree);
+    }
+  } else {
+    repairReport.push("杀码框架固定模型缺失：anyThreeHeweiHit六码");
+  }
+
+  return {
+    version: KILL_FRAMEWORK_SNAPSHOT_VERSION,
+    generatedAt: isoNow(),
+    basePeriod: prediction && prediction.basePeriod || "",
+    itemCount: Math.min(chosen.length, KILL_FRAMEWORK_ITEM_COUNT),
+    framework: {
+      positionCount: 2,
+      heweiCount: 2,
+      reverseShapeCount: 2,
+      heweiComboCount: 2,
+      pairAvoidCount: 0
+    },
+    items: chosen.slice(0, KILL_FRAMEWORK_ITEM_COUNT).map((item, index) => ({
+      rank: index + 1,
+      kind: item.kind,
+      key: item.key,
+      side: item.side || "recommend",
+      name: item.name,
+      code: item.code,
+      mode: item.mode || "avoid",
+      rate: item.rate,
+      stableScore: item.stableScore,
+      rate30: item.rate30,
+      rate60: item.rate60,
+      rate120: item.rate120,
+      rate300: item.rate300,
+      safetyRate: item.safetyRate,
+      safetyThreshold: item.safetyThreshold,
+      longFloor: item.longFloor,
+      lower120: item.lower120,
+      recentMissStreak: item.recentMissStreak,
+      maxMissStreak120: item.maxMissStreak120,
+      maxMissStreak1000: item.maxMissStreak1000,
+      hardnessScore: item.hardnessScore,
+      stabilityGate: !!item.stabilityGate,
+      stabilityReason: item.stabilityReason || "",
+      stageLabel: item.stageLabel,
+      lowConfidence: !!item.lowConfidence,
+      repairedIntoTop: !!item.repairedIntoTop,
+      shapeKey: item.shapeKey || "",
+      derivedFrom: item.derivedFrom || ""
+    })),
+    repairReport
+  };
 }
 
 function ensurePredictionKillFrameworkSnapshot(prediction, history) {
-  return frameworkItems.ensurePredictionKillFrameworkSnapshot(prediction, history);
+  if (!prediction || typeof prediction !== "object") return null;
+  if (killFrameworkSnapshotIsComplete(prediction.killFramework)) return prediction.killFramework;
+  prediction.killFramework = buildKillFrameworkSnapshot(prediction, history);
+  prediction.killFrameworkItems = prediction.killFramework.items;
+  prediction.killFrameworkRepairReport = prediction.killFramework.repairReport;
+  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
+  prediction.recommendationMeta.killFrameworkSnapshotVersion = prediction.killFramework.version;
+  return prediction.killFramework;
 }
 
 function compactAttackParityShapeItem(history) {
@@ -6348,11 +8343,356 @@ function compactAttackParityShapeItem(history) {
 }
 
 function buildCompactAttackSnapshot(prediction, history, options) {
-  return frameworkItems.buildCompactAttackSnapshot(prediction, history, options);
+  // 三定框架 v11：千百十个择优取3位、每位排1码；合尾独立取1项，互不干预。
+  const opts = options && typeof options === "object" ? options : {};
+  const comboWindow = Math.max(30, Math.min(MODEL_STABLE_WINDOW, Number(opts.comboWindow || MODEL_STABLE_WINDOW)));
+  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
+  const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
+  const candidates = autoTop6CandidateItems(prediction).map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount));
+  const healthy = candidates.filter((item) => item && item.stabilityGate === true);
+  const chosen = [];
+  const used = new Set();
+  const repairReport = [];
+  const comboRows = safeHistory.slice(0, Math.min(comboWindow, safeHistory.length));
+  const assist = resolveStableMathAssist(prediction);
+  const preferExcludeDigits = new Set((assist && assist.ok && Array.isArray(assist.excludeDigits)) ? assist.excludeDigits.map(String) : []);
+
+  function order(a, b) {
+    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
+    if (Number(b.hardnessScore || 0) !== Number(a.hardnessScore || 0)) return Number(b.hardnessScore || 0) - Number(a.hardnessScore || 0);
+    if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
+    if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
+    if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  }
+
+  function comboStats(items) {
+    let total = 0;
+    let hit = 0;
+    let validChecks = 0;
+    let successChecks = 0;
+    comboRows.forEach((record) => {
+      const results = (items || []).map((item) => autoTop6RecordSuccess(item, record)).filter((value) => typeof value === "boolean");
+      if (results.length !== (items || []).length || !results.length) return;
+      total += 1;
+      const wins = results.filter(Boolean).length;
+      validChecks += results.length;
+      successChecks += wins;
+      if (wins === results.length) hit += 1;
+    });
+    return {
+      total,
+      hit,
+      rate: total ? hit * 100 / total : null,
+      avgRate: validChecks ? successChecks * 100 / validChecks : null
+    };
+  }
+
+  function comboPickScore(item) {
+    const stats = comboStats(chosen.concat([item]));
+    const full = stats.rate === null ? -1 : Number(stats.rate || 0);
+    const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
+    return full * 10000 + avg * 100 + Number(item.stableScore || 0);
+  }
+
+  function positionStrengthScore(item) {
+    // 定位加强：健康门 + 硬度 + 更稳排除码优先 + 近窗命中 + 无动态单码时形态/跨度优先
+    const digit = frameworkSingleExcludeDigitToken(item);
+    const gateBoost = item && item.stabilityGate ? 12000 : 0;
+    const hardnessBoost = Number(item && item.hardnessScore || 0) * 40;
+    const preferBoost = digit && preferExcludeDigits.has(digit) ? 18000 : 0;
+    const stableBoost = stableMathAssistPickBoost(assist, item);
+    const safetyBoost = Number(item && item.safetyRate || 0) * 20;
+    const missPenalty = Number(item && item.recentMissStreak || 0) * 80;
+    return gateBoost + hardnessBoost + preferBoost + stableBoost + safetyBoost - missPenalty;
+  }
+
+  function noteLow(pool, label) {
+    (pool || []).forEach((item) => {
+      if (item.lowConfidence) {
+        const rate = item.safetyRate === null ? "样本不足" : `${Number(item.safetyRate).toFixed(2)}%`;
+        const reason = item.stabilityReason ? `，原因 ${item.stabilityReason}` : "";
+        repairReport.push(`${label}暂停低稳：${item.name} ${item.code}，安全率 ${rate}${reason}`);
+      }
+    });
+  }
+
+  function promoteIfBackup(item, kindLabel) {
+    if (!item) return item;
+    if ((item.side || "recommend") !== "backup") return item;
+    const next = Object.assign({}, item, {
+      side: "recommend",
+      repairedIntoTop: true,
+      derivedFrom: item.derivedFrom || (item.kind === "hewei" ? "hewei-backup-algorithm" : "position-backup-algorithm")
+    });
+    if (item.kind === "hewei") {
+      next.name = String(item.name || "").replace(/备用$/, "推荐") || "合尾推荐";
+    } else {
+      next.name = String(item.name || "").replace(/备用$/, "推荐") || `${kindLabel || "定位"}备用算法`;
+    }
+    return next;
+  }
+
+  function commitItem(item) {
+    if (!item) return false;
+    const id = autoTop6ItemId(item);
+    if (used.has(id)) return false;
+    used.add(id);
+    chosen.push(item);
+    return true;
+  }
+
+  // 1) 先择优三位定位（位置排除）；合尾必须跟这三位对齐。
+  const positionPool = candidates.filter((item) => item.kind === "position" && THREE_DING_ALL_POSITION_KEYS.has(String(item.key || ""))).sort(order);
+  noteLow(positionPool, "三定框架定位池");
+  void opts.allowUnhealthy;
+  const positionHealthy = healthy.filter((item) => item.kind === "position" && THREE_DING_ALL_POSITION_KEYS.has(String(item.key || ""))).sort(order);
+  // 组码只认单定顶1（main/recommend）；dual/backup 不进 compact 主链路
+  const sideOrder = ["main", "recommend"];
+  if (preferExcludeDigits.size) {
+    repairReport.push(`三定框架定位加强：更稳排除码优先 ${Array.from(preferExcludeDigits).join("")}`);
+  } else if ((assist.excludeShapes || []).length || (assist.excludeSpans || []).length) {
+    repairReport.push(`三定框架定位加强：更稳形态/跨度辅助（单码空：形态${(assist.excludeShapes || []).slice(0, 2).join("、") || "无"}，跨度${(assist.excludeSpans || []).slice(0, 3).join("、") || "无"}）`);
+  } else {
+    repairReport.push("三定框架定位加强：优先主攻/推荐（单定顶1）");
+  }
+
+  function bestCandidateForKey(key) {
+    const pools = [
+      positionHealthy.filter((item) => String(item.key) === key),
+      positionPool.filter((item) => String(item.key) === key)
+    ];
+    let selected = null;
+    let selectedScore = -Infinity;
+    for (let p = 0; p < pools.length; p += 1) {
+      for (let s = 0; s < sideOrder.length; s += 1) {
+        const side = sideOrder[s];
+        const pool = pools[p].filter((item) => (item.side || "recommend") === side).sort(order);
+        pool.forEach((raw) => {
+          const item = promoteIfBackup(raw, "定位");
+          const id = autoTop6ItemId(item);
+          if (used.has(id)) return;
+          const score = comboPickScore(item) + positionStrengthScore(item) - s * 20 - p * 1000;
+          if (score > selectedScore || (score === selectedScore && selected && order(item, selected) < 0)) {
+            selected = item;
+            selectedScore = score;
+          }
+        });
+      }
+    }
+    return selected ? { key, item: selected, score: selectedScore } : null;
+  }
+  function forceFillMissingKey(key) {
+    let digit = "0";
+    const preferList = Array.from(preferExcludeDigits).concat(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+    for (let i = 0; i < preferList.length; i += 1) {
+      const text = String(preferList[i]);
+      if (/^\d$/.test(text)) {
+        digit = text;
+        break;
+      }
+    }
+    const forced = autoTop6DecorateItem(safeHistory, {
+      kind: "position",
+      key,
+      side: "recommend",
+      name: ({ wan: "千位", qian: "百位", bai: "十位", shi: "个位" }[key] || key) + "强制推荐",
+      code: digit,
+      derivedFrom: "compact-force-position-digit",
+      repairedIntoTop: true
+    }, evaluatedCount);
+    if (!commitItem(forced)) return false;
+    repairReport.push(`三定框架${forced.name}补齐：${digit}`);
+    return true;
+  }
+
+  const rankedPositionCandidates = THREE_DING_POSITION_ORDER
+    .map((key) => bestCandidateForKey(key))
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score || THREE_DING_POSITION_ORDER.indexOf(a.key) - THREE_DING_POSITION_ORDER.indexOf(b.key));
+
+  let selectedPositionKeys = [];
+  // 合尾必须真有模型/候选，否则会选到 wanQianGe 等空键 → compactAttack 永远封存不了
+  const heweiModelKeys = new Set(
+    candidates
+      .filter((item) => item && item.kind === "hewei" && THREE_DING_INDEPENDENT_HEWEI_KEYS.has(String(item.key || "")))
+      .map((item) => String(item.key || ""))
+  );
+  const ihk = prediction && prediction.independentHeweiKills && typeof prediction.independentHeweiKills === "object"
+    ? prediction.independentHeweiKills
+    : {};
+  Object.keys(ihk).forEach((key) => {
+    const base = String(key || "").replace(/Freq$/, "");
+    if (THREE_DING_INDEPENDENT_HEWEI_KEYS.has(base) && ihk[key] && (ihk[key].killDigit != null || ihk[key].primaryDigit != null)) {
+      const dig = String(ihk[key].killDigit != null ? ihk[key].killDigit : ihk[key].primaryDigit).replace(/\D/g, "").slice(0, 1);
+      if (/^\d$/.test(dig)) heweiModelKeys.add(base);
+    }
+  });
+  const capableCombos = [];
+  for (let i = 0; i < rankedPositionCandidates.length; i += 1) {
+    for (let j = i + 1; j < rankedPositionCandidates.length; j += 1) {
+      for (let k = j + 1; k < rankedPositionCandidates.length; k += 1) {
+        const trio = [rankedPositionCandidates[i], rankedPositionCandidates[j], rankedPositionCandidates[k]];
+        const keys = trio.map((entry) => entry.key);
+        const heweiKey = threeDingHeweiKeyForPositions(keys);
+        if (!heweiKey || !heweiModelKeys.has(heweiKey)) continue;
+        const score = trio.reduce((sum, entry) => sum + Number(entry.score || 0), 0);
+        capableCombos.push({ keys, trio, heweiKey, score });
+      }
+    }
+  }
+  capableCombos.sort((a, b) => b.score - a.score);
+  if (capableCombos.length) {
+    capableCombos[0].trio.forEach((entry) => {
+      if (commitItem(entry.item)) selectedPositionKeys.push(entry.key);
+    });
+  } else {
+    rankedPositionCandidates.slice(0, 3).forEach((entry) => {
+      if (commitItem(entry.item)) selectedPositionKeys.push(entry.key);
+    });
+  }
+  THREE_DING_POSITION_ORDER.forEach((key) => {
+    if (selectedPositionKeys.length >= 3 || selectedPositionKeys.includes(key)) return;
+    if (forceFillMissingKey(key)) selectedPositionKeys.push(key);
+  });
+  if (!threeDingHeweiKeyForPositions(selectedPositionKeys)) {
+    for (let i = chosen.length - 1; i >= 0; i -= 1) {
+      const row = chosen[i];
+      if (row && row.kind === "position") {
+        used.delete(autoTop6ItemId(row));
+        chosen.splice(i, 1);
+      }
+    }
+    selectedPositionKeys = [];
+    ["wan", "qian", "bai"].forEach((key) => {
+      const best = bestCandidateForKey(key);
+      if (best && commitItem(best.item)) selectedPositionKeys.push(key);
+      else if (forceFillMissingKey(key)) selectedPositionKeys.push(key);
+    });
+    repairReport.push("三定框架位置组合无合尾模型，已回退千百十对齐。");
+  }
+  const posCount = chosen.filter((item) => item && item.kind === "position").length;
+  const alignedHeweiKey = threeDingHeweiKeyForPositions(selectedPositionKeys) || "wanQianBai";
+  if (posCount < 3) repairReport.push("三定框架定位正式项不足三项。");
+  else {
+    const labels = { wan: "千", qian: "百", bai: "十", shi: "个" };
+    const pickedLabels = THREE_DING_POSITION_ORDER.filter((key) => selectedPositionKeys.includes(key)).map((key) => labels[key]);
+    repairReport.push(`三定框架系统择优位置：${pickedLabels.join("、")}；每位独立排除1码。`);
+  }
+
+  // 2) 合尾跟随已选三位（位置排除对齐），禁止乱挂其它段合尾。
+  const heweiPool = candidates.filter((item) => item.kind === "hewei" && THREE_DING_INDEPENDENT_HEWEI_KEYS.has(String(item.key || ""))).sort(order);
+  noteLow(heweiPool, "三定框架合尾池");
+  // 合尾组码也只用 recommend/main；backup 不进 compact 主链路
+  const heweiSideOrder = ["recommend", "main"];
+  let heweiPicked = false;
+  function tryPickAlignedHewei(requireGate) {
+    for (let s = 0; s < heweiSideOrder.length; s += 1) {
+      const side = heweiSideOrder[s];
+      const pool = heweiPool
+        .filter((item) => String(item.key || "") === alignedHeweiKey && (item.side || "recommend") === side && (!requireGate || item.stabilityGate))
+        .sort(order);
+      let best = null;
+      let bestScore = -Infinity;
+      pool.forEach((raw) => {
+        const item = raw;
+        const id = autoTop6ItemId(item);
+        if (used.has(id)) return;
+        const score = comboPickScore(item) + positionStrengthScore(item) - s * 30;
+        if (score > bestScore || (score === bestScore && best && order(item, best) < 0)) {
+          best = item;
+          bestScore = score;
+        }
+      });
+      if (best && commitItem(best)) {
+        heweiPicked = true;
+        return true;
+      }
+    }
+    return false;
+  }
+  if (!tryPickAlignedHewei(true)) tryPickAlignedHewei(false);
+  if (!heweiPicked) repairReport.push(`三定框架对齐合尾缺失：${alignedHeweiKey}`);
+  else {
+    const hw = chosen.find((item) => item && item.kind === "hewei");
+    if (hw) repairReport.push(`三定框架位置对齐合尾：${hw.name || hw.key} ${hw.code}${hw.stabilityGate ? "" : "（观察项）"}`);
+  }
+
+  repairReport.push("三定框架：3项定位排除 + 1项同位置合尾；合尾跟随三位位置");
+
+  const ordered = [];
+  THREE_DING_POSITION_ORDER.forEach((key) => {
+    const item = chosen.find((row) => row && row.kind === "position" && String(row.key) === key);
+    if (item) ordered.push(item);
+  });
+  chosen.forEach((item) => {
+    if (item && item.kind === "hewei" && THREE_DING_INDEPENDENT_HEWEI_KEYS.has(String(item.key || ""))) ordered.push(item);
+  });
+  chosen.forEach((item) => {
+    if (ordered.indexOf(item) < 0) ordered.push(item);
+  });
+
+  return {
+    version: COMPACT_ATTACK_SNAPSHOT_VERSION,
+    generatedAt: isoNow(),
+    basePeriod: prediction && prediction.basePeriod || "",
+    itemCount: Math.min(ordered.length, COMPACT_ATTACK_ITEM_COUNT),
+    framework: {
+      positionCount: 3,
+      heweiComboCount: 1,
+      shapeParityCount: 0,
+      heweiCount: 1,
+      pool: "any3Of4",
+      pickOrder: ["position-any3of4-aligned", "hewei-follow-positions"],
+      selectedPositionKeys: THREE_DING_POSITION_ORDER.filter((key) => selectedPositionKeys.includes(key)),
+      alignedHeweiKey,
+      positionSidePreference: sideOrder.slice()
+    },
+    items: ordered.slice(0, COMPACT_ATTACK_ITEM_COUNT).map((item, index) => ({
+      rank: index + 1,
+      kind: item.kind,
+      key: item.key,
+      side: item.side || "recommend",
+      name: item.name,
+      code: item.code,
+      mode: item.mode || (item.kind === "extra" && /Hit$/.test(String(item.key || "")) ? "hit" : "avoid"),
+      rate: item.rate,
+      stableScore: item.stableScore,
+      rate30: item.rate30,
+      rate60: item.rate60,
+      rate120: item.rate120,
+      rate300: item.rate300,
+      safetyRate: item.safetyRate,
+      safetyThreshold: item.safetyThreshold,
+      longFloor: item.longFloor,
+      lower120: item.lower120,
+      recentMissStreak: item.recentMissStreak,
+      maxMissStreak120: item.maxMissStreak120,
+      maxMissStreak1000: item.maxMissStreak1000,
+      hardnessScore: item.hardnessScore,
+      stabilityGate: !!item.stabilityGate,
+      stabilityReason: item.stabilityReason || "",
+      stageLabel: item.stageLabel,
+      lowConfidence: !!item.lowConfidence,
+      repairedIntoTop: !!item.repairedIntoTop,
+      shapeKey: item.shapeKey || "",
+      derivedFrom: item.derivedFrom || ""
+    })),
+    repairReport
+  };
 }
 
 function ensurePredictionCompactAttackSnapshot(prediction, history) {
-  return frameworkItems.ensurePredictionCompactAttackSnapshot(prediction, history);
+  // retired: 三定框架已删除
+  if (prediction && typeof prediction === "object") {
+    delete prediction.compactAttack;
+    delete prediction.compactAttackItems;
+    delete prediction.compactAttackRepairReport;
+    if (prediction.recommendationMeta && typeof prediction.recommendationMeta === "object") {
+      delete prediction.recommendationMeta.compactAttackSnapshotVersion;
+    }
+  }
+  return null;
 }
 
 function mapFrameworkSnapshotItems(chosen, heweiScopeIndexes, itemCount) {
@@ -6383,10 +8723,11 @@ function mapFrameworkSnapshotItems(chosen, heweiScopeIndexes, itemCount) {
     stageLabel: item.stageLabel,
     lowConfidence: !!item.lowConfidence,
     repairedIntoTop: !!item.repairedIntoTop,
-    codeCount: item.codeCount,
-    codes: Array.isArray(item.codes) ? item.codes.slice(0, recentExactCodeCodeLimit(item)) : undefined,
     shapeKey: item.shapeKey || "",
     shapeScopeLength: item.shapeScopeLength || undefined,
+    shapeScopeIndexes: item.kind === "derivedReverseShape" && Array.isArray(item.shapeScopeIndexes) && item.shapeScopeIndexes.length === 3
+      ? item.shapeScopeIndexes.slice()
+      : undefined,
     derivedFrom: item.derivedFrom || "",
     heweiScopeIndexes: (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") && Array.isArray(heweiScopeIndexes) && heweiScopeIndexes.length >= 2
       ? heweiScopeIndexes.slice()
@@ -6494,18 +8835,16 @@ function structuralAnyTwoAlignment(chosenItems, prediction, assist) {
   const pk = prediction && prediction.positionKills ? prediction.positionKills : {};
   ["wan", "qian", "bai", "shi"].forEach((key) => {
     const row = pk[key] || {};
+    // 只认单定顶1 main；不用 backup / killDigits 双码搅进结构对齐
     if (row.codexStableRecommended && /^\d$/.test(String(row.codexStableDigit || ""))) {
       const digit = String(row.codexStableDigit);
       if (!kills.has(digit)) prefer.add(digit);
     }
-    if (/^\d$/.test(String(row.backup || ""))) {
-      const digit = String(row.backup);
-      if (!kills.has(digit)) prefer.add(digit);
-    }
-    if (/^\d$/.test(String(row.main || ""))) kills.add(String(row.main));
-    (Array.isArray(row.killDigits) ? row.killDigits : []).forEach((digit) => {
-      if (/^\d$/.test(String(digit))) kills.add(String(digit));
-    });
+    const mainDigit = row.main != null ? row.main
+      : (row.mainDigit != null ? row.mainDigit
+        : (row.primaryDigit != null ? row.primaryDigit
+          : (row.recommendDigit != null ? row.recommendDigit : null)));
+    if (/^\d$/.test(String(mainDigit || ""))) kills.add(String(mainDigit));
   });
   if (assist && assist.ok) {
     (assist.excludeDigits || []).forEach((digit) => {
@@ -6570,6 +8909,85 @@ function pickStructuralAnyTwoHeweiHit(history, evaluatedCount, scopeIndexes, cho
   return item;
 }
 
+function pickThreeDingTwoAnyTwoFiveMixed(history, evaluatedCount, scopeIndexes, avoidCodes) {
+  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
+  const avoid = avoidCodes instanceof Set ? avoidCodes : new Set(Array.isArray(avoidCodes) ? avoidCodes : []);
+  const scope = (Array.isArray(scopeIndexes) ? scopeIndexes : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 3);
+  const uniqueScope = [...new Set(scope)].sort((left, right) => left - right);
+  if (uniqueScope.length < 3) return null;
+
+  const pairTails = safeHistory.map((row) => {
+    const nums = numbersFromRecordByIndexes(row, uniqueScope).map(Number);
+    if (nums.length < 3 || nums.some((value) => !Number.isFinite(value))) return null;
+    return [
+      (nums[0] + nums[1]) % 10,
+      (nums[0] + nums[2]) % 10,
+      (nums[1] + nums[2]) % 10
+    ];
+  }).filter(Boolean);
+
+  const near = Math.max(1, Math.min(120, pairTails.length));
+  let best = null;
+  anyTwoHeweiFiveMixedCandidates().forEach((code) => {
+    if (avoid.has(code)) return;
+    const structBase = threeDingAnyTwoStructBasePercent(code);
+    if (structBase > THREE_DING_ANYTWO_MAX_BASE) return;
+    const mask = anyTwoMaskFromDigitCode(code);
+    let nearHit = 0;
+    let longHit = 0;
+    for (let i = 0; i < pairTails.length; i += 1) {
+      const t = pairTails[i];
+      const hit = ((mask >> t[0]) & 1) || ((mask >> t[1]) & 1) || ((mask >> t[2]) & 1);
+      if (hit) {
+        longHit += 1;
+        if (i < near) nearHit += 1;
+      }
+    }
+    const lowerNear = wilsonLowerPercent(nearHit, near);
+    const lowerLong = wilsonLowerPercent(longHit, pairTails.length);
+    const score = lowerNear * 0.65 + lowerLong * 0.35;
+    if (!best || score > best.score || (score === best.score && String(code).localeCompare(String(best.code)) < 0)) {
+      best = { code, score, structBase, nearHit, longHit };
+    }
+  });
+
+  if (!best) {
+    anyTwoHeweiFiveMixedCandidates().forEach((code) => {
+      if (avoid.has(code)) return;
+      const structBase = threeDingAnyTwoStructBasePercent(code);
+      if (!best || structBase < best.structBase || (structBase === best.structBase && String(code).localeCompare(String(best.code)) < 0)) {
+        best = { code, score: -1, structBase, nearHit: 0, longHit: 0 };
+      }
+    });
+  }
+  if (!best) return null;
+
+  let item = {
+    kind: "extra",
+    key: "anyTwoHeweiHit",
+    side: "recommend",
+    name: "三定二数合尾五码混奇偶",
+    code: best.code,
+    mode: "hit",
+    derivedFrom: "three-ding-anytwo-five-mixed-optimized",
+    structuralPick: true,
+    algorithm: "three-ding-anytwo-five-mixed-struct-filter",
+    structBase: Number(best.structBase.toFixed(1)),
+    hitMode: true,
+    matchMode: "hit-if-any-two-hewei-tail-in-five-mixed",
+    dynamicEveryPrediction: true
+  };
+  if (uniqueScope.length >= 2) item.heweiScopeIndexes = uniqueScope.slice();
+  item = autoTop6DecorateItem(safeHistory, item, evaluatedCount);
+  item.derivedFrom = "three-ding-anytwo-five-mixed-optimized";
+  item.algorithm = "three-ding-anytwo-five-mixed-struct-filter";
+  item.structBase = Number(best.structBase.toFixed(1));
+  if (uniqueScope.length >= 2) item.heweiScopeIndexes = uniqueScope.slice();
+  return item;
+}
+
 function pickThreeDingTwoAnyTwoFromSeed(history, evaluatedCount, scopeIndexes, chosenItems, prediction, avoidCodes) {
   const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
   const avoid = avoidCodes instanceof Set ? avoidCodes : new Set(Array.isArray(avoidCodes) ? avoidCodes : []);
@@ -6606,7 +9024,7 @@ function pickThreeDingTwoAnyTwoFromSeed(history, evaluatedCount, scopeIndexes, c
     derivedFrom: "three-ding-two-seed-02468-exclude-one",
     structuralPick: true,
     algorithm: "three-ding-two-any-two-seed-02468-exclude-one",
-    seedCode: THREE_DING_TWO_ANY_TWO_SEED,
+    seedCode: ANY_TWO_HEWEI_SOURCE_DIGITS,
     excludedSeedDigit: excludedDigit,
     hitMode: true,
     matchMode: "hit-if-any-two-hewei-tail-in-02468-exclude-one",
@@ -6615,7 +9033,7 @@ function pickThreeDingTwoAnyTwoFromSeed(history, evaluatedCount, scopeIndexes, c
   if (Array.isArray(scopeIndexes) && scopeIndexes.length >= 2) item.heweiScopeIndexes = scopeIndexes.slice();
   item = autoTop6DecorateItem(safeHistory, item, evaluatedCount);
   item.derivedFrom = "three-ding-two-seed-02468-exclude-one";
-  item.seedCode = THREE_DING_TWO_ANY_TWO_SEED;
+  item.seedCode = ANY_TWO_HEWEI_SOURCE_DIGITS;
   item.excludedSeedDigit = excludedDigit;
   if (Array.isArray(scopeIndexes) && scopeIndexes.length >= 2) item.heweiScopeIndexes = scopeIndexes.slice();
   return item;
@@ -6640,7 +9058,15 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
     : new Set(Array.isArray(opts.avoidTwoDigitCodes) ? opts.avoidTwoDigitCodes : []);
   const preferredPositionSides = Array.isArray(opts.preferredPositionSides) && opts.preferredPositionSides.length
     ? opts.preferredPositionSides.slice()
-    : ["recommend", "main", "backup"];
+    : ["main", "recommend"];
+  const positionKeys = Array.isArray(opts.positionKeys) && opts.positionKeys.length === 3
+    ? opts.positionKeys.slice()
+    : THREE_DING_TWO_POSITION_KEYS.slice();
+  const positionKeySet = new Set(positionKeys);
+  const heweiKey = String(opts.heweiKey || THREE_DING_TWO_HEWEI_KEY);
+  const comboLabel = String(opts.comboLabel || THREE_DING_TWO_COMBO_LABEL);
+  const positionSlotLabels = { wan: "千位", qian: "百位", bai: "十位", shi: "个位" };
+  const shapeFromPositionsFirst = opts.shapeFromPositionsFirst === true;
   const comboRows = safeHistory.slice(0, Math.min(comboWindow, safeHistory.length));
 
   function order(a, b) {
@@ -6738,9 +9164,9 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
   }
 
   function pickPositions(needCount, label) {
-    const positionPool = candidates.filter((item) => item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || ""))).sort(order);
+    const positionPool = candidates.filter((item) => item.kind === "position" && positionKeySet.has(String(item.key || ""))).sort(order);
     noteLow(positionPool, `${label}定位池`);
-    const positionHealthy = healthy.filter((item) => item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || ""))).sort(order);
+    const positionHealthy = healthy.filter((item) => item.kind === "position" && positionKeySet.has(String(item.key || ""))).sort(order);
     let before = chosen.length;
     preferredPositionSides.forEach((side) => {
       while (chosen.length - before < needCount && pickBest(sidePool(positionHealthy, side), 1, false)) {}
@@ -6754,14 +9180,14 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
           chosen[chosen.length - 1].repairedIntoTop = true;
         }
       });
-      if (chosen.length - before >= needCount) repairReport.push(`${label}定位健康项不足，已用观察项/备用算法补齐（仅千百十，不含个位）。`);
+      if (chosen.length - before >= needCount) repairReport.push(`${label}定位健康项不足，已用观察项补齐（仅单定顶1，不含 dual/backup；仅${comboLabel}）。`);
     }
     // 候选同码/跨框避码抽干时，对齐原三定：强制补独立码，避免 B 快照 intermittent incomplete
     function forceFillMissingPosition() {
-      const keyOrder = ["wan", "qian", "bai"];
+      const keyOrder = positionKeys.slice();
       const usedKeys = new Set(
         chosen
-          .filter((item) => item && item.kind === "position" && THREE_DING_QBS_KEYS.has(String(item.key || "")))
+          .filter((item) => item && item.kind === "position" && positionKeySet.has(String(item.key || "")))
           .map((item) => String(item.key))
       );
       let filled = 0;
@@ -6785,7 +9211,7 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
           kind: "position",
           key: missingKey,
           side: "recommend",
-          name: ({ wan: "千位", qian: "百位", bai: "十位" }[missingKey] || missingKey) + "强制独立码",
+          name: (positionSlotLabels[missingKey] || missingKey) + "强制独立码",
           code: digit,
           derivedFrom: "three-ding-force-unique-digit",
           repairedIntoTop: true
@@ -6801,19 +9227,20 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
     if (chosen.length - before < needCount) {
       const filled = forceFillMissingPosition();
       if (filled > 0 && chosen.length - before >= needCount) {
-        repairReport.push(`${label}定位已用强制独立码补齐至${needCount}项（仅千百十）。`);
+        repairReport.push(`${label}定位已用强制独立码补齐至${needCount}项（仅${comboLabel}）。`);
       }
     }
-    if (chosen.length - before < needCount) repairReport.push(`${label}定位正式项不足${needCount}个（仅千百十）。`);
+    if (chosen.length - before < needCount) repairReport.push(`${label}定位正式项不足${needCount}个（仅${comboLabel}）。`);
     else {
       const sidesUsed = chosen.slice(before).filter((item) => item.kind === "position").map((item) => item.derivedFrom || item.side || "recommend");
       repairReport.push(`${label}定位算法侧：${sidesUsed.join("/") || preferredPositionSides[0]}`);
     }
   }
 
-  function pickWanQianBai(label, preferredSides) {
-    const sideOrder = Array.isArray(preferredSides) && preferredSides.length ? preferredSides.slice() : ["recommend", "main", "backup"];
-    const heweiPool = candidates.filter((item) => item.kind === "hewei" && item.key === "wanQianBai").sort((a, b) => {
+  function pickComboHewei(label, preferredSides) {
+    const sideOrder = (Array.isArray(preferredSides) && preferredSides.length ? preferredSides.slice() : ["recommend", "main"])
+      .filter((side) => side !== "backup");
+    const heweiPool = candidates.filter((item) => item.kind === "hewei" && item.key === heweiKey && item.side !== "backup").sort((a, b) => {
       const sa = sideOrder.indexOf(a.side || "recommend");
       const sb = sideOrder.indexOf(b.side || "recommend");
       if (sa !== sb) return (sa < 0 ? 99 : sa) - (sb < 0 ? 99 : sb);
@@ -6833,7 +9260,7 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
     });
     if (!ok && pickBest(heweiPool, 1, true)) ok = true;
     if (!ok) {
-      repairReport.push(`${label}千百十合尾缺失`);
+      repairReport.push(`${label}${comboLabel}合尾缺失`);
       return;
     }
     if (chosen.length > before) {
@@ -6875,20 +9302,17 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
   }
 
   function pickThreeDingTwoAnyTwo(label, scopeIndexes) {
-    const picked = pickThreeDingTwoAnyTwoFromSeed(
+    const picked = pickThreeDingTwoAnyTwoFiveMixed(
       safeHistory,
       evaluatedCount,
       scopeIndexes,
-      chosen,
-      prediction,
       avoidAnyTwoCodes
     );
     if (!picked) {
-      repairReport.push(`${label}固定模型缺失：anyTwoHeweiHit`);
+      repairReport.push(`${label}固定模型缺失：anyTwoHeweiHit五码混奇偶`);
       return;
     }
-    const excluded = String(picked.excludedSeedDigit || "");
-    repairReport.push(`${label}二数合02468排除${excluded || "一码"}：${picked.code}`);
+    repairReport.push(`${label}二数合五码混奇偶（结构基线${picked.structBase != null ? picked.structBase : "--"}%≤${THREE_DING_ANYTWO_MAX_BASE}）：${picked.code}`);
     const id = autoTop6ItemId(picked);
     if (!used.has(id)) {
       used.add(id);
@@ -6929,6 +9353,13 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
     }
     if (!picked) picked = pool[0] || null;
     if (!picked) {
+      const fallbackPair = resolveDuishuFallbackPair(prediction);
+      if (/^\d{2}$/.test(fallbackPair)) {
+        picked = buildDuishuFallbackItem(fallbackPair, "对数避开1组");
+        repairReport.push(`${label}对数池空，已从三对数/独立组补抓 ${fallbackPair}`);
+      }
+    }
+    if (!picked) {
       repairReport.push(`${label}固定模型缺失：twoDigitAvoid`);
       return;
     }
@@ -6962,70 +9393,175 @@ function buildThreeDingVariantHelpers(prediction, history, options) {
   function pickReverseShape(label) {
     const assist = resolveStableMathAssist(prediction);
     const scopeLen = 3;
-    // 更稳单双形态（全奇→单单单）已禁用；仅接受大小类更稳形态
-    const stableFirst = pickStableMathShapeCandidate(assist, safeHistory, evaluatedCount, scopeLen);
-    if (stableFirst && !isParityOnlyShapeCode(stableFirst.code)) {
-      const id = autoTop6ItemId(stableFirst);
-      if (!used.has(id)) {
-        used.add(id);
-        chosen.push(stableFirst);
-        repairReport.push(`${label}更稳排除形态：${stableFirst.name} ${String(stableFirst.code || "").slice(0, scopeLen)}`);
-        return;
-      }
-    }
-    const reverseBase = chosen.filter((item) => item && item.kind === "position");
-    const reversePool = autoTop6ReverseShapeCandidatesFromPositions(reverseBase, safeHistory)
-      .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
-      // 三定 A/B 排除形态禁用单双，优先/仅用大小形态
-      .filter((item) => item && !isParityOnlyShapeCode(item.code) && (item.shapeKey === "shapeSize" || item.key === "reverseSize" || /^[大小]{3,4}$/.test(String(item.code || ""))))
-      .sort(order);
-    noteLow(reversePool, `${label}反向形态池`);
-    const reverseHealthy = reversePool.filter((item) => item && item.stabilityGate === true);
-    const source = reverseHealthy.length ? reverseHealthy : reversePool;
-    let reversePicked = source.slice().sort((a, b) => {
-      const delta = comboPickScore(b) - comboPickScore(a);
-      return delta || order(a, b);
-    })[0] || null;
-    if (!reversePicked) {
-      // 无大小形态时强制挂一个大小排除，保证 A/B 结构完整，绝不回退单单单
-      const forced = autoTop6DecorateItem(safeHistory, {
-        kind: "derivedReverseShape",
-        key: "reverseSize",
-        side: "recommend",
-        name: "排除形态(大小)",
-        code: "大大小",
-        shapeKey: "shapeSize",
+    const shapeScopeIndexes = threeDingShapeScopeIndexesFromPositionKeys(positionKeys);
+
+    function commitReverseShape(reversePicked, sourceLabel) {
+      if (!reversePicked) return false;
+      const comboShape = threeDingShapeCodeForPositionKeys(reversePicked.code, positionKeys);
+      const normalized = Object.assign({}, reversePicked, {
+        code: comboShape,
         shapeScopeLength: 3,
-        mode: "avoid",
-        derivedFrom: "three-ding-size-shape-fallback",
-        repairedIntoTop: true
-      }, evaluatedCount);
-      reversePicked = forced;
-      repairReport.push(`${label}排除形态暂缺，已强制大小形态大大小（禁用单双）。`);
-    }
-    if (!reversePicked.stabilityGate) {
-      reversePicked.repairedIntoTop = true;
-      repairReport.push(`${label}排除形态未达安全阈值，暂用最优观察项：${reversePicked.name} ${reversePicked.code}。`);
-    } else {
-      const attackShape = String(reversePicked.code || "").slice(0, 3);
-      repairReport.push(`${label}排除形态：${reversePicked.name} ${attackShape}（千百十三字攻击语，仅大小形态）`);
-    }
-    const id = autoTop6ItemId(reversePicked);
-    if (!used.has(id)) {
+        shapeScopeIndexes: shapeScopeIndexes.slice()
+      });
+      if (!normalized.stabilityGate) {
+        normalized.repairedIntoTop = true;
+        repairReport.push(`${label}排除形态未达安全阈值，暂用最优观察项：${normalized.name} ${comboShape}。`);
+      } else {
+        repairReport.push(`${label}排除形态：${normalized.name} ${comboShape}（${comboLabel}三字攻击语，仅大小形态；${sourceLabel}）`);
+      }
+      const id = autoTop6ItemId(normalized);
+      if (used.has(id)) return false;
       used.add(id);
-      chosen.push(reversePicked);
+      chosen.push(normalized);
+      return true;
     }
+
+    function tryStableMathShape() {
+      const stableFirst = pickStableMathShapeCandidate(assist, safeHistory, evaluatedCount, scopeLen);
+      if (!stableFirst || isParityOnlyShapeCode(stableFirst.code)) return false;
+      stableFirst.shapeScopeIndexes = shapeScopeIndexes.slice();
+      repairReport.push(`${label}更稳排除形态：${stableFirst.name} ${String(stableFirst.code || "").slice(0, scopeLen)}`);
+      return commitReverseShape(stableFirst, "更稳算法");
+    }
+
+    function tryPositionDerivedShape() {
+      const reverseBase = chosen.filter((item) => item && item.kind === "position");
+      const reversePool = autoTop6ReverseShapeCandidatesFromPositions(reverseBase, safeHistory)
+        .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
+        .filter((item) => item && !isParityOnlyShapeCode(item.code) && (item.shapeKey === "shapeSize" || item.key === "reverseSize" || /^[大小]{3,4}$/.test(String(item.code || ""))))
+        .sort(order);
+      noteLow(reversePool, `${label}反向形态池`);
+      const reverseHealthy = reversePool.filter((item) => item && item.stabilityGate === true);
+      const source = reverseHealthy.length ? reverseHealthy : reversePool;
+      let reversePicked = source.slice().sort((a, b) => {
+        const delta = comboPickScore(b) - comboPickScore(a);
+        return delta || order(a, b);
+      })[0] || null;
+      if (!reversePicked) {
+        reversePicked = autoTop6DecorateItem(safeHistory, {
+          kind: "derivedReverseShape",
+          key: "reverseSize",
+          side: "recommend",
+          name: "排除形态(大小)",
+          code: "大大小",
+          shapeKey: "shapeSize",
+          shapeScopeLength: 3,
+          mode: "avoid",
+          derivedFrom: "three-ding-size-shape-fallback",
+          repairedIntoTop: true
+        }, evaluatedCount);
+        repairReport.push(`${label}排除形态暂缺，已强制大小形态大大小（禁用单双）。`);
+      }
+      return commitReverseShape(reversePicked, "定位推导") ? true : false;
+    }
+
+    if (shapeFromPositionsFirst) {
+      if (tryPositionDerivedShape()) return;
+      if (tryStableMathShape()) return;
+      return;
+    }
+    if (tryStableMathShape()) return;
+    tryPositionDerivedShape();
   }
 
-  return { chosen, repairReport, pickPositions, pickWanQianBai, pickAnyTwo, pickThreeDingTwoAnyTwo, pickTwoDigitAvoid, pickReverseShape };
+  return { chosen, repairReport, pickPositions, pickComboHewei, pickAnyTwo, pickThreeDingTwoAnyTwo, pickTwoDigitAvoid, pickReverseShape };
 }
 
 function buildThreeDingTwoSnapshot(prediction, history, options) {
-  return frameworkItems.buildThreeDingTwoSnapshot(prediction, history, options);
+  // 三定框架A：千百十合尾 + 千百十挑1位除1码 + 二数合(千百十) + 排除形态1 + 一对数避开
+  const ctx = buildThreeDingVariantHelpers(prediction, history, Object.assign({
+    preferredPositionSides: ["main", "recommend"],
+    positionKeys: THREE_DING_TWO_POSITION_KEYS,
+    heweiKey: THREE_DING_TWO_HEWEI_KEY,
+    comboLabel: THREE_DING_TWO_COMBO_LABEL,
+    shapeFromPositionsFirst: true
+  }, options || {}));
+  ctx.pickComboHewei("三定框架A", ["recommend", "main"]);
+  // 合尾入框后再选定位；定位只用单定顶1，不让 dual/backup 占码
+  ctx.pickPositions(1, "三定框架A");
+  ctx.pickReverseShape("三定框架A");
+  ctx.chosen.forEach((item) => {
+    if (item && item.kind === "derivedReverseShape") {
+      item.shapeScopeLength = 3;
+      if (!Array.isArray(item.shapeScopeIndexes) || item.shapeScopeIndexes.length !== 3) {
+        item.shapeScopeIndexes = threeDingShapeScopeIndexesFromPositionKeys(THREE_DING_TWO_POSITION_KEYS);
+      }
+    }
+  });
+  const heweiScopeIndexes = THREE_DING_TWO_SCOPE_INDEXES.slice();
+  ctx.repairReport.push("三定框架A二数合作用位：千百十（五码混奇偶，禁结构基线>" + THREE_DING_ANYTWO_MAX_BASE + "%）");
+  ctx.pickThreeDingTwoAnyTwo("三定框架A", heweiScopeIndexes);
+  ctx.pickTwoDigitAvoid("三定框架A");
+  return {
+    version: THREE_DING_TWO_SNAPSHOT_VERSION,
+    generatedAt: isoNow(),
+    basePeriod: prediction && prediction.basePeriod || "",
+    itemCount: Math.min(ctx.chosen.length, THREE_DING_TWO_ITEM_COUNT),
+    framework: {
+      positionCount: 1,
+      heweiCount: 1,
+      heweiComboCount: 1,
+      reverseShapeCount: 1,
+      pairAvoidCount: 1,
+      pool: "wanQianBai",
+      comboLabel: THREE_DING_TWO_COMBO_LABEL,
+      positionKeys: THREE_DING_TWO_POSITION_KEYS.slice(),
+      pickOrder: ["hewei.wanQianBai", "positionx1", "derivedReverseShape", "anyTwoHeweiHit-fiveMixed", "twoDigitAvoid"],
+      anyTwoMode: "five-mixed-struct-filter",
+      positionSidePreference: ["main", "recommend"],
+      heweiScopeIndexes: heweiScopeIndexes.slice()
+    },
+    heweiScopeIndexes: heweiScopeIndexes.slice(),
+    items: mapFrameworkSnapshotItems(ctx.chosen, heweiScopeIndexes, THREE_DING_TWO_ITEM_COUNT),
+    repairReport: ctx.repairReport
+  };
 }
 
 function buildThreeDingOneSnapshot(prediction, history, options) {
-  return frameworkItems.buildThreeDingOneSnapshot(prediction, history, options);
+  // 三定框架B：百十个合尾 + 百十个挑2位 + 大小形态排除 + 对数避开（无二数合）
+  const heweiScopeIndexes = THREE_DING_ONE_SCOPE_INDEXES.slice();
+  const ctx = buildThreeDingVariantHelpers(prediction, history, Object.assign({
+    preferredPositionSides: ["main", "recommend"],
+    positionKeys: THREE_DING_ONE_POSITION_KEYS,
+    heweiKey: THREE_DING_ONE_HEWEI_KEY,
+    comboLabel: THREE_DING_ONE_COMBO_LABEL,
+    shapeFromPositionsFirst: true
+  }, options || {}));
+  ctx.pickComboHewei("三定框架B", ["recommend", "main"]);
+  ctx.pickPositions(2, "三定框架B");
+  ctx.pickReverseShape("三定框架B");
+  ctx.chosen.forEach((item) => {
+    if (item && item.kind === "derivedReverseShape") {
+      item.shapeScopeLength = 3;
+      if (!Array.isArray(item.shapeScopeIndexes) || item.shapeScopeIndexes.length !== 3) {
+        item.shapeScopeIndexes = threeDingShapeScopeIndexesFromPositionKeys(THREE_DING_ONE_POSITION_KEYS);
+      }
+    }
+  });
+  ctx.pickTwoDigitAvoid("三定框架B");
+  return {
+    version: THREE_DING_ONE_SNAPSHOT_VERSION,
+    generatedAt: isoNow(),
+    basePeriod: prediction && prediction.basePeriod || "",
+    itemCount: Math.min(ctx.chosen.length, THREE_DING_ONE_ITEM_COUNT),
+    framework: {
+      positionCount: 2,
+      heweiCount: 1,
+      heweiComboCount: 0,
+      reverseShapeCount: 1,
+      pairAvoidCount: 1,
+      pool: "qianBaiShi",
+      comboLabel: THREE_DING_ONE_COMBO_LABEL,
+      positionKeys: THREE_DING_ONE_POSITION_KEYS.slice(),
+      pickOrder: ["hewei.qianBaiShi", "positionx2", "derivedReverseShape", "twoDigitAvoid"],
+      heweiSidePreference: ["recommend", "main"],
+      positionSidePreference: ["main", "recommend"],
+      heweiScopeIndexes: heweiScopeIndexes.slice()
+    },
+    heweiScopeIndexes: heweiScopeIndexes.slice(),
+    items: mapFrameworkSnapshotItems(ctx.chosen, heweiScopeIndexes, THREE_DING_ONE_ITEM_COUNT),
+    repairReport: ctx.repairReport
+  };
 }
 
 function normalizeStableMathFilterOnPrediction(prediction) {
@@ -7068,10 +9604,10 @@ function applyStableMathFilterToPrediction(prediction, filter) {
 
 function attachCachedStableMathFilter(prediction) {
   if (!prediction || typeof prediction !== "object") return prediction;
-  const attached = l0Orchestrator.stableMathAlgo.compute({
-    history: state && Array.isArray(state.history) ? state.history : []
-  });
-  if (attached && attached.payload) applyStableMathFilterToPrediction(prediction, attached.payload);
+  const cached = (state && state.stableMathFilter)
+    || stableMathFilterBridge.readCachedFilter()
+    || null;
+  if (cached) applyStableMathFilterToPrediction(prediction, cached);
   return prediction;
 }
 
@@ -7088,25 +9624,36 @@ function scheduleStableMathFilterRefresh(reason) {
   stableMathFilterRunning = true;
   stableMathFilterQueued = false;
   setImmediate(() => {
-    Promise.resolve(l0Orchestrator.stableMathAlgo.computeAsync({ history }, { timeoutMs: 25000 }))
+    Promise.resolve(stableMathFilterBridge.runStableMathFilterAsync(history, { timeoutMs: 25000 }))
       .then((outcome) => {
-        const slim = outcome && outcome.payload ? outcome.payload : null;
-        const raw = outcome && outcome.raw ? outcome.raw : null;
-        if (slim && typeof slim === "object") {
-          state.stableMathFilter = slim;
+        const filter = outcome && outcome.result ? outcome.result : null;
+        // 假成功禁令：仅 stdout JSON 真成功才写入；失败不得用旧缓存冒充已刷新
+        if (outcome && outcome.ok && filter && typeof filter === "object") {
+          state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(filter);
           invalidatePanelStateCache();
           addLog("更稳数学排除已刷新", {
             trigger,
-            ok: !!(outcome && outcome.meta && outcome.meta.ok !== false),
-            latestPeriod: slim.latest_period || null,
-            historyCount: slim.history_count || (raw && raw.history_count) || null,
-            error: outcome && outcome.meta ? outcome.meta.error : null,
-            via: "stable-math/computeAsync"
+            ok: true,
+            latestPeriod: filter.latest_period || null,
+            historyCount: filter.history_count || null
           });
+          // 若 tip 已封存但更稳仍落后，立刻解封重算（异步刷新追上后的补救）
+          try {
+            const catchup = rebuildTipAfterStableMathCatchup("async-smf-" + trigger);
+            if (catchup && catchup.rebuilt) {
+              addLog("异步更稳追上后已重算 tip", catchup);
+            }
+          } catch (err) {
+            addLog("异步更稳追上后重算 tip 失败", {
+              trigger,
+              error: String(err && err.message || err)
+            });
+          }
         } else {
-          addLog("更稳数学排除刷新无结果", {
+          addLog("更稳数学排除刷新失败", {
             trigger,
-            error: String((outcome && outcome.meta && outcome.meta.error) || "empty-result")
+            error: String((outcome && outcome.error) || "empty-result"),
+            cachePeriod: (state.stableMathFilter && state.stableMathFilter.latest_period) || null
           });
         }
       })
@@ -7537,62 +10084,31 @@ function pickStableMathShapeCandidate(assist, history, evaluatedCount, scopeLeng
 }
 
 function ensurePredictionThreeDingTwoSnapshot(prediction, history) {
-  return frameworkItems.ensurePredictionThreeDingTwoSnapshot(prediction, history);
+  // retired: 三定框架已删除
+  if (prediction && typeof prediction === "object") {
+    delete prediction.threeDingTwo;
+    delete prediction.threeDingTwoItems;
+    delete prediction.threeDingTwoRepairReport;
+    if (prediction.recommendationMeta && typeof prediction.recommendationMeta === "object") {
+      delete prediction.recommendationMeta.threeDingTwoSnapshotVersion;
+    }
+  }
+  return null;
 }
 
 function ensurePredictionThreeDingOneSnapshot(prediction, history) {
-  return frameworkItems.ensurePredictionThreeDingOneSnapshot(prediction, history);
-}
-
-function buildSideStableSnapshot(prediction, history) {
-  return frameworkItems.buildSideStableSnapshot(prediction, history);
-}
-
-function ensurePredictionSideStableSnapshot(prediction, history) {
-  return frameworkItems.ensurePredictionSideStableSnapshot(prediction, history);
-}
-
-function evaluateSideStableSnapshot(prediction, actualRecord) {
-  const snapshot = prediction && prediction.sideStable && Array.isArray(prediction.sideStable.items)
-    ? prediction.sideStable
-    : (prediction && Array.isArray(prediction.sideStableItems) ? { version: "legacy-sideStableItems", items: prediction.sideStableItems, repairReport: prediction.sideStableRepairReport || [] } : null);
-  const truthEligible = sideStableSnapshotIsComplete(snapshot) && snapshotSealIsValid(snapshot, prediction) && snapshotSealPredatesTarget(snapshot, actualRecord);
-  if (!truthEligible) {
-    return { ok: false, success: null, passed: 0, total: 0, items: [], reason: "unsealed-or-incomplete-side-stable-snapshot", truthEligible: false };
+  // retired: 三定框架已删除
+  if (prediction && typeof prediction === "object") {
+    delete prediction.threeDingOne;
+    delete prediction.threeDingOneItems;
+    delete prediction.threeDingOneRepairReport;
+    if (prediction.recommendationMeta && typeof prediction.recommendationMeta === "object") {
+      delete prediction.recommendationMeta.threeDingOneSnapshotVersion;
+    }
   }
-  const items = snapshot.items.map((item) => {
-    const success = autoTop6RecordSuccess(item, actualRecord);
-    return {
-      rank: item.rank,
-      kind: item.kind,
-      key: item.key,
-      side: item.side || "recommend",
-      name: item.name,
-      code: item.code,
-      shapeKey: item.shapeKey || "",
-      success,
-      actualNumbers: actualRecord && Array.isArray(actualRecord.numbers) ? actualRecord.numbers.slice(0, 5).map(String) : [],
-      actualFirstFourDigits: firstFourNumbers(actualRecord),
-      actualCompositeHeweiGroup: getCompositeHeweiGroup(actualRecord),
-      actualFirstFourSum: String(firstFourSum(actualRecord))
-    };
-  });
-  const valid = items.filter((item) => typeof item.success === "boolean");
-  const passed = valid.filter((item) => item.success).length;
-  return {
-    ok: valid.length === items.length && items.length > 0,
-    version: snapshot.version || SIDE_STABLE_SNAPSHOT_VERSION,
-    basePeriod: prediction && prediction.basePeriod || "",
-    success: valid.length === items.length && items.length > 0 ? passed === items.length : null,
-    truthEligible: true,
-    sealedAt: snapshot.sealedAt,
-    sealedBaseUid: snapshot.sealedBaseUid,
-    sealHash: snapshot.sealHash,
-    passed,
-    total: items.length,
-    items
-  };
+  return null;
 }
+
 
 function forceSealKillFrameworkSnapshot(snapshot, prediction, sealedAt) {
   if (!snapshot || !prediction) return null;
@@ -8460,469 +10976,25 @@ function scheduleFrameworkSimHistoryBackfill() {
   setTimeout(runChunk, 45000);
 }
 
-function coldFrameworkOrder(a, b) {
-  if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
-  if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
-  if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);
-  if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
-  return String(a.name || "").localeCompare(String(b.name || ""), "zh-CN");
-}
 
-function coldFrameworkDigitStatsFromSeries(digitSeries, limit) {
-  const rows = (Array.isArray(digitSeries) ? digitSeries : []).slice(0, Math.max(1, Number(limit || COLD_FRAMEWORK_COLD_WINDOW)));
-  const counts = {};
-  DIGIT_POOL.forEach((digit) => { counts[digit] = 0; });
-  rows.forEach((value) => {
-    const digit = String(value === undefined || value === null ? "" : value).replace(/\D/g, "").charAt(0);
-    if (DIGIT_POOL.includes(digit)) counts[digit] = Number(counts[digit] || 0) + 1;
-  });
-  const ranked = DIGIT_POOL.slice().sort((a, b) => {
-    if (Number(counts[a] || 0) !== Number(counts[b] || 0)) return Number(counts[a] || 0) - Number(counts[b] || 0);
-    return Number(a) - Number(b);
-  });
-  const hotRanked = ranked.slice().reverse().sort((a, b) => {
-    if (Number(counts[b] || 0) !== Number(counts[a] || 0)) return Number(counts[b] || 0) - Number(counts[a] || 0);
-    return Number(a) - Number(b);
-  });
-  return {
-    total: rows.length,
-    window: Math.max(1, Number(limit || COLD_FRAMEWORK_COLD_WINDOW)),
-    counts,
-    cold: ranked,
-    hot: hotRanked,
-    minCount: rows.length ? Number(counts[ranked[0]] || 0) : 0,
-    maxCount: rows.length ? Number(counts[hotRanked[0]] || 0) : 0
-  };
-}
 
-function coldFrameworkDigitStats(history, getter, limit) {
-  const rows = (Array.isArray(history) ? history : []).filter(Boolean).slice(0, Math.max(1, Number(limit || COLD_FRAMEWORK_COLD_WINDOW)));
-  return coldFrameworkDigitStatsFromSeries(rows.map((record) => getter(record)), limit);
-}
 
-function coldFrameworkSerializeItem(item, index) {
-  return {
-    rank: index + 1,
-    kind: item.kind,
-    key: item.key,
-    side: item.side || "recommend",
-    name: item.name,
-    code: item.code,
-    mode: item.mode || "avoid",
-    rate: item.rate,
-    stableScore: item.stableScore,
-    rate30: item.rate30,
-    rate60: item.rate60,
-    rate120: item.rate120,
-    rate300: item.rate300,
-    safetyRate: item.safetyRate,
-    safetyThreshold: item.safetyThreshold,
-    longFloor: item.longFloor,
-    lower120: item.lower120,
-    recentMissStreak: item.recentMissStreak,
-    maxMissStreak120: item.maxMissStreak120,
-    maxMissStreak1000: item.maxMissStreak1000,
-    hardnessScore: item.hardnessScore,
-    stabilityGate: !!item.stabilityGate,
-    stabilityReason: item.stabilityReason || "",
-    stageLabel: item.stageLabel,
-    lowConfidence: !!item.lowConfidence,
-    repairedIntoTop: !!item.repairedIntoTop,
-    codeCount: item.codeCount,
-    codes: Array.isArray(item.codes) ? item.codes.slice(0, recentExactCodeCodeLimit(item)) : undefined,
-    shapeKey: item.shapeKey || "",
-    derivedFrom: item.derivedFrom || "",
-    coldPool: Array.isArray(item.coldPool) ? item.coldPool.slice(0, 4) : undefined,
-    hotPool: Array.isArray(item.hotPool) ? item.hotPool.slice(0, 4) : undefined,
-    coldWindow: item.coldWindow,
-    coldCount: item.coldCount,
-    hotCount: item.hotCount,
-    targetGroupCount: item.targetGroupCount,
-    rawGeneratedGroupCount: item.rawGeneratedGroupCount,
-    generatedGroupCount: item.generatedGroupCount,
-    trimmedGroupCount: item.trimmedGroupCount,
-    generatedCodeCutoff: item.generatedCodeCutoff || "",
-    trimStrategy: item.trimStrategy || "",
-    groupCountDistance: item.groupCountDistance,
-    choiceReason: item.choiceReason || ""
-    // 不落盘 choiceCompared：候选对比表会把单条预测撑到十余 KB，999 条合计十余 MB，saveState 同步 stringify 堵死事件循环
-  };
-}
 
-function coldFrameworkPositionCandidates(history, evaluatedCount) {
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  return AUTO_TOP6_POSITIONS.map((pos) => {
-    const stats = coldFrameworkDigitStats(safeHistory, (record) => {
-      const nums = Array.isArray(record && record.numbers) ? record.numbers : [];
-      return nums[pos.index];
-    }, COLD_FRAMEWORK_COLD_WINDOW);
-    const code = stats.cold[0] || "";
-    return autoTop6DecorateItem(safeHistory, {
-      kind: "position",
-      key: pos.key,
-      side: "cold",
-      name: `${pos.label}冷码`,
-      code,
-      mode: "avoid",
-      coldPool: stats.cold,
-      hotPool: stats.hot,
-      coldWindow: stats.window,
-      coldCount: stats.minCount,
-      hotCount: stats.maxCount
-    }, evaluatedCount);
-  }).filter((item) => item && item.code).sort(coldFrameworkOrder);
-}
 
-function coldFrameworkHeweiCandidates(history, evaluatedCount) {
-  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
-  const compositeGroups = safeHistory.map((record) => getCompositeHeweiGroup(record).map(String));
-  const heweiDigitSeries = {};
-  AUTO_TOP6_HEWEI.filter((entry) => entry.key !== "unified").forEach((hewei) => {
-    heweiDigitSeries[hewei.key] = compositeGroups.map((group) => group[hewei.index]);
-  });
-  return AUTO_TOP6_HEWEI.filter((entry) => entry.key !== "unified").map((hewei) => {
-    const stats = coldFrameworkDigitStatsFromSeries(heweiDigitSeries[hewei.key], COLD_FRAMEWORK_COLD_WINDOW);
-    const code = stats.cold[0] || "";
-    return autoTop6DecorateItem(safeHistory, {
-      kind: "hewei",
-      key: hewei.key,
-      side: "cold",
-      name: `${hewei.label}冷码`,
-      code,
-      mode: "avoid",
-      coldPool: stats.cold,
-      hotPool: stats.hot,
-      coldWindow: stats.window,
-      coldCount: stats.minCount,
-      hotCount: stats.maxCount
-    }, evaluatedCount);
-  }).filter((item) => item && item.code).sort(coldFrameworkOrder);
-}
 
-function coldFrameworkExtraCandidate(prediction, history, evaluatedCount, key) {
-  const item = autoTop6CandidateItems(prediction).filter((candidate) => candidate && candidate.kind === "extra" && candidate.key === key)[0] || null;
-  if (!item) return null;
-  if (/^recentExactCodeAvoid\d+$/.test(String(key || ""))) {
-    const lookback = Number(String(key).replace(/\D/g, ""));
-    return coldFrameworkDecorateRecentExactItem(history, item, evaluatedCount, lookback);
-  }
-  return autoTop6DecorateItem(history, item, evaluatedCount);
-}
 
-function coldFrameworkRecentExactRollingStats(history, lookbackLimit, sampleLimit) {
-  // 滑动窗口计数，避免每个 sample 都 slice + 新建 Set（冷框架选型时会放大成 OOM 尖峰）
-  const rows = (Array.isArray(history) ? history : []).filter((record) => /^\d{4}$/.test(firstFourCode(record)));
-  const lookback = Math.max(1, Number(lookbackLimit || 500));
-  const sample = Math.max(1, Number(sampleLimit || MODEL_RATE_WINDOW));
-  const maxRows = Math.min(sample, rows.length);
-  const codes = rows.slice(0, Math.min(rows.length, maxRows + lookback)).map((record) => firstFourCode(record));
-  const windowCounts = new Map();
-  const addToWindow = (idx) => {
-    if (idx < 0 || idx >= codes.length) return;
-    const code = codes[idx];
-    windowCounts.set(code, (windowCounts.get(code) || 0) + 1);
-  };
-  const removeFromWindow = (idx) => {
-    if (idx < 0 || idx >= codes.length) return;
-    const code = codes[idx];
-    const next = (windowCounts.get(code) || 0) - 1;
-    if (next <= 0) windowCounts.delete(code);
-    else windowCounts.set(code, next);
-  };
-  for (let j = 1; j <= lookback && j < codes.length; j += 1) addToWindow(j);
-  const vals = [];
-  for (let index = 0; index < maxRows; index += 1) {
-    const code = codes[index];
-    const previousCount = Math.min(lookback, Math.max(0, codes.length - index - 1));
-    if (/^\d{4}$/.test(code) && previousCount >= 1) {
-      vals.push(!windowCounts.has(code));
-    }
-    removeFromWindow(index + 1);
-    addToWindow(index + 1 + lookback);
-  }
-  let missStreak = 0;
-  let currentRun = 0;
-  let maxMissStreak = 0;
-  for (let i = 0; i < vals.length; i += 1) {
-    if (vals[i] === true) break;
-    missStreak += 1;
-  }
-  vals.forEach((ok) => {
-    if (ok) {
-      currentRun = 0;
-    } else {
-      currentRun += 1;
-      if (currentRun > maxMissStreak) maxMissStreak = currentRun;
-    }
-  });
-  const hit = vals.filter(Boolean).length;
-  return {
-    total: vals.length,
-    hit,
-    rate: vals.length ? Number(((hit / vals.length) * 100).toFixed(2)) : null,
-    missStreak,
-    maxMissStreak
-  };
-}
 
-function coldFrameworkDecorateRecentExactItem(history, item, evaluatedCount, lookbackLimit) {
-  const base = autoTop6DecorateItem(history, item, evaluatedCount);
-  const s30 = coldFrameworkRecentExactRollingStats(history, lookbackLimit, 30);
-  const s60 = coldFrameworkRecentExactRollingStats(history, lookbackLimit, 60);
-  const s120 = coldFrameworkRecentExactRollingStats(history, lookbackLimit, 120);
-  const sStable = coldFrameworkRecentExactRollingStats(history, lookbackLimit, MODEL_STABLE_WINDOW);
-  const rates = [s30.rate, s120.rate, sStable.rate].map(finiteNumberOrNull).filter((value) => value !== null);
-  const safetyRate = rates.length ? Math.min(...rates) : null;
-  const weightedParts = [
-    { weight: 0.36, rate: finiteNumberOrNull(s30.rate) },
-    { weight: 0.30, rate: finiteNumberOrNull(s60.rate) },
-    { weight: 0.22, rate: finiteNumberOrNull(s120.rate) },
-    { weight: 0.12, rate: finiteNumberOrNull(sStable.rate) }
-  ].filter((part) => part.rate !== null);
-  const weightTotal = weightedParts.reduce((sum, part) => sum + part.weight, 0);
-  let score = weightTotal ? weightedParts.reduce((sum, part) => sum + part.rate * part.weight, 0) / weightTotal : Number(base.stableScore || 0);
-  score -= Math.max(0, Number(s120.maxMissStreak || 0) - 4) * 0.22;
-  score -= Math.max(0, Number(sStable.maxMissStreak || 0) - 7) * 0.12;
-  const stableReasons = [];
-  if (s30.total >= 20 && s30.rate !== null && s30.rate < MODEL_LOW_HIT_RATE) stableReasons.push(`滚动30期${Number(s30.rate).toFixed(2)}低于${MODEL_LOW_HIT_RATE}`);
-  if (s120.total >= 60 && s120.rate !== null && s120.rate < MODEL_LOW_HIT_RATE) stableReasons.push(`滚动120期${Number(s120.rate).toFixed(2)}低于${MODEL_LOW_HIT_RATE}`);
-  if (sStable.total >= 120 && sStable.rate !== null && sStable.rate < MODEL_LOW_HIT_RATE) stableReasons.push(`滚动1000期${Number(sStable.rate).toFixed(2)}低于${MODEL_LOW_HIT_RATE}`);
-  if (s30.missStreak >= AUTO_TOP6_RECENT_MISS_LIMIT) stableReasons.push(`当前连错${s30.missStreak}手`);
-  return Object.assign({}, base, {
-    rate: Number(score.toFixed(4)),
-    stableScore: Number(score.toFixed(4)),
-    hardnessScore: Number(score.toFixed(4)),
-    rate30: s30.rate,
-    rate60: s60.rate,
-    rate120: s120.rate,
-    rate300: sStable.rate,
-    safetyRate,
-    recentMissStreak: s30.missStreak,
-    maxMissStreak120: s120.maxMissStreak,
-    maxMissStreak1000: sStable.maxMissStreak,
-    stabilityGate: stableReasons.length === 0,
-    stabilityReason: stableReasons.join("；"),
-    lowConfidence: stableReasons.length > 0,
-    rollingRecentExact: true
-  });
-}
 
-function coldFrameworkGeneratedGroupInfo(items, target) {
-  const activeItems = (Array.isArray(items) ? items : []).filter((item) => item && item.code);
-  const limit = Math.max(0, Number(target || 0));
-  if (!activeItems.length) return { rawCount: 0, selectedCount: 0, cutoffCode: "", strategy: "ascending-first-n" };
-  // 只需前 N 组时提前停，避免结算选型时 10000 全扫堵死事件循环；rawCount 在未扫完时为下界。
-  const stopAt = limit > 0 ? limit : 10000;
-  const accepted = [];
-  let scannedAll = true;
-  for (let n = 0; n < 10000; n += 1) {
-    const code = String(n).padStart(4, "0");
-    const numbers = code.split("").concat(["0"]);
-    const record = {
-      numbers,
-      metrics: calculateMetrics(numbers)
-    };
-    const ok = activeItems.every((item) => autoTop6RecordSuccess(item, record) === true);
-    if (ok) {
-      accepted.push(code);
-      if (accepted.length >= stopAt && limit > 0) {
-        scannedAll = false;
-        break;
-      }
-    }
-  }
-  const selectedCount = limit > 0 ? Math.min(limit, accepted.length) : accepted.length;
-  return {
-    rawCount: scannedAll ? accepted.length : Math.max(accepted.length, limit),
-    selectedCount,
-    cutoffCode: selectedCount > 0 && (selectedCount < accepted.length || !scannedAll)
-      ? accepted[selectedCount - 1]
-      : "",
-    strategy: "ascending-first-n",
-    earlyStopped: !scannedAll
-  };
-}
 
-function coldFrameworkGeneratedGroupCount(items) {
-  return coldFrameworkGeneratedGroupInfo(items, 0).rawCount;
-}
 
-function coldFrameworkChooseRecentExactCandidate(baseItems, recentCandidates, tailItems) {
-  const target = COLD_FRAMEWORK_TARGET_GROUP_COUNT;
-  const candidates = (Array.isArray(recentCandidates) ? recentCandidates : []).filter((item) => item && item.code);
-  if (!candidates.length) return null;
-  const base = (Array.isArray(baseItems) ? baseItems : []).filter((item) => item && item.code);
-  const tail = (Array.isArray(tailItems) ? tailItems : []).filter((item) => item && item.code);
-  const compared = candidates.map((item) => {
-    const groupInfo = coldFrameworkGeneratedGroupInfo(base.concat([item], tail), target);
-    const rawGeneratedGroupCount = groupInfo.rawCount;
-    const generatedGroupCount = groupInfo.selectedCount;
-    const trimmedGroupCount = Math.max(0, rawGeneratedGroupCount - target);
-    return {
-      key: item.key,
-      name: item.name,
-      code: item.code,
-      rawGeneratedGroupCount,
-      generatedGroupCount,
-      trimmedGroupCount,
-      cutoffCode: groupInfo.cutoffCode,
-      trimStrategy: groupInfo.strategy,
-      distance: Math.abs(generatedGroupCount - target),
-      stableScore: Number(item.stableScore || item.rate || 0)
-    };
-  }).sort((a, b) => {
-    if (a.distance !== b.distance) return a.distance - b.distance;
-    if (b.stableScore !== a.stableScore) return b.stableScore - a.stableScore;
-    return String(a.key || "").localeCompare(String(b.key || ""));
-  });
-  const best = compared[0];
-  const source = candidates.filter((item) => item && item.key === best.key)[0] || candidates[0];
-  const reason = best.trimmedGroupCount > 0
-    ? `500/800择优，目标${target}组，攻击语完整展开${best.rawGeneratedGroupCount}组；${target}组及截止${best.cutoffCode}仅作选型参考，不裁TXT`
-    : `500/800择优，目标${target}组，当前${best.generatedGroupCount}组`;
-  return Object.assign({}, source, {
-    targetGroupCount: target,
-    rawGeneratedGroupCount: best.rawGeneratedGroupCount,
-    generatedGroupCount: best.generatedGroupCount,
-    trimmedGroupCount: best.trimmedGroupCount,
-    generatedCodeCutoff: best.cutoffCode,
-    trimStrategy: best.trimStrategy,
-    groupCountDistance: best.distance,
-    choiceReason: reason,
-    choiceCompared: compared
-  });
-}
 
-function buildColdFrameworkSnapshot(prediction, history) {
-  return frameworkItems.buildColdFrameworkSnapshot(prediction, history);
-}
 
-function ensurePredictionColdFrameworkSnapshot(prediction, history) {
-  return frameworkItems.ensurePredictionColdFrameworkSnapshot(prediction, history);
-}
 
-function buildPick5000Snapshot(prediction, history) {
-  return frameworkItems.buildPick5000Snapshot(prediction, history);
-}
 
-function ensurePredictionPick5000Snapshot(prediction, history) {
-  return frameworkItems.ensurePredictionPick5000Snapshot(prediction, history);
-}
 
-function dingKillChooseRecentExactCandidate(baseItems, recentCandidates, tailItems, target) {
-  const bandMin = DING_KILL_TARGET_MIN;
-  const bandMax = DING_KILL_TARGET_MAX;
-  const want = Math.max(bandMin, Math.min(bandMax, Number(target || bandMin)));
-  const candidates = (Array.isArray(recentCandidates) ? recentCandidates : []).filter((item) => item && item.code);
-  if (!candidates.length) return null;
-  const base = (Array.isArray(baseItems) ? baseItems : []).filter((item) => item && item.code);
-  const tail = (Array.isArray(tailItems) ? tailItems : []).filter((item) => item && item.code);
-  const compared = candidates.map((item) => {
-    // 一次扫描：目标带内只需知道是否够 want；超 bandMax 时用 early-stop 的 raw 下界即可
-    const groupInfo = coldFrameworkGeneratedGroupInfo(base.concat([item], tail), want);
-    const selectedCount = Number(groupInfo.selectedCount || 0);
-    const earlyStopped = groupInfo.earlyStopped === true;
-    const rawGeneratedGroupCount = earlyStopped
-      ? Math.max(Number(groupInfo.rawCount || 0), want + 1)
-      : Number(groupInfo.rawCount || 0);
-    let cutoffCode = String(groupInfo.cutoffCode || "");
-    let trimmedGroupCount = Math.max(0, rawGeneratedGroupCount - selectedCount);
-    let distance = 0;
-    if (rawGeneratedGroupCount > bandMax) {
-      distance = rawGeneratedGroupCount - want;
-    } else if (rawGeneratedGroupCount < bandMin) {
-      distance = (bandMin - rawGeneratedGroupCount) + 10000;
-    } else {
-      distance = Math.abs(rawGeneratedGroupCount - want);
-    }
-    return {
-      key: item.key,
-      name: item.name,
-      code: item.code,
-      rawGeneratedGroupCount,
-      generatedGroupCount: selectedCount,
-      trimmedGroupCount,
-      cutoffCode,
-      trimStrategy: "ascending-first-n",
-      distance,
-      inBand: rawGeneratedGroupCount >= bandMin && rawGeneratedGroupCount <= bandMax,
-      stableScore: Number(item.stableScore || item.rate || 0)
-    };
-  }).sort((a, b) => {
-    if (a.distance !== b.distance) return a.distance - b.distance;
-    if (!!b.inBand !== !!a.inBand) return (b.inBand ? 1 : 0) - (a.inBand ? 1 : 0);
-    if (b.stableScore !== a.stableScore) return b.stableScore - a.stableScore;
-    return String(a.key || "").localeCompare(String(b.key || ""));
-  });
-  const best = compared[0];
-  const source = candidates.filter((item) => item && item.key === best.key)[0] || candidates[0];
-  const reason = best.trimmedGroupCount > 0
-    ? `旧码择优，目标带${bandMin}-${bandMax}（本期目标${want}），攻击语完整展开${best.rawGeneratedGroupCount}组；${best.generatedGroupCount}组及截止${best.cutoffCode}仅作选型参考，不裁TXT`
-    : `旧码择优，目标带${bandMin}-${bandMax}（本期目标${want}），当前${best.generatedGroupCount}组`;
-  return Object.assign({}, source, {
-    targetGroupCount: want,
-    targetBandMin: bandMin,
-    targetBandMax: bandMax,
-    rawGeneratedGroupCount: best.rawGeneratedGroupCount,
-    generatedGroupCount: best.generatedGroupCount,
-    trimmedGroupCount: best.trimmedGroupCount,
-    generatedCodeCutoff: best.cutoffCode,
-    trimStrategy: best.trimStrategy,
-    groupCountDistance: best.distance,
-    choiceReason: reason,
-    choiceCompared: compared
-  });
-}
 
-function buildDingKillSnapshot(prediction, history) {
-  return frameworkItems.buildDingKillSnapshot(prediction, history);
-}
 
-function ensurePredictionDingKillSnapshot(prediction, history) {
-  return frameworkItems.ensurePredictionDingKillSnapshot(prediction, history);
-}
 
-function evaluateDingKillSnapshot(prediction, actualRecord) {
-  const snapshot = prediction && prediction.dingKill && Array.isArray(prediction.dingKill.items)
-    ? prediction.dingKill
-    : (prediction && Array.isArray(prediction.dingKillItems) ? { version: "legacy-dingKillItems", items: prediction.dingKillItems, repairReport: prediction.dingKillRepairReport || [] } : null);
-  const truthEligible = dingKillSnapshotIsComplete(snapshot) && snapshotSealIsValid(snapshot, prediction) && snapshotSealPredatesTarget(snapshot, actualRecord);
-  if (!truthEligible) {
-    return { ok: false, success: null, passed: 0, total: 0, items: [], reason: "unsealed-or-incomplete-ding-kill-snapshot", truthEligible: false };
-  }
-  const items = snapshot.items.map((item) => {
-    const success = autoTop6RecordSuccess(item, actualRecord);
-    return {
-      rank: item.rank,
-      kind: item.kind,
-      key: item.key,
-      side: item.side || "recommend",
-      name: item.name,
-      code: item.code,
-      shapeKey: item.shapeKey || "",
-      success,
-      actualNumbers: actualRecord && Array.isArray(actualRecord.numbers) ? actualRecord.numbers.slice(0, 5).map(String) : [],
-      actualFirstFourDigits: firstFourNumbers(actualRecord),
-      actualCompositeHeweiGroup: getCompositeHeweiGroup(actualRecord),
-      actualFirstFourSum: String(firstFourSum(actualRecord))
-    };
-  });
-  const valid = items.filter((item) => typeof item.success === "boolean");
-  const passed = valid.filter((item) => item.success).length;
-  return {
-    ok: valid.length === items.length && items.length > 0,
-    version: snapshot.version || DING_KILL_SNAPSHOT_VERSION,
-    basePeriod: prediction && prediction.basePeriod || "",
-    success: valid.length === items.length && items.length > 0 ? passed === items.length : null,
-    truthEligible: true,
-    sealedAt: snapshot.sealedAt,
-    sealedBaseUid: snapshot.sealedBaseUid,
-    sealHash: snapshot.sealHash,
-    passed,
-    total: items.length,
-    items
-  };
-}
 
 function evaluateAutoTop6Snapshot(prediction, actualRecord) {
   const snapshot = prediction && prediction.autoTop6 && Array.isArray(prediction.autoTop6.items)
@@ -9060,17 +11132,8 @@ function evaluateCompactAttackSnapshot(prediction, actualRecord) {
   if (!truthEligible) {
     return { ok: false, success: null, passed: 0, total: 0, items: [], reason: "unsealed-or-incomplete-compact-attack-snapshot", truthEligible: false };
   }
-  // 三定框架二数合：优先用快照封存的千百十作用位，缺省再从定位项重算。
-  let heweiScopeIndexes = heweiScopeIndexesFromItems(snapshot.items);
-  if (Array.isArray(snapshot.heweiScopeIndexes) && snapshot.heweiScopeIndexes.length >= 2) {
-    heweiScopeIndexes = snapshot.heweiScopeIndexes.map(Number).filter((value) => Number.isInteger(value) && value >= 0 && value <= 3);
-  }
-  if (heweiScopeIndexes.length < 2) heweiScopeIndexes = [0, 1, 2];
   const items = snapshot.items.map((item) => {
-    const evaluateItem = (item && (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") && heweiScopeIndexes.length >= 2)
-      ? Object.assign({}, item, { heweiScopeIndexes })
-      : item;
-    const success = autoTop6RecordSuccess(evaluateItem, actualRecord);
+    const success = autoTop6RecordSuccess(item, actualRecord);
     return {
       rank: item.rank,
       kind: item.kind,
@@ -9079,9 +11142,6 @@ function evaluateCompactAttackSnapshot(prediction, actualRecord) {
       name: item.name,
       code: item.code,
       shapeKey: item.shapeKey || "",
-      heweiScopeIndexes: (item && (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") && heweiScopeIndexes.length >= 2)
-        ? heweiScopeIndexes.slice()
-        : undefined,
       success,
       actualNumbers: actualRecord && Array.isArray(actualRecord.numbers) ? actualRecord.numbers.slice(0, 5).map(String) : [],
       actualFirstFourDigits: firstFourNumbers(actualRecord),
@@ -9100,7 +11160,6 @@ function evaluateCompactAttackSnapshot(prediction, actualRecord) {
     sealedAt: snapshot.sealedAt,
     sealedBaseUid: snapshot.sealedBaseUid,
     sealHash: snapshot.sealHash,
-    heweiScopeIndexes: heweiScopeIndexes.length >= 2 ? heweiScopeIndexes.slice() : undefined,
     passed,
     total: items.length,
     items
@@ -9127,7 +11186,11 @@ function evaluateScopedThreeDingSnapshot(prediction, actualRecord, storeName, is
     if (item && (item.key === "anyTwoHeweiHit" || item.key === "anyThreeHeweiHit") && heweiScopeIndexes.length >= 2) {
       evaluateItem = Object.assign({}, item, { heweiScopeIndexes });
     } else if (item && item.kind === "derivedReverseShape") {
-      evaluateItem = Object.assign({}, item, { shapeScopeLength: 3 });
+      const patch = { shapeScopeLength: 3 };
+      if (Array.isArray(item.shapeScopeIndexes) && item.shapeScopeIndexes.length === 3) {
+        patch.shapeScopeIndexes = item.shapeScopeIndexes.slice();
+      }
+      evaluateItem = Object.assign({}, item, patch);
     }
     const success = autoTop6RecordSuccess(evaluateItem, actualRecord);
     return {
@@ -9171,128 +11234,10 @@ function evaluateThreeDingTwoSnapshot(prediction, actualRecord) {
 }
 
 function evaluateThreeDingOneSnapshot(prediction, actualRecord) {
-  return evaluateScopedThreeDingSnapshot(prediction, actualRecord, "threeDingOne", threeDingOneSnapshotIsComplete, THREE_DING_ONE_SNAPSHOT_VERSION, [0, 1, 2]);
+  return evaluateScopedThreeDingSnapshot(prediction, actualRecord, "threeDingOne", threeDingOneSnapshotIsComplete, THREE_DING_ONE_SNAPSHOT_VERSION, THREE_DING_ONE_SCOPE_INDEXES);
 }
 
-function evaluateColdFrameworkSnapshot(prediction, actualRecord) {
-  const snapshot = prediction && prediction.coldFramework && Array.isArray(prediction.coldFramework.items)
-    ? prediction.coldFramework
-    : (prediction && Array.isArray(prediction.coldFrameworkItems) ? { version: "legacy-coldFrameworkItems", items: prediction.coldFrameworkItems, repairReport: prediction.coldFrameworkRepairReport || [] } : null);
-  const truthEligible = coldFrameworkSnapshotIsComplete(snapshot) && snapshotSealIsValid(snapshot, prediction) && snapshotSealPredatesTarget(snapshot, actualRecord);
-  if (!truthEligible) {
-    return { ok: false, success: null, passed: 0, total: 0, items: [], reason: "unsealed-or-incomplete-cold-framework-snapshot", truthEligible: false };
-  }
-  const items = snapshot.items.map((item) => {
-    const success = autoTop6RecordSuccess(item, actualRecord);
-    return {
-      rank: item.rank,
-      kind: item.kind,
-      key: item.key,
-      side: item.side || "recommend",
-      name: item.name,
-      code: item.code,
-      shapeKey: item.shapeKey || "",
-      success,
-      actualNumbers: actualRecord && Array.isArray(actualRecord.numbers) ? actualRecord.numbers.slice(0, 5).map(String) : [],
-      actualFirstFourDigits: firstFourNumbers(actualRecord),
-      actualCompositeHeweiGroup: getCompositeHeweiGroup(actualRecord),
-      actualFirstFourSum: String(firstFourSum(actualRecord))
-    };
-  });
-  const valid = items.filter((item) => typeof item.success === "boolean");
-  const passed = valid.filter((item) => item.success).length;
-  const allFiltersPassed = valid.length === items.length && items.length > 0 && passed === items.length;
-  const txtSelection = snapshot.txtSelection || {};
-  const actualCode = firstFourCode(actualRecord);
-  const rawCount = Number(txtSelection.rawCount || 0);
-  const selectedCount = Number(txtSelection.selectedCount || 0);
-  const cutoffCode = String(txtSelection.cutoffCode || "");
-  const selectionValid = txtSelection.strategy === "ascending-first-n" && rawCount >= selectedCount && selectedCount > 0 && (rawCount === selectedCount || /^\d{4}$/.test(cutoffCode));
-  const txtIncluded = allFiltersPassed && /^\d{4}$/.test(actualCode);
-  return {
-    ok: valid.length === items.length && items.length > 0,
-    version: snapshot.version || "backend-cold-framework-snapshot",
-    basePeriod: prediction && prediction.basePeriod || "",
-    success: valid.length === items.length && items.length > 0 && selectionValid ? allFiltersPassed : null,
-    truthEligible: true,
-    sealedAt: snapshot.sealedAt,
-    sealedBaseUid: snapshot.sealedBaseUid,
-    sealHash: snapshot.sealHash,
-    rawFiltersPassed: allFiltersPassed,
-    txtIncluded,
-    txtSelection: {
-      strategy: txtSelection.strategy,
-      rawCount,
-      selectedCount,
-      cutoffCode,
-      outputStrategy: "full-rule-expansion",
-      outputCount: rawCount
-    },
-    passed,
-    total: items.length,
-    items
-  };
-}
 
-function evaluatePick5000Snapshot(prediction, actualRecord) {
-  const snapshot = prediction && prediction.pick5000 && Array.isArray(prediction.pick5000.items)
-    ? prediction.pick5000
-    : (prediction && Array.isArray(prediction.pick5000Items) ? { version: "legacy-pick5000Items", items: prediction.pick5000Items, repairReport: prediction.pick5000RepairReport || [] } : null);
-  const truthEligible = pick5000SnapshotIsComplete(snapshot) && snapshotSealIsValid(snapshot, prediction) && snapshotSealPredatesTarget(snapshot, actualRecord);
-  if (!truthEligible) {
-    return { ok: false, success: null, passed: 0, total: 0, items: [], reason: "unsealed-or-incomplete-pick5000-snapshot", truthEligible: false };
-  }
-  const items = snapshot.items.map((item) => {
-    const success = autoTop6RecordSuccess(item, actualRecord);
-    return {
-      rank: item.rank,
-      kind: item.kind,
-      key: item.key,
-      side: item.side || "recommend",
-      name: item.name,
-      code: item.code,
-      shapeKey: item.shapeKey || "",
-      success,
-      actualNumbers: actualRecord && Array.isArray(actualRecord.numbers) ? actualRecord.numbers.slice(0, 5).map(String) : [],
-      actualFirstFourDigits: firstFourNumbers(actualRecord),
-      actualCompositeHeweiGroup: getCompositeHeweiGroup(actualRecord),
-      actualFirstFourSum: String(firstFourSum(actualRecord))
-    };
-  });
-  const valid = items.filter((item) => typeof item.success === "boolean");
-  const passed = valid.filter((item) => item.success).length;
-  const allFiltersPassed = valid.length === items.length && items.length > 0 && passed === items.length;
-  const txtSelection = snapshot.txtSelection || {};
-  const actualCode = firstFourCode(actualRecord);
-  const rawCount = Number(txtSelection.rawCount || 0);
-  const selectedCount = Number(txtSelection.selectedCount || 0);
-  const cutoffCode = String(txtSelection.cutoffCode || "");
-  const selectionValid = txtSelection.strategy === "ascending-first-n" && rawCount >= selectedCount && selectedCount > 0 && (rawCount === selectedCount || /^\d{4}$/.test(cutoffCode));
-  const txtIncluded = allFiltersPassed && /^\d{4}$/.test(actualCode);
-  return {
-    ok: valid.length === items.length && items.length > 0,
-    version: snapshot.version || "backend-pick5000-snapshot",
-    basePeriod: prediction && prediction.basePeriod || "",
-    success: valid.length === items.length && items.length > 0 && selectionValid ? allFiltersPassed : null,
-    truthEligible: true,
-    sealedAt: snapshot.sealedAt,
-    sealedBaseUid: snapshot.sealedBaseUid,
-    sealHash: snapshot.sealHash,
-    rawFiltersPassed: allFiltersPassed,
-    txtIncluded,
-    txtSelection: {
-      strategy: txtSelection.strategy,
-      rawCount,
-      selectedCount,
-      cutoffCode,
-      outputStrategy: "full-rule-expansion",
-      outputCount: rawCount
-    },
-    passed,
-    total: items.length,
-    items
-  };
-}
 
 function getStableMathExcludeDigitSet() {
   const slim = (typeof state !== "undefined" && state && state.stableMathFilter)
@@ -9347,69 +11292,642 @@ function applyHeweiConfidenceFields(selected, picked, options) {
 }
 
 function reconcileHeweiKillBundle(bundle) {
-  const formula = require("./algorithms/hewei/formula");
-  formula.bindRuntime({
-    getStable120Locks() {
+  const total = bundle && bundle.totalHeweiKill;
+  const unified = bundle && bundle.threeFourKill;
+  const independent = bundle && bundle.independentHeweiKills;
+  const notes = [];
+  if (!total || !independent || typeof independent !== "object") {
+    return { notes };
+  }
+
+  const wqbs = independent.wanQianBaiShi;
+  const totalDigit = heweiPrimaryDigit(total, "killHewei");
+  if (wqbs && /^\d$/.test(totalDigit) && heweiPrimaryDigit(wqbs, "killDigit") !== totalDigit) {
+    wqbs.killDigit = totalDigit;
+    wqbs.primaryDigit = total.primaryDigit || totalDigit;
+    wqbs.backupDigit = total.backupDigit || wqbs.backupDigit;
+    wqbs.reason = `aligned-with-total-hewei:${String(total.reason || "sync")}`;
+    notes.push(`wanQianBaiShi->${totalDigit}`);
+    if (typeof state !== "undefined" && state) {
       if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
-      return state.stable120Locks;
+      const totalLock = state.stable120Locks["v43:hewei:total"];
+      if (totalLock) state.stable120Locks["v43:hewei:wanQianBaiShi"] = Object.assign({}, totalLock);
+    }
+  }
+
+  const used = new Set();
+  const slots = [
+    {
+      name: "total",
+      result: total,
+      preferField: "killHewei",
+      backupField: "backupDigit",
+      getDigit: () => heweiPrimaryDigit(total, "killHewei"),
+      setDigit: (digit, backup) => {
+        total.killHewei = digit;
+        total.primaryDigit = digit;
+        if (backup) total.backupDigit = backup;
+      }
     },
-    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
-    getStableMathFilter() { return state && state.stableMathFilter || null; },
-    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
+    {
+      name: "unified",
+      result: unified,
+      preferField: "killDigit",
+      backupField: "backupDigit",
+      getDigit: () => heweiPrimaryDigit(unified, "killDigit"),
+      setDigit: (digit, backup) => {
+        if (!unified) return;
+        unified.killDigit = digit;
+        unified.primaryDigit = digit;
+        if (backup) unified.backupDigit = backup;
+      }
+    },
+    {
+      name: "wanQianBai",
+      result: independent.wanQianBai,
+      preferField: "killDigit",
+      backupField: "backupDigit",
+      getDigit: () => heweiPrimaryDigit(independent.wanQianBai, "killDigit"),
+      setDigit: (digit, backup) => {
+        independent.wanQianBai.killDigit = digit;
+        independent.wanQianBai.primaryDigit = digit;
+        if (backup) independent.wanQianBai.backupDigit = backup;
+      }
+    },
+    {
+      name: "qianBaiShi",
+      result: independent.qianBaiShi,
+      preferField: "killDigit",
+      backupField: "backupDigit",
+      getDigit: () => heweiPrimaryDigit(independent.qianBaiShi, "killDigit"),
+      setDigit: (digit, backup) => {
+        independent.qianBaiShi.killDigit = digit;
+        independent.qianBaiShi.primaryDigit = digit;
+        if (backup) independent.qianBaiShi.backupDigit = backup;
+      }
+    }
+  ];
+
+  slots.forEach((slot) => {
+    if (!slot.result) return;
+    let digit = slot.getDigit();
+    if (!/^\d$/.test(digit)) return;
+    if (!used.has(digit)) {
+      used.add(digit);
+      return;
+    }
+    const alt = pickAlternateHeweiDigit(slot.result, used, slot.preferField);
+    if (alt && alt !== digit) {
+      slot.setDigit(alt, slot.result[slot.backupField]);
+      slot.result.reason = `dedup-shift:${digit}->${alt}`;
+      notes.push(`${slot.name}:${digit}->${alt}`);
+      digit = alt;
+    }
+    used.add(digit);
   });
-  return formula.reconcileHeweiKillBundle(bundle);
+
+  return { notes };
 }
 
 function calculateTotalHeweiKill(history, performance) {
-  const formula = require("./algorithms/hewei/formula");
-  formula.bindRuntime({
-    getStable120Locks() {
-      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
-      return state.stable120Locks;
-    },
-    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
-    getStableMathFilter() { return state && state.stableMathFilter || null; },
-    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
+  const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers) && record.numbers.length >= 4) : [];
+  function actual(record) {
+    return String(calculateMetrics(record.numbers).totalHewei);
+  }
+  const candidates = buildStableHeweiCandidates(safeHistory, actual, {
+    floor: HEWEI_BLOCK_FLOOR,
+    guardRate: HEWEI_GUARD_RATE,
+    missPenalty: 2.5,
+    getterId: "hewei:total"
   });
-  return formula.calculateTotalHeweiKill(history, performance);
+  const picked = selectStableHeweiCandidate(candidates, "v43:hewei:total", performance, "hewei.total", {
+    floor: HEWEI_BLOCK_FLOOR,
+    guardRate: HEWEI_GUARD_RATE,
+    lowerFloor: 72,
+    performanceFloor: 78
+  });
+  const selected = picked.selected;
+  const backup = picked.backup;
+  const confidenceMeta = applyHeweiConfidenceFields(selected, picked, {
+    guardRate: HEWEI_GUARD_RATE
+  });
+  return {
+    killHewei: selected.digit,
+    primaryDigit: selected.digit,
+    backupDigit: backup.digit,
+    algorithm: "v43-total-hewei-stability-blocks",
+    performance: modelPerformanceSummary(performance, "hewei.total"),
+    detail: stableHeweiDetail(candidates),
+    stage: selected.stage,
+    stability: stableHeweiStability(selected, { floor: HEWEI_BLOCK_FLOOR, guardRate: HEWEI_GUARD_RATE }),
+    confidence: confidenceMeta.confidence,
+    recommendable: confidenceMeta.recommendable,
+    reason: confidenceMeta.reason
+  };
 }
 function calculateThreeFourHeweiKillDigit(history, performance) {
-  const formula = require("./algorithms/hewei/formula");
-  formula.bindRuntime({
-    getStable120Locks() {
-      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
-      return state.stable120Locks;
-    },
-    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
-    getStableMathFilter() { return state && state.stableMathFilter || null; },
-    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
+  const safeHistory = Array.isArray(history) ? history.filter(Boolean) : [];
+  function group(record) { const g = getCompositeHeweiGroup(record); return Array.isArray(g) ? g.map(String) : []; }
+  const candidates = buildStableHeweiCandidates(safeHistory, group, {
+    floor: HEWEI_UNIFIED_BLOCK_FLOOR,
+    guardRate: HEWEI_UNIFIED_GUARD_RATE,
+    missPenalty: 2.5,
+    getterId: "hewei:unified"
   });
-  return formula.calculateThreeFourHeweiKillDigit(history, performance);
+  const picked = selectStableHeweiCandidate(candidates, "v43:hewei:unified", performance, "hewei.unified", {
+    floor: HEWEI_UNIFIED_BLOCK_FLOOR,
+    guardRate: HEWEI_UNIFIED_GUARD_RATE,
+    lowerFloor: 56,
+    performanceFloor: 65
+  });
+  const selected = picked.selected;
+  const backup = picked.backup;
+  const confidenceMeta = applyHeweiConfidenceFields(selected, picked, {
+    guardRate: HEWEI_UNIFIED_GUARD_RATE
+  });
+  const reason = !confidenceMeta.recommendable && picked.reason === "best-stability-window"
+    ? "low-confidence-unified-hewei"
+    : confidenceMeta.reason;
+  return {
+    killDigit: selected.digit,
+    primaryDigit: selected.digit,
+    backupDigit: backup.digit,
+    algorithm: "v43-unified-hewei-stability-blocks",
+    performance: modelPerformanceSummary(performance, "hewei.unified"),
+    detail: stableHeweiDetail(candidates),
+    currentCompositeHeweiGroup: safeHistory[0] ? group(safeHistory[0]) : [],
+    confidence: confidenceMeta.confidence,
+    recommendable: confidenceMeta.recommendable,
+    stage: selected.stage,
+    stability: stableHeweiStability(selected, { floor: HEWEI_UNIFIED_BLOCK_FLOOR, guardRate: HEWEI_UNIFIED_GUARD_RATE }),
+    reason
+  };
 }
 function calculateIndependentHeweiKills(history, performance) {
-  const formula = require("./algorithms/hewei/formula");
-  formula.bindRuntime({
-    getStable120Locks() {
-      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
-      return state.stable120Locks;
-    },
-    setStable120Locks(value) { state.stable120Locks = value && typeof value === "object" ? value : {}; },
-    getStableMathFilter() { return state && state.stableMathFilter || null; },
-    readCachedStableMathFilter() { return stableMathFilterBridge.readCachedFilter(); }
-  });
-  return formula.calculateIndependentHeweiKills(history, performance);
+  const safeHistory = Array.isArray(history) ? history.filter(Boolean) : [];
+  function group(record) { const g = getCompositeHeweiGroup(record); return Array.isArray(g) ? g.map(String) : []; }
+  function calculateOne(index, label, key) {
+    const actual = (record) => {
+      const g = group(record);
+      return !g.length || g[index] === undefined ? "" : String(g[index]);
+    };
+    const candidates = buildStableHeweiCandidates(safeHistory, actual, {
+      floor: HEWEI_BLOCK_FLOOR,
+      guardRate: HEWEI_GUARD_RATE,
+      missPenalty: 2.5,
+      getterId: `hewei:${key}`
+    });
+    const picked = selectStableHeweiCandidate(candidates, `v43:hewei:${key}`, performance, `hewei.${key}`, {
+      floor: HEWEI_BLOCK_FLOOR,
+      guardRate: HEWEI_GUARD_RATE,
+      lowerFloor: 72,
+      performanceFloor: 78
+    });
+    const selected = picked.selected;
+    const backup = picked.backup;
+    const confidenceMeta = applyHeweiConfidenceFields(selected, picked, {
+      guardRate: HEWEI_GUARD_RATE
+    });
+    return {
+      label,
+      key,
+      killDigit: selected.digit,
+      primaryDigit: selected.digit,
+      backupDigit: backup.digit,
+      algorithm: `v43-independent-hewei-${key}-stability-blocks`,
+      performance: modelPerformanceSummary(performance, `hewei.${key}`),
+      detail: stableHeweiDetail(candidates),
+      stage: selected.stage,
+      stability: stableHeweiStability(selected, { floor: HEWEI_BLOCK_FLOOR, guardRate: HEWEI_GUARD_RATE }),
+      confidence: confidenceMeta.confidence,
+      recommendable: confidenceMeta.recommendable,
+      reason: confidenceMeta.reason
+    };
+  }
+  return {
+    wanQianBai: calculateOne(0, "千百十合尾", "wanQianBai"),
+    qianBaiShi: calculateOne(1, "百十个合尾", "qianBaiShi"),
+    wanQianBaiShi: calculateOne(2, "千百十个合尾", "wanQianBaiShi"),
+    wanQianGe: (function () {
+      try {
+        const mod = require("./algorithms/hewei-qian-bai-ge-stable/formula");
+        if (typeof mod.bindRuntime === "function") {
+          mod.bindRuntime({
+            getStable120Locks: () => (state && state.stable120Locks) || {},
+            setStable120Locks: (value) => {
+              if (state) state.stable120Locks = value && typeof value === "object" ? value : {};
+            },
+            getStableMathFilter: () => (state && state.stableMathFilter) || null,
+            readCachedStableMathFilter: () => {
+              try {
+                return stableMathFilterBridge && typeof stableMathFilterBridge.readCachedFilter === "function"
+                  ? stableMathFilterBridge.readCachedFilter()
+                  : null;
+              } catch (_) {
+                return null;
+              }
+            }
+          });
+        }
+        return mod.calculate(safeHistory.slice(0, 300), performance);
+      } catch (err) {
+        return { label: "千百个合尾(稳定)", key: "wanQianGe", killDigit: "--", reason: String(err && err.message || err) };
+      }
+    })(),
+    wanQianGeFreq: (function () {
+      try {
+        return require("./algorithms/hewei-qian-bai-ge-freq/formula").calculate(safeHistory.slice(0, 300), performance);
+      } catch (err) {
+        return { label: "千百个合尾(频次)", key: "wanQianGeFreq", killDigit: "--", reason: String(err && err.message || err) };
+      }
+    })(),
+    wanBaiShi: (function () {
+      try {
+        const mod = require("./algorithms/hewei-qian-shi-ge-stable/formula");
+        if (typeof mod.bindRuntime === "function") {
+          mod.bindRuntime({
+            getStable120Locks: () => (state && state.stable120Locks) || {},
+            setStable120Locks: (value) => {
+              if (state) state.stable120Locks = value && typeof value === "object" ? value : {};
+            },
+            getStableMathFilter: () => (state && state.stableMathFilter) || null,
+            readCachedStableMathFilter: () => {
+              try {
+                return stableMathFilterBridge && typeof stableMathFilterBridge.readCachedFilter === "function"
+                  ? stableMathFilterBridge.readCachedFilter()
+                  : null;
+              } catch (_) {
+                return null;
+              }
+            }
+          });
+        }
+        return mod.calculate(safeHistory.slice(0, 300), performance);
+      } catch (err) {
+        return { label: "千十个合尾(稳定)", key: "wanBaiShi", killDigit: "--", reason: String(err && err.message || err) };
+      }
+    })(),
+    wanBaiShiFreq: (function () {
+      try {
+        return require("./algorithms/hewei-qian-shi-ge-freq/formula").calculate(safeHistory.slice(0, 300), performance);
+      } catch (err) {
+        return { label: "千十个合尾(频次)", key: "wanBaiShiFreq", killDigit: "--", reason: String(err && err.message || err) };
+      }
+    })()
+  };
 }
 function calculatePositionKill(history, position, performance) {
-  const formula = require("./algorithms/position-kills/formula");
-  return formula.calculatePositionKill(history, position, performance, {
-    getStable120Locks() {
-      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
-      return state.stable120Locks;
-    },
-    setStable120Locks(value) {
-      state.stable120Locks = value && typeof value === "object" ? value : {};
+  const safeHistory = Array.isArray(history)
+    ? history
+      .filter((record) => record && Array.isArray(record.numbers))
+      .slice()
+      .sort((a, b) => {
+        const aKey = String(a && (a.period || a.uid) || "");
+        const bKey = String(b && (b.period || b.uid) || "");
+        return bKey.localeCompare(aKey);
+      })
+    : [];
+  const index = Number(position && position.index);
+  const posKey = String(position && position.key || "pos");
+  const posLabel = String(position && position.label || posKey);
+
+  function actualDigit(record) {
+    const nums = record && Array.isArray(record.numbers) ? record.numbers : [];
+    return nums[index] === undefined || nums[index] === null ? "" : String(nums[index]);
+  }
+
+  function pairRateMultiWindow(pair, records, limits) {
+    const lims = [...new Set((Array.isArray(limits) ? limits : [limits]).map((limit) => Math.max(1, Number(limit || 120))))];
+    const maxLimit = Math.max(...lims);
+    const sliced = (records || []).slice(0, maxLimit);
+    const results = {};
+    lims.forEach((limit) => {
+      results[limit] = { total: 0, hit: 0, rate: 0, missStreak: 0, maxMissStreak: 0, _currentRun: 0, _leading: true };
+    });
+    for (let i = 0; i < sliced.length; i += 1) {
+      const actual = actualDigit(sliced[i]);
+      if (!actual) continue;
+      const ok = pair.indexOf(actual) < 0;
+      lims.forEach((limit) => {
+        if (i >= limit) return;
+        const result = results[limit];
+        result.total += 1;
+        if (ok) {
+          result.hit += 1;
+          result._currentRun = 0;
+          result._leading = false;
+        } else {
+          result._currentRun += 1;
+          if (result._currentRun > result.maxMissStreak) result.maxMissStreak = result._currentRun;
+          if (result._leading) result.missStreak += 1;
+        }
+      });
     }
+    lims.forEach((limit) => {
+      const result = results[limit];
+      result.rate = result.total ? result.hit * 100 / result.total : 0;
+      delete result._currentRun;
+      delete result._leading;
+    });
+    return results;
+  }
+
+  function pairRate(pair, records, limit) {
+    const key = Math.max(1, Number(limit || 120));
+    const results = pairRateMultiWindow(pair, records, [key]);
+    return results[key] || { total: 0, hit: 0, rate: 0, missStreak: 0, maxMissStreak: 0 };
+  }
+
+  function pairBlockStats(pair) {
+    const rows = safeHistory.slice(0, POSITION_BLOCK_WINDOW);
+    const blocks = [];
+    for (let start = 0; start < rows.length; start += POSITION_BLOCK_SIZE) {
+      const blockRows = rows.slice(start, start + POSITION_BLOCK_SIZE);
+      if (!blockRows.length) continue;
+      const result = pairRate(pair, blockRows, blockRows.length);
+      if (result.total > 0) {
+        blocks.push({
+          index: blocks.length + 1,
+          total: result.total,
+          hit: result.hit,
+          fail: result.total - result.hit,
+          rate: Number(result.rate.toFixed(2))
+        });
+      }
+    }
+    if (!blocks.length) {
+      return {
+        window: POSITION_BLOCK_WINDOW,
+        blockSize: POSITION_BLOCK_SIZE,
+        blockCount: 0,
+        minRate: null,
+        avgRate: null,
+        maxRate: null,
+        variance: null,
+        weakBlocks: 0,
+        floor: POSITION_BLOCK_FLOOR,
+        blocks: []
+      };
+    }
+    const rates = blocks.map((block) => Number(block.rate || 0));
+    const avg = rates.reduce((sum, n) => sum + n, 0) / rates.length;
+    return {
+      window: POSITION_BLOCK_WINDOW,
+      blockSize: POSITION_BLOCK_SIZE,
+      blockCount: blocks.length,
+      minRate: Math.min(...rates),
+      avgRate: Number(avg.toFixed(2)),
+      maxRate: Math.max(...rates),
+      variance: Number(rateVariance(rates).toFixed(2)),
+      weakBlocks: blocks.filter((block) => Number(block.rate || 0) < POSITION_BLOCK_FLOOR).length,
+      floor: POSITION_BLOCK_FLOOR,
+      blocks
+    };
+  }
+
+  function scorePositionPair(pair, rLong, r300, r120, r60, r30) {
+    const weighted = stableWindowScore(r30, r60, r120, r300, rLong, 3.5);
+    const block = pairBlockStats(pair);
+    const lower120 = wilsonLowerRate(r120.hit, r120.total);
+    const lower300 = wilsonLowerRate(r300.hit, r300.total);
+    const recentPenalty = Number((r30 && r30.missStreak) || 0) * 1.8;
+    const weakPenalty = Number(block.weakBlocks || 0) * 2.4;
+    const variancePenalty = Number(block.variance || 0) * 0.08;
+    const score = (
+      weighted.score * 0.54 +
+      lower120 * 0.14 +
+      lower300 * 0.10 +
+      Number(block.minRate || 0) * 0.12 +
+      Number(block.avgRate || 0) * 0.08 -
+      recentPenalty -
+      weakPenalty -
+      variancePenalty
+    );
+    return {
+      score: Number(score.toFixed(4)),
+      stage: weighted.stage,
+      block,
+      lower120: Number(lower120.toFixed(2)),
+      lower300: Number(lower300.toFixed(2)),
+      repairFlags: {
+        recentMiss: Number((r30 && r30.missStreak) || 0),
+        weakBlocks: Number(block.weakBlocks || 0),
+        blockMinRate: Number(block.minRate || 0),
+        lower120: Number(lower120.toFixed(2))
+      }
+    };
+  }
+
+  function uniquePair(a, b) {
+    const out = [];
+    [a, b].forEach((digit) => {
+      digit = String(digit);
+      if (digit !== "" && digit !== "--" && out.indexOf(digit) < 0) out.push(digit);
+    });
+    DIGIT_POOL.forEach((digit) => { if (out.indexOf(digit) < 0) out.push(digit); });
+    return out.slice(0, 2);
+  }
+
+  const candidates = [];
+  const positionRateWindows = [MODEL_LONG_WINDOW, MODEL_STABLE_WINDOW, 120, 60, 30];
+  for (let i = 0; i < DIGIT_POOL.length; i += 1) {
+    for (let j = i + 1; j < DIGIT_POOL.length; j += 1) {
+      const pair = uniquePair(DIGIT_POOL[i], DIGIT_POOL[j]);
+      const rateWindows = pairRateMultiWindow(pair, safeHistory, positionRateWindows);
+      const rLong = rateWindows[MODEL_LONG_WINDOW];
+      const r300 = rateWindows[MODEL_STABLE_WINDOW];
+      const r120 = rateWindows[120];
+      const r30 = rateWindows[30];
+      const r60 = rateWindows[60];
+      const weighted = scorePositionPair(pair, rLong, r300, r120, r60, r30);
+      candidates.push({ pair, rLong, r300, r120, r60, r30, score: weighted.score, stage: weighted.stage, block: weighted.block, lower120: weighted.lower120, lower300: weighted.lower300, repairFlags: weighted.repairFlags });
+    }
+  }
+  candidates.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (b.lower120 !== a.lower120) return b.lower120 - a.lower120;
+    if ((b.block && b.block.minRate || 0) !== (a.block && a.block.minRate || 0)) return (b.block && b.block.minRate || 0) - (a.block && a.block.minRate || 0);
+    if (b.r300.rate !== a.r300.rate) return b.r300.rate - a.r300.rate;
+    if (b.rLong.rate !== a.rLong.rate) return b.rLong.rate - a.rLong.rate;
+    if (b.r120.rate !== a.r120.rate) return b.r120.rate - a.r120.rate;
+    if (b.r60.rate !== a.r60.rate) return b.r60.rate - a.r60.rate;
+    return a.pair.join("").localeCompare(b.pair.join(""));
   });
+
+  const emptyBlock = {
+    window: POSITION_BLOCK_WINDOW,
+    blockSize: POSITION_BLOCK_SIZE,
+    blockCount: 0,
+    minRate: null,
+    avgRate: null,
+    maxRate: null,
+    variance: null,
+    weakBlocks: 0,
+    floor: POSITION_BLOCK_FLOOR,
+    blocks: []
+  };
+  const best = candidates[0] || {
+    pair: ["--", "--"],
+    rLong: { total: 0, hit: 0, rate: null, missStreak: 0 },
+    r300: { total: 0, hit: 0, rate: null, missStreak: 0 },
+    r120: { total: 0, hit: 0, rate: null, missStreak: 0 },
+    r60: { total: 0, hit: 0, rate: null, missStreak: 0 },
+    r30: { total: 0, hit: 0, rate: null, missStreak: 0 },
+    score: 0,
+    stage: stableWindowStage(0),
+    block: emptyBlock,
+    lower120: null,
+    lower300: null,
+    repairFlags: {},
+    truthAvailable: false
+  };
+  let selected = best;
+  let reason = "best-stability-window";
+  const perf = getModelStat(performance, `position.${posKey}.dual`);
+  const weak = perf.total >= 8 && Number(perf.rate || 0) < 78;
+
+  if (typeof state !== "undefined" && state) {
+    if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
+  }
+  const locks = (typeof state !== "undefined" && state && state.stable120Locks) ? state.stable120Locks : {};
+  const lockKey = `v42:position:${posKey}`;
+  const lock = locks[lockKey] || {};
+  const oldPair = Array.isArray(lock.pair) ? lock.pair.map(String).slice(0, 2) : [];
+
+  if (oldPair.length === 2) {
+    const oldRateWindows = pairRateMultiWindow(oldPair, safeHistory, positionRateWindows);
+    const old = {
+      pair: oldPair,
+      rLong: oldRateWindows[MODEL_LONG_WINDOW],
+      r300: oldRateWindows[MODEL_STABLE_WINDOW],
+      r120: oldRateWindows[120],
+      r60: oldRateWindows[60],
+      r30: oldRateWindows[30]
+    };
+    const oldWeighted = scorePositionPair(old.pair, old.rLong, old.r300, old.r120, old.r60, old.r30);
+    old.score = oldWeighted.score;
+    old.stage = oldWeighted.stage;
+    old.block = oldWeighted.block;
+    old.lower120 = oldWeighted.lower120;
+    old.lower300 = oldWeighted.lower300;
+    old.repairFlags = oldWeighted.repairFlags;
+    const oldHold = Number(lock.hold || 0);
+    const oldBlock = old.block || emptyBlock;
+    const bestClearlyBetter = best.score > old.score + POSITION_SWITCH_MARGIN;
+    const dualPerf = modelPerformanceSummary(performance, `position.${posKey}.dual`);
+    const dualLow = !!(dualPerf && dualPerf.low);
+    const oldWarning = dualLow ||
+      old.r30.missStreak >= 2 ||
+      old.r30.rate < MODEL_LOW_HIT_RATE ||
+      old.r60.rate < 80 ||
+      old.r120.rate < 78 ||
+      Number(old.lower120 || 0) < 72 ||
+      Number(oldBlock.minRate || 0) < POSITION_BLOCK_FLOOR ||
+      Number(oldBlock.weakBlocks || 0) > 0;
+    // dual 官方绩效已 low：禁止再强留旧锁对（老化及时换码）；仍受 weak/best 比较约束
+    if (!weak && !dualLow && oldHold > 0 && oldHold < POSITION_MIN_HOLD && !oldWarning && best.score <= old.score + POSITION_SWITCH_MARGIN * 1.5) {
+      selected = old;
+      reason = "keep-min-hold-stable-pair";
+    } else if (!weak && !dualLow && !oldWarning && !bestClearlyBetter) {
+      selected = old;
+      reason = "keep-locked-1000-stable";
+    } else if (!weak && !dualLow && old.r120.rate >= best.r120.rate - 2 && old.r30.missStreak < 2 && Number(oldBlock.minRate || 0) >= POSITION_BLOCK_FLOOR && best.score <= old.score + POSITION_SWITCH_MARGIN * 1.25) {
+      selected = old;
+      reason = "keep-close-stable-pair";
+    } else {
+      reason = weak ? "weak-position-switch-1000" : (dualLow ? "aging-dual-low-switch" : "warning-switch-stability-block");
+    }
+  }
+
+  if (selected && selected.r30) {
+    const selectedBlock = selected.block || emptyBlock;
+    const selectedWarning = selected.r30.rate < MODEL_LOW_HIT_RATE ||
+      selected.r60.rate < 80 ||
+      selected.r120.rate < 78 ||
+      selected.r30.missStreak >= 2 ||
+      Number(selected.lower120 || 0) < 72 ||
+      Number(selectedBlock.minRate || 0) < POSITION_BLOCK_FLOOR ||
+      Number(selectedBlock.weakBlocks || 0) > 0;
+    const guarded = candidates
+      .filter((item) => item && item.r30 &&
+        item.r30.rate >= MODEL_LOW_HIT_RATE &&
+        item.r60.rate >= 80 &&
+        item.r120.rate >= 78 &&
+        item.r30.missStreak < 2 &&
+        Number(item.lower120 || 0) >= 72 &&
+        item.block &&
+        Number(item.block.minRate || 0) >= POSITION_BLOCK_FLOOR &&
+        Number(item.block.weakBlocks || 0) === 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (b.lower120 !== a.lower120) return b.lower120 - a.lower120;
+        if ((b.block && b.block.minRate || 0) !== (a.block && a.block.minRate || 0)) return (b.block && b.block.minRate || 0) - (a.block && a.block.minRate || 0);
+        if (b.r300.rate !== a.r300.rate) return b.r300.rate - a.r300.rate;
+        if (b.r120.rate !== a.r120.rate) return b.r120.rate - a.r120.rate;
+        if (b.r60.rate !== a.r60.rate) return b.r60.rate - a.r60.rate;
+        if (b.r30.rate !== a.r30.rate) return b.r30.rate - a.r30.rate;
+        if (b.rLong.rate !== a.rLong.rate) return b.rLong.rate - a.rLong.rate;
+        return a.pair.join("").localeCompare(b.pair.join(""));
+      })[0];
+    if (selectedWarning && guarded && guarded.pair.join("") !== selected.pair.join("")) {
+      selected = guarded;
+      reason = "position-stability-guard";
+    }
+  }
+
+  const selectedValue = selected.pair.join("");
+  const oldValue = oldPair.join("");
+  const latestPeriod = safeHistory[0] ? String(safeHistory[0].period || safeHistory[0].uid || "") : "";
+  const samePeriod = String(lock.period || "") === latestPeriod;
+  const hold = oldValue && oldValue === selectedValue
+    ? (samePeriod ? Math.max(1, Number(lock.hold || 0)) : Number(lock.hold || 0) + 1)
+    : 1;
+  if (locks && lockKey) {
+    locks[lockKey] = {
+      pair: selected.pair.slice(0, 2),
+      hold,
+      period: latestPeriod,
+      score: selected.score,
+      rateLong: Number(selected.rLong.rate.toFixed(2)),
+      rate300: Number(selected.r300.rate.toFixed(2)),
+      rate120: Number(selected.r120.rate.toFixed(2)),
+      rate60: Number(selected.r60.rate.toFixed(2)),
+      rate30: Number(selected.r30.rate.toFixed(2)),
+      lower120: Number((selected.lower120 || 0).toFixed(2)),
+      lower300: Number((selected.lower300 || 0).toFixed(2)),
+      blockMinRate: Number(((selected.block && selected.block.minRate) || 0).toFixed(2)),
+      blockAvgRate: Number(((selected.block && selected.block.avgRate) || 0).toFixed(2)),
+      blockWeakBlocks: Number((selected.block && selected.block.weakBlocks) || 0),
+      blockVariance: Number(((selected.block && selected.block.variance) || 0).toFixed(2)),
+      missStreak30: selected.r30.missStreak,
+      stage: selected.stage,
+      reason,
+      updatedAt: (new Date()).toISOString()
+    };
+  }
+
+  return {
+    label: `${posLabel}位定位双码排除`,
+    key: posKey,
+    mainDigit: selected.pair[0] || "--",
+    backupDigit: selected.pair[1] || "--",
+    primaryDigit: selected.pair[0] || "--",
+    originalBackupDigit: selected.pair[1] || "--",
+    killDigits: selected.pair.filter((digit) => digit !== "--"),
+    algorithm: "v42-position-stability-blocks",
+    performance: modelPerformanceSummary(performance, `position.${posKey}.dual`),
+    detail: candidates.slice(0, 10).map((item) => ({ pair: item.pair, rateLong: Number(item.rLong.rate.toFixed(2)), rate300: Number(item.r300.rate.toFixed(2)), rate120: Number(item.r120.rate.toFixed(2)), rate60: Number(item.r60.rate.toFixed(2)), rate30: Number(item.r30.rate.toFixed(2)), lower120: Number((item.lower120 || 0).toFixed(2)), lower300: Number((item.lower300 || 0).toFixed(2)), blockMinRate: Number(((item.block && item.block.minRate) || 0).toFixed(2)), blockAvgRate: Number(((item.block && item.block.avgRate) || 0).toFixed(2)), blockWeakBlocks: Number((item.block && item.block.weakBlocks) || 0), blockVariance: Number(((item.block && item.block.variance) || 0).toFixed(2)), missStreak30: item.r30.missStreak, score: item.score, stage: item.stage })),
+    stage: selected.stage,
+    stability: {
+      lower120: Number((selected.lower120 || 0).toFixed(2)),
+      lower300: Number((selected.lower300 || 0).toFixed(2)),
+      block: selected.block || emptyBlock,
+      repairFlags: selected.repairFlags || {},
+      minHold: POSITION_MIN_HOLD,
+      switchMargin: POSITION_SWITCH_MARGIN
+    },
+    reason
+  };
 }
 function normalizePositionKillEntry(entry) {
   if (Array.isArray(entry)) {
@@ -9450,13 +11968,6 @@ function hasCompletePredictionModels(prediction) {
   const hasSnapshots = autoTop6SnapshotIsComplete(prediction.autoTop6)
     && recommend2SnapshotIsComplete(prediction.recommend2)
     && killFrameworkSnapshotIsComplete(prediction.killFramework)
-    && compactAttackSnapshotIsComplete(prediction.compactAttack)
-    && threeDingTwoSnapshotIsComplete(prediction.threeDingTwo)
-    && threeDingOneSnapshotIsComplete(prediction.threeDingOne)
-    && sideStableSnapshotIsComplete(prediction.sideStable)
-    && coldFrameworkSnapshotIsComplete(prediction.coldFramework)
-    && dingKillSnapshotIsComplete(prediction.dingKill)
-    && pick5000SnapshotIsComplete(prediction.pick5000)
     && threeDuishuSnapshotIsComplete(prediction.threeDuishu);
   return hasPositions && hasHewei && hasTotalHewei && hasUnifiedHewei && hasExtras && hasSnapshots;
 }
@@ -9466,23 +11977,451 @@ function isPredictionCompatible(prediction, latest) {
   return !!(prediction && latest && prediction.baseUid === latest.uid && prediction.modelVersion === MODEL_VERSION && hasCompletePredictionModels(prediction));
 }
 
-function ensurePredictionFrameworkSnapshots(prediction, history) {
+function ensurePredictionFourPosExcludeSnapshot(prediction, history) {
+  if (!prediction || typeof prediction !== "object") return null;
+  if (predictionSnapshotsAreImmutable(prediction) && fourPosExcludeAlgo.snapshotIsComplete(prediction.fourPosExclude)) {
+    return prediction.fourPosExclude;
+  }
+  if (fourPosExcludeAlgo.snapshotIsComplete(prediction.fourPosExclude) && prediction.fourPosExclude.sealed === true) {
+    return prediction.fourPosExclude;
+  }
+  const snapshot = fourPosExcludeAlgo.buildSnapshot(history);
+  prediction.fourPosExclude = snapshot;
+  if (!prediction.detail || typeof prediction.detail !== "object") prediction.detail = {};
+  prediction.detail.fourPosExclude = {
+    version: snapshot.version,
+    itemCount: snapshot.itemCount,
+    shapeCount: snapshot.shapeCount,
+    items: (snapshot.items || []).map((item) => ({
+      key: item.key,
+      label: item.label,
+      code: item.code,
+      backup: item.backup
+    })),
+    shapeItems: (snapshot.shapeItems || []).map((item) => ({
+      key: item.key,
+      label: item.label,
+      shapeKey: item.shapeKey,
+      code: item.code,
+      scopeLabel: item.scopeLabel
+    }))
+  };
+  if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};
+  prediction.recommendationMeta.fourPosExcludeSnapshotVersion = snapshot.version;
+  return snapshot;
+}
+
+function evaluateFourPosExcludeSnapshot(prediction, actualRecord) {
+  const snapshot = prediction && prediction.fourPosExclude;
+  if (!fourPosExcludeAlgo.positionsComplete(snapshot)) {
+    return {
+      version: FOUR_POS_EXCLUDE_SNAPSHOT_VERSION,
+      kind: "fourPosExclude",
+      label: fourPosExcludeAlgo.LABEL || "四位各排1码",
+      truthEligible: false,
+      success: null,
+      reason: "snapshot-incomplete"
+    };
+  }
+  return fourPosExcludeAlgo.evaluatePositions(snapshot, actualRecord);
+}
+
+function evaluateFourPosShapesSnapshot(prediction, actualRecord) {
+  const snapshot = prediction && prediction.fourPosExclude;
+  if (!fourPosExcludeAlgo.shapesComplete(snapshot)) {
+    return {
+      version: FOUR_POS_EXCLUDE_SNAPSHOT_VERSION,
+      kind: "fourPosShapes",
+      label: "三定形态排除",
+      truthEligible: false,
+      success: null,
+      reason: "snapshot-incomplete"
+    };
+  }
+  return fourPosExcludeAlgo.evaluateShapes(snapshot, actualRecord);
+}
+
+function slimFourPosExcludeSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return snapshot || null;
+  const out = {
+    version: snapshot.version,
+    kind: snapshot.kind || "fourPosExclude",
+    label: snapshot.label || "四位各排1码",
+    itemCount: Number(snapshot.itemCount || (Array.isArray(snapshot.items) ? snapshot.items.length : 0)) || 0,
+    shapeCount: Number(snapshot.shapeCount || (Array.isArray(snapshot.shapeItems) ? snapshot.shapeItems.length : 0)) || 0,
+    sealed: snapshot.sealed === true,
+    sealedAt: snapshot.sealedAt || null,
+    sealedBaseUid: snapshot.sealedBaseUid || null,
+    note: snapshot.note || null,
+    source: snapshot.source && typeof snapshot.source === "object"
+      ? {
+          officialHistory: snapshot.source.officialHistory || "rds-shared-read-only",
+          historyCount: snapshot.source.historyCount,
+          builtAt: snapshot.source.builtAt
+        }
+      : { officialHistory: "rds-shared-read-only" },
+    items: Array.isArray(snapshot.items)
+      ? snapshot.items.map((item) => ({
+          key: item.key,
+          label: item.label,
+          index: item.index,
+          code: item.code,
+          backup: item.backup,
+          score: item.score,
+          stage: item.stage,
+          rate30: item.rate30,
+          rate60: item.rate60,
+          rate120: item.rate120,
+          rate300: item.rate300,
+          rateLong: item.rateLong,
+          lower120: item.lower120,
+          sample120: item.sample120,
+          sampleLong: item.sampleLong,
+          missStreak30: item.missStreak30,
+          algorithm: item.algorithm,
+          reason: item.reason
+        }))
+      : [],
+    shapeItems: Array.isArray(snapshot.shapeItems)
+      ? snapshot.shapeItems.map((item) => ({
+          key: item.key,
+          rank: item.rank,
+          label: item.label,
+          shapeKey: item.shapeKey,
+          code: item.code,
+          scopeIndexes: item.scopeIndexes,
+          scopeLabel: item.scopeLabel,
+          score: item.score,
+          stage: item.stage,
+          rate30: item.rate30,
+          rate60: item.rate60,
+          rate120: item.rate120,
+          rate300: item.rate300,
+          rateLong: item.rateLong,
+          lower120: item.lower120,
+          sample120: item.sample120,
+          sampleLong: item.sampleLong,
+          missStreak30: item.missStreak30,
+          algorithm: item.algorithm,
+          reason: item.reason
+        }))
+      : []
+  };
+  return out;
+}
+
+function bindAlgorithmOrchestrators() {
+  if (algorithmOrchestratorsBound) return;
+  // 门道主链路默认 in-process；避免 .env 里遗留 PROCESS_MODE=1 走未验收的 worker 路径
+  if (String(process.env.PENTA5_ORCHESTRATE_FORCE_INPROCESS || "1") !== "0") {
+    process.env.PENTA5_ALGO_PROCESS_MODE = "0";
+  }
+  const host = {
+    getState: () => state || {},
+    getStable120Locks: () => (state && state.stable120Locks) || {},
+    setStable120Locks: (locks) => {
+      if (state) state.stable120Locks = locks && typeof locks === "object" ? locks : {};
+    },
+    getCachedFilter: () => {
+      if (state && state.stableMathFilter && typeof state.stableMathFilter === "object") {
+        return state.stableMathFilter;
+      }
+      return stableMathFilterBridge.readCachedFilter();
+    },
+    setCachedFilter: (filter) => {
+      if (!state) return;
+      state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(filter) || filter || null;
+    },
+    readCachedFilter: () => stableMathFilterBridge.readCachedFilter(),
+    getStableMathExcludeDigitSet,
+    invalidatePanelStateCache: (options) => {
+      try { return invalidatePanelStateCache(options); } catch (_) { return null; }
+    },
+    // L1 create_snapshot_algorithm 回退：本地 formula 缺失时走 runner ensure*
+    ensurePredictionAutoTop6Snapshot,
+    ensurePredictionRecommend2Snapshot,
+    ensurePredictionKillFrameworkSnapshot,
+    ensurePredictionCompactAttackSnapshot,
+    ensurePredictionThreeDingTwoSnapshot,
+    ensurePredictionThreeDingOneSnapshot,
+    ensurePredictionThreeDuishuSnapshot,
+    ensurePredictionFourPosExcludeSnapshot
+  };
+  algoOrchestrateL0.bindRunnerHost(host);
+  algoOrchestrateL1.bindRunnerHost(host);
+  algorithmOrchestratorsBound = true;
+}
+
+function applyOrchestrateL0ToPrediction(prediction, l0) {
+  if (!prediction || typeof prediction !== "object" || !l0 || typeof l0 !== "object") return prediction;
+  if (!prediction.detail || typeof prediction.detail !== "object") prediction.detail = {};
+
+  if (l0.positionKills && typeof l0.positionKills === "object") {
+    prediction.positionKills = l0.positionKills;
+    prediction.detail.positionKills = l0.positionKills;
+  }
+  if (l0.codexStable && typeof l0.codexStable === "object") {
+    prediction.codexStable = l0.codexStable;
+    prediction.detail.codexStable = l0.codexStable;
+  }
+
+  const hewei = l0.hewei && typeof l0.hewei === "object" ? l0.hewei : null;
+  if (hewei) {
+    // 门道字段 + 现网消费字段双向对齐
+    prediction.hewei = hewei;
+    if (hewei.totalHeweiKill != null) prediction.totalHeweiKill = hewei.totalHeweiKill;
+    if (hewei.totalHeweiBackupDigit != null) prediction.totalHeweiBackupDigit = hewei.totalHeweiBackupDigit;
+    if (hewei.threeFourHeweiKillDigit != null) prediction.threeFourHeweiKillDigit = hewei.threeFourHeweiKillDigit;
+    if (hewei.threeFourHeweiBackupDigit != null) prediction.threeFourHeweiBackupDigit = hewei.threeFourHeweiBackupDigit;
+    if (hewei.independentHeweiKills && typeof hewei.independentHeweiKills === "object") {
+      prediction.independentHeweiKills = hewei.independentHeweiKills;
+      prediction.detail.independentHeweiKills = hewei.independentHeweiKills;
+    }
+    const heweiDetail = hewei.detail && typeof hewei.detail === "object" ? hewei.detail : null;
+    if (heweiDetail) {
+      if (heweiDetail.totalHeweiKill) prediction.detail.totalHeweiKill = heweiDetail.totalHeweiKill;
+      if (heweiDetail.threeFourHeweiKill) prediction.detail.threeFourHeweiKill = heweiDetail.threeFourHeweiKill;
+      if (heweiDetail.independentHeweiKills) {
+        prediction.detail.independentHeweiKills = heweiDetail.independentHeweiKills;
+      }
+      if (Array.isArray(heweiDetail.heweiReconcileNotes)) {
+        prediction.detail.heweiReconcileNotes = heweiDetail.heweiReconcileNotes.slice(0, 20);
+      }
+    }
+  }
+
+  if (l0.stableMathFilter && typeof l0.stableMathFilter === "object") {
+    applyStableMathFilterToPrediction(prediction, l0.stableMathFilter);
+    if (state) {
+      state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(l0.stableMathFilter)
+        || state.stableMathFilter
+        || null;
+    }
+  }
+  if (l0.extraKills && typeof l0.extraKills === "object") {
+    prediction.extraKills = l0.extraKills;
+    prediction.detail.extraKills = l0.extraKills;
+  }
+  if (l0.fourPosExclude && typeof l0.fourPosExclude === "object") {
+    prediction.fourPosExclude = l0.fourPosExclude;
+    prediction.detail.fourPosExclude = l0.fourPosExclude;
+  }
+
+  prediction.orchestrateMeta = prediction.orchestrateMeta && typeof prediction.orchestrateMeta === "object"
+    ? prediction.orchestrateMeta
+    : {};
+  prediction.orchestrateMeta.l0 = l0.meta || null;
+  prediction.orchestrateMeta.l0ProcessMode = !!l0.processMode;
+  return prediction;
+}
+
+function tipStableMathFilterLagging(prediction) {
+  if (!prediction || typeof prediction !== "object") return false;
+  const tipBase = prediction.basePeriod != null ? String(prediction.basePeriod) : "";
+  const tipSmf = prediction.stableMathFilter && prediction.stableMathFilter.latest_period != null
+    ? String(prediction.stableMathFilter.latest_period)
+    : "";
+  if (!tipBase) return false;
+  // 缺更稳或期号落后 tip base = 摆设
+  if (!tipSmf) return true;
+  return tipSmf !== tipBase;
+}
+
+function unsealTipForStableMathRebuild(prediction, reason) {
+  if (!prediction || typeof prediction !== "object") return false;
+  prediction.snapshotsSealedAt = "";
+  prediction.snapshotsSealedBaseUid = "";
+  prediction.allSnapshotsSealed = false;
+  [
+    "autoTop6", "recommend2", "killFramework", "threeDuishu", "fourPosExclude"
+  ].forEach((key) => {
+    const snap = prediction[key];
+    if (snap && typeof snap === "object" && snap.sealed === true) {
+      snap.sealed = false;
+      snap.sealHash = "";
+    }
+  });
+  addLog("更稳落后 tip，已解封准备重算", {
+    tipBase: prediction.basePeriod || null,
+    tipSmfPeriod: prediction.stableMathFilter && prediction.stableMathFilter.latest_period || null,
+    reason: reason || "smf-lag"
+  });
+  return true;
+}
+
+function ensureStableMathFilterCurrentForTip(history, reason) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  if (!safeHistory.length) return { ok: false, error: "empty-history" };
+  const latestPeriod = safeHistory[0] && safeHistory[0].period != null
+    ? String(safeHistory[0].period)
+    : "";
+  const cached = (state && state.stableMathFilter)
+    || stableMathFilterBridge.readCachedFilter()
+    || null;
+  if (cached && latestPeriod && String(cached.latest_period || "") === latestPeriod) {
+    if (state) {
+      state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(cached) || cached;
+    }
+    return { ok: true, skipped: true, latestPeriod, trigger: reason || "cache-hit" };
+  }
+  const outcome = stableMathFilterBridge.runStableMathFilterSync(safeHistory, { timeoutMs: 25000 });
+  const filter = outcome && outcome.result ? outcome.result : null;
+  // 仅在真成功时写入；失败绝不把旧缓存冒充“已刷新”
+  if (outcome && outcome.ok && filter && typeof filter === "object") {
+    const slim = stableMathFilterBridge.slimStableMathFilter(filter) || filter;
+    if (state) state.stableMathFilter = slim;
+    addLog("更稳数学排除已同步刷新(封存前)", {
+      trigger: reason || "pre-tip-build",
+      ok: true,
+      latestPeriod: filter.latest_period || null,
+      historyLatest: latestPeriod || null
+    });
+    return {
+      ok: true,
+      skipped: false,
+      latestPeriod: filter.latest_period || null,
+      trigger: reason || "pre-tip-build"
+    };
+  }
+  addLog("更稳数学排除同步刷新失败", {
+    trigger: reason || "pre-tip-build",
+    error: String((outcome && outcome.error) || "empty-result"),
+    historyLatest: latestPeriod || null,
+    cachePeriod: cached && cached.latest_period || null
+  });
+  return { ok: false, error: String((outcome && outcome.error) || "empty-result"), latestPeriod };
+}
+
+function rebuildTipAfterStableMathCatchup(reason) {
+  const prediction = state && state.currentPrediction;
+  const history = state && Array.isArray(state.history) ? state.history : [];
+  const latest = history[0] || (state && state.latestRecord) || null;
+  if (!prediction || !latest || !history.length) return { ok: false, reason: "no-tip" };
+  if (prediction.evaluated === true) return { ok: false, reason: "already-evaluated" };
+  if (!tipStableMathFilterLagging(prediction)) return { ok: true, skipped: true };
+  // 仅当更稳已追上 tip base 才重算，避免用旧缓存再封一次
+  const filterPeriod = state.stableMathFilter && state.stableMathFilter.latest_period != null
+    ? String(state.stableMathFilter.latest_period)
+    : "";
+  const tipBase = prediction.basePeriod != null ? String(prediction.basePeriod) : "";
+  if (!filterPeriod || !tipBase || filterPeriod !== tipBase) {
+    return { ok: false, reason: "filter-not-caught-up", filterPeriod, tipBase };
+  }
+  unsealTipForStableMathRebuild(prediction, reason || "async-smf-catchup");
+  attachCachedStableMathFilter(prediction);
+  ensurePredictionFrameworkSnapshots(prediction, history);
+  sealPredictionSnapshots(prediction, latest);
+  try {
+    ensureTipStructurePerfect({
+      trigger: reason || "async-smf-catchup",
+      log: true,
+      fromSync: false,
+      allowRegenerate: false
+    });
+  } catch (_) {}
+  try { saveState({ skipMirror: true }); } catch (_) {}
+  return {
+    ok: true,
+    rebuilt: true,
+    tipBase,
+    tipSmfPeriod: prediction.stableMathFilter && prediction.stableMathFilter.latest_period || null
+  };
+}
+
+function ensureTipTargetPeriod(prediction) {
+  if (!prediction || typeof prediction !== "object") return prediction;
+  if (prediction.targetPeriod) return prediction;
+  const base = prediction.basePeriod || (Array.isArray(state && state.history) && state.history[0] && state.history[0].period) || "";
+  if (!base) return prediction;
+  const nextPeriod = expectedNextPenta5Period(base);
+  if (nextPeriod && nextPeriod.ok) {
+    prediction.targetPeriod = nextPeriod.expectedPeriod;
+    prediction.targetPeriodRule = prediction.targetPeriodRule || nextPeriod.rule || "tip-target-repair";
+    if (prediction.periodsPerDay == null) prediction.periodsPerDay = PENTA5_PERIODS_PER_DAY;
+  }
+  return prediction;
+}
+
+function ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history) {
+  bindAlgorithmOrchestrators();
+  const safeHistory = Array.isArray(history) ? history : [];
+  // 封存前强制更稳与最新开奖期对齐，避免 tip 吃上期滤网
+  ensureStableMathFilterCurrentForTip(safeHistory, "orchestrate-pre-l0");
+  attachCachedStableMathFilter(prediction);
+  ensureTipTargetPeriod(prediction);
+  const modelPerformance = (state && state.modelPerformance) || {};
+  const l0 = algoOrchestrateL0.computeL0({
+    history: safeHistory,
+    modelPerformance,
+    prediction,
+    getState: () => state || {},
+    getStableMathExcludeDigitSet
+  });
+  applyOrchestrateL0ToPrediction(prediction, l0);
+  const l1 = algoOrchestrateL1.computeL1({
+    history: safeHistory,
+    prediction,
+    modelPerformance,
+    getState: () => state || {},
+    recomputeThreeDuishuRecommendation
+  });
+  prediction.orchestrateMeta = prediction.orchestrateMeta && typeof prediction.orchestrateMeta === "object"
+    ? prediction.orchestrateMeta
+    : {};
+  prediction.orchestrateMeta.l1 = l1 && l1.meta ? l1.meta : null;
+  prediction.orchestrateMeta.l1ProcessMode = !!(l1 && l1.processMode);
+  prediction.orchestrateMeta.at = isoNow();
+  prediction.orchestrateMeta.path = "orchestrate-l0-l1";
+  addLog("orchestrate L0/L1 完成", {
+    basePeriod: prediction.basePeriod || null,
+    baseUid: prediction.baseUid || null,
+    hasHewei: !!(prediction.hewei && prediction.independentHeweiKills),
+    hasCodex: !!prediction.codexStable,
+    hasExtra: !!prediction.extraKills,
+    hasFourPos: !!prediction.fourPosExclude,
+    l1Keys: l1 && l1.meta ? Object.keys(l1.meta) : []
+  });
+  return prediction;
+}
+
+/** 内联 ensure* 补洞 / orchestrate 失败回退（已完整的快照会自行 no-op） */
+function ensurePredictionFrameworkSnapshotsLegacy(prediction, history) {
   if (!prediction || typeof prediction !== "object") return prediction;
   if (predictionSnapshotsAreImmutable(prediction)) return prediction;
   attachCachedStableMathFilter(prediction);
+  ensurePredictionFourPosExcludeSnapshot(prediction, history);
   ensurePredictionAutoTop6Snapshot(prediction, history);
   ensurePredictionRecommend2Snapshot(prediction, history);
   ensurePredictionKillFrameworkSnapshot(prediction, history);
   ensurePredictionCompactAttackSnapshot(prediction, history);
   ensurePredictionThreeDingTwoSnapshot(prediction, history);
   ensurePredictionThreeDingOneSnapshot(prediction, history);
-  ensurePredictionSideStableSnapshot(prediction, history);
-  ensurePredictionColdFrameworkSnapshot(prediction, history);
-  ensurePredictionDingKillSnapshot(prediction, history);
-  ensurePredictionPick5000Snapshot(prediction, history);
   recomputeThreeDuishuRecommendation();
   ensurePredictionThreeDuishuSnapshot(prediction);
   return prediction;
+}
+
+function ensurePredictionFrameworkSnapshots(prediction, history) {
+  if (!prediction || typeof prediction !== "object") return prediction;
+  if (predictionSnapshotsAreImmutable(prediction)) return prediction;
+  try {
+    ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history);
+    // 补洞：orchestrate 未写满时用内联 ensure*（完整快照不会被覆盖）
+    ensurePredictionFrameworkSnapshotsLegacy(prediction, history);
+    return prediction;
+  } catch (err) {
+    addLog("orchestrate L0/L1 失败，回退内联 ensure*", {
+      error: String(err && err.message || err),
+      baseUid: prediction.baseUid || null,
+      basePeriod: prediction.basePeriod || null
+    });
+    prediction.orchestrateMeta = {
+      path: "legacy-ensure-fallback",
+      error: String(err && err.message || err),
+      at: isoNow()
+    };
+    return ensurePredictionFrameworkSnapshotsLegacy(prediction, history);
+  }
 }
 
 function ensureTipStructurePerfect(options) {
@@ -9502,9 +12441,38 @@ function ensureTipStructurePerfect(options) {
       applyTipReadyState(prediction, latest, issues);
       break;
     }
+    const duishuBefore = collectDuishuCaptureIssues(prediction);
     ensurePredictionFrameworkSnapshots(prediction, state.history);
     sealPredictionSnapshots(prediction, latest);
     issues = collectPredictionIntegrityIssues(prediction, latest);
+    const duishuRepairIssues = issues.filter((issue) => issue && issue.action === "repair-duishu-capture");
+    if (duishuRepairIssues.length) {
+      const repairActions = [];
+      repairDuishuCapture(repairActions);
+      sealPredictionSnapshots(prediction, latest);
+      issues = collectPredictionIntegrityIssues(prediction, latest);
+    } else if (duishuBefore.length) {
+      const remaining = collectDuishuCaptureIssues(prediction);
+      state.duishuCaptureAlarm = {
+        at: isoNow(),
+        baseUid: String(prediction.baseUid || ""),
+        basePeriod: String(prediction.basePeriod || ""),
+        beforeCount: duishuBefore.length,
+        before: duishuBefore.slice(0, 12),
+        repairs: [{ target: "ensure-framework-snapshots", ok: remaining.length === 0 }],
+        remaining: remaining.slice(0, 12),
+        resolved: remaining.length === 0,
+        via: "tip-structure-perfect"
+      };
+      addLog(remaining.length === 0
+        ? "【报警】对数抓取缺失，门闩已自动补齐"
+        : "【报警】对数抓取缺失，门闩补齐后仍有残留", {
+        baseUid: prediction.baseUid,
+        basePeriod: prediction.basePeriod,
+        before: duishuBefore.slice(0, 12),
+        remaining: remaining.slice(0, 12)
+      });
+    }
     markAlgorithmProjectIssues(issues);
     const coreIssues = issues.filter(isCorePredictionIssue);
     if (!coreIssues.length) {
@@ -9543,68 +12511,41 @@ function ensureTipStructurePerfect(options) {
   return { ok: coreIssues.length === 0, attempts, issues };
 }
 
-function bindL0AlgorithmHost() {
-  const lockApi = {
-    getStable120Locks() {
-      if (!state.stable120Locks || typeof state.stable120Locks !== "object") state.stable120Locks = {};
-      return state.stable120Locks;
-    },
-    setStable120Locks(value) {
-      state.stable120Locks = value && typeof value === "object" ? value : {};
-    }
-  };
-  l0Orchestrator.bindRunnerHost({
-    // L0 formulas live in algorithms/*/formula.js; host only injects accessors.
-    getStable120Locks: lockApi.getStable120Locks,
-    setStable120Locks: lockApi.setStable120Locks,
-    getState: () => state,
-    getStableMathExcludeDigitSet: () => require("./algorithms/hewei/formula").getStableMathExcludeDigitSet(),
-    POSITION_LIST,
-    addLog,
-    getCachedFilter: () => (state && state.stableMathFilter) || stableMathFilterBridge.readCachedFilter() || null,
-    readCachedFilter: () => stableMathFilterBridge.readCachedFilter() || null,
-    setCachedFilter: (slim) => {
-      if (!state || !slim) return;
-      state.stableMathFilter = slim;
-    }
-  });
-}
-
-function bindL1AlgorithmHost() {
-  frameworkItems.bindRuntime({
-    getState: () => state,
-    invalidatePanelStateCache: invalidatePanelStateCache
-  });
-  l1Orchestrator.bindRunnerHost({
-    getState: () => state,
-    ensurePredictionAutoTop6Snapshot,
-    ensurePredictionRecommend2Snapshot,
-    ensurePredictionKillFrameworkSnapshot,
-    ensurePredictionCompactAttackSnapshot,
-    ensurePredictionThreeDingTwoSnapshot,
-    ensurePredictionThreeDingOneSnapshot,
-    ensurePredictionSideStableSnapshot,
-    ensurePredictionColdFrameworkSnapshot,
-    ensurePredictionDingKillSnapshot,
-    ensurePredictionPick5000Snapshot,
-    ensurePredictionThreeDuishuSnapshot
-  });
-}
-
-bindL0AlgorithmHost();
-bindL1AlgorithmHost();
-
 function generateBigDataPrediction(history) {
   const safeHistory = Array.isArray(history) && history.length ? history : [DEFAULT_RECORD];
   const latest = safeHistory[0];
   const nextPeriod = expectedNextPenta5Period(latest && latest.period);
   const modelPerformance = calculateModelPerformance(state && Array.isArray(state.predictions) ? state.predictions : []);
-  // L0 independent compute: hewei / position-kills / stable-math / extra-kills
-  const l0 = l0Orchestrator.computeL0({ history: safeHistory, modelPerformance });
-  const heweiPayload = l0.hewei || {};
-  const positionKills = l0.positionKills || {};
-  const heweiDetail = heweiPayload.detail || {};
-  const extraKills = l0.extraKills;
+  const totalHeweiKill = calculateTotalHeweiKill(safeHistory, modelPerformance);
+  const threeFourKill = calculateThreeFourHeweiKillDigit(safeHistory, modelPerformance);
+  const independentHeweiKills = calculateIndependentHeweiKills(safeHistory, modelPerformance);
+  const heweiReconcile = reconcileHeweiKillBundle({ totalHeweiKill, threeFourKill, independentHeweiKills });
+  if (heweiReconcile && Array.isArray(heweiReconcile.notes) && heweiReconcile.notes.length) {
+    addLog("合尾排除已协调去重", { notes: heweiReconcile.notes });
+  }
+  const extraKills = calculateExtraAvoidKills(safeHistory, modelPerformance);
+  const positionKills = {};
+  POSITION_LIST.slice(0, 4).forEach((position) => {
+    const calculated = calculatePositionKill(safeHistory, position, modelPerformance);
+    positionKills[position.key] = {
+      main: calculated.mainDigit,
+      backup: calculated.backupDigit,
+      recommendDigit: calculated.mainDigit,
+      selectedDigit: calculated.mainDigit,
+      mainAlgorithmDigit: calculated.primaryDigit,
+      backupAlgorithmDigit: calculated.originalBackupDigit,
+      killDigits: calculated.killDigits,
+      algorithm: calculated.algorithm,
+      performance: calculated.performance,
+      primaryDigit: calculated.primaryDigit,
+      originalBackupDigit: calculated.originalBackupDigit,
+      reason: calculated.reason,
+      stage: calculated.stage,
+      stability: calculated.stability,
+      detail: calculated.detail
+    };
+  });
+  codexStablePosition.applyCodexStablePositionOverlay(positionKills, safeHistory);
   const recommendationMeta = {
     targetCount: TOP_RECOMMEND_COUNT,
     targetRate: MODEL_LOW_HIT_RATE,
@@ -9614,10 +12555,10 @@ function generateBigDataPrediction(history) {
     panelPredictionLimit: PANEL_PREDICTION_LIMIT,
     lowHitRateThreshold: MODEL_LOW_HIT_RATE,
     minSample: MODEL_MIN_SAMPLE,
-    independenceMode: "l1-isolated-compute-v1",
+    independenceMode: "all-models-calculated-before-selection",
     lowConfidencePolicy: "mark-only"
   };
-  const prediction = {
+  return {
     id: `prediction:${latest.uid}:${Date.now()}`,
     modelVersion: MODEL_VERSION,
     baseUid: latest.uid,
@@ -9628,12 +12569,13 @@ function generateBigDataPrediction(history) {
     periodsPerDay: PENTA5_PERIODS_PER_DAY,
     generatedAt: isoNow(),
     generatedAtText: nowText(),
-    totalHeweiKill: heweiPayload.totalHeweiKill,
-    totalHeweiBackupDigit: heweiPayload.totalHeweiBackupDigit,
-    threeFourHeweiKillDigit: heweiPayload.threeFourHeweiKillDigit,
-    threeFourHeweiBackupDigit: heweiPayload.threeFourHeweiBackupDigit,
-    independentHeweiKills: heweiPayload.independentHeweiKills,
+    totalHeweiKill: totalHeweiKill.killHewei,
+    totalHeweiBackupDigit: totalHeweiKill.backupDigit,
+    threeFourHeweiKillDigit: threeFourKill.killDigit,
+    threeFourHeweiBackupDigit: threeFourKill.backupDigit,
+    independentHeweiKills: independentHeweiKills,
     positionKills,
+    fourPosExclude: fourPosExcludeAlgo.buildSnapshot(safeHistory),
     extraKills,
     modelPerformance,
     recommendationMeta,
@@ -9641,28 +12583,26 @@ function generateBigDataPrediction(history) {
     counterApplied: false,
     evaluation: null,
     detail: {
-      totalHeweiKill: heweiDetail.totalHeweiKill || null,
-      threeFourHeweiKill: heweiDetail.threeFourHeweiKill || null,
-      independentHeweiKills: heweiDetail.independentHeweiKills || heweiPayload.independentHeweiKills,
-      heweiReconcileNotes: Array.isArray(heweiDetail.heweiReconcileNotes) ? heweiDetail.heweiReconcileNotes : [],
+      totalHeweiKill,
+      threeFourHeweiKill: threeFourKill,
+      independentHeweiKills,
+      heweiReconcileNotes: Array.isArray(heweiReconcile && heweiReconcile.notes) ? heweiReconcile.notes : [],
       // 禁止把带 codes 的 extraKills 再复制一份进 detail（否则单 tip 双倍常驻）
       extraKills: slimExtraKillsForPersist(extraKills, false),
       positionKills: {},
       modelPerformance,
       recommendationMeta,
-      historyCountUsed: safeHistory.length,
-      l0Meta: l0.meta || null
+      historyCountUsed: safeHistory.length
     }
   };
-  if (l0.stableMathFilter) {
-    applyStableMathFilterToPrediction(prediction, l0.stableMathFilter);
-  }
-  return prediction;
 }
 function fillPredictionDetail(prediction, history) {
   const safeHistory = Array.isArray(history) && history.length ? history : [DEFAULT_RECORD];
   if (predictionSnapshotsAreImmutable(prediction)) return prediction;
   if (!prediction.detail) prediction.detail = {};
+  if (!fourPosExcludeAlgo.snapshotIsComplete(prediction.fourPosExclude) || prediction.fourPosExclude.sealed !== true) {
+    ensurePredictionFourPosExcludeSnapshot(prediction, safeHistory);
+  }
   if (prediction.positionKills && typeof prediction.positionKills === "object" && Object.keys(prediction.positionKills).length) {
     prediction.detail.positionKills = prediction.positionKills;
     codexStablePosition.applyCodexStablePositionOverlay(prediction.positionKills, safeHistory);
@@ -9670,13 +12610,14 @@ function fillPredictionDetail(prediction, history) {
     prediction.positionKills = prediction.detail.positionKills;
     codexStablePosition.applyCodexStablePositionOverlay(prediction.positionKills, safeHistory);
   } else {
+    const detailPositionKills = {};
     const performance = calculateModelPerformance(state && Array.isArray(state.predictions) ? state.predictions : []);
-    const rebuilt = l0Orchestrator.positionKillsAlgo.computeRawEntries({
-      history: safeHistory,
-      modelPerformance: performance
+    POSITION_LIST.slice(0, 4).forEach((position) => {
+      detailPositionKills[position.key] = calculatePositionKill(safeHistory, position, performance);
     });
-    prediction.positionKills = rebuilt.payload;
-    prediction.detail.positionKills = rebuilt.payload;
+    prediction.positionKills = detailPositionKills;
+    prediction.detail.positionKills = detailPositionKills;
+    codexStablePosition.applyCodexStablePositionOverlay(prediction.positionKills, safeHistory);
   }
   attachCachedStableMathFilter(prediction);
   return prediction;
@@ -9698,8 +12639,23 @@ function evaluatePrediction(prediction, actualRecord) {
   const previousIndependentHeweiKills = {
     wanQianBai: independentDigit("wanQianBai"),
     qianBaiShi: independentDigit("qianBaiShi"),
-    wanQianBaiShi: independentDigit("wanQianBaiShi")
+    wanQianBaiShi: independentDigit("wanQianBaiShi"),
+    wanQianGe: independentDigit("wanQianGe"),
+    wanQianGeFreq: independentDigit("wanQianGeFreq"),
+    wanBaiShi: independentDigit("wanBaiShi"),
+    wanBaiShiFreq: independentDigit("wanBaiShiFreq")
   };
+
+  const actualWanQianGe = String(computedMetrics.wanQianGeHewei);
+  const actualWanBaiShi = String(computedMetrics.wanBaiShiHewei);
+
+  function trioHeweiEval(killDigit, actualDigit) {
+    return {
+      killDigit,
+      actualDigit,
+      success: /^\d$/.test(killDigit) && /^\d$/.test(actualDigit) ? killDigit !== actualDigit : null
+    };
+  }
 
   const independentHewei = {
     wanQianBai: {
@@ -9716,7 +12672,11 @@ function evaluatePrediction(prediction, actualRecord) {
       killDigit: previousIndependentHeweiKills.wanQianBaiShi,
       actualDigit: String(actualCompositeHeweiGroup[2]),
       success: /^\d$/.test(previousIndependentHeweiKills.wanQianBaiShi) && /^\d$/.test(String(actualCompositeHeweiGroup[2])) ? previousIndependentHeweiKills.wanQianBaiShi !== String(actualCompositeHeweiGroup[2]) : null
-    }
+    },
+    wanQianGe: trioHeweiEval(previousIndependentHeweiKills.wanQianGe, actualWanQianGe),
+    wanQianGeFreq: trioHeweiEval(previousIndependentHeweiKills.wanQianGeFreq, actualWanQianGe),
+    wanBaiShi: trioHeweiEval(previousIndependentHeweiKills.wanBaiShi, actualWanBaiShi),
+    wanBaiShiFreq: trioHeweiEval(previousIndependentHeweiKills.wanBaiShiFreq, actualWanBaiShi)
   };
 
   const wanKills = killListFromValue(prediction.positionKills && prediction.positionKills.wan);
@@ -9755,6 +12715,7 @@ function evaluatePrediction(prediction, actualRecord) {
   const twoDigitAvoid3Value = extraValue("twoDigitAvoid3");
   const twoDigitHitValue = extraValue("twoDigitHit");
   const threeDigitHitValue = extraValue("threeDigitHit");
+  const threeDigitAvoid2Value = extraValue("threeDigitAvoid2");
   const anyTwoHeweiHitValue = extraValue("anyTwoHeweiHit");
   const anyThreeHeweiHitValue = extraValue("anyThreeHeweiHit");
   const sumRangeAvoidValue = extraValue("sumRangeAvoid");
@@ -9763,36 +12724,8 @@ function evaluatePrediction(prediction, actualRecord) {
   const consecutiveAvoidValue = extraValue("consecutiveAvoid");
   const parityRatioAvoidValue = extraValue("parityRatioAvoid");
   const sizeRatioAvoidValue = extraValue("sizeRatioAvoid");
-  const recentExactCodeAvoid300Value = extraValue("recentExactCodeAvoid300");
-  const recentExactCodeAvoid500Value = extraValue("recentExactCodeAvoid500");
-  const recentExactCodeAvoid800Value = extraValue("recentExactCodeAvoid800");
-  const recentExactCodeAvoid1000Value = extraValue("recentExactCodeAvoid1000");
-  const recentExactCodeAvoidMaxValue = extraValue("recentExactCodeAvoidMax");
-  function extraCodeSet(key) {
-    const item = predictedExtras[key];
-    if (item && Array.isArray(item.codes) && item.codes.length) {
-      return new Set(item.codes.map(String).filter((value) => /^\d{4}$/.test(value)));
-    }
-    // codes 已 omit：按 tip 生成时的 baseUid + lookback 从共享 history 重建，避免常驻数千码数组
-    return resolveRecentExactCodeSet(
-      Object.assign({ key }, item || {}),
-      (typeof state !== "undefined" && state && Array.isArray(state.history)) ? state.history : [],
-      prediction.baseUid,
-      prediction.basePeriod
-    );
-  }
-  const recentExactCode300Set = extraCodeSet("recentExactCodeAvoid300");
-  const recentExactCode500Set = extraCodeSet("recentExactCodeAvoid500");
-  const recentExactCode800Set = extraCodeSet("recentExactCodeAvoid800");
-  const recentExactCode1000Set = extraCodeSet("recentExactCodeAvoid1000");
-  const recentExactCodeMaxSet = extraCodeSet("recentExactCodeAvoidMax");
   const actualFirstFourSum = firstFourSum(actualRecord);
   const actualFirstFourDigits = firstFourNumbers(actualRecord);
-  const actualFirstFourCode = firstFourCode(actualRecord);
-  function recentExactCodeEvaluation(value, codeSet) {
-    if (!value || !/^\d{4}$/.test(actualFirstFourCode) || !codeSet || !codeSet.size) return null;
-    return !codeSet.has(actualFirstFourCode);
-  }
   const independentExtras = {
     sumAvoid: {
       value: sumAvoidValue,
@@ -9829,36 +12762,6 @@ function evaluatePrediction(prediction, actualRecord) {
       actualValue: firstFourSizeRatio(actualRecord),
       success: sizeRatioAvoidValue ? !extraStructureMatched(actualRecord, "sizeRatioAvoid", sizeRatioAvoidValue) : null
     },
-    recentExactCodeAvoid300: {
-      value: recentExactCodeAvoid300Value,
-      actualValue: actualFirstFourCode,
-      codeCount: recentExactCode300Set.size,
-      success: recentExactCodeEvaluation(recentExactCodeAvoid300Value, recentExactCode300Set)
-    },
-    recentExactCodeAvoid500: {
-      value: recentExactCodeAvoid500Value,
-      actualValue: actualFirstFourCode,
-      codeCount: recentExactCode500Set.size,
-      success: recentExactCodeEvaluation(recentExactCodeAvoid500Value, recentExactCode500Set)
-    },
-    recentExactCodeAvoid800: {
-      value: recentExactCodeAvoid800Value,
-      actualValue: actualFirstFourCode,
-      codeCount: recentExactCode800Set.size,
-      success: recentExactCodeEvaluation(recentExactCodeAvoid800Value, recentExactCode800Set)
-    },
-    recentExactCodeAvoid1000: {
-      value: recentExactCodeAvoid1000Value,
-      actualValue: actualFirstFourCode,
-      codeCount: recentExactCode1000Set.size,
-      success: recentExactCodeEvaluation(recentExactCodeAvoid1000Value, recentExactCode1000Set)
-    },
-    recentExactCodeAvoidMax: {
-      value: recentExactCodeAvoidMaxValue,
-      actualValue: actualFirstFourCode,
-      codeCount: recentExactCodeMaxSet.size,
-      success: recentExactCodeEvaluation(recentExactCodeAvoidMaxValue, recentExactCodeMaxSet)
-    },
     threeDigitAvoid: {
       value: threeDigitAvoidValue,
       actualDigits: actualFirstFourDigits,
@@ -9887,7 +12790,12 @@ function evaluatePrediction(prediction, actualRecord) {
     threeDigitHit: {
       value: threeDigitHitValue,
       actualDigits: actualFirstFourDigits,
-      success: threeDigitHitValue ? threeDigitCooccurs(actualRecord, threeDigitHitValue) : null
+      success: threeDigitHitValue ? !threeDigitCooccurs(actualRecord, threeDigitHitValue) : null
+    },
+    threeDigitAvoid2: {
+      value: threeDigitAvoid2Value,
+      actualDigits: actualFirstFourDigits,
+      success: threeDigitAvoid2Value ? !threeDigitCooccurs(actualRecord, threeDigitAvoid2Value) : null
     },
     anyTwoHeweiHit: {
       value: anyTwoHeweiHitValue,
@@ -9899,7 +12807,7 @@ function evaluatePrediction(prediction, actualRecord) {
     anyThreeHeweiHit: {
       value: anyThreeHeweiHitValue,
       actualTails: heweiCombinationTails(actualRecord, 3),
-      success: (/^\d{5}$/.test(anyThreeHeweiHitValue) && new Set(anyThreeHeweiHitValue.split("")).size === 5 && !isUniformParityDigitSet(anyThreeHeweiHitValue))
+      success: (/^\d{6}$/.test(anyThreeHeweiHitValue) && new Set(anyThreeHeweiHitValue.split("")).size === ANY_THREE_HEWEI_CODE_SIZE && !isUniformParityDigitSet(anyThreeHeweiHitValue))
         ? anyHeweiCombinationHit(actualRecord, anyThreeHeweiHitValue, 3, 1)
         : null
     }
@@ -9939,6 +12847,7 @@ function evaluatePrediction(prediction, actualRecord) {
       twoDigitAvoid3: twoDigitAvoid3Value,
       twoDigitHit: twoDigitHitValue,
       threeDigitHit: threeDigitHitValue,
+      threeDigitAvoid2: threeDigitAvoid2Value,
       anyTwoHeweiHit: anyTwoHeweiHitValue,
       anyThreeHeweiHit: anyThreeHeweiHitValue,
       sumRangeAvoid: sumRangeAvoidValue,
@@ -9946,12 +12855,7 @@ function evaluatePrediction(prediction, actualRecord) {
       repeatAvoid: repeatAvoidValue,
       consecutiveAvoid: consecutiveAvoidValue,
       parityRatioAvoid: parityRatioAvoidValue,
-      sizeRatioAvoid: sizeRatioAvoidValue,
-      recentExactCodeAvoid300: recentExactCodeAvoid300Value,
-      recentExactCodeAvoid500: recentExactCodeAvoid500Value,
-      recentExactCodeAvoid800: recentExactCodeAvoid800Value,
-      recentExactCodeAvoid1000: recentExactCodeAvoid1000Value,
-      recentExactCodeAvoidMax: recentExactCodeAvoidMaxValue
+      sizeRatioAvoid: sizeRatioAvoidValue
     },
     independentPosition,
     independentTotalHeweiSuccess,
@@ -9964,11 +12868,9 @@ function evaluatePrediction(prediction, actualRecord) {
     compactAttack: evaluateCompactAttackSnapshot(prediction, actualRecord),
     threeDingTwo: evaluateThreeDingTwoSnapshot(prediction, actualRecord),
     threeDingOne: evaluateThreeDingOneSnapshot(prediction, actualRecord),
-    sideStable: evaluateSideStableSnapshot(prediction, actualRecord),
-    coldFramework: evaluateColdFrameworkSnapshot(prediction, actualRecord),
-    dingKill: evaluateDingKillSnapshot(prediction, actualRecord),
-    pick5000: evaluatePick5000Snapshot(prediction, actualRecord),
     threeDuishu: evaluateThreeDuishuSnapshot(prediction, actualRecord),
+    fourPosExclude: evaluateFourPosExcludeSnapshot(prediction, actualRecord),
+    fourPosShapes: evaluateFourPosShapesSnapshot(prediction, actualRecord),
     allFourPositionSuccess,
     positionTotalSuccess
   };
@@ -9985,6 +12887,20 @@ function addCounterResult(counters, key, isMatch, isMainMatch) {
 
 function applyEvaluationToCounters(evaluation) {
   const counters = normalizeCounters(state.counters);
+  const targetPeriod = cleanPeriodKey(evaluation && (evaluation.targetPeriod || evaluation.targetUid));
+  const cohort = counters.cohort && typeof counters.cohort === "object" ? counters.cohort : null;
+  if (targetPeriod && cohort) {
+    const applied = Array.isArray(cohort.appliedTargetPeriods) ? cohort.appliedTargetPeriods : [];
+    if (applied.includes(targetPeriod)) {
+      state.counters = counters;
+      return counters;
+    }
+    cohort.appliedTargetPeriods = applied;
+    if (!cohort.startPeriod) cohort.startPeriod = targetPeriod;
+    cohort.endPeriod = targetPeriod;
+    applied.push(targetPeriod);
+    cohort.appliedTargetPeriods = applied.slice(-MAX_HISTORY);
+  }
   addCounterResult(counters, "positionTotal", evaluation.positionTotalSuccess);
   addCounterResult(counters, "wan", evaluation.independentPosition.wan.success, evaluation.independentPosition.wan.mainSuccess);
   addCounterResult(counters, "qian", evaluation.independentPosition.qian.success, evaluation.independentPosition.qian.mainSuccess);
@@ -9996,6 +12912,10 @@ function applyEvaluationToCounters(evaluation) {
     addCounterResult(counters, "wanQianBai", evaluation.independentHewei.wanQianBai && evaluation.independentHewei.wanQianBai.success);
     addCounterResult(counters, "qianBaiShi", evaluation.independentHewei.qianBaiShi && evaluation.independentHewei.qianBaiShi.success);
     addCounterResult(counters, "wanQianBaiShi", evaluation.independentHewei.wanQianBaiShi && evaluation.independentHewei.wanQianBaiShi.success);
+    addCounterResult(counters, "wanQianGe", evaluation.independentHewei.wanQianGe && evaluation.independentHewei.wanQianGe.success);
+    addCounterResult(counters, "wanQianGeFreq", evaluation.independentHewei.wanQianGeFreq && evaluation.independentHewei.wanQianGeFreq.success);
+    addCounterResult(counters, "wanBaiShi", evaluation.independentHewei.wanBaiShi && evaluation.independentHewei.wanBaiShi.success);
+    addCounterResult(counters, "wanBaiShiFreq", evaluation.independentHewei.wanBaiShiFreq && evaluation.independentHewei.wanBaiShiFreq.success);
   }
   if (evaluation.threeDuishu && evaluation.threeDuishu.truthEligible === true) {
     addCounterResult(counters, "threeDuishu", evaluation.threeDuishu.success);
@@ -10008,31 +12928,30 @@ function applyEvaluationToCounters(evaluation) {
     addCounterResult(counters, "consecutiveAvoid", evaluation.independentExtras.consecutiveAvoid && evaluation.independentExtras.consecutiveAvoid.success);
     addCounterResult(counters, "parityRatioAvoid", evaluation.independentExtras.parityRatioAvoid && evaluation.independentExtras.parityRatioAvoid.success);
     addCounterResult(counters, "sizeRatioAvoid", evaluation.independentExtras.sizeRatioAvoid && evaluation.independentExtras.sizeRatioAvoid.success);
-    addCounterResult(counters, "recentExactCodeAvoid300", evaluation.independentExtras.recentExactCodeAvoid300 && evaluation.independentExtras.recentExactCodeAvoid300.success);
-    addCounterResult(counters, "recentExactCodeAvoid500", evaluation.independentExtras.recentExactCodeAvoid500 && evaluation.independentExtras.recentExactCodeAvoid500.success);
-    addCounterResult(counters, "recentExactCodeAvoid800", evaluation.independentExtras.recentExactCodeAvoid800 && evaluation.independentExtras.recentExactCodeAvoid800.success);
-    addCounterResult(counters, "recentExactCodeAvoid1000", evaluation.independentExtras.recentExactCodeAvoid1000 && evaluation.independentExtras.recentExactCodeAvoid1000.success);
-    addCounterResult(counters, "recentExactCodeAvoidMax", evaluation.independentExtras.recentExactCodeAvoidMax && evaluation.independentExtras.recentExactCodeAvoidMax.success);
     addCounterResult(counters, "threeDigitAvoid", evaluation.independentExtras.threeDigitAvoid && evaluation.independentExtras.threeDigitAvoid.success);
     addCounterResult(counters, "twoDigitAvoid", evaluation.independentExtras.twoDigitAvoid && evaluation.independentExtras.twoDigitAvoid.success);
     addCounterResult(counters, "twoDigitAvoid2", evaluation.independentExtras.twoDigitAvoid2 && evaluation.independentExtras.twoDigitAvoid2.success);
     addCounterResult(counters, "twoDigitAvoid3", evaluation.independentExtras.twoDigitAvoid3 && evaluation.independentExtras.twoDigitAvoid3.success);
     addCounterResult(counters, "twoDigitHit", evaluation.independentExtras.twoDigitHit && evaluation.independentExtras.twoDigitHit.success);
     addCounterResult(counters, "threeDigitHit", evaluation.independentExtras.threeDigitHit && evaluation.independentExtras.threeDigitHit.success);
+    addCounterResult(counters, "threeDigitAvoid2", evaluation.independentExtras.threeDigitAvoid2 && evaluation.independentExtras.threeDigitAvoid2.success);
     addCounterResult(counters, "anyTwoHeweiHit", evaluation.independentExtras.anyTwoHeweiHit && evaluation.independentExtras.anyTwoHeweiHit.success);
     addCounterResult(counters, "anyThreeHeweiHit", evaluation.independentExtras.anyThreeHeweiHit && evaluation.independentExtras.anyThreeHeweiHit.success);
   }
   counters.updatedAt = isoNow();
+  if (cohort) cohort.updatedAt = counters.updatedAt;
   state.counters = counters;
   return counters;
 }
 
 function rebuildMissingModelCountersFromPredictions() {
-  // 只回填新增且仍为 0 的账本键；绝不重算已有累计，也不改动开奖结果
   const counters = normalizeCounters(state && state.counters);
-  const fillKeys = ["wanQianBai", "qianBaiShi", "wanQianBaiShi", "threeDuishu"].filter((key) => {
-    return counters[key] && Number(counters[key].total || 0) === 0;
-  });
+  // 新增合尾账本键（千百个/千十个）即使 cohort 未变也允许从历史评价回填，避免永远 0 样本。
+  const fillKeys = [
+    "wanQianBai", "qianBaiShi", "wanQianBaiShi",
+    "wanQianGe", "wanQianGeFreq", "wanBaiShi", "wanBaiShiFreq",
+    "threeDuishu"
+  ].filter((key) => counters[key] && Number(counters[key].total || 0) === 0);
   if (!fillKeys.length) {
     state.counters = counters;
     return { ok: true, filled: [], scanned: 0 };
@@ -10048,27 +12967,21 @@ function rebuildMissingModelCountersFromPredictions() {
     const evaluation = prediction.evaluation;
     if (evaluation.truthEligible === false || evaluation.voided === true) return;
     scanned += 1;
-    if (tallies.wanQianBai) {
-      const item = evaluation.independentHewei && evaluation.independentHewei.wanQianBai;
+    function takeHewei(key) {
+      if (!tallies[key]) return;
+      const item = evaluation.independentHewei && evaluation.independentHewei[key];
       if (item && typeof item.success === "boolean") {
-        tallies.wanQianBai.total += 1;
-        if (item.success) tallies.wanQianBai.match += 1;
+        tallies[key].total += 1;
+        if (item.success) tallies[key].match += 1;
       }
     }
-    if (tallies.qianBaiShi) {
-      const item = evaluation.independentHewei && evaluation.independentHewei.qianBaiShi;
-      if (item && typeof item.success === "boolean") {
-        tallies.qianBaiShi.total += 1;
-        if (item.success) tallies.qianBaiShi.match += 1;
-      }
-    }
-    if (tallies.wanQianBaiShi) {
-      const item = evaluation.independentHewei && evaluation.independentHewei.wanQianBaiShi;
-      if (item && typeof item.success === "boolean") {
-        tallies.wanQianBaiShi.total += 1;
-        if (item.success) tallies.wanQianBaiShi.match += 1;
-      }
-    }
+    takeHewei("wanQianBai");
+    takeHewei("qianBaiShi");
+    takeHewei("wanQianBaiShi");
+    takeHewei("wanQianGe");
+    takeHewei("wanQianGeFreq");
+    takeHewei("wanBaiShi");
+    takeHewei("wanBaiShiFreq");
     if (tallies.threeDuishu) {
       const item = evaluation.threeDuishu;
       if (item && item.truthEligible === true && typeof item.success === "boolean") {
@@ -10162,9 +13075,6 @@ function buildVoidedPredictionEvaluation(prediction, actualRecord, reason, trans
     compactAttack: voidFrameworkEvaluation(prediction, "compactAttack", reason),
     threeDingTwo: voidFrameworkEvaluation(prediction, "threeDingTwo", reason),
     threeDingOne: voidFrameworkEvaluation(prediction, "threeDingOne", reason),
-    sideStable: voidFrameworkEvaluation(prediction, "sideStable", reason),
-    coldFramework: voidFrameworkEvaluation(prediction, "coldFramework", reason),
-    dingKill: voidFrameworkEvaluation(prediction, "dingKill", reason),
     threeDuishu: voidFrameworkEvaluation(prediction, "threeDuishu", reason)
   };
 }
@@ -10336,19 +13246,87 @@ function alignTipPredictionAfterHydrate(reason) {
   state.latestRecord = latest;
   let currentPrediction = (Array.isArray(state.predictions) ? state.predictions : [])
     .find((item) => item && item.baseUid === latest.uid && item.modelVersion === MODEL_VERSION);
+  if (!currentPrediction && state.currentPrediction && state.currentPrediction.baseUid === latest.uid) {
+    currentPrediction = state.currentPrediction;
+  }
   let created = false;
+  // 必须在整包重生前采样：缺对数会使 hasCompletePredictionModels=false，重生后采样会变成空
+  const duishuBeforeAlign = collectDuishuCaptureIssues(currentPrediction);
   if (
     isPredictionCompatible(currentPrediction, latest)
     && (state.tipReady === true || (currentPrediction && currentPrediction.tipStructurePerfect === true))
+    && !tipStableMathFilterLagging(currentPrediction)
   ) {
     state.currentPrediction = currentPrediction;
+    const lightDuishuIssues = collectDuishuCaptureIssues(currentPrediction);
+    if (lightDuishuIssues.length) {
+      const repairActions = [];
+      repairDuishuCapture(repairActions);
+      sealPredictionSnapshots(currentPrediction, latest);
+      try { saveState({ skipMirror: true }); } catch (saveErr) {
+        console.error("[duishu-repair] light-align save failed", saveErr && saveErr.message ? saveErr.message : saveErr);
+      }
+      addLog("灌注后轻量对齐触发对数自动修复", {
+        reason: reason || "hydrate-align-tip",
+        baseUid: currentPrediction && currentPrediction.baseUid || "",
+        issueCount: lightDuishuIssues.length,
+        resolved: !!(state.duishuCaptureAlarm && state.duishuCaptureAlarm.resolved)
+      });
+      return {
+        ok: true,
+        created: false,
+        tipReady: !!state.tipReady,
+        repairedDuishu: true,
+        latestPeriod: latest.period || "",
+        baseUid: currentPrediction && currentPrediction.baseUid || ""
+      };
+    }
+    // 轻量对齐也要挂上独立新算法快照（不重算其它框架）
+    try {
+      let attached = false;
+      const existing = currentPrediction.fourPosExclude;
+      const needUpgrade = !fourPosExcludeAlgo.snapshotIsComplete(existing)
+        || String(existing && existing.version || "") !== String(fourPosExcludeAlgo.VERSION || "");
+      // 版本升级允许覆盖已封存的本算法快照（其它框架不动）
+      if (needUpgrade) {
+        const snap = fourPosExcludeAlgo.buildSnapshot(history);
+        fourPosExcludeAlgo.sealSnapshot(snap, currentPrediction);
+        currentPrediction.fourPosExclude = snap;
+        if (!currentPrediction.detail || typeof currentPrediction.detail !== "object") currentPrediction.detail = {};
+        currentPrediction.detail.fourPosExclude = {
+          version: snap.version,
+          itemCount: snap.itemCount,
+          shapeCount: snap.shapeCount,
+          items: (snap.items || []).map((item) => ({ key: item.key, label: item.label, code: item.code, backup: item.backup })),
+          shapeItems: (snap.shapeItems || []).map((item) => ({
+            key: item.key, label: item.label, shapeKey: item.shapeKey, code: item.code, scopeLabel: item.scopeLabel
+          }))
+        };
+        if (!currentPrediction.recommendationMeta || typeof currentPrediction.recommendationMeta !== "object") {
+          currentPrediction.recommendationMeta = {};
+        }
+        currentPrediction.recommendationMeta.fourPosExcludeSnapshotVersion = snap.version;
+        attached = true;
+      } else if (existing && existing.sealed !== true) {
+        fourPosExcludeAlgo.sealSnapshot(existing, currentPrediction);
+        attached = true;
+      }
+      if (attached) {
+        try { saveState({ skipMirror: true }); } catch (saveErr) {
+          console.error("[four-pos-exclude] light-align save failed", saveErr && saveErr.message ? saveErr.message : saveErr);
+        }
+      }
+    } catch (err) {
+      console.error("[four-pos-exclude] light-align failed", err && err.message ? err.message : err);
+    }
     addLog("灌注后已对齐当前预测 tip", {
       reason: reason || "hydrate-align-tip",
       latestPeriod: latest.period || "",
       baseUid: currentPrediction && currentPrediction.baseUid || "",
       created: false,
       tipReady: true,
-      skippedHeavy: true
+      skippedHeavy: true,
+      fourPosExclude: !!(currentPrediction && fourPosExcludeAlgo.snapshotIsComplete(currentPrediction.fourPosExclude))
     });
     return {
       ok: true,
@@ -10365,18 +13343,8 @@ function alignTipPredictionAfterHydrate(reason) {
     resetAlgorithmProjectHealthForPrediction(currentPrediction);
     created = true;
   }
-  ensurePredictionAutoTop6Snapshot(currentPrediction, history);
-  ensurePredictionRecommend2Snapshot(currentPrediction, history);
-  ensurePredictionKillFrameworkSnapshot(currentPrediction, history);
-  ensurePredictionCompactAttackSnapshot(currentPrediction, history);
-  ensurePredictionThreeDingTwoSnapshot(currentPrediction, history);
-  ensurePredictionThreeDingOneSnapshot(currentPrediction, history);
-  ensurePredictionSideStableSnapshot(currentPrediction, history);
-  ensurePredictionColdFrameworkSnapshot(currentPrediction, history);
-  ensurePredictionDingKillSnapshot(currentPrediction, history);
-  ensurePredictionPick5000Snapshot(currentPrediction, history);
-  recomputeThreeDuishuRecommendation();
-  ensurePredictionThreeDuishuSnapshot(currentPrediction);
+  // 统一走 L0→L1 orchestrate；禁止先 legacy ensure+seal，否则 tip 门闩会因不可变跳过编排
+  ensurePredictionFrameworkSnapshots(currentPrediction, history);
   sealPredictionSnapshots(currentPrediction, latest);
   state.predictions = state.predictions.slice(0, MAX_PREDICTION_LOG);
   state.currentPrediction = currentPrediction;
@@ -10386,6 +13354,31 @@ function alignTipPredictionAfterHydrate(reason) {
     allowRegenerate: created || !(state.tipReady === true),
     log: true
   });
+  if (duishuBeforeAlign.length && !(state.duishuCaptureAlarm && state.duishuCaptureAlarm.at)) {
+    const remaining = collectDuishuCaptureIssues(currentPrediction);
+    state.duishuCaptureAlarm = {
+      at: isoNow(),
+      baseUid: String(currentPrediction.baseUid || ""),
+      basePeriod: String(currentPrediction.basePeriod || ""),
+      beforeCount: duishuBeforeAlign.length,
+      before: duishuBeforeAlign.slice(0, 12),
+      repairs: [{
+        target: created ? "hydrate-align-regenerate" : "hydrate-align-ensure",
+        ok: remaining.length === 0
+      }],
+      remaining: remaining.slice(0, 12),
+      resolved: remaining.length === 0,
+      via: "hydrate-align-tip"
+    };
+    addLog(remaining.length === 0
+      ? "【报警】对数抓取缺失，灌注对齐已自动补齐"
+      : "【报警】对数抓取缺失，灌注对齐后仍有残留", {
+      baseUid: currentPrediction.baseUid,
+      created,
+      before: duishuBeforeAlign.slice(0, 12),
+      remaining: remaining.slice(0, 12)
+    });
+  }
   addLog("灌注后已对齐当前预测 tip", {
     reason: reason || "hydrate-align-tip",
     latestPeriod: latest.period || "",
@@ -10477,6 +13470,7 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
     currentPrediction
     && isPredictionCompatible(currentPrediction, latest)
     && (state.tipReady === true || currentPrediction.tipStructurePerfect === true)
+    && !tipStableMathFilterLagging(currentPrediction)
   );
   // 开奖窗有多个 offset 同步：无新期且 tip 已就绪时跳过整包快照/门闩，避免反复打满事件循环导致面板假死。
   if (!early.didAddNewRecord && !early.didEvaluate && tipAlreadyReady) {
@@ -10499,20 +13493,9 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
   }
   await yieldEventLoop();
 
-  ensurePredictionAutoTop6Snapshot(currentPrediction, state.history);
-  ensurePredictionRecommend2Snapshot(currentPrediction, state.history);
-  ensurePredictionKillFrameworkSnapshot(currentPrediction, state.history);
-  ensurePredictionCompactAttackSnapshot(currentPrediction, state.history);
-  ensurePredictionThreeDingTwoSnapshot(currentPrediction, state.history);
-  ensurePredictionThreeDingOneSnapshot(currentPrediction, state.history);
+  // 统一走 L0→L1 orchestrate（含四位/三对数）；避免先 seal 导致门闩跳过编排
+  ensurePredictionFrameworkSnapshots(currentPrediction, state.history);
   await yieldEventLoop();
-
-  ensurePredictionSideStableSnapshot(currentPrediction, state.history);
-  ensurePredictionColdFrameworkSnapshot(currentPrediction, state.history);
-  ensurePredictionDingKillSnapshot(currentPrediction, state.history);
-  ensurePredictionPick5000Snapshot(currentPrediction, state.history);
-  recomputeThreeDuishuRecommendation();
-  ensurePredictionThreeDuishuSnapshot(currentPrediction);
   sealPredictionSnapshots(currentPrediction, latest);
   state.predictions = state.predictions.slice(0, MAX_PREDICTION_LOG);
   state.latestRecord = latest;
@@ -10542,7 +13525,59 @@ async function integrateRecordIntoBigData(record) {
 
 function buildSummary() {
   refreshBackendDailyStreaksIfNeeded();
+  const businessDay = currentBusinessDayKey();
+  const canRebuildDaily = memoryCanRebuildDailyCounters(state.predictions, businessDay);
+  const dailyPositionCounters = canRebuildDaily
+    ? summarizeDailyPositionCounters(state.predictions, businessDay)
+    : null;
+  const modelPerformance = calculateModelPerformance(state.predictions);
   const c = normalizeCounters(state.counters);
+  if (dailyPositionCounters) {
+    ["positionTotal", "wan", "qian", "bai", "shi"].forEach((key) => {
+      if (!dailyPositionCounters[key]) return;
+      c[key] = Object.assign({}, c[key], dailyPositionCounters[key], {
+        label: (c[key] && c[key].label) || dailyPositionCounters[key].label || key
+      });
+    });
+  } else {
+    // 样本被掏空时不要沿用过期 dayScope，避免面板仍显示「今日」却是旧账/空账假 100%
+    ["positionTotal", "wan", "qian", "bai", "shi", "threeDuishu", "anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((key) => {
+      if (!c[key] || typeof c[key] !== "object") return;
+      if (c[key].dayScope && String(c[key].dayScope) !== String(businessDay)) {
+        if (String(c[key].truthSource || "").indexOf("daily") >= 0) {
+          c[key].truthSource = "official-counter-truth-eligible-only";
+        }
+        delete c[key].dayScope;
+      }
+    });
+  }
+  if (canRebuildDaily) {
+    const dailyThreeDuishuCounter = summarizeDailyThreeDuishuCounter(state.predictions, businessDay);
+    if (dailyThreeDuishuCounter) {
+      c.threeDuishu = Object.assign({}, c.threeDuishu, dailyThreeDuishuCounter, {
+        label: (c.threeDuishu && c.threeDuishu.label) || dailyThreeDuishuCounter.label || "三对数排除"
+      });
+    }
+    const dailyHeweiHitCounters = summarizeDailyHeweiHitCounters(state.predictions, businessDay);
+    ["anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((key) => {
+      if (!dailyHeweiHitCounters[key]) return;
+      c[key] = Object.assign({}, c[key], dailyHeweiHitCounters[key], {
+        label: (c[key] && c[key].label) || dailyHeweiHitCounters[key].label || key,
+        truthSource: "official-counter-truth-eligible-only-daily",
+        dayScope: businessDay,
+        dayResetHour: PENTA5_DAY_RESET_HOUR
+      });
+    });
+    Object.keys(modelPerformance).forEach((key) => {
+      if (!/^position\.(wan|qian|bai|shi)\.(main|backup|dual)$/.test(String(key)) && String(key) !== "threeDuishu.backup") return;
+      c[key] = Object.assign({}, modelPerformance[key], {
+        label: modelKeyLabel(key),
+        dayScope: businessDay,
+        dayResetHour: PENTA5_DAY_RESET_HOUR,
+        truthSource: "official-counter-truth-eligible-only-daily"
+      });
+    });
+  }
   const memory = process.memoryUsage();
   const heapStats = v8.getHeapStatistics();
   const rates = {
@@ -10568,6 +13603,7 @@ function buildSummary() {
     twoDigitAvoid3: counterRateText(c.twoDigitAvoid3, "twoDigitAvoid3"),
     twoDigitHit: counterRateText(c.twoDigitHit, "twoDigitHit"),
     threeDigitHit: counterRateText(c.threeDigitHit, "threeDigitHit"),
+    threeDigitAvoid2: counterRateText(c.threeDigitAvoid2, "threeDigitAvoid2"),
     anyTwoHeweiHit: counterRateText(c.anyTwoHeweiHit, "anyTwoHeweiHit"),
     anyThreeHeweiHit: counterRateText(c.anyThreeHeweiHit, "anyThreeHeweiHit")
   };
@@ -10602,11 +13638,22 @@ function buildSummary() {
     latestRecord: state.latestRecord,
     currentPrediction: state.currentPrediction,
     tipReady,
+    structureReady: modelAudit.structureReady === true,
+    truthReady: modelAudit.truthReady === true,
+    qualityReady: modelAudit.qualityReady === true,
+    operationalReady: modelAudit.operationalReady === true,
     tipReadyCheckedAt: state.tipReadyCheckedAt || "",
     tipReadyIssueCount: Number(state.tipReadyIssueCount || 0),
     tipReadyIssues: Array.isArray(state.tipReadyIssues) ? state.tipReadyIssues.slice(0, 20) : [],
     threeDuishuRecommendation: buildThreeDuishuRecommendation(),
+    duishuCaptureAlarm: state.duishuCaptureAlarm && typeof state.duishuCaptureAlarm === "object"
+      ? state.duishuCaptureAlarm
+      : null,
     counters: c,
+    counterCohort: c.cohort || null,
+    positionDayScope: businessDay,
+    positionDayResetHour: PENTA5_DAY_RESET_HOUR,
+    legacyCounterCohorts: Array.isArray(c.legacyCohorts) ? c.legacyCohorts.slice(-5) : [],
     modelWatchdog: normalizeModelWatchdog(state.modelWatchdog),
     stormMode,
     dailyStreakLedger: normalizeDailyStreakLedger(state.dailyStreakLedger),
@@ -10782,15 +13829,27 @@ function buildModelAuditSummary() {
   const coreIntegrityIssues = integrityIssues.filter(isCorePredictionIssue);
   const projectIntegrityIssues = integrityIssues.filter((issue) => !isCorePredictionIssue(issue));
   const stabilityIssues = current ? collectCurrentPredictionStabilityIssues(current) : [];
+  const projectHealthSummary = summarizeAlgorithmProjectHealth(state && state.algorithmProjectHealth);
+  const structureReady = coreIntegrityIssues.length === 0;
+  const truthReady = structureReady && projectIntegrityIssues.length === 0;
+  const qualityReady = truthReady && projectHealthSummary.degradedProjectCount === 0 && stabilityIssues.length === 0;
+  const operationalReady = qualityReady;
   const extraKills = current && (current.extraKills || (current.detail && current.detail.extraKills)) || {};
   const missingExtraKeys = REQUIRED_EXTRA_KILL_KEYS.filter((key) => extraModelIntegrityReason(key, extraKills[key]) !== "");
   const autoTop6Total = current && current.autoTop6 && Array.isArray(current.autoTop6.items)
     ? current.autoTop6.items.filter((item) => item && item.side !== "backup").length
     : 0;
   return {
-    ok: coreIntegrityIssues.length === 0,
-    tipReady: coreIntegrityIssues.length === 0,
-    tipStructurePerfect: coreIntegrityIssues.length === 0,
+    ok: operationalReady,
+    tipReady: structureReady,
+    tipStructurePerfect: structureReady,
+    structureReady,
+    truthReady,
+    qualityReady,
+    operationalReady,
+    degradedProjectCount: projectHealthSummary.degradedProjectCount,
+    degradedProjectIssueCount: projectHealthSummary.degradedIssueCount,
+    degradedProjectIds: projectHealthSummary.degradedProjectIds,
     checkedAt: isoNow(),
     modelVersion: current && current.modelVersion || "",
     requiredExtraModelCount: REQUIRED_EXTRA_KILL_KEYS.length,
@@ -10806,11 +13865,7 @@ function buildModelAuditSummary() {
       killFramework: savedSnapshotTruthMetrics("killFramework", KILL_FRAMEWORK_SNAPSHOT_VERSION, KILL_FRAMEWORK_ITEM_COUNT, MODEL_STABLE_WINDOW),
       compactAttack: savedSnapshotTruthMetrics("compactAttack", COMPACT_ATTACK_SNAPSHOT_VERSION, COMPACT_ATTACK_ITEM_COUNT, MODEL_STABLE_WINDOW),
       threeDingTwo: savedSnapshotTruthMetrics("threeDingTwo", THREE_DING_TWO_SNAPSHOT_VERSION, THREE_DING_TWO_ITEM_COUNT, MODEL_STABLE_WINDOW),
-      threeDingOne: savedSnapshotTruthMetrics("threeDingOne", THREE_DING_ONE_SNAPSHOT_VERSION, THREE_DING_ONE_ITEM_COUNT, MODEL_STABLE_WINDOW),
-      sideStable: savedSnapshotTruthMetrics("sideStable", SIDE_STABLE_SNAPSHOT_VERSION, SIDE_STABLE_ITEM_COUNT, MODEL_STABLE_WINDOW),
-      coldFramework: savedSnapshotTruthMetrics("coldFramework", COLD_FRAMEWORK_SNAPSHOT_VERSION, COLD_FRAMEWORK_ITEM_COUNT, MODEL_STABLE_WINDOW),
-      dingKill: savedSnapshotTruthMetrics("dingKill", DING_KILL_SNAPSHOT_VERSION, DING_KILL_ITEM_COUNT, MODEL_STABLE_WINDOW),
-      pick5000: savedSnapshotTruthMetrics("pick5000", PICK5000_SNAPSHOT_VERSION, PICK5000_ITEM_COUNT, MODEL_STABLE_WINDOW)
+      threeDingOne: savedSnapshotTruthMetrics("threeDingOne", THREE_DING_ONE_SNAPSHOT_VERSION, THREE_DING_ONE_ITEM_COUNT, MODEL_STABLE_WINDOW)
     },
     simMetrics: {
       compactAttack: savedSnapshotSimMetrics("compactAttack", COMPACT_ATTACK_SNAPSHOT_VERSION, COMPACT_ATTACK_ITEM_COUNT, FRAMEWORK_SIM_SAMPLE_TARGET),
@@ -10848,7 +13903,9 @@ function modelAuditCacheKeyNow() {
     Array.isArray(state && state.predictions) ? state.predictions.length : 0,
     state && state.tipReady ? "1" : "0",
     state && state.tipReadyIssueCount || 0,
-    state && state.algorithmProjectIssueCount || 0
+    state && state.algorithmProjectIssueCount || 0,
+    state && state.algorithmProjectDegradedCount || 0,
+    state && state.algorithmProjectDegradedIssueCount || 0
   ].join("|");
 }
 
@@ -10895,6 +13952,10 @@ function buildHealthSummary(options) {
     pendingOfficialDrawCount: Array.isArray(state && state.pendingOfficialDraws) ? state.pendingOfficialDraws.length : 0,
     stormMode,
     tipReady: state && state.tipReady === true,
+    structureReady: state && state.structureReady === true,
+    truthReady: state && state.truthReady === true,
+    qualityReady: state && state.qualityReady === true,
+    operationalReady: state && state.operationalReady === true,
     tipReadyIssueCount: Number(state && state.tipReadyIssueCount || 0),
     algorithmProjectIssueCount: Number(state && state.algorithmProjectIssueCount || 0),
     algorithmProjectDegradedCount: Number(state && state.algorithmProjectDegradedCount || 0),
@@ -11045,7 +14106,7 @@ function slimHeweiKill(entry, includeMeta) {
 function slimHeweiKills(independentHeweiKills, includeMeta) {
   if (!independentHeweiKills || typeof independentHeweiKills !== "object") return {};
   const out = {};
-  ["wanQianBai", "qianBaiShi", "wanQianBaiShi"].forEach((key) => {
+  ["wanQianBai", "qianBaiShi", "wanQianBaiShi", "wanQianGe", "wanQianGeFreq", "wanBaiShi", "wanBaiShiFreq"].forEach((key) => {
     if (independentHeweiKills[key]) out[key] = slimHeweiKill(independentHeweiKills[key], includeMeta);
   });
   return out;
@@ -11082,13 +14143,9 @@ function slimExtraKill(entry) {
   ].forEach((key) => {
     if (entry[key] !== undefined) out[key] = entry[key];
   });
-  if (entry.codeCount !== undefined) out.codeCount = entry.codeCount;
-  else if (Array.isArray(entry.codes)) out.codeCount = entry.codes.length;
   if (entry.confidence !== undefined) out.confidence = entry.confidence;
   if (entry.recommendable !== undefined) out.recommendable = entry.recommendable;
   if (entry.preferOverlap !== undefined) out.preferOverlap = entry.preferOverlap;
-  // 面板从不需要 codes 大数组（可达上千），统一省略，避免 /state 膨胀与前端卡顿
-  if (entry.codesOmitted === true || (Array.isArray(entry.codes) && entry.codes.length)) out.codesOmitted = true;
   if (entry.performance) out.performance = slimPerformance(entry.performance);
   // 高基线元数据：即使旧 tip 缺字段，也按 key 补齐，避免面板把高通过率当成强预测
   const baselineMeta = highBaselineScoreMeta(entry.key || out.key);
@@ -11104,7 +14161,7 @@ function slimExtraKill(entry) {
 function slimExtraKills(extraKills) {
   if (!extraKills || typeof extraKills !== "object") return {};
   const out = {};
-  ["sumAvoid", "sumRangeAvoid", "spanAvoid", "repeatAvoid", "consecutiveAvoid", "parityRatioAvoid", "sizeRatioAvoid", ...RECENT_EXACT_CODE_KEYS, "threeDigitAvoid", "twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit", "threeDigitHit", "anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((key) => {
+  ["sumAvoid", "sumRangeAvoid", "spanAvoid", "repeatAvoid", "consecutiveAvoid", "parityRatioAvoid", "sizeRatioAvoid", "threeDigitAvoid", "twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit", "threeDigitHit", "threeDigitAvoid2", "anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((key) => {
     if (extraKills[key]) out[key] = slimExtraKill(Object.assign({ key }, extraKills[key]));
   });
   return out;
@@ -11147,6 +14204,21 @@ function slimThreeFourDetail(detail, includeMeta) {
   if (detail && detail.stableMathFilter) {
     out.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(detail.stableMathFilter);
   }
+  if (includeMeta && detail && detail.hewei && typeof detail.hewei === "object") {
+    out.hewei = detail.hewei;
+  }
+  if (includeMeta && detail && detail.codexStable && typeof detail.codexStable === "object") {
+    out.codexStable = detail.codexStable;
+  }
+  if (includeMeta && detail && detail.positionKills && typeof detail.positionKills === "object") {
+    out.positionKills = slimPositionKills(detail.positionKills, true);
+  }
+  if (includeMeta && detail && detail.extraKills && typeof detail.extraKills === "object") {
+    out.extraKills = slimExtraKillsForPersist(detail.extraKills, true);
+  }
+  if (includeMeta && detail && detail.fourPosExclude && typeof detail.fourPosExclude === "object") {
+    out.fourPosExclude = detail.fourPosExclude;
+  }
   return out;
 }
 
@@ -11177,14 +14249,9 @@ function slimEvaluation(evaluation) {
     "autoTop6",
     "recommend2",
     "killFramework",
-    "compactAttack",
-    "threeDingTwo",
-    "threeDingOne",
-    "sideStable",
-    "coldFramework",
-    "dingKill",
-    "pick5000",
     "threeDuishu",
+    "fourPosExclude",
+    "fourPosShapes",
     "independentTotalHeweiSuccess",
     "independentThreeFourSuccess",
     "allFourPositionSuccess",
@@ -11197,7 +14264,7 @@ function slimEvaluation(evaluation) {
   ].forEach((key) => {
     if (evaluation[key] !== undefined) out[key] = evaluation[key];
   });
-  FRAMEWORK_SNAPSHOT_STORE_KEYS.concat(["threeDuishu"]).forEach((key) => {
+  FRAMEWORK_SNAPSHOT_STORE_KEYS.concat(["threeDuishu", "fourPosExclude", "fourPosShapes"]).forEach((key) => {
     if (out[key]) out[key] = slimFrameworkEvaluationForPersist(out[key]);
   });
   return out;
@@ -11212,30 +14279,60 @@ function slimPredictionForPanel(prediction, includeMeta) {
     "baseUid",
     "basePeriod",
     "baseOpenTime",
+    // 面板审计/对奖依赖目标期；禁止从 /state 瘦身抹掉（否则历史预测看起来缺胳膊少腿）
+    "targetPeriod",
+    "targetPeriodRule",
+    "periodsPerDay",
     "generatedAt",
     "generatedAtText",
     "totalHeweiKill",
     "totalHeweiBackupDigit",
     "threeFourHeweiKillDigit",
     "threeFourHeweiBackupDigit",
-    "evaluated"
+    "evaluated",
+    "counterApplied",
+    "tipReady",
+    "tipStructurePerfect",
+    "structureReady",
+    "truthReady",
+    "qualityReady",
+    "operationalReady",
+    "snapshotsSealedAt",
+    "snapshotsSealedBaseUid",
+    "allSnapshotsSealed"
   ].forEach((key) => {
     if (prediction[key] !== undefined) out[key] = prediction[key];
   });
+  // 内存 tip 偶发缺 targetPeriod（旧 hydrate/瘦身残留）：按 base 即时补齐，禁止面板显示空目标期
+  if (!out.targetPeriod && out.basePeriod) {
+    const nextPeriod = expectedNextPenta5Period(out.basePeriod);
+    if (nextPeriod && nextPeriod.ok) {
+      out.targetPeriod = nextPeriod.expectedPeriod;
+      out.targetPeriodRule = out.targetPeriodRule || nextPeriod.rule || "panel-slim-repair";
+    }
+  }
   if (prediction.evaluation) out.evaluation = slimEvaluation(prediction.evaluation);
   if (prediction.positionKills) out.positionKills = slimPositionKills(prediction.positionKills, !!includeMeta);
   if (prediction.independentHeweiKills) out.independentHeweiKills = slimHeweiKills(prediction.independentHeweiKills, !!includeMeta);
   if (includeMeta && prediction.recommendationMeta) out.recommendationMeta = prediction.recommendationMeta;
   if (includeMeta && prediction.extraKills) out.extraKills = slimExtraKills(prediction.extraKills);
-  // 历史 predictions 只给核算真相；框架只下发 snapshot（面板读 prediction[storeName].items），不再重复 *Items/*RepairReport
-  if (includeMeta) {
-    FRAMEWORK_SNAPSHOT_STORE_KEYS.forEach((storeName) => {
-      if (prediction[storeName]) out[storeName] = slimFrameworkSnapshotForPanel(prediction[storeName]);
-    });
-    if (prediction.stableMathFilter) {
-      out.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(prediction.stableMathFilter);
-    }
-    if (prediction.detail) out.detail = slimThreeFourDetail(prediction.detail, true);
+  // 历史 predictions 也要带框架 snapshot / 更稳 / 门道，否则面板历史核对像“乱七八糟”
+  // 不再重复 *Items/*RepairReport
+  FRAMEWORK_SNAPSHOT_STORE_KEYS.forEach((storeName) => {
+    if (prediction[storeName]) out[storeName] = slimFrameworkSnapshotForPanel(prediction[storeName]);
+  });
+  if (prediction.stableMathFilter) {
+    out.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(prediction.stableMathFilter);
+  }
+  if (prediction.hewei && typeof prediction.hewei === "object") out.hewei = prediction.hewei;
+  if (prediction.codexStable && typeof prediction.codexStable === "object") {
+    out.codexStable = prediction.codexStable;
+  }
+  if (prediction.orchestrateMeta && typeof prediction.orchestrateMeta === "object") {
+    out.orchestrateMeta = prediction.orchestrateMeta;
+  }
+  if (includeMeta && prediction.detail) {
+    out.detail = slimThreeFourDetail(prediction.detail, true);
   } else if (prediction.detail && prediction.detail.threeFourHeweiKill) {
     out.detail = {
       threeFourHeweiKill: {
@@ -11246,6 +14343,7 @@ function slimPredictionForPanel(prediction, includeMeta) {
     };
   }
   if (prediction.threeDuishu) out.threeDuishu = slimThreeDuishuSnapshot(prediction.threeDuishu);
+  if (prediction.fourPosExclude) out.fourPosExclude = slimFourPosExcludeSnapshot(prediction.fourPosExclude);
   return out;
 }
 
@@ -11260,6 +14358,8 @@ function slimThreeDuishuSnapshot(snapshot) {
     "shot",
     "pairs",
     "pairCodes",
+    "selectedPair",
+    "selectedPairCode",
     "sealed",
     "sealedAt",
     "sealedBaseUid",
@@ -11273,7 +14373,10 @@ function slimThreeDuishuSnapshot(snapshot) {
     "quality",
     "confidence",
     "recommendable",
-    "stableMathOverlap"
+    "stableMathOverlap",
+    "pairSelectionMode",
+    "pairSelectionHoldCount",
+    "pairSelectionMaxHold"
   ].forEach((key) => {
     if (snapshot[key] !== undefined) out[key] = snapshot[key];
   });
@@ -11286,7 +14389,13 @@ function slimHistoryRecord(record) {
   ["uid", "period", "opentime", "numbers"].forEach((key) => {
     if (record[key] !== undefined) out[key] = record[key];
   });
-  // metrics/positions/capturedAt 面板冷热与展示用不上，省略以减 /state 体积
+  const metrics = record.metrics && typeof record.metrics === "object" ? record.metrics : null;
+  if (metrics) {
+    out.metrics = {};
+    ["totalHewei", "wanQianBaiHewei", "qianBaiShiHewei", "wanQianGeHewei", "wanBaiShiHewei", "wanQianBaiShiHewei"].forEach((key) => {
+      if (metrics[key] !== undefined) out.metrics[key] = metrics[key];
+    });
+  }
   return out;
 }
 
@@ -11296,13 +14405,7 @@ function slimFrameworkSnapshotForPanel(snapshot) {
   if (Array.isArray(snapshot.items)) {
     out.items = snapshot.items.map((item) => {
       if (!item || typeof item !== "object") return item;
-      const copy = Object.assign({}, item);
-      if (Array.isArray(copy.codes)) {
-        if (copy.codeCount == null) copy.codeCount = copy.codes.length;
-        copy.codesOmitted = true;
-        delete copy.codes;
-      }
-      return copy;
+      return Object.assign({}, item);
     });
   }
   if (Array.isArray(out.repairReport) && out.repairReport.length > 12) {
@@ -11324,7 +14427,7 @@ function slimFrameworkSnapshotForRobot(snapshot) {
       [
         "rank", "kind", "key", "side", "name", "code", "mode", "shapeKey",
         "rate", "rate30", "rate60", "rate120", "rate300", "stableScore", "stageLabel",
-        "confidence", "recommendable", "generatedGroupCount", "codeCount", "codesOmitted"
+        "confidence", "recommendable", "generatedGroupCount"
       ].forEach((key) => {
         if (item[key] !== undefined) value[key] = item[key];
       });
@@ -11342,6 +14445,7 @@ function buildRobotStatePayload() {
   [
     "id", "modelVersion", "baseUid", "basePeriod", "baseOpenTime", "targetPeriod", "targetPeriodRule",
     "generatedAt", "generatedAtText", "evaluated", "tipReady", "tipStructurePerfect",
+    "structureReady", "truthReady", "qualityReady", "operationalReady",
     "snapshotsSealedAt", "snapshotsSealedBaseUid", "allSnapshotsSealed",
     "totalHeweiKill", "totalHeweiBackupDigit", "threeFourHeweiKillDigit", "threeFourHeweiBackupDigit"
   ].forEach((key) => {
@@ -11355,6 +14459,7 @@ function buildRobotStatePayload() {
     if (current[storeName]) prediction[storeName] = slimFrameworkSnapshotForRobot(current[storeName]);
   });
   if (current.threeDuishu) prediction.threeDuishu = slimThreeDuishuSnapshot(current.threeDuishu);
+  if (current.fourPosExclude) prediction.fourPosExclude = slimFourPosExcludeSnapshot(current.fourPosExclude);
 
   const historyLimit = Math.max(30, Math.min(120, MODEL_STABLE_WINDOW, MAX_HISTORY || 120));
   return {
@@ -11367,10 +14472,15 @@ function buildRobotStatePayload() {
     latestRecord: slimHistoryRecord(state.latestRecord),
     currentPrediction: prediction,
     tipReady: state.tipReady === true,
+    structureReady: state.structureReady === true,
+    truthReady: state.truthReady === true,
+    qualityReady: state.qualityReady === true,
+    operationalReady: state.operationalReady === true,
     tipReadyIssueCount: Number(state.tipReadyIssueCount || 0),
     stormMode: normalizeStormMode(state.stormMode),
     dailyStreakLedger: normalizeDailyStreakLedger(state.dailyStreakLedger),
     modelWatchdog: normalizeModelWatchdog(state.modelWatchdog),
+    backdeleteSnapshot: getLatestBackdeleteSnapshot(),
     history: Array.isArray(state.history) ? state.history.slice(0, historyLimit).map(slimHistoryRecord) : []
   };
 }
@@ -11382,6 +14492,7 @@ function buildPanelStatePayload() {
   const predictionLimit = Math.max(30, Math.min(PANEL_PREDICTION_LIMIT, PANEL_STATE_PREDICTION_LIMIT));
   const historyLimit = Math.max(60, Math.min(PANEL_HISTORY_LIMIT, MODEL_STABLE_WINDOW, MAX_HISTORY || PANEL_HISTORY_LIMIT));
   return Object.assign({}, summary, {
+    backdeleteSnapshot: getLatestBackdeleteSnapshot(),
     history: Array.isArray(state.history) ? state.history.slice(0, historyLimit).map(slimHistoryRecord) : [],
     predictions: Array.isArray(state.predictions) ? state.predictions.slice(0, predictionLimit).map((prediction) => slimPredictionForPanel(prediction, false)) : [],
     logs: Array.isArray(state.logs) ? state.logs.slice(0, PANEL_LOG_LIMIT) : []
@@ -11395,6 +14506,7 @@ function panelStateKey() {
   const current = state.currentPrediction || {};
   const lastSync = state.lastSync || {};
   const watchdog = state.modelWatchdog || {};
+  const backdeleteSnapshot = getLatestBackdeleteSnapshot();
   return [
     state.updatedAt || "",
     latest.uid || "",
@@ -11414,6 +14526,7 @@ function panelStateKey() {
     watchdog.lastRepairAt || "",
     Array.isArray(watchdog.lastIssues) ? watchdog.lastIssues.length : 0,
     Array.isArray(watchdog.lastActions) ? watchdog.lastActions.length : 0,
+    backdeleteSnapshot && backdeleteSnapshot.fingerprint ? backdeleteSnapshot.fingerprint : "",
     latestLog
   ].join("|");
 }
@@ -11477,6 +14590,8 @@ function sendSharedHistory(req, res, parsedUrl) {
   const sourceHistory = Array.isArray(state && state.history) ? state.history : [];
   const history = sourceHistory.slice(0, limit).map((row) => ({
     period: String((row && (row.period || row.issue || row.uid)) || ""),
+    uid: String((row && (row.uid || row.period || row.issue)) || ""),
+    opentime: String((row && (row.opentime || row.openTime)) || ""),
     numbers: Array.isArray(row && row.numbers) ? row.numbers.slice(0, 5).map((value) => String(value)) : []
   }));
   sendJson(res, 200, {
@@ -11491,41 +14606,461 @@ function sendSharedHistory(req, res, parsedUrl) {
   });
 }
 
-function sendConverterHistory(req, res, parsedUrl) {
-  const requestedLimit = Number(parsedUrl.searchParams.get("limit") || 1500);
-  const limit = Math.max(1, Math.min(5000, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 1500));
-  const sourceHistory = Array.isArray(state && state.history) ? state.history : [];
+let converterHistoryHydratePromise = null;
+async function ensureConverterHistoryHydrated() {
+  if (!HISTORY_FROM_RDS || !state) return { ok: false, reason: "disabled" };
+  if (converterHistoryHydratePromise) return converterHistoryHydratePromise;
+  converterHistoryHydratePromise = Promise.resolve()
+    .then(() => hydrateSharedHistoryFromRds(state))
+    .finally(() => {
+      converterHistoryHydratePromise = null;
+    });
+  return converterHistoryHydratePromise;
+}
+
+function buildConverterHistoryRows(limit) {
+  const rdsPeriod = String((state && state.sharedHistoryRdsLatestPeriod) || "");
+  const sourceAll = Array.isArray(state && state.history) ? state.history : [];
+  const sourceHistory = rdsPeriod
+    ? sourceAll.filter((row) => {
+        const period = String((row && (row.period || row.issue || row.uid)) || "");
+        return period && period <= rdsPeriod;
+      })
+    : sourceAll;
   const history = sourceHistory.slice(0, limit).map((row) => {
     const numbers = Array.isArray(row && row.numbers) ? row.numbers.slice(0, 4).map((value) => String(value)) : [];
     return {
       period: String((row && (row.period || row.issue || row.uid)) || ""),
+      opentime: String((row && (row.opentime || row.openTime)) || ""),
       numbers
     };
   }).filter((row) => /^\d+$/.test(row.period) && row.numbers.length === 4 && row.numbers.every((value) => /^\d$/.test(value)));
-  const sharedSource = String((state && state.sharedHistorySource) || "").toLowerCase();
-  const sharedPeriod = String((state && state.sharedHistoryLatestPeriod) || (history[0] && history[0].period) || "");
-  const rdsPeriod = String((state && state.sharedHistoryRdsLatestPeriod) || "");
-  if (sharedSource !== "rds" || !history.length || (rdsPeriod && sharedPeriod !== rdsPeriod)) {
+  const sharedPeriod = String((history[0] && history[0].period) || "");
+  // ready 看「库内可用期数」，不能看本次 limit 切片长度（否则 limit=200 会被误判 503）
+  const poolMin = Math.max(200, Math.min(800, Number(limit) || 200));
+  return {
+    rdsPeriod,
+    sourceHistory,
+    history,
+    sharedPeriod,
+    ready: !!(
+      history.length &&
+      rdsPeriod &&
+      sharedPeriod === rdsPeriod &&
+      sourceHistory.length >= poolMin
+    )
+  };
+}
+
+async function sendConverterHistory(req, res, parsedUrl) {
+  const requestedLimit = Number(parsedUrl.searchParams.get("limit") || 1500);
+  const limit = Math.max(1, Math.min(5000, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 1500));
+
+  // 回删取数：优先每次从阿里云 RDS 拉最新；瞬时失败时若内存已有≥800期纯 RDS 段则降级继续，避免整段回删瘫痪
+  let refreshedFromRds = false;
+  let hydrateError = "";
+  if (HISTORY_FROM_RDS && state) {
+    try {
+      const hydrated = await ensureConverterHistoryHydrated();
+      if (hydrated && hydrated.ok === true) {
+        refreshedFromRds = true;
+      } else {
+        hydrateError = String((hydrated && hydrated.reason) || "hydrate-failed");
+      }
+    } catch (err) {
+      hydrateError = String(err && err.message ? err.message : err);
+    }
+  }
+
+  const built = buildConverterHistoryRows(limit);
+  if (!built.ready) {
     sendJson(res, 503, {
       ok: false,
-      error: "shared RDS history is not ready",
-      sharedHistorySource: sharedSource,
-      sharedHistoryLatestPeriod: sharedPeriod,
-      sharedHistoryRdsLatestPeriod: rdsPeriod
+      error: hydrateError
+        ? ("RDS hydrate failed: " + hydrateError + "；且内存历史不可用于回删")
+        : "shared RDS history is not ready",
+      reason: hydrateError || "not-ready",
+      sharedHistorySource: String((state && state.sharedHistorySource) || ""),
+      sharedHistoryLatestPeriod: built.sharedPeriod,
+      sharedHistoryRdsLatestPeriod: built.rdsPeriod,
+      historyCount: built.history.length,
+      availableHistoryCount: built.sourceHistory.length
+    });
+    return;
+  }
+
+  sendJson(res, 200, {
+    ok: true,
+    service: "penta5-converter-history",
+    sharedHistorySource: "rds",
+    sharedHistoryLatestPeriod: built.sharedPeriod,
+    sharedHistoryRdsLatestPeriod: built.rdsPeriod,
+    availableHistoryCount: built.sourceHistory.length,
+    historyCount: built.history.length,
+    latestRecord: built.history[0],
+    history: built.history,
+    refreshedFromRds: refreshedFromRds,
+    hydrateFallback: !refreshedFromRds && !!hydrateError,
+    sharedHistorySyncedAt: (state && state.sharedHistorySyncedAt) || null
+  });
+}
+
+function getLatestBackdeleteSnapshot() {
+  try {
+    return backdeleteSnapshotStore.latest();
+  } catch (_) {
+    return null;
+  }
+}
+
+function currentBackdeletePanelContext() {
+  const prediction = state && state.currentPrediction && typeof state.currentPrediction === "object"
+    ? state.currentPrediction
+    : {};
+  const snapshotPair = String(prediction && prediction.threeDuishu && prediction.threeDuishu.selectedPair || "");
+  const recommendation = buildThreeDuishuRecommendation();
+  const recommendationPair = String(recommendation && recommendation.selectedPair || "");
+  const panelPair = /^\d{2}$/.test(snapshotPair)
+    ? snapshotPair
+    : (/^\d{2}$/.test(recommendationPair) ? recommendationPair : "");
+  return {
+    panelPair,
+    panelBasePeriod: String(prediction.basePeriod || prediction.baseUid || ""),
+    panelTargetPeriod: String(prediction.targetPeriod || "")
+  };
+}
+
+async function buildBackdeleteHistoryContext() {
+  let hydrateError = "";
+  if (!HISTORY_FROM_RDS) throw new Error("RDS 共享历史读取已关闭，禁止生成回删结果。");
+  try {
+    const hydrated = await ensureConverterHistoryHydrated();
+    if (!hydrated || hydrated.ok !== true) hydrateError = String(hydrated && hydrated.reason || "hydrate-failed");
+  } catch (error) {
+    hydrateError = String(error && error.message || error);
+  }
+  const built = buildConverterHistoryRows(200);
+  if (!built.ready) {
+    throw new Error(hydrateError
+      ? ("RDS 刷新失败且共享历史未就绪：" + hydrateError)
+      : "RDS 共享历史未就绪。");
+  }
+  if (String(state && state.sharedHistorySource || "").toLowerCase() !== "rds") {
+    throw new Error("当前共享历史来源不是 RDS，已停止回删。");
+  }
+  const panel = currentBackdeletePanelContext();
+  if (!/^\d{2}$/.test(panel.panelPair)) throw new Error("面板本期排除对数尚未就绪。");
+  if (panel.panelBasePeriod && panel.panelBasePeriod !== built.sharedPeriod) {
+    throw new Error("面板基准期 " + panel.panelBasePeriod + " 与 RDS 最新期 " + built.sharedPeriod + " 不一致，已停止回删。");
+  }
+  return {
+    source: "rds",
+    sharedPeriod: built.sharedPeriod,
+    rdsPeriod: built.rdsPeriod,
+    rows: built.history,
+    panelBasePeriod: panel.panelBasePeriod || built.sharedPeriod,
+    panelTargetPeriod: panel.panelTargetPeriod,
+    panelPair: panel.panelPair,
+    refreshedFromRds: !hydrateError,
+    hydrateFallback: !!hydrateError
+  };
+}
+
+function loadQualifiedPicksPayload() {
+  if (PANEL_PASSWORD && fs.existsSync(QUALIFIED_PICKS_SEALED_FILE)) {
+    try {
+      const wrapped = JSON.parse(fs.readFileSync(QUALIFIED_PICKS_SEALED_FILE, "utf8"));
+      if (wrapped && wrapped.envelope) {
+        return qualifiedPicksSeal.unsealPayload(wrapped.envelope, PANEL_PASSWORD);
+      }
+    } catch (_) {}
+  }
+  try {
+    if (!fs.existsSync(QUALIFIED_PICKS_FILE)) return null;
+    return JSON.parse(fs.readFileSync(QUALIFIED_PICKS_FILE, "utf8"));
+  } catch (_) {
+    return null;
+  }
+}
+
+function loadQualifiedPicksLocks() {
+  const locks = qualifiedPicksSecureStore.readSealedField({
+    sealedFile: QUALIFIED_PICKS_LOCKS_SEALED_FILE,
+    metaFile: QUALIFIED_PICKS_LOCKS_FILE,
+    password: PANEL_PASSWORD,
+    field: "locks",
+    legacyReader() {
+      try {
+        if (!fs.existsSync(QUALIFIED_PICKS_LOCKS_FILE)) return {};
+        const raw = JSON.parse(fs.readFileSync(QUALIFIED_PICKS_LOCKS_FILE, "utf8"));
+        if (raw && raw.locksSealed === true) return {};
+        return raw && raw.locks && typeof raw.locks === "object" ? raw.locks : (raw || {});
+      } catch (_) {
+        return {};
+      }
+    }
+  });
+  return locks && typeof locks === "object" ? locks : {};
+}
+
+function loadQualifiedPicksDualLock() {
+  return qualifiedPicksSecureStore.readSealedField({
+    sealedFile: QUALIFIED_PICKS_DUAL_LOCKS_SEALED_FILE,
+    metaFile: QUALIFIED_PICKS_DUAL_LOCKS_FILE,
+    password: PANEL_PASSWORD,
+    field: "lock",
+    legacyReader() {
+      try {
+        if (!fs.existsSync(QUALIFIED_PICKS_DUAL_LOCKS_FILE)) return null;
+        const raw = JSON.parse(fs.readFileSync(QUALIFIED_PICKS_DUAL_LOCKS_FILE, "utf8"));
+        if (raw && raw.lockSealed === true) return null;
+        return raw && raw.lock ? raw.lock : null;
+      } catch (_) {
+        return null;
+      }
+    }
+  });
+}
+
+const qualifiedPicksRateBuckets = new Map();
+function qualifiedPicksRateLimited(req) {
+  const ip = String(req.socket && req.socket.remoteAddress || "unknown");
+  const now = Date.now();
+  let bucket = qualifiedPicksRateBuckets.get(ip);
+  if (!bucket || now > bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + 60000 };
+  }
+  bucket.count += 1;
+  qualifiedPicksRateBuckets.set(ip, bucket);
+  return bucket.count > 60;
+}
+
+function sendQualifiedPicksJson(res, statusCode, body) {
+  const text = safeJsonStringify(body);
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store, no-cache, must-revalidate, private",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "Connection": "close",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Length": String(Buffer.byteLength(text, "utf8"))
+  });
+  res.end(text);
+}
+
+function qualifiedPicksStreakOpts() {
+  return {
+    maxShowStreak: Number(process.env.QUALIFIED_PICKS_MAX_SHOW_STREAK != null
+      ? process.env.QUALIFIED_PICKS_MAX_SHOW_STREAK : 0),
+    maxEntryConsecutive: Number(process.env.QUALIFIED_PICKS_MAX_ENTRY_CONSECUTIVE != null
+      ? process.env.QUALIFIED_PICKS_MAX_ENTRY_CONSECUTIVE : 1),
+    cooldownPeriods: Math.max(0, Number(process.env.QUALIFIED_PICKS_FAIL_COOLDOWN || 3)),
+    entryLookback: Math.max(3, Number(process.env.QUALIFIED_PICKS_ENTRY_LOOKBACK || 8))
+  };
+}
+
+function scanQualifiedPicksForVerify(sourceHistory) {
+  const windowN = Math.max(20, Number(process.env.QUALIFIED_PICKS_WINDOW || 100));
+  const minRate = Number(process.env.QUALIFIED_PICKS_MIN_RATE || 92);
+  const stickyEnabled = String(process.env.QUALIFIED_PICKS_STICKY || "1") !== "0";
+  const streakOpts = Object.assign({
+    window: windowN,
+    minRate,
+    exitMinRate: Number(process.env.QUALIFIED_PICKS_EXIT_MIN_RATE || 88),
+    minLockPeriods: Number(process.env.QUALIFIED_PICKS_MIN_LOCK_PERIODS || 12),
+    now: isoNow()
+  }, qualifiedPicksStreakOpts());
+  if (!stickyEnabled) {
+    return qualifiedPicksScanner.scanQualifiedPicks(sourceHistory, { window: windowN, minRate });
+  }
+  return qualifiedPicksSticky.scanQualifiedPicksSticky(sourceHistory, streakOpts, loadQualifiedPicksLocks());
+}
+
+function scanDualPicksForVerify(sourceHistory) {
+  const windowN = Math.max(20, Number(process.env.QUALIFIED_PICKS_WINDOW || 100));
+  const dualEnabled = String(process.env.QUALIFIED_PICKS_DUAL_ENABLED || "1") !== "0";
+  if (!dualEnabled) return { picks: [] };
+  const stickyEnabled = String(process.env.QUALIFIED_PICKS_STICKY || "1") !== "0";
+  const streakOpts = Object.assign({
+    window: windowN,
+    minRate: Number(process.env.QUALIFIED_PICKS_DUAL_MIN_RATE || 89),
+    exitMinRate: Number(process.env.QUALIFIED_PICKS_DUAL_EXIT_MIN_RATE || 85),
+    minLockPeriods: Number(process.env.QUALIFIED_PICKS_MIN_LOCK_PERIODS || 12),
+    now: isoNow()
+  }, qualifiedPicksStreakOpts());
+  if (!stickyEnabled) {
+    return qualifiedPicksDual.scanDualPositionPicks(sourceHistory, streakOpts);
+  }
+  return qualifiedPicksDual.scanDualPositionSticky(sourceHistory, streakOpts, loadQualifiedPicksDualLock());
+}
+
+function sealQualifiedPicksResponse(body) {
+  if (!PANEL_PASSWORD) return body;
+  return {
+    ok: body.ok !== false,
+    sealed: true,
+    envelope: qualifiedPicksSeal.sealPayload(body, PANEL_PASSWORD)
+  };
+}
+
+function sendQualifiedPicks(res, authRole, req) {
+  if (authRole !== "admin") {
+    sendQualifiedPicksJson(res, 403, { ok: false, error: "qualified-picks admin only" });
+    return;
+  }
+  if (req && qualifiedPicksRateLimited(req)) {
+    sendQualifiedPicksJson(res, 429, { ok: false, error: "qualified-picks rate limited" });
+    return;
+  }
+  try {
+    const payload = loadQualifiedPicksPayload();
+    if (!payload) {
+      sendQualifiedPicksJson(res, 200, sealQualifiedPicksResponse({
+        ok: true, picks: [], dualPicks: [], trusted: false, updatedAt: null, window: 100, minRate: 92
+      }));
+      return;
+    }
+    const auditInfo = payload.audit && typeof payload.audit === "object" ? payload.audit : null;
+    const trusted = !!(auditInfo && auditInfo.crossCheckOk === true && auditInfo.windowDigest);
+    sendQualifiedPicksJson(res, 200, sealQualifiedPicksResponse({
+      ok: true,
+      trusted,
+      picks: trusted && Array.isArray(payload.picks) ? payload.picks : [],
+      dualPicks: trusted && Array.isArray(payload.dualPicks) ? payload.dualPicks : [],
+      updatedAt: payload.updatedAt || null,
+      window: Number(payload.window) || 100,
+      minRate: Number(payload.minRate) || 92,
+      exitMinRate: Number(payload.exitMinRate) || 88,
+      minLockPeriods: Number(payload.minLockPeriods) || 12,
+      dualMinRate: Number(payload.dualMinRate) || 89,
+      maxShowStreak: Number(payload.maxShowStreak != null ? payload.maxShowStreak : 0),
+      failCooldown: Number(payload.failCooldown != null ? payload.failCooldown : 3),
+      strategy: payload.strategy || null,
+      latestPeriod: payload.latestPeriod || null,
+      audit: auditInfo
+    }));
+  } catch (err) {
+    sendQualifiedPicksJson(res, 200, sealQualifiedPicksResponse({
+      ok: true, trusted: false, picks: [], dualPicks: [], error: String(err && err.message || err)
+    }));
+  }
+}
+
+function sendQualifiedPicksVerify(res, authRole, req) {
+  if (authRole !== "admin") {
+    sendQualifiedPicksJson(res, 403, { ok: false, error: "qualified-picks verify admin only" });
+    return;
+  }
+  if (req && qualifiedPicksRateLimited(req)) {
+    sendQualifiedPicksJson(res, 429, { ok: false, error: "qualified-picks verify rate limited" });
+    return;
+  }
+  const windowN = Math.max(20, Number(process.env.QUALIFIED_PICKS_WINDOW || 100));
+  const sourceHistory = Array.isArray(state && state.history) ? state.history : [];
+  const liveScan = scanQualifiedPicksForVerify(sourceHistory);
+  const liveDual = scanDualPicksForVerify(sourceHistory);
+  const liveNorm = qualifiedPicksScanner.normalizeHistoryRows(sourceHistory);
+  const liveDigest = qualifiedPicksAudit.historyWindowDigest(liveNorm, windowN);
+
+  const filePayload = loadQualifiedPicksPayload();
+  const fileAudit = filePayload && filePayload.audit ? filePayload.audit : null;
+  const filePicks = filePayload && Array.isArray(filePayload.picks) ? filePayload.picks : [];
+  const fileDualPicks = filePayload && Array.isArray(filePayload.dualPicks) ? filePayload.dualPicks : [];
+  const picksMatch = qualifiedPicksAudit.picksMatch(liveScan.picks, filePicks);
+  const dualPicksMatch = qualifiedPicksDual.dualPicksMatch(liveDual.picks || [], fileDualPicks);
+  const digestMatch = !!(fileAudit && fileAudit.windowDigest && fileAudit.windowDigest === liveDigest.digest);
+  const crossCheckOk = !!(fileAudit && fileAudit.crossCheckOk === true);
+  const trusted = crossCheckOk && picksMatch && dualPicksMatch && digestMatch;
+
+  sendQualifiedPicksJson(res, 200, sealQualifiedPicksResponse({
+    ok: trusted,
+    trusted,
+    verifiedAt: isoNow(),
+    checks: {
+      crossCheckOk,
+      picksMatch,
+      dualPicksMatch,
+      digestMatch,
+      historyAvailable: liveNorm.length >= windowN
+    },
+    live: {
+      picks: liveScan.picks,
+      pickCount: liveScan.picks.length,
+      dualPicks: liveDual.picks || [],
+      dualPickCount: (liveDual.picks || []).length,
+      latestPeriod: liveScan.latestPeriod,
+      windowDigest: liveDigest.digest,
+      windowNewestPeriod: liveDigest.newestPeriod,
+      windowOldestPeriod: liveDigest.oldestPeriod,
+      picksFingerprint: qualifiedPicksAudit.pickFingerprint(liveScan.picks),
+      dualPicksFingerprint: qualifiedPicksDual.dualPickFingerprint(liveDual.picks || []),
+      sharedHistorySource: String((state && state.sharedHistorySource) || ""),
+      historyCount: liveNorm.length
+    },
+    file: filePayload ? {
+      updatedAt: filePayload.updatedAt || null,
+      pickCount: filePicks.length,
+      dualPickCount: fileDualPicks.length,
+      audit: fileAudit
+    } : null
+  }));
+}
+
+function sendBackdeleteState(res) {
+  const integrityError = backdeleteSnapshotStore.integrityError();
+  if (integrityError) {
+    sendJson(res, 500, {
+      ok: false,
+      error: integrityError,
+      converterVersion: backdeleteSnapshotStore.converterVersion,
+      snapshot: getLatestBackdeleteSnapshot()
     });
     return;
   }
   sendJson(res, 200, {
     ok: true,
-    service: "penta5-converter-history",
-    sharedHistorySource: "rds",
-    sharedHistoryLatestPeriod: sharedPeriod,
-    sharedHistoryRdsLatestPeriod: rdsPeriod || sharedPeriod,
-    availableHistoryCount: sourceHistory.length,
-    historyCount: history.length,
-    latestRecord: history[0],
-    history
+    converterVersion: backdeleteSnapshotStore.converterVersion,
+    snapshot: getLatestBackdeleteSnapshot()
   });
+}
+
+async function generateBackdeleteSnapshot(req, res) {
+  let payload;
+  try {
+    const raw = await readRequestBody(req);
+    payload = JSON.parse(raw || "{}");
+  } catch (error) {
+    sendJson(res, 400, { ok: false, error: "请求格式无效：" + String(error && error.message || error) });
+    return;
+  }
+  try {
+    const historyContext = await buildBackdeleteHistoryContext();
+    const suppliedPair = String(payload && payload.panelThreeDuishuPair || "");
+    if (suppliedPair && suppliedPair !== historyContext.panelPair) {
+      sendJson(res, 409, {
+        ok: false,
+        error: "页面对数 " + suppliedPair + " 与面板本期对数 " + historyContext.panelPair + " 不一致，请刷新后重试。"
+      });
+      return;
+    }
+    const generated = backdeleteSnapshotStore.generate({
+      attackText: payload && payload.attackText,
+      target: payload && payload.target,
+      panelThreeDuishuPair: historyContext.panelPair,
+      historyContext
+    });
+    invalidatePanelStateCache();
+    sendJson(res, 200, {
+      ok: true,
+      reused: generated.reused === true,
+      refreshedFromRds: historyContext.refreshedFromRds,
+      hydrateFallback: historyContext.hydrateFallback,
+      snapshot: generated.snapshot
+    });
+  } catch (error) {
+    sendJson(res, 422, { ok: false, error: String(error && error.message || error) });
+  }
 }
 
 function sendPanelHtml(req, res) {
@@ -11746,6 +15281,21 @@ async function syncNow(trigger) {
               issueCount: Number(watchdogResult && watchdogResult.issueCount || 0),
               actionCount: Number(watchdogResult && watchdogResult.actionCount || 0)
             });
+            // 完整性之后：仅质量清锁（禁止整包重生），让下期选码能换掉老化锁
+            try {
+              const qualityResult = runModelWatchdog("sync-new-record-deferred-quality", {
+                save: true,
+                qualityLockReleaseOnly: true
+              });
+              addLog("开奖后延后质量清锁完成", {
+                ok: qualityResult && qualityResult.ok !== false,
+                skipped: !!(qualityResult && qualityResult.skipped),
+                issueCount: Number(qualityResult && qualityResult.issueCount || 0),
+                actionCount: Number(qualityResult && qualityResult.actionCount || 0)
+              });
+            } catch (qualityErr) {
+              addLog("开奖后延后质量清锁失败", { error: String(qualityErr && qualityErr.message || qualityErr) });
+            }
           } catch (err) {
             addLog("开奖后延后模型巡检失败", { error: String(err && err.message || err) });
           }
@@ -11845,6 +15395,26 @@ function readRequestBody(req) {
     req.on("end", () => resolve(body));
     req.on("error", reject);
   });
+}
+
+function readAlgorithmProjectStateFile(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { ok: false, error: "not-ready", data: null };
+    }
+    const raw = fs.readFileSync(filePath, "utf8");
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object") {
+      return { ok: false, error: "invalid-state", data: null };
+    }
+    return { ok: true, error: null, data };
+  } catch (error) {
+    return {
+      ok: false,
+      error: String(error && error.message ? error.message : error),
+      data: null
+    };
+  }
 }
 
 function sendJson(res, statusCode, payload) {
@@ -12008,7 +15578,7 @@ function authRoleFromPanelCookie(req) {
 function passwordOnlyLoginRole(password) {
   const pass = String(password || "");
   if (PANEL_VIEWER_PASSWORD !== "" && timingSafeEqualText(pass, PANEL_VIEWER_PASSWORD)) return "viewer";
-  if (PANEL_VIEWER_PASSWORD === "" && PANEL_PASSWORD !== "" && timingSafeEqualText(pass, PANEL_PASSWORD)) return "viewer";
+  if (PANEL_PASSWORD !== "" && timingSafeEqualText(pass, PANEL_PASSWORD)) return "admin";
   return "";
 }
 
@@ -12076,24 +15646,145 @@ function isAttackTxtPublicPath(pathname) {
     || pathname === "/attack-txt-icon.svg";
 }
 
+function isAccuracyPath(pathname) {
+  return pathname === "/accuracy" || pathname === "/accuracy.html";
+}
+
+function sendAccuracyHtml(req, res) {
+  try {
+    const html = fs.readFileSync(path.join(__dirname, "accuracy.html"), "utf8");
+    sendTextForRequest(req, res, 200, html, "text/html; charset=utf-8");
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: String(error && error.message ? error.message : error) });
+  }
+}
+
 function isViewerAllowedRequest(method, pathname) {
-  return method === "GET" && (
+  if (method === "POST" && pathname === "/backdelete-generate") return true;
+  if (method !== "GET") return false;
+  if (
+    pathname === "/claude"
+    || pathname.indexOf("/claude/") === 0
+    || pathname === "/claude-stable"
+    || pathname.indexOf("/claude-stable/") === 0
+    || pathname === "/claude-ensemble"
+    || pathname.indexOf("/algorithm-project/") === 0
+  ) {
+    return true;
+  }
+  return (
     pathname === "/"
     || pathname === "/panel"
     || isAttackTxtPublicPath(pathname)
+    || isAccuracyPath(pathname)
     || pathname === "/converter-history"
+    || pathname === "/backdelete-state"
     || pathname === "/state"
     || pathname === "/robot-state"
     || pathname === "/history"
     || pathname === "/health"
     || pathname === "/stable-math-filter"
     || pathname === "/exclusion-model"
+    || pathname === "/shape-avoid-3"
+    || pathname === "/four-factor-rank"
+    || pathname === "/four-ding-shape-size"
+    || pathname === "/four-ding-shape-parity"
+    || pathname === "/four-ding-shape-kills"
+    || pathname === "/shape-parity"
+    || pathname === "/shape-size"
+    || pathname === "/shape-parity-4"
+    || pathname === "/shape-size-4"
+    || pathname === "/claude-ensemble"
   );
+}
+
+function proxyLocalUpstream(req, res, upstreamBase, stripPrefix, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const silentFail = opts.silentFail === true;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+    try {
+      const incoming = new URL(req.url || "/", "http://127.0.0.1");
+      let suffix = incoming.pathname || "/";
+      if (stripPrefix && suffix.indexOf(stripPrefix) === 0) {
+        suffix = suffix.slice(stripPrefix.length) || "/";
+      }
+      if (!suffix.startsWith("/")) suffix = "/" + suffix;
+      const target = new URL(upstreamBase + suffix + (incoming.search || ""));
+      const headers = Object.assign({}, req.headers || {});
+      delete headers.host;
+      delete headers["content-length"];
+      const proxyReq = http.request({
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port || 80,
+        path: target.pathname + target.search,
+        method: req.method || "GET",
+        headers,
+        timeout: Math.min(SERVER_REQUEST_TIMEOUT, 15000)
+      }, (proxyRes) => {
+        const outHeaders = Object.assign({}, proxyRes.headers || {});
+        delete outHeaders.connection;
+        delete outHeaders["transfer-encoding"];
+        res.writeHead(proxyRes.statusCode || 502, outHeaders);
+        proxyRes.pipe(res);
+        proxyRes.on("end", () => finish(true));
+        proxyRes.on("error", () => finish(false));
+      });
+      proxyReq.on("timeout", () => {
+        try { proxyReq.destroy(new Error("upstream-timeout")); } catch (_) {}
+      });
+      proxyReq.on("error", () => {
+        if (!silentFail && !res.headersSent) {
+          sendJson(res, 502, { ok: false, error: "upstream-unreachable", upstream: upstreamBase });
+        }
+        finish(false);
+      });
+      if (req.method === "GET" || req.method === "HEAD") {
+        proxyReq.end();
+      } else {
+        req.pipe(proxyReq);
+      }
+    } catch (error) {
+      if (!silentFail && !res.headersSent) {
+        sendJson(res, 500, { ok: false, error: String(error && error.message ? error.message : error) });
+      }
+      finish(false);
+    }
+  });
+}
+
+async function handleClaudeProxyRequest(req, res, pathname) {
+  const isStable = pathname === "/claude-stable" || pathname.indexOf("/claude-stable/") === 0;
+  const strip = isStable ? "/claude-stable" : "/claude";
+  const upstream = isStable ? CLAUDE_STABLE_UPSTREAM : CLAUDE_ENSEMBLE_UPSTREAM;
+  const stateFile = isStable ? CLAUDE_STABLE_STATE_FILE : CLAUDE_ENSEMBLE_STATE_FILE;
+  const wantState = pathname === strip + "/state" || pathname === strip + "/state.json";
+  const ok = await proxyLocalUpstream(req, res, upstream, strip, { silentFail: wantState });
+  if (ok) return true;
+  if (wantState && !res.headersSent) {
+    const loaded = readAlgorithmProjectStateFile(stateFile);
+    if (loaded.ok) {
+      sendJson(res, 200, Object.assign({ ok: true, source: "state-file-fallback" }, loaded.data));
+      return true;
+    }
+    sendJson(res, 404, { ok: false, error: (isStable ? "claude-stable" : "claude-ensemble") + " not ready" });
+    return true;
+  }
+  if (!res.headersSent) {
+    sendJson(res, 502, { ok: false, error: "upstream-unreachable", upstream });
+  }
+  return true;
 }
 
 function safeLoginNextPath(raw) {
   const text = String(raw || "").trim();
-  if (text === "/attack-txt" || text === "/gongjiyu" || text === "/panel") return text;
+  if (text === "/attack-txt" || text === "/gongjiyu" || text === "/panel" || isAccuracyPath(text)) return text;
   return "/panel";
 }
 
@@ -12105,30 +15796,36 @@ function sendPasswordLoginHtml(req, res, message, nextPath) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>五路横财数据分析</title>
+  <title>五路公交数据库</title>
   <style>
-    html,body{margin:0;min-height:100%;font-family:Arial,"Microsoft YaHei",sans-serif;background:#f1f5f9;color:#0f172a;}
+    html,body{margin:0;min-height:100%;font-family:"Songti SC","STSong","Noto Serif SC","Microsoft YaHei",sans-serif;background:
+      radial-gradient(900px 360px at 20% 0%,rgba(245,158,11,.18),transparent 55%),
+      radial-gradient(800px 320px at 90% 10%,rgba(30,58,138,.12),transparent 50%),
+      #0b1220;color:#f8fafc;}
     body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;}
-    .box{width:100%;max-width:360px;background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:26px 24px;box-shadow:0 12px 35px rgba(15,23,42,.12);}
-    h1{font-size:22px;line-height:1.3;margin:0 0 18px;font-weight:900;text-align:center;}
-    label{display:block;font-size:15px;font-weight:800;margin:0 0 8px;}
-    input{width:100%;height:48px;border:1px solid #93c5fd;border-radius:10px;padding:0 12px;font-size:20px;box-sizing:border-box;outline:none;}
-    input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.16);}
-    button{width:100%;height:48px;margin-top:14px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-size:18px;font-weight:900;cursor:pointer;}
+    .box{width:100%;max-width:380px;background:linear-gradient(180deg,rgba(255,255,255,.98),#fff);border:1px solid rgba(245,158,11,.45);border-radius:16px;padding:28px 24px;box-shadow:0 18px 48px rgba(0,0,0,.35);}
+    h1{font-size:28px;line-height:1.25;margin:0 0 6px;font-weight:900;text-align:center;letter-spacing:.16em;color:#0f172a;}
+    h1 .mark{color:#d97706;margin-right:.08em;}
+    .sub{text-align:center;font-size:12px;font-weight:700;letter-spacing:.28em;color:#b45309;margin:0 0 18px;font-family:"Microsoft YaHei",sans-serif;}
+    label{display:block;font-size:15px;font-weight:800;margin:0 0 8px;color:#0f172a;font-family:"Microsoft YaHei",sans-serif;}
+    input{width:100%;height:48px;border:1px solid #f59e0b;border-radius:10px;padding:0 12px;font-size:20px;box-sizing:border-box;outline:none;font-family:"Microsoft YaHei",sans-serif;}
+    input:focus{border-color:#d97706;box-shadow:0 0 0 3px rgba(245,158,11,.22);}
+    button{width:100%;height:48px;margin-top:14px;border:0;border-radius:10px;background:linear-gradient(180deg,#f59e0b,#d97706);color:#111827;font-size:18px;font-weight:900;cursor:pointer;font-family:"Microsoft YaHei",sans-serif;}
     button:disabled{background:#94a3b8;cursor:default;}
-    .error{margin:0 0 12px;padding:10px 12px;border-radius:10px;background:#fee2e2;color:#991b1b;font-weight:800;}
-    .hint{margin-top:12px;color:#64748b;font-size:13px;line-height:1.5;text-align:center;}
+    .error{margin:0 0 12px;padding:10px 12px;border-radius:10px;background:#fee2e2;color:#991b1b;font-weight:800;font-family:"Microsoft YaHei",sans-serif;}
+    .hint{margin-top:12px;color:#64748b;font-size:13px;line-height:1.5;text-align:center;font-family:"Microsoft YaHei",sans-serif;}
   </style>
 </head>
 <body>
   <main class="box">
-    <h1>五路横财数据分析</h1>
+    <h1><span class="mark">◆</span>五路公交数据库</h1>
+    <div class="sub">五路数据 · 公交查询</div>
     ${errorHtml}
     <form id="loginForm" autocomplete="on">
       <label for="panelPassword">密码</label>
       <input id="panelPassword" name="password" type="password" autocomplete="current-password" autofocus required>
       <button id="loginBtn" type="submit">进入</button>
-      <div id="loginMsg" class="hint">五路横财数据分析，请输入密码进入。</div>
+      <div id="loginMsg" class="hint">五路公交数据库，请输入密码进入。</div>
     </form>
   </main>
   <script>
@@ -12142,6 +15839,16 @@ function sendPasswordLoginHtml(req, res, message, nextPath) {
       try{
         var res=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:password})});
         if(!res.ok){ msg.textContent="密码不对"; btn.disabled=false; return; }
+        var loginData=await res.json();
+        // Defer PBKDF2(120k) to panel boot to avoid UI freeze on Enter
+        try{
+          if(loginData&&loginData.role==="admin"){
+            sessionStorage.setItem("penta5_qp_seal_pw_tmp", password);
+          }else{
+            sessionStorage.removeItem("penta5_qp_seal_pw_tmp");
+            sessionStorage.removeItem("penta5_qp_seal_key");
+          }
+        }catch(sealStashErr){}
         location.replace(${JSON.stringify(next)});
       }catch(err){
         msg.textContent="网络异常，请重试";
@@ -12188,13 +15895,19 @@ async function handlePasswordLogin(req, res) {
 }
 
 function handleLogout(req, res) {
-  res.writeHead(302, {
-    "Location": "/panel",
+  const html = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>退出</title></head>
+<body><script>
+try{sessionStorage.removeItem("penta5_qp_seal_key");}catch(e){}
+location.replace("/login");
+</script></body></html>`;
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
     "Set-Cookie": clearPanelSessionCookieHeader(),
     "Cache-Control": "no-store",
     "Connection": "close"
   });
-  res.end("");
+  res.end(html);
 }
 
 function sendUnauthorized(res) {
@@ -12256,6 +15969,33 @@ async function handleRequest(req, res) {
     });
     return;
   }
+  // 本机救机器人完整包下载（免登录；支持 GET/HEAD，避免浏览器预检无响应）
+  if (
+    (req.method === "GET" || req.method === "HEAD") &&
+    (pathname === "/download/jiu-jiqiren.zip" ||
+      pathname === "/jiu-jiqiren.zip" ||
+      pathname === "/download/救机器人.zip")
+  ) {
+    const zipPath = path.join(__dirname, "downloads", "jiu-jiqiren.zip");
+    if (!fs.existsSync(zipPath)) {
+      sendJson(res, 404, { ok: false, error: "package not found" });
+      return;
+    }
+    const st = fs.statSync(zipPath);
+    res.writeHead(200, {
+      "Content-Type": "application/zip",
+      "Content-Length": st.size,
+      "Content-Disposition": 'attachment; filename="jiu-jiqiren.zip"',
+      "Cache-Control": "no-store",
+      "Accept-Ranges": "bytes"
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    fs.createReadStream(zipPath).pipe(res);
+    return;
+  }
   if (!authRole) {
     if (req.method === "GET" && (pathname === "/" || pathname === "/panel")) {
       sendPasswordLoginHtml(req, res, "", "/panel");
@@ -12268,6 +16008,10 @@ async function handleRequest(req, res) {
         return;
       }
       sendUnauthorized(res);
+      return;
+    }
+    if (req.method === "GET" && isAccuracyPath(pathname)) {
+      sendPasswordLoginHtml(req, res, "", "/accuracy");
       return;
     }
     sendUnauthorized(res);
@@ -12307,7 +16051,122 @@ async function handleRequest(req, res) {
       return;
     }
     if (req.method === "GET" && pathname === "/converter-history") {
-      sendConverterHistory(req, res, parsedUrl);
+      try { req.setTimeout(SYNC_REQUEST_TIMEOUT); } catch (_) {}
+      try { res.setTimeout(SYNC_REQUEST_TIMEOUT); } catch (_) {}
+      await sendConverterHistory(req, res, parsedUrl);
+      return;
+    }
+    if (req.method === "GET" && pathname === "/qualified-picks") {
+      sendQualifiedPicks(res, authRole, req);
+      return;
+    }
+    if (req.method === "GET" && pathname === "/qualified-picks/verify") {
+      sendQualifiedPicksVerify(res, authRole, req);
+      return;
+    }
+    if (req.method === "GET" && (
+      pathname === "/claude"
+      || pathname.indexOf("/claude/") === 0
+      || pathname === "/claude-stable"
+      || pathname.indexOf("/claude-stable/") === 0
+    )) {
+      await handleClaudeProxyRequest(req, res, pathname);
+      return;
+    }
+    if (req.method === "GET" && (
+      pathname === "/shape-avoid-3"
+      || pathname === "/four-factor-rank"
+      || pathname === "/four-ding-shape-size"
+      || pathname === "/four-ding-shape-parity"
+      || pathname === "/four-ding-shape-kills"
+        || pathname === "/shape-parity"
+      || pathname === "/shape-size"
+      || pathname === "/shape-parity-4"
+      || pathname === "/shape-size-4"
+      || pathname === "/claude-ensemble"
+      || pathname.indexOf("/algorithm-project/") === 0
+    )) {
+      try {
+        if (pathname === "/four-ding-shape-kills") {
+          const size = readAlgorithmProjectStateFile(FOUR_DING_SHAPE_SIZE_STATE_FILE);
+          const parity = readAlgorithmProjectStateFile(FOUR_DING_SHAPE_PARITY_STATE_FILE);
+          if (!size.ok && !parity.ok) {
+            sendJson(res, 404, { ok: false, error: "four-ding-shape-kills not ready" });
+            return;
+          }
+          const latestPeriod = (size.ok && size.data && size.data.latestPeriod)
+            || (parity.ok && parity.data && parity.data.latestPeriod)
+            || null;
+          sendJson(res, 200, {
+            ok: true,
+            id: "four-ding-shape-kills",
+            kind: "fourDingShapeKillBundle",
+            latestPeriod,
+            size: size.ok ? size.data : null,
+            parity: parity.ok ? parity.data : null,
+            sizeError: size.ok ? null : size.error,
+            parityError: parity.ok ? null : parity.error
+          });
+          return;
+        }
+        let projectId = "";
+        let stateFile = "";
+        if (pathname.indexOf("/algorithm-project/") === 0) {
+          projectId = String(pathname.slice("/algorithm-project/".length) || "").replace(/[^a-zA-Z0-9._-]/g, "");
+          if (!projectId) {
+            sendJson(res, 400, { ok: false, error: "missing-project-id" });
+            return;
+          }
+          stateFile = path.join(DATA_DIR, "algorithm-projects", projectId, "state.json");
+        } else {
+          const fileMap = {
+            "/shape-avoid-3": SHAPE_AVOID_3_STATE_FILE,
+            "/four-factor-rank": FOUR_FACTOR_RANK_STATE_FILE,
+            "/four-ding-shape-size": FOUR_DING_SHAPE_SIZE_STATE_FILE,
+            "/four-ding-shape-parity": FOUR_DING_SHAPE_PARITY_STATE_FILE,
+            "/shape-parity": path.join(DATA_DIR, "algorithm-projects", "shape-parity", "state.json"),
+            "/shape-size": path.join(DATA_DIR, "algorithm-projects", "shape-size", "state.json"),
+            "/shape-parity-4": path.join(DATA_DIR, "algorithm-projects", "shape-parity-4", "state.json"),
+            "/shape-size-4": path.join(DATA_DIR, "algorithm-projects", "shape-size-4", "state.json"),
+            "/claude-ensemble": CLAUDE_ENSEMBLE_STATE_FILE
+          };
+          stateFile = fileMap[pathname];
+          projectId = pathname.slice(1);
+        }
+        const loaded = readAlgorithmProjectStateFile(stateFile);
+        if (!loaded.ok) {
+          sendJson(res, 404, { ok: false, error: loaded.error || (projectId + " not ready") });
+          return;
+        }
+        const runnerLatest = state && state.latestRecord
+          ? String(state.latestRecord.period || state.latestRecord.uid || "")
+          : "";
+        const projectLatest = loaded.data && loaded.data.latestPeriod != null
+          ? String(loaded.data.latestPeriod)
+          : "";
+        const lagging = !!(runnerLatest && projectLatest && runnerLatest !== projectLatest);
+        sendJson(res, 200, Object.assign({
+          ok: true,
+          projectId,
+          runnerLatestPeriod: runnerLatest || null,
+          periodAligned: !lagging,
+          retiredHint: lagging && /^(shape-parity|shape-size|shape-parity-4|shape-size-4)$/.test(projectId)
+            ? "legacy-shape-model-no-sidecar"
+            : null
+        }, loaded.data));
+      } catch (error) {
+        sendJson(res, 500, { ok: false, error: String(error && error.message ? error.message : error) });
+      }
+      return;
+    }
+    if (req.method === "GET" && pathname === "/backdelete-state") {
+      sendBackdeleteState(res);
+      return;
+    }
+    if (req.method === "POST" && pathname === "/backdelete-generate") {
+      try { req.setTimeout(SYNC_REQUEST_TIMEOUT); } catch (_) {}
+      try { res.setTimeout(SYNC_REQUEST_TIMEOUT); } catch (_) {}
+      await generateBackdeleteSnapshot(req, res);
       return;
     }
     if (req.method === "GET" && pathname === "/stable-math-filter") {
@@ -12326,30 +16185,29 @@ async function handleRequest(req, res) {
       await handleExclusionModelRequest(req, res, parsedUrl);
       return;
     }
-    if (req.method === "GET" && pathname === "/download-full-backup") {
-      // 一次性全量备份下载（需已登录面板）；文件在仓库根或 backups/desktop-export
-      const candidates = [
-        path.join(__dirname, "penta5-runner-full-backup.tar.gz"),
-        path.join(__dirname, "backups", "desktop-export", "penta5-runner-full-backup.tar.gz")
-      ];
-      const filePath = candidates.find((p) => fs.existsSync(p));
-      if (!filePath) {
-        sendJson(res, 404, { ok: false, error: "backup archive not found" });
-        return;
-      }
-      const stat = fs.statSync(filePath);
-      res.writeHead(200, {
-        "Content-Type": "application/gzip",
-        "Content-Length": String(stat.size),
-        "Content-Disposition": 'attachment; filename="penta5-runner-full-backup.tar.gz"',
-        "Cache-Control": "no-store"
-      });
-      fs.createReadStream(filePath).pipe(res);
-      return;
-    }
     if (req.method === "POST" && pathname === "/backup") {
       const file = makeBackup();
       sendJson(res, 200, { ok: true, backupFile: file, createdAt: isoNow() });
+      return;
+    }
+    if (req.method === "POST" && pathname === "/force-regenerate-tip") {
+      if (authRole !== "admin") {
+        sendForbidden(res);
+        return;
+      }
+      try { req.setTimeout(SYNC_REQUEST_TIMEOUT); } catch (_) {}
+      try { res.setTimeout(SYNC_REQUEST_TIMEOUT); } catch (_) {}
+      let payload = {};
+      try {
+        const raw = await readRequestBody(req);
+        payload = raw ? JSON.parse(raw || "{}") : {};
+      } catch (_) {
+        payload = {};
+      }
+      const result = forceRegenerateTipForAdmin({
+        clearPositionLocks: payload.clearPositionLocks !== false
+      });
+      sendJson(res, result && result.ok ? 200 : (result && result.error === "sync-running" ? 409 : 500), result);
       return;
     }
     if (req.method === "POST" && pathname === "/sync") {
@@ -12404,11 +16262,15 @@ async function handleRequest(req, res) {
       sendPanelHtml(req, res);
       return;
     }
+    if (req.method === "GET" && isAccuracyPath(pathname)) {
+      sendAccuracyHtml(req, res);
+      return;
+    }
     if (req.method === "GET" && isAttackTxtPublicPath(pathname)) {
       sendAttackTxtAsset(req, res, pathname);
       return;
     }
-    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /robot-state", "GET /history", "GET /converter-history", "GET /stable-math-filter", "GET /exclusion-model", "GET /attack-txt", "POST /sync", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "POST /backup"] });
+    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /robot-state", "GET /history", "GET /converter-history", "GET /backdelete-state", "POST /backdelete-generate", "GET /stable-math-filter", "GET /exclusion-model", "GET /attack-txt", "GET /accuracy", "POST /sync", "POST /force-regenerate-tip", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "POST /backup"] });
   } catch (err) {
     sendJson(res, 500, { ok: false, error: err.message || String(err) });
   }
@@ -12416,7 +16278,17 @@ async function handleRequest(req, res) {
 
 function startServer() {
   state = loadState();
-  addLog("后台常驻服务启动", { port: PORT, sourceApiUrl: SOURCE_API_URL, stateFile: STATE_FILE, autoRefreshMs: AUTO_REFRESH_INTERVAL });
+  try { bindAlgorithmOrchestrators(); } catch (err) {
+    console.error("[orchestrate] bind failed", err && err.message ? err.message : err);
+  }
+  addLog("后台常驻服务启动", {
+    port: PORT,
+    sourceApiUrl: SOURCE_API_URL,
+    stateFile: STATE_FILE,
+    autoRefreshMs: AUTO_REFRESH_INTERVAL,
+    orchestrateBound: algorithmOrchestratorsBound,
+    algoProcessMode: String(process.env.PENTA5_ALGO_PROCESS_MODE || "0")
+  });
   state.updatedAt = state.updatedAt || isoNow();
 
 
@@ -12424,9 +16296,7 @@ function startServer() {
 
 // CODEX_SERVER_PERCENT_0400_BEGIN
 const CODEX_PERCENT_FILE = path.join(DATA_DIR, "codex_percent_server.json");
-const CODEX_PERCENT_VERSION = "CODEX_SERVER_PERCENT_0501_SEALED_ROLLING_100_PROOF";
-const CODEX_PERCENT_SELECTION_WINDOW = 100;
-const CODEX_PERCENT_MIN_TRAINING = 100;
+const CODEX_PERCENT_VERSION = "CODEX_SERVER_PERCENT_0410_RDS_LIVE";
 const CODEX_PERCENT_SOURCE = "rds-live-memory-v1";
 const CODEX_PERCENT_HISTORY_LIMIT = 1000;
 const CODEX_PERCENT_POSITIONS = [
@@ -12549,8 +16419,8 @@ function codexPercentPickByRule(records, posIndex, rule) {
 function codexPercentBacktest(records, posIndex, rule) {
   let total = 0;
   let pass = 0;
-  for (let i = CODEX_PERCENT_MIN_TRAINING; i < records.length; i += 1) {
-    const train = records.slice(Math.max(0, i - CODEX_PERCENT_SELECTION_WINDOW), i);
+  for (let i = 30; i < records.length; i += 1) {
+    const train = records.slice(Math.max(0, i - 80), i);
     const digit = codexPercentPickByRule(train, posIndex, rule);
     const actual = records[i].numbers[posIndex];
     if (actual === undefined || actual === null || actual === "") continue;
@@ -12562,12 +16432,11 @@ function codexPercentBacktest(records, posIndex, rule) {
 
 function codexPercentBuildPrediction(records) {
   const latest = records[records.length - 1] || null;
-  // 下一期只使用当前已开奖记录中最近 100 期；当前期本身尚未成为待结算目标。
-  const train = records.slice();
+  const train = latest ? records.slice(0, -1) : records.slice();
   const rules = ["cold16", "cold24", "hot8", "gap"];
   const exclusions = { qian: [], bai: [], shi: [], ge: [] };
   const models = [];
-  if (!latest || train.length < CODEX_PERCENT_MIN_TRAINING) {
+  if (!latest || train.length < 30) {
     return {
       available: false,
       reason: "暂无真实回测",
@@ -12579,15 +16448,48 @@ function codexPercentBuildPrediction(records) {
     };
   }
   for (const pos of CODEX_PERCENT_POSITIONS) {
+    const latestDigit = latest && Array.isArray(latest.numbers) ? latest.numbers[pos.index] : null;
     const candidates = rules.map((rule) => {
       const stat = codexPercentBacktest(train, pos.index, rule);
-      const digit = codexPercentPickByRule(train.slice(-CODEX_PERCENT_SELECTION_WINDOW), pos.index, rule);
-      return { rule, digit, total: stat.total, pass: stat.pass, rate: stat.rate };
-    }).filter((item) => item.digit !== null && item.total > 0 && item.rate !== null)
-      .sort((a, b) => (b.rate - a.rate) || (b.total - a.total) || a.digit.localeCompare(b.digit));
+      const digit = codexPercentPickByRule(train.slice(-90), pos.index, rule);
+      const sampleTotal = Number(stat.total) || 0;
+      const samplePass = Number(stat.pass) || 0;
+      const sampleRate = sampleTotal > 0 ? samplePass / sampleTotal : 0;
+      const z = 1.96;
+      const z2 = z * z;
+      const denominator = 1 + z2 / sampleTotal;
+      const centre = sampleRate + z2 / (2 * sampleTotal);
+      const margin = z * Math.sqrt(
+        (sampleRate * (1 - sampleRate) + z2 / (4 * sampleTotal)) /
+        sampleTotal
+      );
+      const confidence = sampleTotal > 0
+        ? (centre - margin) / denominator
+        : 0;
 
-    const currentActual = latest && latest.numbers ? latest.numbers[pos.index] : "";
-    const picked = candidates.find((item) => item.digit !== currentActual && item.total >= 20) || candidates.find((item) => item.digit !== currentActual) || null;
+      return {
+        rule,
+        digit,
+        total: stat.total,
+        pass: stat.pass,
+        rate: stat.rate,
+        confidence
+      };
+    }).filter((item) =>
+        item.digit !== null &&
+        item.rate !== null &&
+        item.total >= 20
+      )
+      .sort((a, b) =>
+        (b.rate - a.rate) ||
+        (b.total - a.total) ||
+        a.digit.localeCompare(b.digit)
+      );
+
+    const picked =
+      candidates.find((item) => item.digit !== latestDigit) ||
+      candidates[0] ||
+      null;
     if (!picked) continue;
     exclusions[pos.key] = [picked.digit];
     models.push({
@@ -12601,53 +16503,20 @@ function codexPercentBuildPrediction(records) {
       rate: picked.rate,
     });
   }
-  const available = models.length === CODEX_PERCENT_POSITIONS.length;
-  const prediction = {
-    available,
-    reason: available ? "" : "历史不足 100 期，暂不生成单码定位",
+  return {
+    available: models.length === CODEX_PERCENT_POSITIONS.length,
+    reason: models.length === CODEX_PERCENT_POSITIONS.length ? "" : "暂无真实回测",
     afterPeriod: latest ? latest.period : "",
     afterOpenTime: latest ? latest.openTime : "",
     exclusions,
     models,
     savedAt: new Date().toISOString(),
-    selectionWindow: CODEX_PERCENT_SELECTION_WINDOW,
-    note: "只用最近 100 期选码；仅累计开奖前封存且之后真实开奖的记录",
+    note: "服务器端自动记录，最新开奖号不参与训练，关电脑不影响",
   };
-  return available ? codexPercentSealPrediction(prediction) : prediction;
-}
-
-function codexPercentSealPayload(prediction) {
-  return {
-    version: String(prediction && prediction.version || CODEX_PERCENT_VERSION),
-    afterPeriod: String(prediction && prediction.afterPeriod || ""),
-    exclusions: prediction && prediction.exclusions || {},
-    selectionWindow: Number(prediction && prediction.selectionWindow || 0),
-    sealedAt: String(prediction && prediction.sealedAt || "")
-  };
-}
-
-function codexPercentSealPrediction(prediction) {
-  if (!prediction || prediction.available !== true) return prediction;
-  prediction.version = CODEX_PERCENT_VERSION;
-  prediction.selectionWindow = CODEX_PERCENT_SELECTION_WINDOW;
-  prediction.sealedAt = new Date().toISOString();
-  prediction.sealHash = crypto.createHash("sha256").update(JSON.stringify(codexPercentSealPayload(prediction))).digest("hex");
-  prediction.sealed = true;
-  return prediction;
-}
-
-function codexPercentSealIsValid(prediction) {
-  if (!prediction || prediction.available !== true || prediction.sealed !== true) return false;
-  if (String(prediction.version || "") !== CODEX_PERCENT_VERSION) return false;
-  if (Number(prediction.selectionWindow || 0) !== CODEX_PERCENT_SELECTION_WINDOW) return false;
-  if (!/^[a-f0-9]{64}$/i.test(String(prediction.sealHash || ""))) return false;
-  const expected = crypto.createHash("sha256").update(JSON.stringify(codexPercentSealPayload(prediction))).digest("hex");
-  return expected === prediction.sealHash;
 }
 
 function codexPercentEvaluate(prediction, record) {
-  if (!codexPercentSealIsValid(prediction) || !prediction.afterPeriod || !record || !record.period) return null;
-  if (String(prediction.afterPeriod) === String(record.period)) return null;
+  if (!prediction || prediction.available !== true || !prediction.afterPeriod || !record || !record.period) return null;
   const detail = {};
   let overallPass = true;
   for (const pos of CODEX_PERCENT_POSITIONS) {
@@ -12668,9 +16537,6 @@ function codexPercentEvaluate(prediction, record) {
     excludedFromModel: true,
     detail,
     overallPass,
-    predictionSealedAt: String(prediction.sealedAt || ""),
-    predictionSealHash: String(prediction.sealHash || ""),
-    selectionWindow: Number(prediction.selectionWindow || 0),
     checkedAt: new Date().toISOString(),
   };
 }
@@ -12711,7 +16577,31 @@ function codexPercentTick() {
   }
   if (!Array.isArray(store.history)) store.history = [];
 
-  // 真实百分比只认服务当时落盘的 pending 封存；禁止启动后用历史开奖号回填成绩。
+  // CODEX_SERVER_PERCENT_BACKFILL_0401_BEGIN
+  if (store.history.length < CODEX_PERCENT_HISTORY_LIMIT && records.length >= 36) {
+    const startIndex = Math.max(31, records.length - CODEX_PERCENT_HISTORY_LIMIT);
+    const backfilled = [];
+    for (let i = startIndex; i < records.length; i += 1) {
+      const trainRecords = records.slice(0, i);
+      if (trainRecords.length < 31) continue;
+      const prediction = codexPercentBuildPrediction(trainRecords);
+      if (!prediction || prediction.available !== true) continue;
+      const evaluated = codexPercentEvaluate(prediction, records[i]);
+      if (!evaluated) continue;
+      backfilled.unshift(evaluated);
+    }
+    const mergedHistory = [];
+    const seenHistoryIds = new Set();
+    for (const item of backfilled.concat(store.history)) {
+      if (!item || !item.id || seenHistoryIds.has(item.id)) continue;
+      seenHistoryIds.add(item.id);
+      mergedHistory.push(item);
+    }
+    if (mergedHistory.length >= store.history.length) {
+      store.history = mergedHistory.slice(0, CODEX_PERCENT_HISTORY_LIMIT);
+    }
+  }
+  // CODEX_SERVER_PERCENT_BACKFILL_0401_END
 
   if (store.pending && store.pending.available === true && store.pending.afterPeriod && String(store.pending.afterPeriod) !== String(latest.period)) {
     const evaluated = codexPercentEvaluate(store.pending, latest);
@@ -12849,6 +16739,12 @@ server.maxRequestsPerSocket = 100;
 
 server.listen(PORT, BIND_HOST, () => {
     console.log(`Penta5 backend runner listening on http://${BIND_HOST}:${PORT}`);
+    if (isAuthEnabled() && PANEL_VIEWER_PASSWORD === "") {
+      console.warn("[Security] PANEL_VIEWER_PASSWORD 未设置：只读账号未隔离，请勿把管理员密码给他人");
+    }
+    if (PANEL_PASSWORD) {
+      console.log("[Security] 稳杀单码接口：admin-only + AES密封 + no-store");
+    }
     // 启动巡检延后：先让 /health /state 与 RDS 灌注可用，避免一启动就整包重生堵死探针
     setTimeout(() => {
       try { runModelWatchdog("startup", { save: true, integrityOnly: true }); } catch (error) {
@@ -12871,19 +16767,49 @@ server.listen(PORT, BIND_HOST, () => {
       console.error("[FrameworkSimHistoryBackfill] schedule failed", error && error.message ? error.message : error);
     }
     // 启动即从 RDS 灌注共享 history（磁盘不再保留开奖主数据）
-    hydrateSharedHistoryFromRds(state).then((result) => {
+    hydrateSharedHistoryFromRds(state).then(async (result) => {
       if (result && result.ok) {
         addLog("共享历史已从 RDS 灌注", { reason: "startup-blocking", ...result });
+      }
+      try {
+        let durable = await hydrateAlgoDurableFromRds(state);
+        if ((!durable || !durable.ok) && (ALGO_RDS_DURABLE || LOCAL_TIP_ONLY)) {
+          // /state 约 4~5MB，启动高峰易超时；失败后补一次，避免 counters 空账
+          await new Promise((r) => setTimeout(r, 3000));
+          durable = await hydrateAlgoDurableFromRds(state);
+        }
+        if (durable && durable.ok) {
+          addLog("算法资料已从 RDS 灌注", { reason: "startup-blocking", ...durable });
+        } else if (ALGO_RDS_DURABLE || LOCAL_TIP_ONLY) {
+          addLog("算法资料 RDS 灌注跳过/失败", { reason: "startup-blocking", ...(durable || {}) });
+        }
+      } catch (err) {
+        console.error("[RDS algo hydrate] failed", err && err.message ? err.message : err);
+      }
+      if (result && result.ok) {
         try {
           settleMissedPredictionEvaluations({ reason: "startup-hydrate-catchup", save: false });
           alignTipPredictionAfterHydrate("startup-hydrate-align-tip");
           const scrubbed = scrubReconstructedTruthFlags();
           if (scrubbed > 0) addLog("已清除回填样本的 truth 标记", { scrubbed });
-          // 启动后先挂缓存，再异步按最新 history 刷新更稳排除
+          // 启动后先挂缓存；更稳落后或无 orchestrateMeta 时解封重跑真算
           if (state.currentPrediction) attachCachedStableMathFilter(state.currentPrediction);
           if (state.currentPrediction && Array.isArray(state.history) && state.history.length) {
+            const smfLagging = tipStableMathFilterLagging(state.currentPrediction);
+            if (!state.currentPrediction.orchestrateMeta || smfLagging) {
+              if (smfLagging) {
+                unsealTipForStableMathRebuild(state.currentPrediction, "startup-smf-lag");
+              } else {
+                state.currentPrediction.snapshotsSealedAt = "";
+                state.currentPrediction.snapshotsSealedBaseUid = "";
+                state.currentPrediction.allSnapshotsSealed = false;
+              }
+            }
             fillPredictionDetail(state.currentPrediction, state.history);
             ensurePredictionFrameworkSnapshots(state.currentPrediction, state.history);
+            const latestHydrate = state.history[0] || state.latestRecord;
+            if (latestHydrate) sealPredictionSnapshots(state.currentPrediction, latestHydrate);
+            try { ensureTipStructurePerfect({ trigger: "startup-orchestrate-align", log: true, fromSync: false }); } catch (_) {}
           }
           state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(
             state.stableMathFilter || stableMathFilterBridge.readCachedFilter()
@@ -12920,6 +16846,13 @@ server.listen(PORT, BIND_HOST, () => {
       console.error("[RDS catchup interval] failed", err && err.message ? err.message : err);
     });
   }, Math.max(30000, Number(process.env.RDS_CATCHUP_INTERVAL_MS || 60000)));
+  // 热路径大量 skipMirror；独立定时保证镜像仍会跑（debounce 内合并）
+  const mirrorIntervalMs = Math.max(RDS_MIRROR_DEBOUNCE_MS, Number(process.env.RDS_MIRROR_INTERVAL_MS || 10 * 60 * 1000));
+  setInterval(() => {
+    try { scheduleRdsMirrorAfterSave(); } catch (err) {
+      console.error("[RDS mirror interval] failed", err && err.message ? err.message : err);
+    }
+  }, mirrorIntervalMs);
 
   process.on("SIGINT", () => {
     clearAutoSyncTimer();

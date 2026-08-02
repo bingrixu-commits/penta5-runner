@@ -11,7 +11,14 @@ for x in d:
   e=x.get("pm2_env",{})
   print(n, e.get("status"), "restarts", e.get("restart_time"), "unstable", e.get("unstable_restarts"))'
 echo "=== PORTS ==="
-ss -lntp 2>/dev/null | grep -E ':3000|:3001|:8787' || netstat -lntp 2>/dev/null | grep -E ':3000|:3001|:8787' || true
+# source-proxy(:3000) 已废弃；核心端口 8787/3001 + 可选官网 SOURCE_API_URL
+ss -lntp 2>/dev/null | grep -E ':3001|:8787' || netstat -lntp 2>/dev/null | grep -E ':3001|:8787' || true
+if [[ -f .env ]]; then
+  SOURCE_API_URL="$(grep -E '^SOURCE_API_URL=' .env | head -1 | cut -d= -f2- | tr -d '\r')"
+  if [[ -n "$SOURCE_API_URL" ]]; then
+    curl -sS -m 8 -o /dev/null -w "official_source=%{http_code}\n" "$SOURCE_API_URL" || echo "official_source=fail"
+  fi
+fi
 echo "=== LOG TAIL ==="
 tail -n 40 /root/.pm2/logs/penta5-runner-error.log 2>/dev/null || true
 tail -n 20 /root/.pm2/logs/penta5-runner-out.log 2>/dev/null || true
@@ -50,7 +57,7 @@ print('state.ok', d.get('ok'))
 print('latest', (d.get('latestRecord') or {}).get('period'), (d.get('latestRecord') or {}).get('numbers'))
 print('base', pred.get('basePeriod'), 'gen', pred.get('generatedAt'))
 print('hist', len(d.get('history') or []), 'preds', len(d.get('predictions') or []))
-for name in ['autoTop6','recommend2','killFramework','coldFramework']:
+for name in ['autoTop6','recommend2','killFramework','compactAttack','threeDingTwo','threeDingOne','threeDuishu']:
  snap=pred.get(name) or {}
  items=snap.get('items') or []
  print(name, 'sealed=', snap.get('sealed'), 'n=', len(items), 'ver=', snap.get('version'))

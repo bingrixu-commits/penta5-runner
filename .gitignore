@@ -1,5 +1,14 @@
 .env
 *.env.local
+.env.*
+!.env.example
+
+# 含密钥的本地 IDE / Roo 配置（只保留 *.example.json 可入库）
+.roo/roo-code-settings.json
+.vscode/settings.json
+.vscode/settings.local.json
+.vscode/**/*.session.sql
+
 node_modules/
 api/node_modules/
 data/state.json

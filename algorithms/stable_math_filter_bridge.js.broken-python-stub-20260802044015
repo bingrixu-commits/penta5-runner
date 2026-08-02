@@ -1,0 +1,163 @@
+/**
+ * 稳定数学过滤器桥接文件
+ * 用于连接Python过滤器和前端/后端系统
+ */
+
+// 导入Python过滤器（通过子进程调用）
+const { spawn } = require('child_process');
+const fs = require('fs').promises;
+
+/**
+ * 调用Python过滤器
+ * @param {string} draw - 彩票号码
+ * @returns {Promise<Object>} 过滤结果
+ */
+async function callPythonFilter(draw) {
+    return new Promise((resolve, reject) => {
+        // 调用Python脚本
+        const python = spawn('python3', ['algorithms/lottery_filter.py', draw]);
+        
+        let result = '';
+        let error = '';
+        
+        python.stdout.on('data', (data) => {
+            result += data.toString();
+        });
+        
+        python.stderr.on('data', (data) => {
+            error += data.toString();
+        });
+        
+        python.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    resolve(JSON.parse(result.trim()));
+                } catch (e) {
+                    reject(new Error('解析Python输出失败: ' + result));
+                }
+            } else {
+                reject(new Error('Python脚本执行失败: ' + error));
+            }
+        });
+    });
+}
+
+/**
+ * 调用Python杀码分析函数
+ * @param {Array<string>} draws - 彩票号码数组
+ * @returns {Promise<Object>} 杀码分析结果
+ */
+async function callPythonKillingCodesAnalysis(draws) {
+    return new Promise((resolve, reject) => {
+        // 调用Python脚本进行杀码分析
+        const python = spawn('python3', ['algorithms/lottery_filter.py', 'analyze_killing_codes']);
+        
+        let result = '';
+        let error = '';
+        
+        python.stdout.on('data', (data) => {
+            result += data.toString();
+        });
+        
+        python.stderr.on('data', (data) => {
+            error += data.toString();
+        });
+        
+        python.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    resolve(JSON.parse(result.trim()));
+                } catch (e) {
+                    reject(new Error('解析Python杀码分析输出失败: ' + result));
+                }
+            } else {
+                reject(new Error('Python杀码分析脚本执行失败: ' + error));
+            }
+        });
+    });
+}
+
+/**
+ * 应用稳定数学过滤器
+ * @param {string} draw - 彩票号码
+ * @returns {Promise<Object>} 过滤结果对象
+ */
+async function applyStableMathFilter(draw) {
+    try {
+        // 调用Python过滤器
+        const result = await callPythonFilter(draw);
+        
+        // 根据过滤结果构建返回对象
+        return {
+            original: result.original,
+            normalized: result.normalized,
+            passed: result.passed,
+            rejectedBy: result.rejected_by,
+            // 添加额外的稳定数学过滤器信息
+            extra: {
+                repeatAvoid: result.rejected_by.includes('repeatAvoid'),
+                consecutiveAvoid: result.rejected_by.includes('consecutiveAvoid'),
+                parityRatioAvoid: result.rejected_by.includes('parityRatioAvoid'),
+                sizeRatioAvoid: result.rejected_by.includes('sizeRatioAvoid'),
+                sumRangeAvoid: result.rejected_by.includes('sumRangeAvoid'),
+                // 新增的过滤规则
+                tailSumAvoid: result.rejected_by.includes('tailSumAvoid'),
+                logarithmAvoid: result.rejected_by.includes('logarithmAvoid')
+            }
+        };
+    } catch (error) {
+        console.error('过滤器执行错误:', error);
+        throw error;
+    }
+}
+
+/**
+ * 获取杀码分析结果
+ * @param {Array<string>} draws - 彩票号码数组
+ * @returns {Promise<Object>} 杀码分析结果
+ */
+async function getKillingCodesAnalysis(draws) {
+    try {
+        // 调用Python杀码分析函数
+        const result = await callPythonKillingCodesAnalysis(draws);
+        
+        return {
+            positionKilling: result.position_killing,
+            tailKilling: result.tail_killing
+        };
+    } catch (error) {
+        console.error('杀码分析错误:', error);
+        throw error;
+    }
+}
+
+/**
+ * 批量应用过滤器
+ * @param {Array<string>} draws - 彩票号码数组
+ * @returns {Promise<Array<Object>>} 过滤结果数组
+ */
+async function applyFiltersBatch(draws) {
+    const results = [];
+    
+    for (const draw of draws) {
+        try {
+            const result = await applyStableMathFilter(draw);
+            results.push(result);
+        } catch (error) {
+            console.error(`处理号码 ${draw} 时出错:`, error);
+            results.push({
+                original: draw,
+                error: error.message
+            });
+        }
+    }
+    
+    return results;
+}
+
+// 导出函数
+module.exports = {
+    applyStableMathFilter,
+    applyFiltersBatch,
+    getKillingCodesAnalysis
+};

@@ -1,0 +1,27 @@
+Penta5 algorithms — folder categories
+kill/       杀码类（一位一杀等）
+  - four-pos-exclude
+  - position-kills
+  - kill-framework
+  - extra-kills
+  - codex-stable
+ai/         AI 旁路
+  - claude-ensemble
+  - qualified-picks
+framework/  L1 框架
+  - auto-top6
+  - recommend2
+  - compact-attack
+  - three-ding-one
+  - three-ding-two
+  - three-duishu
+  - core-runner
+filter/     过滤 / 合尾
+  - stable-math
+  - hewei
+  - hewei-qian-bai-ge-freq
+  - hewei-qian-bai-ge-stable
+  - hewei-qian-shi-ge-freq
+  - hewei-qian-shi-ge-stable
+
+旧路径 algorithms/<name> 仍为符号链接，兼容原有 require。

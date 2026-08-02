@@ -1,13 +1,13 @@
 "use strict";
 
 /**
- * Node 桥接：异步调用 algorithms/run.py（更稳数学排除 v3，九条规则）。
- * 禁止 spawnSync，避免堵死 penta5-runner 事件循环。
+ * Node 桥接：调用 algorithms/run.py（更稳数学排除 v3，九条规则）。
+ * 热路径用 async；Tip 封存前用 runStableMathFilterSync 对齐期号（短暂阻塞可接受）。
  */
 
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
 const RUN_PY = path.join(__dirname, "run.py");
@@ -118,14 +118,27 @@ function runStableMathFilterAsync(history, options) {
         });
         return;
       }
+      // 必须以 stdout JSON 为准。旧 stub 会 exit0 却只打印演示文本，
+      // 若回落磁盘缓存并标 ok:true，会出现“刷新成功但期号永不前进”。
       let result = null;
+      let parsedStdout = false;
       try {
-        result = JSON.parse(String(stdout || "").trim() || "null");
+        const text = String(stdout || "").trim();
+        if (text) {
+          result = JSON.parse(text);
+          parsedStdout = !!(result && typeof result === "object");
+        }
       } catch (_) {
-        result = readCachedFilter(outPath);
+        result = null;
+        parsedStdout = false;
       }
-      if (!result) {
-        resolve({ ok: false, error: "empty-result", result: null });
+      if (!parsedStdout) {
+        const cached = readCachedFilter(outPath);
+        resolve({
+          ok: false,
+          error: ((stderr || "").trim() || "python-no-json-stdout").slice(0, 500),
+          result: cached
+        });
         return;
       }
       resolve({ ok: true, result, outPath });
@@ -142,6 +155,70 @@ function runStableMathFilterAsync(history, options) {
       resolve({ ok: false, error: err && err.message ? err.message : String(err), result: readCachedFilter(outPath) });
     }
   });
+}
+
+/**
+ * Tip 封存前同步刷新：必须拿到与 history[0].period 对齐的滤网，
+ * 禁止“先封 tip、再异步刷新”导致当期吃上一期更稳（摆设）。
+ */
+function runStableMathFilterSync(history, options) {
+  const opts = options || {};
+  const outPath = opts.outPath || DEFAULT_OUT;
+  const timeout = Number(opts.timeoutMs || 25000);
+  const python = process.env.PENTA5_PYTHON || process.env.PYTHON || "python3";
+  const payload = buildHistoryPayload(history);
+  if (!payload.history.length) {
+    return { ok: false, error: "empty-history", result: readCachedFilter(outPath) };
+  }
+  try {
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  } catch (_) {}
+  let child;
+  try {
+    child = spawnSync(python, [RUN_PY, "--stdin-json", "--quiet", "--dump-json", "--out", outPath], {
+      cwd: __dirname,
+      env: process.env,
+      input: JSON.stringify(payload),
+      encoding: "utf8",
+      timeout,
+      maxBuffer: 8 * 1024 * 1024
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      error: err && err.message ? err.message : String(err),
+      result: readCachedFilter(outPath)
+    };
+  }
+  if (child.error) {
+    return {
+      ok: false,
+      error: child.error.message || String(child.error),
+      result: readCachedFilter(outPath)
+    };
+  }
+  if (child.status !== 0) {
+    return {
+      ok: false,
+      error: String(child.stderr || child.stdout || `exit:${child.status}`).slice(0, 500),
+      result: readCachedFilter(outPath)
+    };
+  }
+  let result = null;
+  try {
+    const text = String(child.stdout || "").trim();
+    if (text) result = JSON.parse(text);
+  } catch (_) {
+    result = null;
+  }
+  if (!result || typeof result !== "object") {
+    return {
+      ok: false,
+      error: String(child.stderr || "").trim().slice(0, 500) || "python-no-json-stdout",
+      result: readCachedFilter(outPath)
+    };
+  }
+  return { ok: true, result, outPath, sync: true };
 }
 
 /** 兼容旧同步调用：仅读缓存，不阻塞。 */
@@ -170,6 +247,7 @@ module.exports = {
   readCachedFilter,
   slimStableMathFilter,
   runStableMathFilter,
+  runStableMathFilterSync,
   runStableMathFilterAsync,
   attachStableMathFilter,
   buildHistoryPayload

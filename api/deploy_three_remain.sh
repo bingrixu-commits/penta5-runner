@@ -17,4 +17,4 @@ echo
 echo "=== panel source ==="
 curl -s --max-time 30 $AUTH http://127.0.0.1:3001/panel | grep -o "three_remain_pure_v189\|txtThreeRemainTopBox\|只回删旧码，不加排除码\|再叠加替补定位杀码" | sort | uniq -c
 echo "=== ports ==="
-ss -lntp | grep -E ':3000|:3001' || true
+ss -lntp | grep -E ':3001|:8787' || true

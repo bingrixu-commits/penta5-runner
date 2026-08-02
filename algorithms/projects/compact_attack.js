@@ -1,4 +1,3 @@
 "use strict";
-
-/** Compatibility re-export. */
-module.exports = require("../compact-attack");
+/** Retired: 三定框架 compact-attack 已删除 */
+module.exports = { id: "compact-attack", retired: true };

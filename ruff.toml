@@ -1,0 +1,11 @@
+# 更稳排除 Python 核心（algorithms/lottery_filter.py 等）
+target-version = "py310"
+line-length = 120
+src = ["algorithms"]
+
+[lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[format]
+quote-style = "double"

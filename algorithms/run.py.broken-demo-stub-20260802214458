@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""
+彩票过滤系统运行脚本
+"""
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from lottery_filter import run_filter_pipeline, analyze_killing_codes
+import json
+
+def main():
+    # 示例数据 - 在实际应用中，这里会从数据库或API获取数据
+    sample_draws = [
+        "1234",
+        "1111",
+        "1234",
+        "1357",
+        "2468",
+        "0000",
+        "9999"
+    ]
+    
+    print("开始运行彩票过滤系统...")
+    
+    # 运行过滤管道
+    results = run_filter_pipeline(sample_draws)
+    
+    # 输出结果
+    print("\n过滤结果:")
+    for result in results:
+        print(f"原始: {result['original']}, 标准化: {result['normalized']}")
+        if result['passed']:
+            print("  -> 通过所有过滤")
+        else:
+            print(f"  -> 被拒绝: {', '.join(result['rejected_by'])}")
+        print()
+    
+    # 分析杀码
+    print("杀码分析结果:")
+    killing_codes = analyze_killing_codes(sample_draws)
+    print(json.dumps(killing_codes, ensure_ascii=False, indent=2))
+    
+    # 保存结果到文件
+    with open('filtered_results.json', 'w', encoding='utf-8') as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    
+    print("结果已保存到 filtered_results.json")
+
+if __name__ == "__main__":
+    main()

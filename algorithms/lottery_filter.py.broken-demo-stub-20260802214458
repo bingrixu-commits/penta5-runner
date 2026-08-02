@@ -1,0 +1,359 @@
+"""
+彩票过滤器 - 稳定数学过滤器
+根据规则实现各种过滤逻辑
+"""
+
+import json
+from typing import List, Dict, Any, Tuple
+from collections import Counter
+
+def normalize_draw(draw: str) -> str:
+    """去掉特殊字符/字母，仅保留 0-9 四码"""
+    return ''.join(filter(str.isdigit, draw))[:4]
+
+def filter_repeat(draw: str) -> bool:
+    """重号过滤：三重/四重"""
+    normalized = normalize_draw(draw)
+    digits = [int(d) for d in normalized]
+    
+    # 检查是否有三个或四个相同的数字
+    for digit in set(digits):
+        if digits.count(digit) >= 3:
+            return False  # 不通过过滤
+    return True  # 通过过滤
+
+def filter_consecutive(draw: str) -> bool:
+    """连号过滤：三连/四连"""
+    normalized = normalize_draw(draw)
+    digits = [int(d) for d in normalized]
+    
+    # 检查是否有三个或四个连续的数字
+    # 对于四个数字，检查所有可能的连续组合
+    for i in range(len(digits) - 2):
+        if (digits[i] + 1 == digits[i+1] and 
+            digits[i+1] + 1 == digits[i+2]):
+            # 找到三个连续数字
+            return False  # 不通过过滤
+    
+    # 检查四个连续数字的情况
+    if len(digits) >= 4:
+        for i in range(len(digits) - 3):
+            if (digits[i] + 1 == digits[i+1] and 
+                digits[i+1] + 1 == digits[i+2] and 
+                digits[i+2] + 1 == digits[i+3]):
+                # 找到四个连续数字
+                return False  # 不通过过滤
+    
+    return True  # 通过过滤
+
+def filter_parity_ratio(draw: str) -> bool:
+    """奇偶比过滤：4单0双/0单4双"""
+    normalized = normalize_draw(draw)
+    digits = [int(d) for d in normalized]
+    
+    odd_count = sum(1 for d in digits if d % 2 == 1)
+    even_count = len(digits) - odd_count
+    
+    # 检查是否为4单0双或0单4双
+    if (odd_count == 4 and even_count == 0) or (odd_count == 0 and even_count == 4):
+        return False  # 不通过过滤
+    
+    return True  # 通过过滤
+
+def filter_size_ratio(draw: str) -> bool:
+    """大小比过滤：4大0小/0大4小"""
+    normalized = normalize_draw(draw)
+    digits = [int(d) for d in normalized]
+    
+    large_count = sum(1 for d in digits if d >= 5)
+    small_count = len(digits) - large_count
+    
+    # 检查是否为4大0小或0大4小
+    if (large_count == 4 and small_count == 0) or (large_count == 0 and small_count == 4):
+        return False  # 不通过过滤
+    
+    return True  # 通过过滤
+
+def filter_sum_range(draw: str) -> bool:
+    """和值区间过滤：0-5/31-36"""
+    normalized = normalize_draw(draw)
+    digits = [int(d) for d in normalized]
+    
+    total = sum(digits)
+    
+    # 检查和值是否在0-5或31-36范围内
+    if 0 <= total <= 5 or 31 <= total <= 36:
+        return False  # 不通过过滤
+    return True  # 通过过滤
+
+def filter_tail_sum(draw: str) -> bool:
+    """合尾过滤：根据尾数和值进行过滤"""
+    normalized = normalize_draw(draw)
+    digits = [int(d) for d in normalized]
+    
+    # 计算尾数和（个位数之和）
+    tail_sum = sum(d % 10 for d in digits)
+    
+    # 合尾过滤规则：通常排除尾数和为特定值的组合
+    # 这里我们定义一些常见的需要排除的尾数和值
+    excluded_tail_sums = {0, 5, 10, 15}  # 可根据实际需求调整
+    
+    if tail_sum in excluded_tail_sums:
+        return False  # 不通过过滤
+    
+    return True  # 通过过滤
+
+def filter_logarithm(draw: str) -> bool:
+    """对数过滤：基于对数规律的过滤"""
+    normalized = normalize_draw(draw)
+    digits = [int(d) for d in normalized]
+    
+    # 对数过滤规则：检查数字是否符合某种对数分布规律
+    # 这里我们实现一个简单的对数规律检查
+    # 例如：检查数字是否符合对数级数规律（如1,2,4,8等）
+    log_values = [d for d in digits if d > 0]  # 排除0
+    
+    # 简化实现：对数过滤通常排除极端值
+    # 这里我们排除包含极端数字的组合（如0, 9等）
+    excluded_digits = {0, 9}  # 可根据实际需求调整
+    for d in digits:
+        if d in excluded_digits:
+            return False  # 不通过过滤
+    
+    return True  # 通过过滤
+
+def get_killing_codes_by_position(draws: List[str]) -> Dict[str, List[int]]:
+    """
+    根据历史数据计算千百十个位置的杀码
+    返回每个位置上应该排除的数字列表
+    """
+    if not draws:
+        return {
+            'thousands': [],  # 千位
+            'hundreds': [],   # 百位
+            'tens': [],       # 十位
+            'units': []       # 个位
+        }
+    
+    # 将所有号码转换为数字列表
+    all_digits = []
+    for draw in draws:
+        normalized = normalize_draw(draw)
+        if len(normalized) >= 4:
+            digits = [int(d) for d in normalized]
+            all_digits.append(digits)
+    
+    if not all_digits:
+        return {
+            'thousands': [],  # 千位
+            'hundreds': [],   # 百位
+            'tens': [],       # 十位
+            'units': []       # 个位
+        }
+    
+    # 分别统计每个位置的数字出现频率
+    thousands = [digits[0] for digits in all_digits]
+    hundreds = [digits[1] for digits in all_digits]
+    tens = [digits[2] for digits in all_digits]
+    units = [digits[3] for digits in all_digits]
+    
+    # 统计每个位置上数字的出现次数
+    thousands_count = Counter(thousands)
+    hundreds_count = Counter(hundreds)
+    tens_count = Counter(tens)
+    units_count = Counter(units)
+    
+    # 计算杀码：排除出现频率最高的数字（通常为冷号）
+    # 这里我们选择出现频率最低的数字作为杀码
+    # 为了简单起见，我们选择出现频率最高的数字作为杀码
+    # 实际应用中，可以根据统计规律选择更合理的杀码
+    thousands_killing = [digit for digit, count in thousands_count.most_common() if count >= 2]
+    hundreds_killing = [digit for digit, count in hundreds_count.most_common() if count >= 2]
+    tens_killing = [digit for digit, count in tens_count.most_common() if count >= 2]
+    units_killing = [digit for digit, count in units_count.most_common() if count >= 2]
+    
+    return {
+        'thousands': thousands_killing,
+        'hundreds': hundreds_killing,
+        'tens': tens_killing,
+        'units': units_killing
+    }
+
+def get_tail_sum_killing_codes(draws: List[str]) -> Dict[str, List[int]]:
+    """
+    根据历史数据计算合尾杀码
+    包括千百十合尾、百十个合尾、千百十个合尾
+    """
+    if not draws:
+        return {
+            'thousands_hundreds_tens': [],      # 千百十合尾
+            'hundreds_tens_units': [],          # 百十个合尾
+            'all_four': []                      # 千百十个合尾
+        }
+    
+    # 计算每个号码的合尾
+    tail_sums = []
+    for draw in draws:
+        normalized = normalize_draw(draw)
+        if len(normalized) >= 4:
+            digits = [int(d) for d in normalized]
+            # 计算千百十合尾（前三个数字的和）
+            thousands_hundreds_tens = sum(digits[:3]) % 10
+            # 计算百十个合尾（后三个数字的和）
+            hundreds_tens_units = sum(digits[1:4]) % 10
+            # 计算千百十个合尾（所有数字的和）
+            all_four = sum(digits) % 10
+            
+            tail_sums.append({
+                'thousands_hundreds_tens': thousands_hundreds_tens,
+                'hundreds_tens_units': hundreds_tens_units,
+                'all_four': all_four
+            })
+    
+    if not tail_sums:
+        return {
+            'thousands_hundreds_tens': [],      # 千百十合尾
+            'hundreds_tens_units': [],          # 百十个合尾
+            'all_four': []                      # 千百十个合尾
+        }
+    
+    # 统计每个合尾的出现频率
+    thousands_hundreds_tens_sums = [item['thousands_hundreds_tens'] for item in tail_sums]
+    hundreds_tens_units_sums = [item['hundreds_tens_units'] for item in tail_sums]
+    all_four_sums = [item['all_four'] for item in tail_sums]
+    
+    # 统计频率
+    thousands_hundreds_tens_count = Counter(thousands_hundreds_tens_sums)
+    hundreds_tens_units_count = Counter(hundreds_tens_units_sums)
+    all_four_count = Counter(all_four_sums)
+    
+    # 选择出现频率最高的合尾作为杀码（通常为冷号）
+    # 这里我们选择出现频率最高的合尾作为杀码
+    thousands_hundreds_tens_killing = [digit for digit, count in thousands_hundreds_tens_count.most_common() if count >= 2]
+    hundreds_tens_units_killing = [digit for digit, count in hundreds_tens_units_count.most_common() if count >= 2]
+    all_four_killing = [digit for digit, count in all_four_count.most_common() if count >= 2]
+    
+    return {
+        'thousands_hundreds_tens': thousands_hundreds_tens_killing,
+        'hundreds_tens_units': hundreds_tens_units_killing,
+        'all_four': all_four_killing
+    }
+
+def apply_all_filters(draw: str, filters: List[str] = None) -> Dict[str, Any]:
+    """
+    应用所有过滤器
+    """
+    if filters is None:
+        filters = ['repeat', 'consecutive', 'parity_ratio', 'size_ratio', 'sum_range', 'tail_sum', 'logarithm']
+    
+    normalized = normalize_draw(draw)
+    results = {
+        'original': draw,
+        'normalized': normalized,
+        'passed': True,
+        'rejected_by': []
+    }
+    
+    # 应用所有过滤器
+    if 'repeat' in filters:
+        if not filter_repeat(draw):
+            results['passed'] = False
+            results['rejected_by'].append('repeatAvoid')
+    
+    if 'consecutive' in filters:
+        if not filter_consecutive(draw):
+            results['passed'] = False
+            results['rejected_by'].append('consecutiveAvoid')
+    
+    if 'parity_ratio' in filters:
+        if not filter_parity_ratio(draw):
+            results['passed'] = False
+            results['rejected_by'].append('parityRatioAvoid')
+    
+    if 'size_ratio' in filters:
+        if not filter_size_ratio(draw):
+            results['passed'] = False
+            results['rejected_by'].append('sizeRatioAvoid')
+    
+    if 'sum_range' in filters:
+        if not filter_sum_range(draw):
+            results['passed'] = False
+            results['rejected_by'].append('sumRangeAvoid')
+    
+    if 'tail_sum' in filters:
+        if not filter_tail_sum(draw):
+            results['passed'] = False
+            results['rejected_by'].append('tailSumAvoid')
+    
+    if 'logarithm' in filters:
+        if not filter_logarithm(draw):
+            results['passed'] = False
+            results['rejected_by'].append('logarithmAvoid')
+    
+    return results
+
+def analyze_killing_codes(draws: List[str]) -> Dict[str, Any]:
+    """
+    分析杀码信息
+    """
+    # 获取位置杀码
+    position_killing = get_killing_codes_by_position(draws)
+    
+    # 获取合尾杀码
+    tail_killing = get_tail_sum_killing_codes(draws)
+    
+    return {
+        'position_killing': position_killing,
+        'tail_killing': tail_killing
+    }
+
+def run_filter_pipeline(draws: List[str]) -> List[Dict[str, Any]]:
+    """
+    运行过滤管道
+    """
+    results = []
+    for draw in draws:
+        result = apply_all_filters(draw)
+        results.append(result)
+    
+    return results
+
+# 用于测试的示例
+if __name__ == "__main__":
+    # 如果有命令行参数，则处理单个号码
+    import sys
+    if len(sys.argv) > 1:
+        command = sys.argv[1]
+        if command == "analyze_killing_codes":
+            # 处理杀码分析
+            test_draws = [
+                "1234",  # 通过所有过滤
+                "1111",  # 重号
+                "1234",  # 连号
+                "1357",  # 4单0双
+                "2468",  # 0单4双
+                "0000",  # 0-5和值
+                "9999"   # 31-36和值
+            ]
+            killing_codes = analyze_killing_codes(test_draws)
+            print(json.dumps(killing_codes, ensure_ascii=False))
+        else:
+            # 处理单个号码过滤
+            draw = command
+            result = apply_all_filters(draw)
+            print(json.dumps(result, ensure_ascii=False))
+    else:
+        # 否则运行测试
+        test_draws = [
+            "1234",  # 通过所有过滤
+            "1111",  # 重号
+            "1234",  # 连号
+            "1357",  # 4单0双
+            "2468",  # 0单4双
+            "0000",  # 0-5和值
+            "9999"   # 31-36和值
+        ]
+        
+        results = run_filter_pipeline(test_draws)
+        for result in results:
+            print(f"原始: {result['original']}, 标准化: {result['normalized']}, 通过: {result['passed']}, 拒绝原因: {result['rejected_by']}")

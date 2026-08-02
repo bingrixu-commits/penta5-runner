@@ -1,0 +1,74 @@
+[
+  {
+    "original": "1234",
+    "normalized": "1234",
+    "passed": false,
+    "rejected_by": [
+      "consecutiveAvoid",
+      "sizeRatioAvoid",
+      "tailSumAvoid"
+    ]
+  },
+  {
+    "original": "1111",
+    "normalized": "1111",
+    "passed": false,
+    "rejected_by": [
+      "repeatAvoid",
+      "parityRatioAvoid",
+      "sizeRatioAvoid",
+      "sumRangeAvoid"
+    ]
+  },
+  {
+    "original": "1234",
+    "normalized": "1234",
+    "passed": false,
+    "rejected_by": [
+      "consecutiveAvoid",
+      "sizeRatioAvoid",
+      "tailSumAvoid"
+    ]
+  },
+  {
+    "original": "1357",
+    "normalized": "1357",
+    "passed": false,
+    "rejected_by": [
+      "parityRatioAvoid"
+    ]
+  },
+  {
+    "original": "2468",
+    "normalized": "2468",
+    "passed": false,
+    "rejected_by": [
+      "parityRatioAvoid"
+    ]
+  },
+  {
+    "original": "0000",
+    "normalized": "0000",
+    "passed": false,
+    "rejected_by": [
+      "repeatAvoid",
+      "parityRatioAvoid",
+      "sizeRatioAvoid",
+      "sumRangeAvoid",
+      "tailSumAvoid",
+      "logarithmAvoid"
+    ]
+  },
+  {
+    "original": "9999",
+    "normalized": "9999",
+    "passed": false,
+    "rejected_by": [
+      "repeatAvoid",
+      "parityRatioAvoid",
+      "sizeRatioAvoid",
+      "sumRangeAvoid",
+      "logarithmAvoid"
+    ]
+  }
+]

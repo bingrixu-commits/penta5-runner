@@ -1,1 +1,5 @@
-http://8.210.5.221:3019/download
+用浏览器打开：
+
+http://8.210.5.221:3001/download/jiu-jiqiren.zip
+
+解压到桌面，双击 救机器人\粘贴板.bat

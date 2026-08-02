@@ -1,10 +1,11 @@
 /**
- * pm2: penta5-source-proxy
- * 运行入口：remote_state_proxy.py（替代 source_proxy.js）
+ * DEPRECATED — 不要再启动本配置。
+ * 开奖源已改为 runner 直连 .env 的 SOURCE_API_URL（官网 latest）。
+ * install_backend.sh 会 pm2 delete penta5-source-proxy。
+ * 保留文件仅作历史对照；若误启动请立即 pm2 delete penta5-source-proxy。
  *
- * 启动：
+ * 旧启动方式（已废弃）：
  *   pm2 start ecosystem.source-proxy.config.js
- *   pm2 save
  */
 module.exports = {
   apps: [

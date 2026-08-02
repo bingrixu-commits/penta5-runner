@@ -5,7 +5,14 @@
 function safeHistoryRows(history, minNumbers) {
   const need = Number.isFinite(Number(minNumbers)) ? Number(minNumbers) : 4;
   return Array.isArray(history)
-    ? history.filter((record) => record && Array.isArray(record.numbers) && record.numbers.length >= need)
+    ? history
+      .filter((record) => record && Array.isArray(record.numbers) && record.numbers.length >= need)
+      .slice()
+      .sort((a, b) => {
+        const aKey = String(a && (a.period || a.uid) || "");
+        const bKey = String(b && (b.period || b.uid) || "");
+        return bKey.localeCompare(aKey);
+      })
     : [];
 }
 

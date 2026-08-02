@@ -4,14 +4,14 @@
 阿里云常驻监督：保算力在线 + 降智升级修复。
 
 职责（仅跑在 /root/penta5-runner，由 pm2 penta5-supervisor 托管）：
-1) L0 进程：penta5-runner / penta5-rds-api / penta5-source-proxy 掉线则 pm2 restart
-2) L0 健康：8787 / 3000 / 3001 /health 不通则重启对应进程
+1) L0 进程：penta5-runner / penta5-rds-api 掉线则 pm2 restart
+2) L0 健康：8787 / 3001 /health 不通则重启对应进程
 3) L1 模型：读 /health.summary.modelAudit + /state.modelWatchdog
 4) L2：完整性反复失败或 watchdog-error → POST /sync
 5) L3：L2 后仍失败 → pm2 restart penta5-runner（带冷却，防重启风暴）
 
 不启本机后台。风暴模式期间可停/（可选）恢复机器人；非风暴急救仍用 rescue_ali_stop_robots。
-开奖源保持单通道。告警写 data/penta5_alerts.log，可选 PENTA5_ALERT_WEBHOOK_URL。
+开奖源直连官网（无本机 source-proxy）。告警写 data/penta5_alerts.log，可选 PENTA5_ALERT_WEBHOOK_URL。
 """
 
 from __future__ import annotations
@@ -43,18 +43,15 @@ RUNNER_LOGIN = os.environ.get("PENTA5_RUNNER_LOGIN", "http://127.0.0.1:3001/logi
 RUNNER_EXCLUSION_MODEL = os.environ.get("PENTA5_RUNNER_EXCLUSION_MODEL", "http://127.0.0.1:3001/exclusion-model")
 RUNNER_STABLE_MATH = os.environ.get("PENTA5_RUNNER_STABLE_MATH", "http://127.0.0.1:3001/stable-math-filter")
 RDS_HEALTH = os.environ.get("PENTA5_RDS_HEALTH", "http://127.0.0.1:8787/health")
-PROXY_HEALTH = os.environ.get("PENTA5_PROXY_HEALTH", "http://127.0.0.1:3000/health")
 
 CORE_APPS = [
     "penta5-runner",
     "penta5-rds-api",
-    "penta5-source-proxy",
 ]
 
 APP_BY_PROBE = {
     "runner": "penta5-runner",
     "rds": "penta5-rds-api",
-    "proxy": "penta5-source-proxy",
 }
 
 STORM_MODE_FILE = Path(os.environ.get("PENTA5_STORM_MODE_FILE", str(ROOT / "data" / "storm_mode.json")))
@@ -69,6 +66,7 @@ ROBOT_HEALTH_FILES = {
 }
 DEFAULT_INTERVAL = int(os.environ.get("PENTA5_SUPERVISOR_INTERVAL", "90"))
 RESTART_COOLDOWN_SEC = int(os.environ.get("PENTA5_SUPERVISOR_RESTART_COOLDOWN", "300"))
+RUNNER_HEALTH_FAIL_CONFIRM_TICKS = int(os.environ.get("PENTA5_SUPERVISOR_RUNNER_HEALTH_FAIL_CONFIRM_TICKS", "2"))
 INTEGRITY_FAIL_THRESHOLD = int(os.environ.get("PENTA5_SUPERVISOR_INTEGRITY_FAILS", "5"))
 WATCHDOG_ERROR_THRESHOLD = int(os.environ.get("PENTA5_SUPERVISOR_WATCHDOG_ERRORS", "2"))
 SYNC_COOLDOWN_SEC = int(os.environ.get("PENTA5_SUPERVISOR_SYNC_COOLDOWN", "120"))
@@ -259,24 +257,24 @@ class PanelClient:
 
     def _admin_user(self) -> str:
         return str(
-            os.environ.get("PANEL_USER")
+            os.environ.get("PENTA5_PANEL_USER")
             or self.env.get("PANEL_USER")
-            or os.environ.get("PENTA5_PANEL_USER")
+            or os.environ.get("PANEL_USER")
             or ""
         )
 
     def _admin_password(self) -> str:
         return str(
-            os.environ.get("PANEL_PASSWORD")
+            os.environ.get("PENTA5_PANEL_PASSWORD")
             or self.env.get("PANEL_PASSWORD")
-            or os.environ.get("PENTA5_PANEL_PASSWORD")
+            or os.environ.get("PANEL_PASSWORD")
             or ""
         )
 
     def _viewer_password(self) -> str:
         return str(
-            os.environ.get("PANEL_VIEWER_PASSWORD")
-            or self.env.get("PANEL_VIEWER_PASSWORD")
+            self.env.get("PANEL_VIEWER_PASSWORD")
+            or os.environ.get("PANEL_VIEWER_PASSWORD")
             or ""
         )
 
@@ -377,13 +375,6 @@ def ensure_health_probes(state: Dict[str, Any], client: PanelClient) -> Dict[str
         restarted = restart_app(app, state, f"rds-health-fail:{err_rds or rds.get('error')}")
         report["restarts"].append({"app": app, "reason": "rds-health", "ok": restarted})
 
-    ok_proxy, proxy, err_proxy = probe_http(PROXY_HEALTH)
-    report["probes"]["proxy"] = {"ok": ok_proxy and bool(proxy.get("ok")), "error": err_proxy, "cachePeriod": proxy.get("cachePeriod")}
-    if not report["probes"]["proxy"]["ok"]:
-        app = APP_BY_PROBE["proxy"]
-        restarted = restart_app(app, state, f"proxy-health-fail:{err_proxy}")
-        report["restarts"].append({"app": app, "reason": "proxy-health", "ok": restarted})
-
     # /health 免鉴权（轻量探针）；写操作与 /state 仍需 Basic admin 或 cookie。
     # 切勿在已配置 Basic 时回退到无鉴权 probe_http 误判：忙时 timeout 会被覆盖成 401，触发重启风暴。
     if not client._basic_auth_header() and not client._logged_in:
@@ -414,20 +405,31 @@ def ensure_health_probes(state: Dict[str, Any], client: PanelClient) -> Dict[str
         "tipReady": summary.get("tipReady"),
         "tipReadyIssueCount": summary.get("tipReadyIssueCount"),
     }
-    if not report["probes"]["runner"]["ok"]:
+    if report["probes"]["runner"]["ok"]:
+        state["runnerHealthFailStreak"] = 0
+    else:
         err_text = str(err_runner or "")
         auth_fail = err_text in {"http-401", "http-403"} or "401" in err_text or "403" in err_text or "Unauthorized" in err_text
         busy_fail = syncing or prediction_build_running or "timed out" in err_text.lower() or "timeout" in err_text.lower()
         if auth_fail:
+            state["runnerHealthFailStreak"] = 0
             log(f"skip runner restart: auth error ({err_text}); check PANEL_USER/PANEL_PASSWORD in .env")
             report["restarts"].append({"app": "penta5-runner", "reason": "runner-health-skipped-auth", "ok": False})
         elif busy_fail:
+            state["runnerHealthFailStreak"] = 0
             log(f"skip runner restart: busy/timeout during health fail ({err_text})")
             report["restarts"].append({"app": "penta5-runner", "reason": "runner-health-skipped-busy", "ok": False})
         else:
-            app = APP_BY_PROBE["runner"]
-            restarted = restart_app(app, state, f"runner-health-fail:{err_runner}")
-            report["restarts"].append({"app": app, "reason": "runner-health", "ok": restarted})
+            streak = int(state.get("runnerHealthFailStreak") or 0) + 1
+            state["runnerHealthFailStreak"] = streak
+            if streak < max(1, RUNNER_HEALTH_FAIL_CONFIRM_TICKS):
+                log(f"defer runner restart: health failure {streak}/{RUNNER_HEALTH_FAIL_CONFIRM_TICKS} ({err_text or 'unknown'})")
+                report["restarts"].append({"app": "penta5-runner", "reason": "runner-health-await-confirm", "ok": False})
+            else:
+                app = APP_BY_PROBE["runner"]
+                restarted = restart_app(app, state, f"runner-health-fail:{err_runner};streak={streak}")
+                state["runnerHealthFailStreak"] = 0
+                report["restarts"].append({"app": app, "reason": "runner-health", "ok": restarted})
     report["summary"] = summary
     report["modelAudit"] = audit
     report["stormMode"] = storm
@@ -1336,8 +1338,7 @@ def run_once() -> int:
         probes = health_report.get("probes") or {}
         runner_period = (probes.get("runner") or {}).get("latestPeriod")
         rds_period = (probes.get("rds") or {}).get("latestPeriod")
-        proxy_period = (probes.get("proxy") or {}).get("cachePeriod")
-        lag = max(period_lag(runner_period, rds_period), period_lag(proxy_period, rds_period))
+        lag = period_lag(runner_period, rds_period)
         health_report["rdsLagPeriods"] = lag
         if lag >= RDS_LAG_ALERT_PERIODS:
             send_alert(
@@ -1346,7 +1347,6 @@ def run_once() -> int:
                 {
                     "lagPeriods": lag,
                     "runnerPeriod": runner_period,
-                    "proxyPeriod": proxy_period,
                     "rdsPeriod": rds_period,
                     "hint": "Aliyun RDS may be read_only/LOCK_WRITE; turn off instance read-only then catchup",
                 },
@@ -1414,7 +1414,7 @@ def run_once() -> int:
         },
     }
 
-    probe_ok = all(bool((health_report.get("probes") or {}).get(k, {}).get("ok")) for k in ("runner", "rds", "proxy"))
+    probe_ok = all(bool((health_report.get("probes") or {}).get(k, {}).get("ok")) for k in ("runner", "rds"))
     exclusion_ok = bool(exclusion_report.get("ok"))
     stable_math_ok = bool(stable_math_report.get("ok"))
     pm2_ok = all(str((process_report.get("pm2") or {}).get(app) or "") == "online" for app in CORE_APPS)

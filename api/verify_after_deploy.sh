@@ -11,7 +11,7 @@ sleep 4
 echo "=== size ==="
 ls -lh /root/penta5-runner/data/state.json
 echo "=== markers ==="
-grep -n "compactRecentExactCodesInState\|scheduleRdsMirrorAfterSave\|killFrameworkItems" /root/penta5-runner/penta5_backend_runner.js | head -20
+grep -n "stripRetiredFourCodeArtifacts\|scheduleRdsMirrorAfterSave\|killFrameworkItems" /root/penta5-runner/penta5_backend_runner.js | head -20
 grep -n 'JSON.stringify(value)' /root/penta5-runner/penta5_backend_runner.js | head -5
 echo "=== state fields ==="
 curl -s --max-time 60 http://127.0.0.1:3001/state > /tmp/panel_state.json
