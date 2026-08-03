@@ -20,8 +20,9 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         FOUR_FACTOR_POLL_MS: "60000",
-        FOUR_FACTOR_HISTORY_LIMIT: "200",
-        SHAPE_HISTORY_URL: "http://127.0.0.1:8787/history?limit=200"
+        FOUR_FACTOR_HISTORY_LIMIT: "250",
+        FOUR_FACTOR_EVAL_N: "120",
+        SHAPE_HISTORY_URL: "http://127.0.0.1:8787/history?limit=250"
       }
     }
   ]

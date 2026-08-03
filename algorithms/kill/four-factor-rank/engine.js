@@ -9,7 +9,7 @@ const path = require("path");
 const lib = require("../../ai/_shape_lib");
 
 const MODEL_ID = "four-factor-rank";
-const VERSION = "four-factor-rank-v1";
+const VERSION = "four-factor-rank-v2";
 const DIGITS = Object.freeze(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
 const POSITIONS = Object.freeze([
   { key: "wan", label: "千", index: 0 },
@@ -23,6 +23,8 @@ const WEIGHTS = Object.freeze({
   markov: 0.25,
   omit: 0.1
 });
+const MIN_TRAIN = 30;
+const EVAL_WINDOWS = Object.freeze([30, 120]);
 
 function outPaths() {
   const dir = path.join(lib.REPO_ROOT, "data", "algorithm-projects", MODEL_ID);
@@ -138,9 +140,104 @@ function scorePosition(seq) {
   };
 }
 
+function ratePct(hit, total) {
+  if (!total) return null;
+  return Number(((100 * hit) / total).toFixed(2));
+}
+
+/**
+ * Walk-forward：用期 i 之前的历史排码，对照期 i 开奖。
+ * 产出每位 / 四位全中 的近30、近120 命中率。
+ */
+function walkForward(rows, evalN) {
+  const maxEval = Math.max(30, Number(evalN) || 120);
+  const start = Math.max(MIN_TRAIN, rows.length - maxEval);
+  const outcomes = [];
+
+  for (let i = start; i < rows.length; i += 1) {
+    const train = rows.slice(0, i);
+    if (train.length < MIN_TRAIN) continue;
+    const target = rows[i];
+    const hits = POSITIONS.map((pos) => {
+      const seq = train.map((r) => String(r.numbers[pos.index]));
+      const digit = scorePosition(seq).digit;
+      return digit === String(target.numbers[pos.index]);
+    });
+    outcomes.push({
+      period: target.period,
+      hits,
+      allHit: hits.every(Boolean)
+    });
+  }
+
+  function windowStats(n) {
+    const slice = outcomes.slice(-n);
+    const total = slice.length;
+    const pos = POSITIONS.map((pos, idx) => {
+      let hit = 0;
+      slice.forEach((o) => { if (o.hits[idx]) hit += 1; });
+      return {
+        key: pos.key,
+        label: pos.label,
+        hit,
+        total,
+        rate: ratePct(hit, total)
+      };
+    });
+    let jointHit = 0;
+    slice.forEach((o) => { if (o.allHit) jointHit += 1; });
+    return {
+      window: n,
+      total,
+      jointHit,
+      jointRate: ratePct(jointHit, total),
+      positions: pos
+    };
+  }
+
+  const byWindow = Object.create(null);
+  EVAL_WINDOWS.forEach((n) => {
+    byWindow["w" + n] = windowStats(n);
+  });
+  const w30 = byWindow.w30 || null;
+  const w120 = byWindow.w120 || null;
+
+  const perPosition = Object.create(null);
+  POSITIONS.forEach((pos, idx) => {
+    const p30 = w30 && w30.positions[idx] ? w30.positions[idx] : null;
+    const p120 = w120 && w120.positions[idx] ? w120.positions[idx] : null;
+    perPosition[pos.key] = {
+      key: pos.key,
+      label: pos.label,
+      rate30: p30 ? p30.rate : null,
+      hit30: p30 ? p30.hit : 0,
+      total30: p30 ? p30.total : 0,
+      rate120: p120 ? p120.rate : null,
+      hit120: p120 ? p120.hit : 0,
+      total120: p120 ? p120.total : 0
+    };
+  });
+
+  return {
+    method: "walk-forward",
+    version: VERSION,
+    evalCount: outcomes.length,
+    windows: byWindow,
+    positions: perPosition,
+    joint: {
+      rate30: w30 ? w30.jointRate : null,
+      hit30: w30 ? w30.jointHit : 0,
+      total30: w30 ? w30.total : 0,
+      rate120: w120 ? w120.jointRate : null,
+      hit120: w120 ? w120.jointHit : 0,
+      total120: w120 ? w120.total : 0
+    }
+  };
+}
+
 function compute(history) {
   const rows = chronologic(history);
-  if (rows.length < 30) {
+  if (rows.length < MIN_TRAIN) {
     return {
       ok: false,
       error: "history-too-short",
@@ -149,9 +246,11 @@ function compute(history) {
   }
   const train = rows; // 全窗训练；最新期参与转移/遗漏
   const latest = train[train.length - 1];
+  const backtest = walkForward(train, Number(process.env.FOUR_FACTOR_EVAL_N || 120));
   const items = POSITIONS.map((pos) => {
     const seq = train.map((r) => String(r.numbers[pos.index]));
     const picked = scorePosition(seq);
+    const bt = backtest.positions[pos.key] || null;
     return {
       key: pos.key,
       label: pos.label,
@@ -160,7 +259,13 @@ function compute(history) {
       score: picked.score,
       miss: picked.miss,
       top3: picked.top3,
-      parts: picked.parts
+      parts: picked.parts,
+      rate30: bt ? bt.rate30 : null,
+      hit30: bt ? bt.hit30 : 0,
+      total30: bt ? bt.total30 : 0,
+      rate120: bt ? bt.rate120 : null,
+      hit120: bt ? bt.hit120 : 0,
+      total120: bt ? bt.total120 : 0
     };
   });
   const byKey = Object.create(null);
@@ -171,7 +276,7 @@ function compute(history) {
     id: MODEL_ID,
     kind: "fourFactorRank",
     label: "四因子排码",
-    note: "近90期加权频次+短期热度+一阶转移+弱遗漏修正 · 每位排1码",
+    note: "近90期加权频次+短期热度+一阶转移+弱遗漏修正 · 每位排1码 · walk-forward 百分比",
     weights: WEIGHTS,
     generatedAt: new Date().toISOString(),
     historyCount: train.length,
@@ -179,12 +284,14 @@ function compute(history) {
     latestNumbers: latest.numbers.slice(),
     picks: byKey,
     items,
+    backtest,
+    joint: backtest.joint,
     line: items.map((it) => it.label + it.digit).join(" / ")
   };
 }
 
 async function refresh() {
-  const history = await lib.fetchHistory(Number(process.env.FOUR_FACTOR_HISTORY_LIMIT || 200));
+  const history = await lib.fetchHistory(Number(process.env.FOUR_FACTOR_HISTORY_LIMIT || 250));
   if (!history.length) throw new Error("history empty");
   const state = compute(history);
   if (!state.ok) throw new Error(state.error || "compute failed");
@@ -200,6 +307,7 @@ module.exports = {
   WEIGHTS,
   POSITIONS,
   compute,
+  walkForward,
   refresh,
   outPaths
 };

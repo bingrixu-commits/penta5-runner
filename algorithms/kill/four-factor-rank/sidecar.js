@@ -23,10 +23,16 @@ async function tick(force) {
       return;
     }
     lastPeriod = period;
+    const j = state.joint || {};
+    const rateTxt =
+      j.rate120 != null
+        ? " joint120=" + j.rate120 + "%(" + j.hit120 + "/" + j.total120 + ")"
+        : "";
     log(
       "period=" + period +
       " picks=" + (state.line || "") +
-      " hist=" + state.historyCount
+      " hist=" + state.historyCount +
+      rateTxt
     );
   } catch (e) {
     log("tick error: " + (e && e.message ? e.message : String(e)));

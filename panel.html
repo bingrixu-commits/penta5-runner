@@ -262,7 +262,8 @@ button.gray{background:#4b5563}
       <tr><td>总合尾</td><td id="totalHewei">--</td></tr>
       <tr><td>综合合尾</td><td id="subHewei">--</td></tr>
     </table>
-    <!-- fourDingPanelGrabBox retired: 四定抓码五项一起算已删除 -->
+    <!-- fourDingPanelGrabBox retired: 四定抓码五项一起算已删除；仅保留三数共现三组 -->
+    <div id="threeDigitCooccurBox"></div>
     <div id="dailyColdCodeReportBox"></div>
     <div class="small" id="meta"></div>
   </div>
@@ -317,7 +318,7 @@ button.gray{background:#4b5563}
   </div>
 </div>
 
-<div class="panel-section-label" id="section-four-factor-label"><span>四因子排码 · 90期加权+热度+转移+弱遗漏</span></div>
+<div class="panel-section-label" id="section-four-factor-label"><span>四因子排码 · 90期加权+热度+转移+弱遗漏 · walk-forward%</span></div>
 <div class="card section-anchor" id="section-four-factor">
   <div class="card-head">
     <div class="card-head-title">
@@ -5376,7 +5377,14 @@ function paintFourFactorBoard(){
       var byKey={};
       items.forEach(function(it){if(it&&it.key)byKey[it.key]=it;});
       var period=own.latestPeriod||"--";
-      if(meta)meta.textContent="四因子 · 期号 "+period+" · 90期加权+热度+转移+弱遗漏";
+      var joint=own.joint||(own.backtest&&own.backtest.joint)||{};
+      var jointTxt="";
+      if(joint.rate120!=null){
+        jointTxt="联合命中 "+Number(joint.rate120).toFixed(1)+"%";
+        if(joint.hit120!=null&&joint.total120!=null)jointTxt+="（"+joint.hit120+"/"+joint.total120+"）";
+        if(joint.rate30!=null)jointTxt+=" · 近30 "+Number(joint.rate30).toFixed(1)+"%";
+      }
+      if(meta)meta.textContent="四因子 · 期号 "+period+" · walk-forward"+(jointTxt?(" · "+jointTxt):"");
       specs.forEach(function(spec){
         var it=byKey[spec.key]||null;
         var digit=(it&&it.digit!=null)?String(it.digit):(own.picks&&own.picks[spec.key]!=null?String(own.picks[spec.key]):"");
@@ -5384,12 +5392,22 @@ function paintFourFactorBoard(){
         var metaEl=document.getElementById(spec.metaId);
         if(digitEl)digitEl.textContent=digit||"--";
         var parts=[];
+        if(it&&it.rate120!=null){
+          var r120="120期 "+Number(it.rate120).toFixed(1)+"%";
+          if(it.hit120!=null&&it.total120!=null)r120+="（"+it.hit120+"/"+it.total120+"）";
+          parts.push(r120);
+        }
+        if(it&&it.rate30!=null)parts.push("近30 "+Number(it.rate30).toFixed(1)+"%");
         if(it&&it.score!=null)parts.push("分 "+Number(it.score).toFixed(3));
         if(it&&it.miss!=null)parts.push("遗漏 "+it.miss);
         if(it&&it.top3&&it.top3[1]&&it.top3[1].digit!=null)parts.push("次选 "+it.top3[1].digit);
         if(metaEl)metaEl.textContent=parts.length?parts.join(" · "):"--";
       });
-      if(line)line.textContent=own.line?("本期排码："+own.line):"--";
+      if(line){
+        var base=own.line?("本期排码："+own.line):"--";
+        if(jointTxt)base+=" ｜ "+jointTxt;
+        line.textContent=base;
+      }
     })
     .catch(function(){fillEmpty("读取四因子排码失败");});
 }
@@ -8673,7 +8691,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
         +'<span class="tag">千百十个：'+esc(m.wanQianBaiShiHewei||"--")+'</span>';
       setHtml(sub,html);
     }
-    // renderFourDingPanelGrabBelowLottery retired
+    renderThreeDigitCooccurBelowLottery(data);
     renderDailyColdCodeReportBelowLottery(data);
     renderRecommend2BelowSubHewei(data);
   }
@@ -9078,7 +9096,7 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var heweiHtml=heweiDefs.map(function(item){return card(item.label,heweiStat(item.field),"hewei");}).join("");
     setHtml(box,'<div style="margin-top:10px;padding:10px;border:1px solid #a7f3d0;border-radius:10px;background:#ecfdf5;">'
       +'<b style="font-size:14px;color:#065f46;">今日号码出现次数</b>'
-      +'<div style="margin-top:3px;font-size:12px;color:#64748b;">营业日 '+esc(day||"--")+' ｜ 凌晨'+esc(resetHour)+'点清零 ｜ 今日已开 '+esc(sampleTotal)+' 期'+(usingCache?' ｜ 全日样本':' ｜ 加载全日样本中…')+' ｜ 三数共现避开三组见上方四定抓码</div>'
+      +'<div style="margin-top:3px;font-size:12px;color:#64748b;">营业日 '+esc(day||"--")+' ｜ 凌晨'+esc(resetHour)+'点清零 ｜ 今日已开 '+esc(sampleTotal)+' 期'+(usingCache?' ｜ 全日样本':' ｜ 加载全日样本中…')+' ｜ 三数共现避开三组见上方</div>'
       +'<div style="margin-top:8px;font-size:13px;font-weight:900;color:#1d4ed8;">定位出现次数</div>'
       +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-top:6px;">'+posHtml+'</div>'
       +'<div style="margin-top:10px;font-size:13px;font-weight:900;color:#047857;">合尾出现次数</div>'
@@ -9935,18 +9953,29 @@ var PANEL_SNAPSHOT_VERSIONS = {
     var labels={threeDigitAvoid:"1组",threeDigitHit:"2组",threeDigitAvoid2:"3组"};
     var ek=((data&&data.currentPrediction)||{}).extraKills||{};
     var items=[];
+    function numOrNull(v){
+      var n=Number(v);
+      return v!=null&&v!==""&&isFinite(n)?n:null;
+    }
     keys.forEach(function(key){
       var saved=ek[key]||{};
       var code=String(saved.code||saved.value||"").replace(/\D/g,"").slice(0,3);
       if(!/^\d{3}$/.test(code))return;
       var viewItem={kind:"extra",key:key,side:"recommend",name:saved.label||("三数共现避开"+labels[key]),code:code,mode:"avoid"};
+      // 优先封存回测；没有则用后端已算好的 rate30/rate120/lower120（与排除单号同口径）
+      var sealed30=numOrNull(displayedItemRate(data,viewItem,30));
+      var sealed120=numOrNull(displayedItemRate(data,viewItem,120));
+      var rate30=sealed30!=null?sealed30:numOrNull(saved.rate30);
+      var rate120=sealed120!=null?sealed120:numOrNull(saved.rate120);
+      if(rate120==null)rate120=numOrNull(saved.performance&&saved.performance.rate);
       items.push({
         key:key,
         label:"三数共现避开"+labels[key],
         code:code,
         backup:String(saved.backup||saved.backupDigit||""),
-        rate30:displayedItemRate(data,viewItem,30),
-        rate120:displayedItemRate(data,viewItem,120),
+        rate30:rate30,
+        rate120:rate120,
+        lower120:numOrNull(saved.lower120),
         viewItem:viewItem
       });
     });
@@ -9996,6 +10025,52 @@ var PANEL_SNAPSHOT_VERSIONS = {
       if(row.allOk)hit+=1;
     });
     return {total:total,hit:hit,rate:total?hit*100/total:null,recent:rows.slice(0,8)};
+  }
+  function renderThreeDigitCooccurBelowLottery(data){
+    var box=document.getElementById("threeDigitCooccurBox");
+    if(!box)return;
+    var threeGroup=pickFourDingThreeDigitGroup(data);
+    var threeGroupStats=fourDingThreeDigitGroupStats(data);
+    if(!threeGroup.length){
+      setHtml(box,'<div style="margin-top:10px;padding:10px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;color:#64748b;font-size:12px;">三数共现避开：等待面板数据…</div>');
+      return;
+    }
+    function rateMeta(g){
+      var parts=[];
+      if(g.rate120!=null&&isFinite(Number(g.rate120))){
+        parts.push('<span style="color:#166534;font-weight:800;">'+esc(Number(g.rate120).toFixed(1))+'%</span>');
+      }
+      if(g.lower120!=null&&isFinite(Number(g.lower120))){
+        parts.push('下界 '+esc(Number(g.lower120).toFixed(1))+'%');
+      }
+      if(g.rate30!=null&&isFinite(Number(g.rate30))){
+        parts.push('近30 '+esc(Number(g.rate30).toFixed(1))+'%');
+      }
+      if(!parts.length)return '<span style="color:#94a3b8;">暂无命中率</span>';
+      return parts.join(' · ');
+    }
+    var cards=threeGroup.map(function(g){
+      return '<div style="background:#fff;border:1px solid #bbf7d0;border-radius:12px;padding:12px 10px;text-align:center;">'
+        +'<div style="font-size:12px;font-weight:800;color:#64748b;letter-spacing:.04em;">'+esc(g.label)+'</div>'
+        +'<div style="margin-top:6px;font-size:28px;font-weight:900;line-height:1;color:#0f172a;font-variant-numeric:tabular-nums;">'+esc(g.code)+'</div>'
+        +'<div style="margin-top:8px;font-size:12px;color:#475569;line-height:1.45;">'+rateMeta(g)+'</div>'
+        +'</div>';
+    }).join("");
+    setHtml(box,'<div style="margin-top:10px;padding:10px;border:1px solid #bbf7d0;border-radius:10px;background:#f0fdf4;">'
+      +'<b style="font-size:14px;color:#166534;">三数共现避开顶3</b>'
+      +'<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:8px;">'+cards+'</div>'
+      +(Number(threeGroupStats.total)>0
+        ?('<div style="margin-top:8px;font-size:13px;font-weight:800;color:#065f46;">三组合计 '+esc(Number(threeGroupStats.rate).toFixed(2))+'% · '+esc(threeGroupStats.hit)+'/'+esc(threeGroupStats.total)+'</div>')
+        :'')
+      +(threeGroupStats.recent&&threeGroupStats.recent.length
+        ?('<div style="margin-top:4px;font-size:12px;color:#475569;line-height:1.55;">近'+esc(threeGroupStats.recent.length)+'期：'
+          +threeGroupStats.recent.map(function(r){
+            return '<span style="margin-right:8px;">'+esc(String(r.period).replace(/^period:/,""))
+              +' <b style="color:'+(r.allOk?"#166534":"#b91c1c")+';">'+(r.allOk?"过":"不过")+'</b></span>';
+          }).join("")
+          +'</div>')
+        :"")
+      +'</div>');
   }
   function frameworkEvalFailedNames(rec){
     return (Array.isArray(rec&&rec.items)?rec.items:[]).filter(function(item){
