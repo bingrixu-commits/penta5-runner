@@ -358,6 +358,18 @@ button.gray{background:#4b5563}
       <div class="shape-avoid-board__card"><div class="shape-avoid-board__pos" id="shapeAvoid3G3Name">3组</div><div class="shape-avoid-board__code" id="shapeAvoid3G3Code">--</div><div class="shape-avoid-board__meta" id="shapeAvoid3G3Meta">--</div></div>
     </div>
     <div class="small" id="shapeAvoid3Shot" style="margin-top:12px;">--</div>
+    <div style="margin-top:14px;">
+      <div class="small" style="font-weight:800;margin-bottom:6px;">一起通（三组AND）统计</div>
+      <table class="table" id="shapeAvoid3JointTable">
+        <tr><td>窗口</td><td>命中</td><td>总数</td><td>命中率</td><td>下界</td><td>连挂</td></tr>
+        <tr><td colspan="6">--</td></tr>
+      </table>
+      <div class="small" style="font-weight:800;margin:14px 0 6px;">分项统计</div>
+      <table class="table" id="shapeAvoid3GroupTable">
+        <tr><td>组</td><td>类型</td><td>条件</td><td>近30</td><td>近120</td><td>近1000</td></tr>
+        <tr><td colspan="6">--</td></tr>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -5414,9 +5426,62 @@ function paintFourFactorBoard(){
 function paintShapeAvoid3Board(){
   var meta=document.getElementById("shapeAvoid3Meta");
   var shotEl=document.getElementById("shapeAvoid3Shot");
+  var jointTable=document.getElementById("shapeAvoid3JointTable");
+  var groupTable=document.getElementById("shapeAvoid3GroupTable");
+  function fracCell(hit,total,rate){
+    if(hit==null||total==null){
+      return rate!=null?(Number(rate).toFixed(1)+"%"):"--";
+    }
+    var txt=String(hit)+"/"+String(total);
+    if(rate!=null)txt+="（"+Number(rate).toFixed(1)+"%）";
+    return txt;
+  }
+  function renderJointTable(joint){
+    if(!jointTable)return;
+    var head="<tr><td>窗口</td><td>命中</td><td>总数</td><td>命中率</td><td>下界</td><td>连挂</td></tr>";
+    var rows=Array.isArray(joint&&joint.windows)?joint.windows:[];
+    if(!rows.length&&joint){
+      rows=[
+        {window:30,hit:joint.hit30,total:joint.total30,rate:joint.rate30,lower:null,missStreak:joint.missStreak30},
+        {window:120,hit:joint.hit120,total:joint.total120,rate:joint.rate120,lower:joint.lower120,missStreak:null},
+        {window:1000,hit:joint.hitLong,total:joint.totalLong,rate:joint.rateLong,lower:joint.lowerLong,missStreak:null}
+      ].filter(function(r){return r.total!=null||r.rate!=null;});
+    }
+    if(!rows.length){
+      jointTable.innerHTML=head+"<tr><td colspan=\"6\">--</td></tr>";
+      return;
+    }
+    var body=rows.map(function(r){
+      var rateTxt=r.rate!=null?(Number(r.rate).toFixed(1)+"%"):"--";
+      var lowTxt=r.lower!=null?(Number(r.lower).toFixed(1)+"%"):"--";
+      var missTxt=r.missStreak!=null?String(r.missStreak):"--";
+      return "<tr><td>近"+esc(r.window)+"</td><td>"+esc(r.hit!=null?r.hit:"--")+"</td><td>"+esc(r.total!=null?r.total:"--")+"</td><td>"+esc(rateTxt)+"</td><td>"+esc(lowTxt)+"</td><td>"+esc(missTxt)+"</td></tr>";
+    }).join("");
+    jointTable.innerHTML=head+body;
+  }
+  function renderGroupTable(groups){
+    if(!groupTable)return;
+    var head="<tr><td>组</td><td>类型</td><td>条件</td><td>近30</td><td>近120</td><td>近1000</td></tr>";
+    var list=Array.isArray(groups)?groups:[];
+    if(!list.length){
+      groupTable.innerHTML=head+"<tr><td colspan=\"6\">--</td></tr>";
+      return;
+    }
+    var body=list.map(function(g,i){
+      var typeTxt=g&&g.shapeKey==="shapeSize"?"大小":(g&&g.shapeKey==="shapeParity"?"单双":"--");
+      var cond=g&&(g.attack||g.code)?String(g.attack||("除"+g.code)):"--";
+      return "<tr><td>"+esc((g&&g.group)!=null?g.group:(i+1))+"</td><td>"+esc(typeTxt)+"</td><td>"+esc(cond)+"</td>"
+        +"<td>"+esc(fracCell(g&&g.hit30,g&&g.total30,g&&g.rate30))+"</td>"
+        +"<td>"+esc(fracCell(g&&g.hit120,g&&g.total120,g&&g.rate120))+"</td>"
+        +"<td>"+esc(fracCell(g&&g.hitLong,g&&g.totalLong,g&&g.rateLong))+"</td></tr>";
+    }).join("");
+    groupTable.innerHTML=head+body;
+  }
   function fillEmpty(msg){
     if(meta)meta.textContent=msg||"shape-avoid-3 未就绪";
     if(shotEl)shotEl.textContent="--";
+    renderJointTable(null);
+    renderGroupTable([]);
     for(var i=1;i<=3;i++){
       var c=document.getElementById("shapeAvoid3G"+i+"Code");
       var m=document.getElementById("shapeAvoid3G"+i+"Meta");
@@ -5444,6 +5509,10 @@ function paintShapeAvoid3Board(){
         jointTxt="联合命中 "+pct.toFixed(1)+"%";
         if(low!=null)jointTxt+=" · 下界 "+low.toFixed(1)+"%";
         if(hit!=null&&tot!=null)jointTxt+="（"+hit+"/"+tot+"）";
+        if(joint.rate30!=null){
+          jointTxt+=" · 近30 "+Number(joint.rate30).toFixed(1)+"%";
+          if(joint.hit30!=null&&joint.total30!=null)jointTxt+="（"+joint.hit30+"/"+joint.total30+"）";
+        }
       }
       if(meta)meta.textContent=ding+" · "+scope+" · 三组AND · 期号 "+period+" · "+jointTxt;
       for(var i=0;i<3;i++){
@@ -5456,9 +5525,16 @@ function paintShapeAvoid3Board(){
         if(codeEl)codeEl.textContent=g&&g.code?String(g.code):"--";
         var typeTxt=g&&g.shapeKey==="shapeSize"?"大小":(g&&g.shapeKey==="shapeParity"?"单双":"--");
         var rateParts=[];
-        if(g&&g.rate120!=null)rateParts.push("120期 "+Number(g.rate120).toFixed(1)+"%");
-        if(g&&g.hit120!=null&&g.total120!=null)rateParts.push(g.hit120+"/"+g.total120);
-        if(g&&g.rate30!=null)rateParts.push("近30 "+Number(g.rate30).toFixed(1)+"%");
+        if(g&&g.rate120!=null){
+          var r120txt="120期 "+Number(g.rate120).toFixed(1)+"%";
+          if(g.hit120!=null&&g.total120!=null)r120txt+=" · "+g.hit120+"/"+g.total120;
+          rateParts.push(r120txt);
+        }
+        if(g&&g.rate30!=null){
+          var r30txt="近30 "+Number(g.rate30).toFixed(1)+"%";
+          if(g.hit30!=null&&g.total30!=null)r30txt+=" · "+g.hit30+"/"+g.total30;
+          rateParts.push(r30txt);
+        }
         if(metaEl){
           metaEl.textContent=rateParts.length
             ?(typeTxt+" · "+rateParts.join(" · "))
@@ -5469,6 +5545,8 @@ function paintShapeAvoid3Board(){
         var shot=own.shot||joint.shot||groups.map(function(x){return x&&x.attack?x.attack:"";}).filter(Boolean).join("");
         shotEl.textContent=shot?("一起避开："+shot+(jointTxt&&jointTxt!=="--"?(" ｜ "+jointTxt):"")):"--";
       }
+      renderJointTable(joint);
+      renderGroupTable(groups);
     })
     .catch(function(){fillEmpty("读取形态联避失败");});
 }

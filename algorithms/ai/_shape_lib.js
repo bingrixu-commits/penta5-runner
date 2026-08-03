@@ -151,8 +151,14 @@ function scoreCandidate(code, shapeKey, rateWindows, width) {
     sample120: Number(r120.total || 0),
     sampleLong: Number(rLong.total || 0),
     missStreak30: Number(r30.missStreak || 0),
+    hit30: Number(r30.hit || 0),
+    total30: Number(r30.total || 0),
+    hit60: Number(r60.hit || 0),
+    total60: Number(r60.total || 0),
     hit120: Number(r120.hit || 0),
     total120: Number(r120.total || 0),
+    hit300: Number(r300.hit || 0),
+    total300: Number(r300.total || 0),
     hitLong: Number(rLong.hit || 0),
     totalLong: Number(rLong.total || 0)
   };
@@ -276,6 +282,30 @@ function jointRateMultiWindow(trio, records, width) {
   return results;
 }
 
+/** 一起通多窗统计行：命中/总数/命中率/Wilson下界/连挂 */
+function buildJointWindowRows(windowsMap) {
+  const order = [30, 60, 120, 300, 1000];
+  const seen = new Set();
+  return order.filter((n) => {
+    if (seen.has(n)) return false;
+    seen.add(n);
+    return true;
+  }).map((n) => {
+    const r = (windowsMap && windowsMap[n]) || { hit: 0, total: 0, rate: 0, missStreak: 0 };
+    const hit = Number(r.hit || 0);
+    const total = Number(r.total || 0);
+    const lower = total ? Number(wilsonLowerRate(hit, total, 1.44).toFixed(2)) : null;
+    return {
+      window: n,
+      hit,
+      total,
+      rate: Number(Number(r.rate || 0).toFixed(2)),
+      lower,
+      missStreak: Number(r.missStreak || 0)
+    };
+  });
+}
+
 /**
  * 三个形态组合一起避开：三组条件同时成立（AND）才算中。
  * 联合命中率（百分比）主导，三组 AND 全过才算中。
@@ -324,11 +354,14 @@ function pickJointShapeAvoidTrio(history, groupN, width) {
           rateLong: Number(Number(rLong.rate || 0).toFixed(2)),
           lower120: Number(lower120.toFixed(2)),
           lowerLong: Number(lowerLong.toFixed(2)),
+          hit30: Number(r30.hit || 0),
+          total30: Number(r30.total || 0),
           hit120: Number(r120.hit || 0),
           total120: Number(r120.total || 0),
           hitLong: Number(rLong.hit || 0),
           totalLong: Number(rLong.total || 0),
           missStreak30: Number(r30.missStreak || 0),
+          windowRows: buildJointWindowRows(windows),
           trio
         };
         if (!best
@@ -359,11 +392,14 @@ function pickJointShapeAvoidTrio(history, groupN, width) {
       rateLong: best.rateLong,
       lower120: best.lower120,
       lowerLong: best.lowerLong,
+      hit30: best.hit30,
+      total30: best.total30,
       hit120: best.hit120,
       total120: best.total120,
       hitLong: best.hitLong,
       totalLong: best.totalLong,
       missStreak30: best.missStreak30,
+      windows: Array.isArray(best.windowRows) ? best.windowRows : [],
       shot: groups.map((g) => g.attack).join("")
     },
     groups
