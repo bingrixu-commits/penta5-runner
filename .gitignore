@@ -11,18 +11,43 @@
 
 node_modules/
 api/node_modules/
+
+# ---- Python 生成物 ----
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# ---- 运行数据缓存 / 本地状态（勿入库）----
+data/
+data/*.json
+data/*.tmp
+data/.state.*.tmp
 data/state.json
 data/state.json.bak*
-data/.state.*.tmp
-data/*.tmp
 data/proxy_latest_cache.json
 data/penta5_supervisor_state.json
 data/penta5_supervisor.log
-data/backups/
-data/backup/
 data/storm_mode.json
 data/stable_math_filter.json
 data/codex_percent_server.json
+data/backups/
+data/backup/
+
+# ---- 临时日志 / 进程文件 ----
+*.log
+*.log.*
+*.log.nohup
+*.pid
+nohup.out
+memory.log.nohup
+*.tmp
+*~
+
+# ---- 备份 / 归档 ----
 *.bak
 *.bak_*
 *.bak-*
@@ -34,13 +59,6 @@ backup_codex/
 archive/
 robot_runtime/chrome_profiles/
 robot_runtime/robot_profiles/
-__pycache__/
-*.pyc
-*.log
-*.log.nohup
-*.pid
-memory.log.nohup
-data/
 penta5-runner-full-backup.tar.gz
 penta5-runner-全量备份-*.tar.gz
 penta5-l1-真实性核验.tar.gz

@@ -66,5 +66,9 @@ module.exports = {
   bindHost,
   compute,
   computeAsync,
-  bridge
+  bridge,
+  // 软筛选透传：下游组合池请走 Risk Scoring，勿硬删 exclude_*
+  scoreCombination: (...args) => bridge.scoreCombination(...args),
+  softFilterCombinations: (...args) => bridge.softFilterCombinations(...args),
+  applySoftFilterBatch: (...args) => bridge.applySoftFilterBatch(...args)
 };

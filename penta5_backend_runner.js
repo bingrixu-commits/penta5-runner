@@ -3746,8 +3746,16 @@ function scoreThreeDuishuCandidatesCore(history) {
         const displayDigits = pairs.map((pair) => chooseThreeDuishuDisplayCode(history, pair)).sort((left, right) => Number(left) - Number(right));
         const code = displayDigits.join("");
         const stableMathOverlap = displayDigits.reduce((count, digit) => count + (stableExclude.has(String(digit)) ? 1 : 0), 0);
+        let softRiskScore = 0;
+        let softRiskLevel = "low";
+        if (typeof stableMathFilterBridge.scoreCombination === "function") {
+          const risk = stableMathFilterBridge.scoreCombination(String(code).slice(0, 4));
+          softRiskScore = Number(risk && risk.riskScore || 0);
+          softRiskLevel = (risk && risk.riskLevel) || "low";
+        }
         const recentFailPenalty = Number((r40.fail != null ? r40.fail : r30.fail) || 0) * 0.28 + Math.max(0, 3 - Number((r40.streak != null ? r40.streak : r30.streak) || 0)) * 0.6;
         const weakBlockPenalty = Number(block.weakBlocks || 0) * 0.9;
+        const softRiskPenalty = softRiskScore * 0.45 + (softRiskLevel === "high" ? 1.2 : softRiskLevel === "mid" ? 0.4 : 0);
         const score =
           lower30 * 0.12 +
           lower40 * 0.12 +
@@ -3761,7 +3769,8 @@ function scoreThreeDuishuCandidatesCore(history) {
           Number(block.variance || 0) * 0.03 -
           recentFailPenalty -
           weakBlockPenalty +
-          stableMathOverlap * 1.25 +
+          stableMathOverlap * 1.25 -
+          softRiskPenalty +
           Math.min(Number((r40.streak != null ? r40.streak : r30.streak) || 0), 10) * 0.1;
         const pairKey = pairs.map((pair) => pair.key).join("|");
         candidates.push({
@@ -8861,13 +8870,23 @@ function scoreStructuralAnyTwoCode(code, alignment) {
   const digits = String(code || "").split("");
   const { keep, prefer, kills } = alignment;
   let score = 0;
+  // 软筛选：命中更稳排除单码按风险扣分，不再一次性 -100 硬杀
   digits.forEach((digit) => {
     if (keep.has(digit)) score += 14;
-    else if (kills.has(digit)) score -= 100;
+    else if (kills.has(digit)) score -= 28; // was -100 hard kill
     if (prefer.has(digit)) score += 30;
   });
   score += digits.filter((digit) => keep.has(digit)).length * 3;
-  score -= digits.filter((digit) => kills.has(digit)).length * 40;
+  score -= digits.filter((digit) => kills.has(digit)).length * 12; // was *40
+  // 组合级 Risk Score：多重违规额外降权（Fuzzy Zone 对齐）
+  if (typeof stableMathFilterBridge.scoreCombination === "function") {
+    const risk = stableMathFilterBridge.scoreCombination(String(code || "").slice(0, 4));
+    if (risk && risk.riskScore != null) {
+      score -= Number(risk.riskScore) * 18;
+      if (risk.riskLevel === "high") score -= 25;
+      else if (risk.riskLevel === "mid") score -= 8;
+    }
+  }
   return score;
 }
 
@@ -9953,11 +9972,17 @@ function resolveStableMathAssist(prediction) {
     framework: raw.framework || null,
     latestPeriod: raw.latest_period || null,
     version: raw.version || "stable-math-filter",
-    source: prediction && prediction.stableMathFilter ? "prediction" : "cache"
+    source: prediction && prediction.stableMathFilter ? "prediction" : "cache",
+    // 软筛选：exclude_* 为建议维度；组合筛选请走 bridge.softFilterCombinations
+    softRisk: raw.softRisk && typeof raw.softRisk === "object"
+      ? raw.softRisk
+      : (stableMathFilterBridge.softRiskMeta ? stableMathFilterBridge.softRiskMeta() : { mode: "soft_risk" })
   };
 }
 
 function mergeStableMathAvoidDigits(baseAvoid, assist) {
+  // 软筛选语义：更稳 exclude_digits 是「建议避开」维度，仍并入 avoid 集合供排序/换码，
+  // 但下游打分已改为 Risk Scoring 扣分（不再 -100 硬杀）。勿在此对组合池做绝对 filter。
   const out = baseAvoid instanceof Set
     ? new Set(baseAvoid)
     : new Set(Array.isArray(baseAvoid) ? baseAvoid : []);

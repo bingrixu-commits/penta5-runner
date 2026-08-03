@@ -20,7 +20,16 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from lottery_filter import format_console_report, run_stable_filter
+from lottery_filter import (
+    format_console_report,
+    format_soft_recommend_console,
+    run_stable_filter,
+    soft_filter_combinations,
+    soft_recommend_from_pool,
+    slim_soft_recommend,
+    merge_position_kills_into_result,
+    SAFE_RETENTION_DEFAULT,
+)
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT / "data.csv"
@@ -206,7 +215,60 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=str(DEFAULT_OUT), help="结果 JSON 输出路径")
     p.add_argument("--quiet", action="store_true", help="不打印控制台报告，只写文件")
     p.add_argument("--dump-json", action="store_true", help="向 stdout 打印完整 JSON")
+    p.add_argument(
+        "--score-draws",
+        help="对候选组合做软筛选（逗号分隔四码），结果写入 result['soft_filter']",
+    )
+    p.add_argument(
+        "--retention",
+        type=float,
+        default=SAFE_RETENTION_DEFAULT,
+        help="软筛选安全保留比例（夹到 0.20~0.30）",
+    )
+    p.add_argument(
+        "--no-soft-pool",
+        action="store_true",
+        help="跳过全量 0000-9999 Soft Risk 选号（默认启用）",
+    )
+    p.add_argument(
+        "--position-kills",
+        help='位杀 JSON，如 \'{"wan":"6","qian":"1","bai":"3","shi":"8"}\'（软加分）',
+    )
+    p.add_argument(
+        "--position-kills-file",
+        help="位杀 JSON 文件路径",
+    )
+    p.add_argument(
+        "--print-limit",
+        type=int,
+        default=80,
+        help="控制台每档最多打印号码数（默认 80）",
+    )
+    p.add_argument(
+        "--soft-code-limit",
+        type=int,
+        default=0,
+        help="写入 JSON 的推荐号码上限，0=保留全部 retained（文件可能较大）",
+    )
     return p
+
+
+def _load_position_kills(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
+    raw = None
+    if args.position_kills_file:
+        raw = Path(args.position_kills_file).read_text(encoding="utf-8")
+    elif args.position_kills:
+        raw = args.position_kills
+    if not raw:
+        return None
+    data = json.loads(raw)
+    if isinstance(data, dict) and "positionKills" in data and isinstance(data["positionKills"], dict):
+        return data["positionKills"]
+    if isinstance(data, dict) and "position_kills" in data and isinstance(data["position_kills"], dict):
+        return data["position_kills"]
+    if isinstance(data, dict):
+        return data
+    return None
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -218,14 +280,57 @@ def main(argv: Optional[List[str]] = None) -> int:
         latest_period=latest_period,
     )
     result["source"] = source
+    # 软筛选元数据：exclude_* / 位杀 是建议维度，组合筛选走 Risk Scoring
+    result["softRisk"] = {
+        "mode": "soft_risk",
+        "fuzzyZone": {"low": "0~1", "mid": "2", "high": ">=3"},
+        "retentionDefault": SAFE_RETENTION_DEFAULT,
+        "retentionMin": 0.20,
+        "retentionMax": 0.30,
+        "note": "组合筛选走 Risk Scoring；exclude_* / 位杀 为建议维度，非绝对删号",
+    }
+
+    position_kills = _load_position_kills(args)
+    if position_kills:
+        result = merge_position_kills_into_result(result, position_kills)
+
+    if args.score_draws:
+        draws = [part.strip() for part in str(args.score_draws).split(",") if part.strip()]
+        result["soft_filter"] = soft_filter_combinations(
+            draws,
+            result=result,
+            retention_ratio=args.retention,
+        )
+
+    soft_recommend = None
+    if not args.no_soft_pool:
+        soft_recommend = soft_recommend_from_pool(
+            result,
+            position_kills=position_kills,
+            retention_ratio=args.retention,
+            code_limit=int(args.soft_code_limit or 0),
+            keep_ranked=False,
+        )
+        # 磁盘保留较完整推荐列表；slim 摘要也写入便于下游
+        result["soft_recommend"] = soft_recommend
+        result["softRecommend"] = slim_soft_recommend(soft_recommend)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # 全量 recommend_codes 可达数千，写盘前对超大 ranked 已省略；codes 仍完整（除非 soft-code-limit）
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if not args.quiet:
         print(f"[stable-math-filter] source={source} history={result['history_count']} latest={result.get('latest_period')}")
         print(format_console_report(result))
+        if result.get("soft_filter"):
+            sf = result["soft_filter"]
+            print(
+                f"[soft-risk] retained={sf['counts']['retained']} "
+                f"dropped={sf['counts']['dropped']} force={sf['counts']['force_retained']}"
+            )
+        if soft_recommend:
+            print(format_soft_recommend_console(soft_recommend, print_limit=int(args.print_limit or 80)))
         print(f"[stable-math-filter] wrote {out_path}")
     if args.dump_json:
         print(json.dumps(result, ensure_ascii=False))

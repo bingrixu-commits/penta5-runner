@@ -791,8 +791,17 @@ function scoreThreeDuishuCandidatesCore(history) {
         const displayDigits = pairs.map((pair) => chooseThreeDuishuDisplayCode(history, pair)).sort((left, right) => Number(left) - Number(right));
         const code = displayDigits.join("");
         const stableMathOverlap = displayDigits.reduce((count, digit) => count + (stableExclude.has(String(digit)) ? 1 : 0), 0);
+        // 软筛选：组合级 Risk Score（多重违规降权，替代「命中即死」）
+        let softRiskScore = 0;
+        let softRiskLevel = "low";
+        if (typeof stableMathFilterBridge.scoreCombination === "function") {
+          const risk = stableMathFilterBridge.scoreCombination(String(code).slice(0, 4));
+          softRiskScore = Number(risk && risk.riskScore || 0);
+          softRiskLevel = (risk && risk.riskLevel) || "low";
+        }
         const recentFailPenalty = Number((r40.fail != null ? r40.fail : r30.fail) || 0) * 0.28 + Math.max(0, 3 - Number((r40.streak != null ? r40.streak : r30.streak) || 0)) * 0.6;
         const weakBlockPenalty = Number(block.weakBlocks || 0) * 0.9;
+        const softRiskPenalty = softRiskScore * 0.45 + (softRiskLevel === "high" ? 1.2 : softRiskLevel === "mid" ? 0.4 : 0);
         const score =
           lower30 * 0.12 +
           lower40 * 0.12 +
@@ -806,7 +815,8 @@ function scoreThreeDuishuCandidatesCore(history) {
           Number(block.variance || 0) * 0.03 -
           recentFailPenalty -
           weakBlockPenalty +
-          stableMathOverlap * 1.25 +
+          stableMathOverlap * 1.25 -
+          softRiskPenalty +
           Math.min(Number((r40.streak != null ? r40.streak : r30.streak) || 0), 10) * 0.1;
         const pairKey = pairs.map((pair) => pair.key).join("|");
         candidates.push({

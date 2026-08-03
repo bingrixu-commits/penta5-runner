@@ -189,6 +189,17 @@ const STABLE_MATH_PARITY_SHAPE_LABELS = new Set(["全奇", "全偶", "全1路", 
 
 const stableMathFilterBridge = require("../../stable_math_filter_bridge");
 
+/** 软筛选排序增量：四码组合按 Risk Score 微调（高风险降权，不硬删） */
+function softRiskSortKey(item) {
+  const code = String(item && item.code || "");
+  if (!/^\d{4}$/.test(code) || typeof stableMathFilterBridge.scoreCombination !== "function") return 0;
+  const risk = stableMathFilterBridge.scoreCombination(code);
+  if (!risk) return 0;
+  if (risk.riskLevel === "high") return -36;
+  if (risk.riskLevel === "mid") return -12;
+  return Number(risk.riskScore || 0) === 0 ? 6 : 0;
+}
+
 let state = null;
 
 
@@ -1021,7 +1032,9 @@ function buildRecommend2Snapshot(prediction, history) {
   const comboRows = safeHistory.slice(0, Math.min(MODEL_STABLE_WINDOW, safeHistory.length));
 
   function order(a, b) {
-    if (Number(b.stableScore || 0) !== Number(a.stableScore || 0)) return Number(b.stableScore || 0) - Number(a.stableScore || 0);
+    const softA = Number(a.stableScore || 0) + softRiskSortKey(a);
+    const softB = Number(b.stableScore || 0) + softRiskSortKey(b);
+    if (softB !== softA) return softB - softA;
     if (Number(b.rate300 || 0) !== Number(a.rate300 || 0)) return Number(b.rate300 || 0) - Number(a.rate300 || 0);
     if (Number(b.rate60 || 0) !== Number(a.rate60 || 0)) return Number(b.rate60 || 0) - Number(a.rate60 || 0);
     if (Number(b.rate120 || 0) !== Number(a.rate120 || 0)) return Number(b.rate120 || 0) - Number(a.rate120 || 0);

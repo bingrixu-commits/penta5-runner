@@ -1,13 +1,17 @@
 "use strict";
 
 /**
- * Node 桥接：调用 algorithms/run.py（更稳数学排除 v3，九条规则）。
+ * Node 桥接：调用 algorithms/run.py（更稳数学排除 v3，九条规则）
+ * + 软筛选 / 风险评估（soft_risk_filter.js）。
+ *
  * 热路径用 async；Tip 封存前用 runStableMathFilterSync 对齐期号（短暂阻塞可接受）。
+ * 组合筛选请走 scoreCombination / softFilterCombinations，勿对 exclude_* 做绝对删号。
  */
 
 const fs = require("fs");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
+const softRisk = require("./soft_risk_filter");
 
 const ROOT = path.join(__dirname, "..");
 const RUN_PY = path.join(__dirname, "run.py");
@@ -42,7 +46,13 @@ function readCachedFilter(outPath) {
 /** 摘要版：供 state / prediction 持久化；完整 rules.details 仅保留在 data/stable_math_filter.json */
 function slimStableMathFilter(filter) {
   if (!filter || typeof filter !== "object") return null;
-  if (filter.slim === true && !filter.rules) return filter;
+  if (filter.slim === true && !filter.rules) {
+    // 旧缓存也可能缺 softRisk；补齐后返回，避免下游仍按硬杀理解
+    if (!filter.softRisk) {
+      return Object.assign({}, filter, { softRisk: softRisk.softRiskMeta() });
+    }
+    return filter;
+  }
   return {
     slim: true,
     version: filter.version || "stable-math-filter-v3",
@@ -62,8 +72,91 @@ function slimStableMathFilter(filter) {
     exclude_size_ratios: Array.isArray(filter.exclude_size_ratios) ? filter.exclude_size_ratios.slice() : [],
     summary: filter.summary && typeof filter.summary === "object" ? filter.summary : null,
     framework: filter.framework && typeof filter.framework === "object" ? filter.framework : null,
-    source: filter.source || null
+    source: filter.source || null,
+    // 软筛选标识：exclude_* 为建议维度，组合筛选走 Risk Scoring
+    softRisk: filter.softRisk && typeof filter.softRisk === "object"
+      ? filter.softRisk
+      : softRisk.softRiskMeta()
   };
+}
+
+function resolveFilterForSoft(filter, options) {
+  if (filter && typeof filter === "object") return filter;
+  const opts = options || {};
+  return readCachedFilter(opts.outPath || DEFAULT_OUT);
+}
+
+function scoreCombination(draw, filter, options) {
+  const opts = options || {};
+  const base = resolveFilterForSoft(filter, opts);
+  const enriched = softRisk.mergePositionKillsIntoFilter(base, opts.positionKills);
+  return softRisk.scoreCombination(draw, enriched);
+}
+
+function softFilterCombinations(draws, filter, options) {
+  const opts = options || {};
+  const base = resolveFilterForSoft(filter, opts);
+  const enriched = softRisk.mergePositionKillsIntoFilter(base, opts.positionKills);
+  return softRisk.softFilterCombinations(draws, enriched, opts);
+}
+
+function applySoftFilterBatch(draws, options) {
+  const opts = options || {};
+  const filter = resolveFilterForSoft(opts.filter, opts);
+  return softFilterCombinations(draws, filter, opts);
+}
+
+/**
+ * 全量池 Soft Risk 选号：挂 soft_recommend / softRecommend 到 filter 结果。
+ * positionKills 来自 tip 位杀（软加分）。
+ */
+function attachSoftRecommend(result, options) {
+  if (!result || typeof result !== "object") return result;
+  const opts = options || {};
+  if (opts.skipSoftRecommend === true) return result;
+  try {
+    const soft = softRisk.softRecommendFromPool(result, {
+      positionKills: opts.positionKills || null,
+      retentionRatio: opts.retentionRatio,
+      codeLimit: Number.isFinite(Number(opts.codeLimit)) ? Number(opts.codeLimit) : 0,
+      keepRanked: false
+    });
+    result.soft_recommend = soft;
+    result.softRecommend = softRisk.slimSoftRecommend(soft, {
+      maxLow: opts.maxLow,
+      maxMid: opts.maxMid,
+      maxRecommend: opts.maxRecommend
+    });
+    if (!result.softRisk) result.softRisk = softRisk.softRiskMeta();
+    if (opts.printConsole) {
+      softRisk.printSoftRecommendConsole(soft, { printLimit: opts.printLimit || 80 });
+    }
+  } catch (err) {
+    result.softRecommendError = String(err && err.message || err);
+  }
+  return result;
+}
+
+function extractPositionKillsFromPrediction(prediction) {
+  if (!prediction || typeof prediction !== "object") return null;
+  const pk = prediction.positionKills || (prediction.detail && prediction.detail.positionKills);
+  if (!pk || typeof pk !== "object") return null;
+  return softRisk.normalizePositionKills({ position_kills: pk });
+}
+
+const PYTHON_SOFT_POOL_FLAG = process.env.PENTA5_STABLE_MATH_SOFT_POOL_IN_PYTHON === "1";
+
+function buildPythonArgs(outPath, options) {
+  const opts = options || {};
+  const args = [RUN_PY, "--stdin-json", "--quiet", "--dump-json", "--out", outPath];
+  // 默认在 Node 侧做全量 Soft Recommend（便于注入 tip 位杀）；Python 侧可选
+  if (!PYTHON_SOFT_POOL_FLAG && opts.pythonSoftPool !== true) {
+    args.push("--no-soft-pool");
+  }
+  if (opts.retentionRatio != null) {
+    args.push("--retention", String(opts.retentionRatio));
+  }
+  return args;
 }
 
 function runStableMathFilterAsync(history, options) {
@@ -85,7 +178,7 @@ function runStableMathFilterAsync(history, options) {
     let settled = false;
     let stdout = "";
     let stderr = "";
-    const child = spawn(python, [RUN_PY, "--stdin-json", "--quiet", "--dump-json", "--out", outPath], {
+    const child = spawn(python, buildPythonArgs(outPath, opts), {
       cwd: __dirname,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"]
@@ -141,6 +234,13 @@ function runStableMathFilterAsync(history, options) {
         });
         return;
       }
+      if (!result.softRisk) result.softRisk = softRisk.softRiskMeta();
+      if (!result.soft_recommend && !result.softRecommend) {
+        attachSoftRecommend(result, opts);
+        try {
+          fs.writeFileSync(outPath, JSON.stringify(result, null, 2), "utf8");
+        } catch (_) {}
+      }
       resolve({ ok: true, result, outPath });
     });
 
@@ -175,13 +275,13 @@ function runStableMathFilterSync(history, options) {
   } catch (_) {}
   let child;
   try {
-    child = spawnSync(python, [RUN_PY, "--stdin-json", "--quiet", "--dump-json", "--out", outPath], {
+    child = spawnSync(python, buildPythonArgs(outPath, opts), {
       cwd: __dirname,
       env: process.env,
       input: JSON.stringify(payload),
       encoding: "utf8",
       timeout,
-      maxBuffer: 8 * 1024 * 1024
+      maxBuffer: 32 * 1024 * 1024
     });
   } catch (err) {
     return {
@@ -218,6 +318,13 @@ function runStableMathFilterSync(history, options) {
       result: readCachedFilter(outPath)
     };
   }
+  if (!result.softRisk) result.softRisk = softRisk.softRiskMeta();
+  if (!result.soft_recommend && !result.softRecommend) {
+    attachSoftRecommend(result, opts);
+    try {
+      fs.writeFileSync(outPath, JSON.stringify(result, null, 2), "utf8");
+    } catch (_) {}
+  }
   return { ok: true, result, outPath, sync: true };
 }
 
@@ -250,5 +357,11 @@ module.exports = {
   runStableMathFilterSync,
   runStableMathFilterAsync,
   attachStableMathFilter,
-  buildHistoryPayload
+  buildHistoryPayload,
+  scoreCombination,
+  softFilterCombinations,
+  applySoftFilterBatch,
+  softRiskMeta: softRisk.softRiskMeta,
+  digitRiskBonus: softRisk.digitRiskBonus,
+  softRisk
 };

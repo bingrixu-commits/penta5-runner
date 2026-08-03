@@ -1242,13 +1242,22 @@ function scoreStructuralAnyTwoCode(code, alignment) {
   const digits = String(code || "").split("");
   const { keep, prefer, kills } = alignment;
   let score = 0;
+  // 软筛选：命中更稳排除单码按风险扣分，不再一次性 -100 硬杀
   digits.forEach((digit) => {
     if (keep.has(digit)) score += 14;
-    else if (kills.has(digit)) score -= 100;
+    else if (kills.has(digit)) score -= 28;
     if (prefer.has(digit)) score += 30;
   });
   score += digits.filter((digit) => keep.has(digit)).length * 3;
-  score -= digits.filter((digit) => kills.has(digit)).length * 40;
+  score -= digits.filter((digit) => kills.has(digit)).length * 12;
+  if (typeof stableMathFilterBridge.scoreCombination === "function") {
+    const risk = stableMathFilterBridge.scoreCombination(String(code || "").slice(0, 4));
+    if (risk && risk.riskScore != null) {
+      score -= Number(risk.riskScore) * 18;
+      if (risk.riskLevel === "high") score -= 25;
+      else if (risk.riskLevel === "mid") score -= 8;
+    }
+  }
   return score;
 }
 
@@ -1306,7 +1315,10 @@ function resolveStableMathAssist(prediction) {
     framework: raw.framework || null,
     latestPeriod: raw.latest_period || null,
     version: raw.version || "stable-math-filter",
-    source: prediction && prediction.stableMathFilter ? "prediction" : "cache"
+    source: prediction && prediction.stableMathFilter ? "prediction" : "cache",
+    softRisk: raw.softRisk && typeof raw.softRisk === "object"
+      ? raw.softRisk
+      : (stableMathFilterBridge.softRiskMeta ? stableMathFilterBridge.softRiskMeta() : { mode: "soft_risk" })
   };
 }
 

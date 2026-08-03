@@ -422,8 +422,97 @@ def _consecutive_hit(shape: str, excluded: Sequence[str]) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# 软筛选 / 风险评估（在硬排除列表之上叠加；不破坏 run_stable_filter 契约）
+# ---------------------------------------------------------------------------
+# 低风险 0~1 / 中风险 2 / 高风险 >=3；安全保留默认 25%（夹在 20%~30%）
+RISK_LOW_MAX = 1
+RISK_MID = 2
+RISK_HIGH_MIN = 3
+SAFE_RETENTION_MIN = 0.20
+SAFE_RETENTION_MAX = 0.30
+SAFE_RETENTION_DEFAULT = 0.25
+RISK_LEVEL_LABELS = {
+    "low": "低风险/强烈推荐",
+    "mid": "中风险/观察区",
+    "high": "高风险/建议剔除",
+}
+POSITION_KEYS = ("wan", "qian", "bai", "shi")
+POSITION_LABELS = {"wan": "千位", "qian": "百位", "bai": "十位", "shi": "个位"}
+
+
+def risk_level_from_score(risk_score: int) -> str:
+    score = int(risk_score or 0)
+    if score <= RISK_LOW_MAX:
+        return "low"
+    if score == RISK_MID:
+        return "mid"
+    return "high"
+
+
+def normalize_position_kills(result: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    """千/百/十/个 位杀 → 每位至多一位数字（软加分，非硬删）。"""
+    out = {k: "" for k in POSITION_KEYS}
+    if not isinstance(result, dict):
+        return out
+    raw = (
+        result.get("position_kills")
+        or result.get("positionKills")
+        or result.get("exclude_positions")
+        or ((result.get("framework") or {}).get("positionAvoid") if isinstance(result.get("framework"), dict) else None)
+    )
+    if not isinstance(raw, dict) and not isinstance(raw, list):
+        return out
+    for idx, key in enumerate(POSITION_KEYS):
+        entry: Any = None
+        if isinstance(raw, dict):
+            entry = raw.get(key)
+            if entry is None:
+                entry = raw.get(str(idx))
+        elif isinstance(raw, list) and idx < len(raw):
+            entry = raw[idx]
+        if isinstance(entry, dict):
+            entry = (
+                entry.get("selectedDigit")
+                if entry.get("selectedDigit") is not None
+                else (
+                    entry.get("recommendDigit")
+                    if entry.get("recommendDigit") is not None
+                    else (
+                        entry.get("main")
+                        if entry.get("main") is not None
+                        else (entry.get("killDigits") or [None])[0]
+                    )
+                )
+            )
+        digits = "".join(ch for ch in str(entry or "") if ch.isdigit())
+        out[key] = digits[:1] if digits else ""
+    return out
+
+
+def merge_position_kills_into_result(
+    result: Optional[Dict[str, Any]],
+    position_kills: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    base = dict(result or {})
+    normalized = normalize_position_kills({"position_kills": position_kills or base.get("position_kills") or base.get("positionKills")})
+    base["position_kills"] = normalized
+    base["positionKills"] = normalized
+    fw = dict(base.get("framework") or {})
+    fw["positionAvoid"] = normalized
+    base["framework"] = fw
+    return base
+
+
 def matches_excluded_combo(draw_like: DrawLike, result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """判断一注是否命中本期静态/动态排除规则（用于回测；口径对齐主模型 extra）。"""
+    """判断一注是否命中本期静态/动态排除规则（用于回测；口径对齐主模型 extra）。
+
+    兼容说明：
+    - 仍返回布尔字段 excluded（任一规则命中即为 True，旧硬杀语义）
+    - 额外返回 risk_score / risk_level / triggered_rules，供软筛选消费
+      （每命中一类排除维度 Risk Score +1，不在此处删除组合）
+    - 位杀（千/百/十/个）每位命中另 +1（positionAvoid.*），不硬删
+    """
     draw = normalize_draw(draw_like)
     res = result or {}
     excluded_digits = set(res.get("exclude_digits") or [])
@@ -449,10 +538,43 @@ def matches_excluded_combo(draw_like: DrawLike, result: Optional[Dict[str, Any]]
     repeat_matched = _repeat_hit(repeat, repeat_list)
     consecutive_matched = _consecutive_hit(consecutive, consecutive_list)
 
+    position_kills = normalize_position_kills(res)
+    hit_positions: List[str] = []
+    for idx, key in enumerate(POSITION_KEYS):
+        kill_digit = position_kills.get(key) or ""
+        if kill_digit and idx < len(draw) and str(draw[idx]) == kill_digit:
+            hit_positions.append(key)
+
+    # 风险账本：一类维度命中记 +1（与硬杀「命中即死」解耦）；位杀每位 +1
+    triggered_rules: List[str] = []
+    if hit_digits:
+        triggered_rules.append("digitAvoid")
+    if shape_hit:
+        triggered_rules.append("shapeAvoid")
+    if span_hit:
+        triggered_rules.append("spanAvoid")
+    if sum_hit:
+        triggered_rules.append("sumRangeAvoid")
+    if parity_hit:
+        triggered_rules.append("parityRatioAvoid")
+    if size_hit:
+        triggered_rules.append("sizeRatioAvoid")
+    if repeat_matched:
+        triggered_rules.append("repeatAvoid")
+    if consecutive_matched:
+        triggered_rules.append("consecutiveAvoid")
+    for key in hit_positions:
+        triggered_rules.append(f"positionAvoid.{key}")
+
+    risk_score = len(triggered_rules)
+    risk_level = risk_level_from_score(risk_score)
+
     return {
         "draw": draw,
         "hit_digits": hit_digits,
         "hit_shapes": shape_hit,
+        "hit_positions": hit_positions,
+        "position_kills": position_kills,
         "span": span,
         "span_hit": span_hit,
         "sum": total,
@@ -465,17 +587,268 @@ def matches_excluded_combo(draw_like: DrawLike, result: Optional[Dict[str, Any]]
         "repeat_hit": repeat_matched,
         "consecutive_shape": consecutive,
         "consecutive_hit": consecutive_matched,
-        "excluded": bool(
-            hit_digits
-            or shape_hit
-            or span_hit
-            or sum_hit
-            or parity_hit
-            or size_hit
-            or repeat_matched
-            or consecutive_matched
-        ),
+        # 旧硬杀语义保留
+        "excluded": bool(triggered_rules),
+        # 软筛选字段
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "risk_label": RISK_LEVEL_LABELS[risk_level],
+        "triggered_rules": triggered_rules,
+        "passed": risk_level != "high",
+        "recommend": risk_level == "low",
+        "watch": risk_level == "mid",
+        "suggest_drop": risk_level == "high",
     }
+
+
+def score_combination(
+    draw_like: DrawLike,
+    result: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """对单个组合计算 Risk Score（软筛选入口；不删除组合）。"""
+    return matches_excluded_combo(draw_like, result=result)
+
+
+def soft_filter_combinations(
+    draws: Sequence[DrawLike],
+    result: Optional[Dict[str, Any]] = None,
+    *,
+    retention_ratio: Optional[float] = None,
+    high_risk_threshold: int = RISK_HIGH_MIN,
+    keep_mid: bool = True,
+) -> Dict[str, Any]:
+    """
+    批量软筛选：Risk Scoring + Fuzzy Zone + Safe Retention。
+
+    - 每注按命中排除维度累计 risk_score，不直接 filter 掉
+    - 低风险(0~1)优先保留；中风险(2)观察区；高风险(>=3)建议剔除
+    - 无论规则多严，至少保留前 retention_ratio（默认 25%，夹在 20%~30%）
+    """
+    if retention_ratio is None:
+        ratio = SAFE_RETENTION_DEFAULT
+    else:
+        try:
+            ratio = float(retention_ratio)
+        except (TypeError, ValueError):
+            ratio = SAFE_RETENTION_DEFAULT
+        ratio = max(SAFE_RETENTION_MIN, min(SAFE_RETENTION_MAX, ratio))
+
+    scored: List[Dict[str, Any]] = []
+    for item in draws:
+        row = score_combination(item, result=result)
+        code = "".join(str(d) for d in row["draw"])
+        row["original"] = item if isinstance(item, str) else code
+        row["normalized"] = code
+        scored.append(row)
+
+    scored.sort(key=lambda row: (row["risk_score"], row["normalized"]))
+    total = len(scored)
+    min_keep = 0 if total == 0 else max(1, int(math.ceil(total * ratio)))
+
+    retained: List[Dict[str, Any]] = []
+    dropped: List[Dict[str, Any]] = []
+    forced_by_retention: List[Dict[str, Any]] = []
+
+    ranked: List[Dict[str, Any]] = []
+
+    for index, row in enumerate(scored):
+        annotated = dict(row)
+        annotated["rank"] = index + 1
+        score = int(annotated["risk_score"])
+        level = annotated["risk_level"]
+
+        if score < high_risk_threshold:
+            if level == "mid" and not keep_mid:
+                if len(retained) < min_keep:
+                    annotated["retention_forced"] = True
+                    annotated["decision"] = "force_retain"
+                    retained.append(annotated)
+                    forced_by_retention.append(annotated)
+                else:
+                    annotated["retention_forced"] = False
+                    annotated["decision"] = "drop_mid"
+                    dropped.append(annotated)
+            else:
+                annotated["retention_forced"] = False
+                annotated["decision"] = "retain"
+                retained.append(annotated)
+        else:
+            if len(retained) < min_keep:
+                annotated["retention_forced"] = True
+                annotated["decision"] = "force_retain"
+                annotated["passed"] = True
+                retained.append(annotated)
+                forced_by_retention.append(annotated)
+            else:
+                annotated["retention_forced"] = False
+                annotated["decision"] = "drop_high"
+                dropped.append(annotated)
+
+        ranked.append(annotated)
+
+    by_level = {
+        "low": [r for r in ranked if r["risk_level"] == "low"],
+        "mid": [r for r in ranked if r["risk_level"] == "mid"],
+        "high": [r for r in ranked if r["risk_level"] == "high"],
+    }
+
+    return {
+        "mode": "soft_risk",
+        "total": total,
+        "retention_ratio": ratio,
+        "min_keep": min_keep,
+        "high_risk_threshold": high_risk_threshold,
+        "keep_mid": keep_mid,
+        "fuzzy_zone": {
+            "low": f"0~{RISK_LOW_MAX}",
+            "mid": str(RISK_MID),
+            "high": f">={RISK_HIGH_MIN}",
+        },
+        "counts": {
+            "low": len(by_level["low"]),
+            "mid": len(by_level["mid"]),
+            "high": len(by_level["high"]),
+            "retained": len(retained),
+            "dropped": len(dropped),
+            "force_retained": len(forced_by_retention),
+        },
+        "ranked": ranked,
+        "retained": retained,
+        "dropped": dropped,
+        "force_retained": forced_by_retention,
+        "by_level": by_level,
+    }
+
+
+def build_full_four_digit_pool() -> List[str]:
+    return [f"{i:04d}" for i in range(10000)]
+
+
+def soft_recommend_from_pool(
+    result: Optional[Dict[str, Any]] = None,
+    *,
+    position_kills: Optional[Dict[str, Any]] = None,
+    retention_ratio: Optional[float] = None,
+    draws: Optional[Sequence[DrawLike]] = None,
+    code_limit: int = 0,
+    keep_ranked: bool = False,
+) -> Dict[str, Any]:
+    """全量（或给定）组合池 → soft_filter_combinations → 风险分升序推荐列表。"""
+    enriched = merge_position_kills_into_result(result, position_kills)
+    pool: Sequence[DrawLike] = draws if draws is not None else build_full_four_digit_pool()
+    batch = soft_filter_combinations(
+        pool,
+        result=enriched,
+        retention_ratio=retention_ratio,
+    )
+    low_codes = [r["normalized"] for r in batch["by_level"]["low"]]
+    mid_codes = [r["normalized"] for r in batch["by_level"]["mid"]]
+    recommend_codes = [
+        {
+            "code": r["normalized"],
+            "risk_score": r["risk_score"],
+            "risk_level": r["risk_level"],
+            "triggered_rules": r["triggered_rules"],
+        }
+        for r in sorted(batch["retained"], key=lambda row: (row["risk_score"], row["normalized"]))
+    ]
+    if code_limit and code_limit > 0:
+        recommend_codes = recommend_codes[:code_limit]
+        low_out = low_codes[:code_limit]
+        mid_out = mid_codes[:code_limit]
+    else:
+        low_out = low_codes
+        mid_out = mid_codes
+
+    payload: Dict[str, Any] = {
+        "mode": "soft_risk",
+        "pool_size": batch["total"],
+        "retained_count": batch["counts"]["retained"],
+        "dropped_count": batch["counts"]["dropped"],
+        "retention_ratio": batch["retention_ratio"],
+        "position_kills": normalize_position_kills(enriched),
+        "counts": batch["counts"],
+        "fuzzy_zone": batch["fuzzy_zone"],
+        "recommend_codes": recommend_codes,
+        "low_risk_codes": low_out,
+        "mid_risk_codes": mid_out,
+        "low_risk_total": len(low_codes),
+        "mid_risk_total": len(mid_codes),
+        "high_risk_total": batch["counts"]["high"],
+        "comparison": {
+            "before": batch["total"],
+            "after": batch["counts"]["retained"],
+            "text": f"从 {batch['total']} 注安全缩减至 {batch['counts']['retained']} 注",
+        },
+    }
+    if keep_ranked:
+        payload["ranked"] = batch["ranked"]
+        payload["retained"] = batch["retained"]
+    return payload
+
+
+def slim_soft_recommend(
+    soft_recommend: Optional[Dict[str, Any]],
+    *,
+    max_low: int = 200,
+    max_mid: int = 100,
+    max_recommend: int = 300,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(soft_recommend, dict):
+        return None
+    return {
+        "mode": "soft_risk",
+        "pool_size": soft_recommend.get("pool_size"),
+        "retained_count": soft_recommend.get("retained_count"),
+        "dropped_count": soft_recommend.get("dropped_count"),
+        "retention_ratio": soft_recommend.get("retention_ratio"),
+        "position_kills": soft_recommend.get("position_kills"),
+        "counts": soft_recommend.get("counts"),
+        "fuzzy_zone": soft_recommend.get("fuzzy_zone"),
+        "comparison": soft_recommend.get("comparison"),
+        "low_risk_total": soft_recommend.get("low_risk_total"),
+        "mid_risk_total": soft_recommend.get("mid_risk_total"),
+        "high_risk_total": soft_recommend.get("high_risk_total"),
+        "low_risk_codes": list(soft_recommend.get("low_risk_codes") or [])[:max_low],
+        "mid_risk_codes": list(soft_recommend.get("mid_risk_codes") or [])[:max_mid],
+        "recommend_codes": list(soft_recommend.get("recommend_codes") or [])[:max_recommend],
+    }
+
+
+def format_soft_recommend_console(
+    soft_recommend: Optional[Dict[str, Any]],
+    *,
+    print_limit: int = 80,
+) -> str:
+    if not isinstance(soft_recommend, dict):
+        return "[soft-risk] 无软筛选推荐结果"
+    limit = max(1, int(print_limit or 80))
+    before = soft_recommend.get("pool_size") or ((soft_recommend.get("comparison") or {}).get("before"))
+    after = soft_recommend.get("retained_count") or ((soft_recommend.get("comparison") or {}).get("after"))
+    pk = soft_recommend.get("position_kills") or {}
+    pk_text = " ".join(f"{POSITION_LABELS[k]}={pk.get(k) or '-'}" for k in POSITION_KEYS)
+
+    def _block(title: str, codes: Any, total: Any) -> str:
+        lst = list(codes or [])
+        shown = lst[:limit]
+        total_n = total if total is not None else len(lst)
+        head = f"{title}\n  合计 {total_n} 注" + (f"（控制台仅展示前 {limit} 注）" if len(lst) > limit else "")
+        body = "  " + (" ".join(shown) if shown else "（无）")
+        return f"{head}\n{body}"
+
+    lines = [
+        "========== Soft Risk Scoring 选号输出 ==========",
+        f"位杀软加分：{pk_text}",
+        f"过滤对比：从 {before} 注安全缩减至 {after} 注"
+        + (f"（剔除 {soft_recommend.get('dropped_count')}）" if soft_recommend.get("dropped_count") is not None else ""),
+        f"分层统计：低风险={soft_recommend.get('low_risk_total')} "
+        f"中风险={soft_recommend.get('mid_risk_total')} "
+        f"高风险={soft_recommend.get('high_risk_total')}",
+        _block("【低风险推荐号码】（0-1分，建议重点关注）", soft_recommend.get("low_risk_codes"), soft_recommend.get("low_risk_total")),
+        _block("【中风险观察号码】（2分，保留人工参考）", soft_recommend.get("mid_risk_codes"), soft_recommend.get("mid_risk_total")),
+        "================================================",
+    ]
+    return "\n".join(lines)
 
 
 def run_stable_filter(
