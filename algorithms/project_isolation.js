@@ -28,7 +28,8 @@ const PROJECTS = Object.freeze([
   require("./auto-top6"),
   require("./recommend2"),
   require("./kill-framework"),
-  require("./three-duishu")
+  require("./three-duishu"),
+  require("./four-ding-framework")
 ]);
 
 const PROJECT_BY_ID = new Map(PROJECTS.map((project) => [project.id, project]));
@@ -36,8 +37,10 @@ const SNAPSHOT_PROJECT_IDS = Object.freeze({
   autoTop6: "auto-top6",
   recommend2: "recommend2",
   killFramework: "kill-framework",
-  threeDuishu: "three-duishu"
+  threeDuishu: "three-duishu",
+  fourDingFramework: "four-ding-framework"
 });
+
 
 function isoNow() {
   return new Date().toISOString();

@@ -11,14 +11,17 @@ const autoTop6 = require("./auto-top6");
 const recommend2 = require("./recommend2");
 const killFramework = require("./kill-framework");
 const threeDuishu = require("./three-duishu");
+const fourDingFramework = require("./four-ding-framework");
 const algoWorkerHost = require("./_shared/algo_worker_host");
 
 const L1_ALGORITHMS = Object.freeze([
   autoTop6,
   recommend2,
   killFramework,
-  threeDuishu
+  threeDuishu,
+  fourDingFramework
 ]);
+
 
 let runnerHost = null;
 
@@ -188,5 +191,6 @@ module.exports = {
   autoTop6,
   recommend2,
   killFramework,
-  threeDuishu
+  threeDuishu,
+  fourDingFramework
 };

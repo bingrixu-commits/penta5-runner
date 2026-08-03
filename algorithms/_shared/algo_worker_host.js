@@ -35,7 +35,8 @@ const P2_L1_PROCESS_ALGO_IDS = Object.freeze([
   "auto-top6",
   "recommend2",
   "kill-framework",
-  "three-duishu"
+  "three-duishu",
+  "four-ding-framework"
 ]);
 
 const P2_PROCESS_ALGO_IDS = Object.freeze(P2_L0_PROCESS_ALGO_IDS.concat(P2_L1_PROCESS_ALGO_IDS));
@@ -44,8 +45,10 @@ const L1_WAVE1 = Object.freeze([
   "auto-top6",
   "recommend2",
   "kill-framework",
-  "three-duishu"
+  "three-duishu",
+  "four-ding-framework"
 ]);
+
 const L1_WAVE2 = Object.freeze([]);
 const L1_WAVE3 = Object.freeze([]);
 

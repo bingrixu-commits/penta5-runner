@@ -1,11 +1,11 @@
 {
-  "name": "攻击语转TXT",
-  "short_name": "攻击语转",
+  "name": "四定回删",
+  "short_name": "四定回删",
   "start_url": "/attack-txt",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#2563eb",
-  "description": "粘贴攻击语，本机展开为四定TXT",
+  "description": "四定攻击语回删：真扫 RDS 近1200期，本页复制，开奖后面板核对",
   "lang": "zh-CN",
   "icons": [
     {

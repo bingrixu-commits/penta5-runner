@@ -26,8 +26,10 @@ const ALL_ALGOS = Object.freeze([
   "auto-top6",
   "recommend2",
   "kill-framework",
-  "three-duishu"
+  "three-duishu",
+  "four-ding-framework"
 ]);
+
 
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};

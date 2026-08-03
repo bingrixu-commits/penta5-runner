@@ -711,7 +711,7 @@ function autoTop6RecordSuccess(item, record) {
       const size = item.key === "anyTwoHeweiHit" ? 2 : 3;
       const isValidCode = item.key === "anyTwoHeweiHit"
         ? isAnyTwoHeweiCode(code)
-        : (/^\d{6}$/.test(code) && new Set(code.split("")).size === 6);
+        : (/^\d{5}$/.test(code) && new Set(code.split("")).size === 5);
       if (!isValidCode) return null;
       const scope = (Array.isArray(item.heweiScopeIndexes) ? item.heweiScopeIndexes : [])
         .map((value) => Number(value))

@@ -11,8 +11,10 @@ const loaders = {
   "three-duishu": () => require(path.join(ALGO_ROOT, "three-duishu", "engine.js")),
   "auto-top6": () => require(path.join(ALGO_ROOT, "auto-top6", "engine.js")),
   recommend2: () => require(path.join(ALGO_ROOT, "recommend2", "engine.js")),
-  "kill-framework": () => require(path.join(ALGO_ROOT, "kill-framework", "engine.js"))
+  "kill-framework": () => require(path.join(ALGO_ROOT, "kill-framework", "engine.js")),
+  "four-ding-framework": () => require(path.join(ALGO_ROOT, "four-ding-framework", "engine.js"))
 };
+
 
 const cache = {};
 let pendingRuntime = null;
@@ -51,6 +53,9 @@ module.exports = {
   ensurePredictionRecommend2Snapshot: wrap("recommend2", "ensurePredictionRecommend2Snapshot"),
   buildKillFrameworkSnapshot: wrap("kill-framework", "buildKillFrameworkSnapshot"),
   ensurePredictionKillFrameworkSnapshot: wrap("kill-framework", "ensurePredictionKillFrameworkSnapshot"),
+  buildFourDingFrameworkSnapshot: wrap("four-ding-framework", "buildFourDingFrameworkSnapshot"),
+  ensurePredictionFourDingFrameworkSnapshot: wrap("four-ding-framework", "ensurePredictionFourDingFrameworkSnapshot"),
+  fourDingFrameworkSnapshotIsComplete: wrap("four-ding-framework", "fourDingFrameworkSnapshotIsComplete"),
   buildCompactAttackSnapshot: retired,
   ensurePredictionCompactAttackSnapshot: retired,
   buildThreeDingTwoSnapshot: retired,

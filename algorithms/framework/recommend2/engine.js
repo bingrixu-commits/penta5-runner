@@ -418,8 +418,8 @@ function recommend2SnapshotIsComplete(snapshot) {
   const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
   const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  // 二数合固定为 02468 中排除 1 个的 4 码；三数合为混奇偶 6 码。
-  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{6}$/.test(String(item.code || ""))).length;
+  // 二数合固定为 02468 中排除 1 个的 4 码；三数合为混奇偶 5 码。
+  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   const pairAvoidCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(item.key)).length;
   return !!(
     snapshot &&
@@ -736,7 +736,7 @@ function autoTop6RecordSuccess(item, record) {
       const size = item.key === "anyTwoHeweiHit" ? 2 : 3;
       const isValidCode = item.key === "anyTwoHeweiHit"
         ? isAnyTwoHeweiCode(code)
-        : (/^\d{6}$/.test(code) && new Set(code.split("")).size === 6);
+        : (/^\d{5}$/.test(code) && new Set(code.split("")).size === 5);
       if (!isValidCode) return null;
       const scope = (Array.isArray(item.heweiScopeIndexes) ? item.heweiScopeIndexes : [])
         .map((value) => Number(value))

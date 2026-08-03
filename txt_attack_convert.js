@@ -184,11 +184,12 @@ function txtApplyShortShotExclusions(raw,rule){
 
 function txtShotExcludeShapes(text){
   var out=[],match;
-  // 四定形态4字；三定千百十形态3字（除大大小 / 除大大大）
-  var regex4=/除([大小单双]{4})/g;
+  // 四定形态必须恰好4字：除小大小小；禁止把「除小小大小小」误吃成「小小大小」
+  var regex4=/除([大小单双]{4})(?![大小单双])/g;
   while((match=regex4.exec(text))){
     if(out.indexOf(match[1])<0)out.push(match[1]);
   }
+  // 三定千百十形态3字（除大大小 / 除大大大）
   var regex3=/除([大小单双]{3})(?![大小单双])/g;
   while((match=regex3.exec(text))){
     if(out.indexOf(match[1])<0)out.push(match[1]);

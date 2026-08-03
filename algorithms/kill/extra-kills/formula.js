@@ -656,7 +656,7 @@ function calculateExtraAvoidKills(history, performance) {
       lower120: selected.lower120,
       stage: selected.stage,
       hitMode,
-      matchMode: key === "anyTwoHeweiHit" ? "hit-if-any-two-hewei-tail-in-02468-exclude-one" : (key === "anyThreeHeweiHit" ? "hit-if-any-three-hewei-tail-in-selected-six" : (hitMode ? "hit-if-all-digits-in-first-four" : "avoid-if-not-matched")),
+      matchMode: key === "anyTwoHeweiHit" ? "hit-if-any-two-hewei-tail-in-02468-exclude-one" : (key === "anyThreeHeweiHit" ? "hit-if-any-three-hewei-tail-in-selected-five" : (hitMode ? "hit-if-all-digits-in-first-four" : "avoid-if-not-matched")),
       scoreClass: baselineMeta ? baselineMeta.scoreClass : (hitMode ? "predictive-hit" : "predictive-avoid"),
       randomBaseline: baselineMeta ? baselineMeta.baseline : null,
       scoreHint: baselineMeta ? `${baselineMeta.hint}，非预测力` : "",
@@ -705,7 +705,7 @@ function calculateExtraAvoidKills(history, performance) {
     threeDigitHit: threeAvoid2,
     threeDigitAvoid2: threeAvoid3,
     anyTwoHeweiHit: calculateOne("anyTwoHeweiHit", "二数合尾02468排1码命中（高基线参考）", anyTwoHeweiCandidates(), (record, value) => anyHeweiCombinationHit(record, value, 2, 1), 0.55, "hit"),
-    anyThreeHeweiHit: calculateOne("anyThreeHeweiHit", "三数合尾宽命中（高基线参考）", digitSetCandidatesMixedParity(6), (record, value) => anyHeweiCombinationHit(record, value, 3, 1), 0.62, "hit")
+    anyThreeHeweiHit: calculateOne("anyThreeHeweiHit", "三数合尾宽命中（高基线参考）", digitSetCandidatesMixedParity(5), (record, value) => anyHeweiCombinationHit(record, value, 3, 1), 0.62, "hit")
   };
 }
 

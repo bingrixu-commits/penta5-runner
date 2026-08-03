@@ -108,6 +108,73 @@ async function handleHistory(req, res) {
   });
 }
 
+/** 四定回删专用：直查 RDS，只返回近 N 期唯一四位旧码，不走 runner 内存历史缓存。 */
+async function handleFourBackdeleteOpened(req, res) {
+  const q = parseQuery(req.url || "");
+  const limit = Math.min(Math.max(Number(q.limit || 1200) || 1200, 1), 1200);
+  const [rows] = await pool.query(
+    `SELECT period, open_time, ball1, ball2, ball3, ball4
+     FROM official_draws
+     ORDER BY period DESC
+     LIMIT ?`,
+    [limit]
+  );
+  if (!Array.isArray(rows) || rows.length < limit) {
+    sendJson(res, 503, {
+      ok: false,
+      error: "四定回删要求真扫 " + limit + " 期，当前只拿到 " + (rows ? rows.length : 0) + " 期",
+      scanned: rows ? rows.length : 0,
+      limit,
+      source: "rds-direct",
+    });
+    return;
+  }
+  const seenPeriod = Object.create(null);
+  const seenCode = Object.create(null);
+  const opened = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i] || {};
+    const period = String(row.period == null ? "" : row.period).replace(/\D/g, "");
+    const balls = [row.ball1, row.ball2, row.ball3, row.ball4].map((n) =>
+      n == null ? "" : String(n)
+    );
+    if (!/^\d+$/.test(period) || seenPeriod[period] || !String(row.open_time || "").trim()) {
+      sendJson(res, 500, {
+        ok: false,
+        error: "RDS 第 " + (i + 1) + " 条记录期号/开奖时间不完整或重复",
+        source: "rds-direct",
+      });
+      return;
+    }
+    if (balls.some((v) => !/^\d$/.test(v))) {
+      sendJson(res, 500, {
+        ok: false,
+        error: "RDS 第 " + (i + 1) + " 条记录前四位号码不完整",
+        source: "rds-direct",
+      });
+      return;
+    }
+    seenPeriod[period] = true;
+    const code = balls.join("");
+    if (!seenCode[code]) {
+      seenCode[code] = true;
+      opened.push(code);
+    }
+  }
+  sendJson(res, 200, {
+    ok: true,
+    source: "rds-direct",
+    cache: false,
+    limit,
+    scanned: rows.length,
+    openedUnique: opened.length,
+    latestPeriod: String(rows[0].period || ""),
+    oldestPeriod: String(rows[rows.length - 1].period || ""),
+    opened,
+    ts: new Date().toISOString(),
+  });
+}
+
 async function handleState(_req, res) {
   const [[meta]] = await pool.query(
     `SELECT COUNT(*) AS historyCount,
@@ -201,6 +268,9 @@ const server = http.createServer(async (req, res) => {
     const pathOnly = (req.url || "/").split("?")[0];
     if (req.method === "GET" && pathOnly === "/health") return await handleHealth(req, res);
     if (req.method === "GET" && pathOnly === "/history") return await handleHistory(req, res);
+    if (req.method === "GET" && pathOnly === "/four-backdelete-opened") {
+      return await handleFourBackdeleteOpened(req, res);
+    }
     if (req.method === "GET" && pathOnly === "/state") return await handleState(req, res);
     sendJson(res, 404, { ok: false, error: "not_found" });
   } catch (err) {

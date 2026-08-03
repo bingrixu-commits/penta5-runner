@@ -39,8 +39,10 @@ const stableMathFilterBridge = require("./algorithms/stable_math_filter_bridge")
 const codexStablePosition = require("./algorithms/codex_stable_position");
 const algorithmProjectIsolation = require("./algorithms/project_isolation");
 const fourPosExcludeAlgo = require("./algorithms/four-pos-exclude");
+const fourDingFrameworkAlgo = require("./algorithms/four-ding-framework/engine");
 const algoOrchestrateL0 = require("./algorithms/orchestrate_l0");
 const algoOrchestrateL1 = require("./algorithms/orchestrate_l1");
+
 const qualifiedPicksScanner = require("./algorithms/qualified-picks/scanner");
 const qualifiedPicksAudit = require("./algorithms/qualified-picks/audit");
 const qualifiedPicksSeal = require("./algorithms/qualified-picks/seal");
@@ -116,16 +118,21 @@ const DIGIT_POOL = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 // 二数合统一规则：仅从 02468 中挑 4 个，等价于固定排除其中 1 个。
 const ANY_TWO_HEWEI_SOURCE_DIGITS = "02468";
 const ANY_TWO_HEWEI_CODE_SIZE = 4;
-// 三数合宽命中：混奇偶 6 码（由 5 码加密摸高，结构基线约 97）。
-const ANY_THREE_HEWEI_CODE_SIZE = 6;
+// 三数合宽命中：混奇偶 5 码（与二数合5码相同：禁止全单/全双）。
+const ANY_THREE_HEWEI_CODE_SIZE = 5;
 const BACKEND_STATE_VERSION = "backend-truth-audit-v86-remove-fourcode-oldcode";
 const FRAMEWORK_SNAPSHOT_STORE_KEYS = [
   "autoTop6",
   "recommend2",
-  "killFramework"
+  "killFramework",
+  "fourDingFramework"
 ];
 const MODEL_VERSION = "adaptive-independent-v70-remove-fourcode-oldcode";
 const THREE_DUISHU_SNAPSHOT_VERSION = "backend-three-duishu-snapshot-v3-single-pair-rotation";
+const FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION = fourDingFrameworkAlgo.FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION
+  || "backend-four-ding-framework-snapshot-v2-hewei-duishu3-shape3-mixed-vote";
+const FOUR_DING_FRAMEWORK_ITEM_COUNT = Number(fourDingFrameworkAlgo.FOUR_DING_FRAMEWORK_ITEM_COUNT || 8);
+
 const STORM_ENTER_AUTO_TOP6_MISS = Math.max(1, Number(process.env.STORM_ENTER_AUTO_TOP6_MISS || 4));
 const STORM_ENTER_THREE_DUISHU_MISS = Math.max(1, Number(process.env.STORM_ENTER_THREE_DUISHU_MISS || 5));
 const STORM_EXIT_WIN = Math.max(1, Number(process.env.STORM_EXIT_WIN || 2));
@@ -722,11 +729,13 @@ function currentCounterCohortDescriptor() {
     autoTop6: AUTO_TOP6_SNAPSHOT_VERSION,
     recommend2: RECOMMEND2_SNAPSHOT_VERSION,
     killFramework: KILL_FRAMEWORK_SNAPSHOT_VERSION,
+    fourDingFramework: FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION,
     compactAttack: COMPACT_ATTACK_SNAPSHOT_VERSION,
     threeDingTwo: THREE_DING_TWO_SNAPSHOT_VERSION,
     threeDingOne: THREE_DING_ONE_SNAPSHOT_VERSION,
     threeDuishu: THREE_DUISHU_SNAPSHOT_VERSION
   };
+
   return {
     schema: 1,
     key: [MODEL_VERSION, ...Object.keys(snapshotVersions).sort().map((name) => `${name}=${snapshotVersions[name]}`)].join("|"),
@@ -1619,6 +1628,26 @@ function refreshBackendDailyStreaks() {
   if (killFrameworkRows.length || (state.currentPrediction && state.currentPrediction.killFramework)) {
     mergeDailyStreakStats("killFramework", day, streakStatsFromResults(day, killFrameworkRows), KILL_FRAMEWORK_SNAPSHOT_VERSION);
   }
+  const fourDingFrameworkRows = state.predictions
+    .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation && predictionDateKey(prediction) === day)
+    .map((prediction) => {
+      const ev = prediction.evaluation || {};
+      const fourDingFramework = ev.fourDingFramework || {};
+      if (typeof fourDingFramework.success !== "boolean") return null;
+      if (fourDingFramework.truthEligible !== true) return null;
+      if (fourDingFramework.reconstructed === true) return null;
+      if (fourDingFramework.version && fourDingFramework.version !== FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION) return null;
+      if (Number(fourDingFramework.total || 0) !== FOUR_DING_FRAMEWORK_ITEM_COUNT) return null;
+      return {
+        period: ev.targetPeriod || prediction.basePeriod || "",
+        success: fourDingFramework.success
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a.period).localeCompare(String(b.period)));
+  if (fourDingFrameworkRows.length || (state.currentPrediction && state.currentPrediction.fourDingFramework)) {
+    mergeDailyStreakStats("fourDingFramework", day, streakStatsFromResults(day, fourDingFrameworkRows), FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION);
+  }
   const compactAttackRows = state.predictions
     .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation && predictionDateKey(prediction) === day)
     .map((prediction) => {
@@ -2272,7 +2301,7 @@ function scrubReconstructedTruthFlags() {
   (Array.isArray(state && state.predictions) ? state.predictions : []).forEach((prediction) => {
     const ev = prediction && prediction.evaluation;
     if (!ev || typeof ev !== "object") return;
-    ["autoTop6", "recommend2", "killFramework", "threeDuishu"].forEach((storeName) => {
+    ["autoTop6", "recommend2", "killFramework", "fourDingFramework", "threeDuishu"].forEach((storeName) => {
       const rec = ev[storeName];
       if (!rec || rec.reconstructed !== true) return;
       if (rec.truthEligible === true) {
@@ -2416,6 +2445,7 @@ function slimExtraKillsForPersist(extraKills, keepCodes) {
 function slimEvaluationForPersist(evaluation) {
   const base = slimEvaluation(evaluation);
   if (!base || typeof base !== "object") return base || null;
+  // fourDingFramework 已在 FRAMEWORK_SNAPSHOT_STORE_KEYS
   FRAMEWORK_SNAPSHOT_STORE_KEYS.concat(["threeDuishu"]).forEach((key) => {
     if (base[key]) base[key] = slimFrameworkEvaluationForPersist(base[key]);
   });
@@ -4792,7 +4822,7 @@ function extraModelIntegrityReason(key, item) {
     if (!isAnyTwoHeweiCode(value)) return "invalid-two-hewei-code";
   }
   if (key === "anyThreeHeweiHit") {
-    if (!/^\d{6}$/.test(value) || new Set(value.split("")).size !== ANY_THREE_HEWEI_CODE_SIZE) return "invalid-three-hewei-code";
+    if (!/^\d{5}$/.test(value) || new Set(value.split("")).size !== ANY_THREE_HEWEI_CODE_SIZE) return "invalid-three-hewei-code";
     if (isUniformParityDigitSet(value)) return "invalid-three-hewei-uniform-parity";
   }
   if (key === "sumRangeAvoid" && !/^\d{1,2}-\d{1,2}$/.test(value)) return "invalid-sum-range";
@@ -4812,8 +4842,10 @@ const TIP_STRUCTURE_SNAPSHOT_SPECS = [
   ["autoTop6", "自动推荐快照", () => autoTop6SnapshotIsComplete],
   ["recommend2", "推荐2快照", () => recommend2SnapshotIsComplete],
   ["killFramework", "杀码框架快照", () => killFrameworkSnapshotIsComplete],
+  ["fourDingFramework", "四定框架快照", () => fourDingFrameworkSnapshotIsComplete],
   ["threeDuishu", "三对数快照", () => threeDuishuSnapshotIsComplete]
 ];
+
 
 function collectPredictionIntegrityIssues(prediction, latest) {
   const issues = [];
@@ -6553,7 +6585,7 @@ function calculateExtraAvoidKills(history, performance) {
       lower120: selected.lower120,
       stage: selected.stage,
       hitMode,
-      matchMode: key === "anyTwoHeweiHit" ? "hit-if-any-two-hewei-tail-in-02468-exclude-one" : (key === "anyThreeHeweiHit" ? "hit-if-any-three-hewei-tail-in-selected-six" : (hitMode ? "hit-if-all-digits-in-first-four" : "avoid-if-not-matched")),
+      matchMode: key === "anyTwoHeweiHit" ? "hit-if-any-two-hewei-tail-in-02468-exclude-one" : (key === "anyThreeHeweiHit" ? "hit-if-any-three-hewei-tail-in-selected-five" : (hitMode ? "hit-if-all-digits-in-first-four" : "avoid-if-not-matched")),
       scoreClass: baselineMeta ? baselineMeta.scoreClass : (hitMode ? "predictive-hit" : "predictive-avoid"),
       randomBaseline: baselineMeta ? baselineMeta.baseline : null,
       scoreHint: baselineMeta ? `${baselineMeta.hint}，非预测力` : "",
@@ -6738,11 +6770,36 @@ function cleanAutoTop6Code(value) {
   return text;
 }
 
-function autoTop6PatternOf(record, shapeKey) {
+function autoTop6InferShapeKey(code) {
+  const text = String(code || "");
+  if (!/^[大小单双]{3,4}$/.test(text)) return "";
+  const hasSize = /[大小]/.test(text);
+  const hasParity = /[单双]/.test(text);
+  if (hasSize && hasParity) return "shapeMixed";
+  if (hasSize) return "shapeSize";
+  if (hasParity) return "shapeParity";
+  return "";
+}
+
+function autoTop6PatternOf(record, shapeKey, templateCode) {
   const nums = Array.isArray(record && record.numbers) ? record.numbers.slice(0, 4).map(Number) : [];
   if (nums.length < 4 || nums.some((value) => !Number.isFinite(value))) return "";
-  if (shapeKey === "shapeParity") return nums.map((value) => value % 2 ? "单" : "双").join("");
-  if (shapeKey === "shapeSize") return nums.map((value) => value >= 5 ? "大" : "小").join("");
+  const template = String(templateCode || "");
+  const key = shapeKey || autoTop6InferShapeKey(template);
+  if (key === "shapeMixed" || (template && autoTop6InferShapeKey(template) === "shapeMixed")) {
+    const depth = template.length >= 3 ? Math.min(4, template.length) : 4;
+    const parts = [];
+    for (let i = 0; i < depth; i += 1) {
+      const n = nums[i];
+      const ch = template.charAt(i);
+      if (ch === "大" || ch === "小") parts.push(n >= 5 ? "大" : "小");
+      else if (ch === "单" || ch === "双") parts.push(n % 2 ? "单" : "双");
+      else return "";
+    }
+    return parts.join("");
+  }
+  if (key === "shapeParity") return nums.map((value) => value % 2 ? "单" : "双").join("");
+  if (key === "shapeSize") return nums.map((value) => value >= 5 ? "大" : "小").join("");
   return "";
 }
 
@@ -6921,7 +6978,7 @@ function autoTop6RecordSuccess(item, record) {
       const size = item.key === "anyTwoHeweiHit" ? 2 : 3;
       const isValidCode = item.key === "anyTwoHeweiHit"
         ? (isAnyTwoHeweiCode(code) || isAnyTwoHeweiFiveMixedCode(code))
-        : (/^\d{6}$/.test(code) && new Set(code.split("")).size === ANY_THREE_HEWEI_CODE_SIZE);
+        : (/^\d{5}$/.test(code) && new Set(code.split("")).size === ANY_THREE_HEWEI_CODE_SIZE);
       if (!isValidCode) return null;
       const scope = (Array.isArray(item.heweiScopeIndexes) ? item.heweiScopeIndexes : [])
         .map((value) => Number(value))
@@ -6941,15 +6998,17 @@ function autoTop6RecordSuccess(item, record) {
     return item.mode === "hit" ? matched : !matched;
   }
   if (item.kind === "derivedReverseShape") {
-    const shapeKey = item.shapeKey || (item.key === "reverseSize" ? "shapeSize" : "shapeParity");
-    const scopeLen = Number(item.shapeScopeLength || 0) === 3 ? 3 : 4;
     const codeText = String(code || "");
+    const shapeKey = item.shapeKey
+      || autoTop6InferShapeKey(codeText)
+      || (item.key === "reverseSize" ? "shapeSize" : "shapeParity");
+    const scopeLen = Number(item.shapeScopeLength || 0) === 3 ? 3 : 4;
     if (scopeLen === 3) {
       if (!/^[大小单双]{3,4}$/.test(codeText)) return null;
     } else if (!/^[大小单双]{4}$/.test(codeText)) {
       return null;
     }
-    const actualShape = autoTop6PatternOf(record, shapeKey);
+    const actualShape = autoTop6PatternOf(record, shapeKey, codeText);
     if (!actualShape) return null;
     if (scopeLen === 3) {
       const scopeIndexes = (Array.isArray(item.shapeScopeIndexes) ? item.shapeScopeIndexes : [])
@@ -7434,6 +7493,8 @@ function buildAutoTop6Snapshot(prediction, history) {
 const AUTO_TOP6_SNAPSHOT_VERSION = "backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit";
 const RECOMMEND2_SNAPSHOT_VERSION = "backend-recommend2-snapshot-v16-formal-anytwo4-pool02468-label-v2";
 const KILL_FRAMEWORK_SNAPSHOT_VERSION = "backend-kill-framework-snapshot-v8-formal-anytwo4-pool02468-label-v2";
+// FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION / ITEM_COUNT 见顶部 fourDingFrameworkAlgo
+
 const KILL_FRAMEWORK_ITEM_COUNT = 8;
 const COMPACT_ATTACK_SNAPSHOT_VERSION = "backend-three-ding-framework-v12-pos-aligned-hewei";
 const COMPACT_ATTACK_ITEM_COUNT = 4;
@@ -7514,8 +7575,8 @@ function recommend2SnapshotIsComplete(snapshot) {
   const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
   const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  // 二数合固定为 02468 中排除 1 个的 4 码；三数合为混奇偶 6 码。
-  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{6}$/.test(String(item.code || ""))).length;
+  // 二数合固定为 02468 中排除 1 个的 4 码；三数合为混奇偶 5 码。
+  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   const pairAvoidCount = formal.filter((item) => item && item.kind === "extra" && ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].includes(item.key)).length;
   return !!(
     snapshot &&
@@ -7539,7 +7600,7 @@ function killFrameworkSnapshotIsComplete(snapshot) {
   const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
   const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{6}$/.test(String(item.code || ""))).length;
+  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
     snapshot.version === KILL_FRAMEWORK_SNAPSHOT_VERSION &&
@@ -7552,6 +7613,16 @@ function killFrameworkSnapshotIsComplete(snapshot) {
     anyThreeCount === 1
   );
 }
+
+function fourDingFrameworkSnapshotIsComplete(snapshot) {
+  return fourDingFrameworkAlgo.fourDingFrameworkSnapshotIsComplete(snapshot);
+}
+
+function ensurePredictionFourDingFrameworkSnapshot(prediction, history) {
+  if (!prediction || typeof prediction !== "object") return null;
+  return fourDingFrameworkAlgo.ensurePredictionFourDingFrameworkSnapshot(prediction, history);
+}
+
 
 function brotherNumberResultFromCode(code) {
   const text = String(code || "").replace(/\D/g, "");
@@ -7729,8 +7800,10 @@ function sealPredictionSnapshots(prediction, latest) {
     ["autoTop6", autoTop6SnapshotIsComplete],
     ["recommend2", recommend2SnapshotIsComplete],
     ["killFramework", killFrameworkSnapshotIsComplete],
+    ["fourDingFramework", fourDingFrameworkSnapshotIsComplete],
     ["threeDuishu", threeDuishuSnapshotIsComplete]
   ];
+
   let sealedCount = 0;
   frameworkSeals.forEach(([key, isComplete]) => {
     const snapshot = prediction[key];
@@ -8046,7 +8119,7 @@ function ensurePredictionRecommend2Snapshot(prediction, history) {
 }
 
 function buildKillFrameworkSnapshot(prediction, history, options) {
-  // 杀码框架：2定位 + 2合尾 + 2反向形态 + 二数合02468排1码 + 三数合6码（无对数避开）
+  // 杀码框架：2定位 + 2合尾 + 2反向形态 + 二数合02468排1码 + 三数合5码（无对数避开）
   const opts = options && typeof options === "object" ? options : {};
   const comboWindow = Math.max(30, Math.min(MODEL_STABLE_WINDOW, Number(opts.comboWindow || MODEL_STABLE_WINDOW)));
   const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
@@ -8237,12 +8310,12 @@ function buildKillFrameworkSnapshot(prediction, history, options) {
       kind: "extra",
       key: "anyThreeHeweiHit",
       side: "recommend",
-      name: "全码池三数合尾6码命中",
+      name: "全码池三数合尾5码命中",
       code,
       mode: "hit",
-      algorithm: "kill-framework-any-three-hewei-selected-six",
+      algorithm: "kill-framework-any-three-hewei-selected-five",
       hitMode: true,
-      matchMode: "hit-if-any-three-hewei-tail-in-selected-six",
+      matchMode: "hit-if-any-three-hewei-tail-in-selected-five",
       dynamicEveryPrediction: true
     }, evaluatedCount))
     .sort((a, b) => {
@@ -8252,7 +8325,7 @@ function buildKillFrameworkSnapshot(prediction, history, options) {
   if (killFrameworkAnyThree) {
     if (killFrameworkAnyThree.lowConfidence) {
       const rate = killFrameworkAnyThree.safetyRate === null ? "样本不足" : `${Number(killFrameworkAnyThree.safetyRate).toFixed(2)}%`;
-      repairReport.push(`杀码框架三数合6码观察加入：${killFrameworkAnyThree.code}，安全率 ${rate}`);
+      repairReport.push(`杀码框架三数合5码观察加入：${killFrameworkAnyThree.code}，安全率 ${rate}`);
       killFrameworkAnyThree.repairedIntoTop = true;
     }
     if (!used.has(autoTop6ItemId(killFrameworkAnyThree))) {
@@ -8260,7 +8333,7 @@ function buildKillFrameworkSnapshot(prediction, history, options) {
       chosen.push(killFrameworkAnyThree);
     }
   } else {
-    repairReport.push("杀码框架固定模型缺失：anyThreeHeweiHit六码");
+    repairReport.push("杀码框架固定模型缺失：anyThreeHeweiHit五码");
   }
 
   return {
@@ -11149,6 +11222,61 @@ function evaluateKillFrameworkSnapshot(prediction, actualRecord) {
   };
 }
 
+function evaluateFourDingFrameworkSnapshot(prediction, actualRecord) {
+  const snapshot = prediction && prediction.fourDingFramework && Array.isArray(prediction.fourDingFramework.items)
+    ? prediction.fourDingFramework
+    : (prediction && Array.isArray(prediction.fourDingFrameworkItems)
+      ? { version: "legacy-fourDingFrameworkItems", items: prediction.fourDingFrameworkItems, repairReport: prediction.fourDingFrameworkRepairReport || [] }
+      : null);
+  const truthEligible = fourDingFrameworkSnapshotIsComplete(snapshot)
+    && snapshotSealIsValid(snapshot, prediction)
+    && snapshotSealPredatesTarget(snapshot, actualRecord);
+  if (!truthEligible) {
+    return {
+      ok: false,
+      success: null,
+      passed: 0,
+      total: 0,
+      items: [],
+      reason: "unsealed-or-incomplete-four-ding-framework-snapshot",
+      truthEligible: false
+    };
+  }
+  const items = snapshot.items.map((item) => {
+    const success = autoTop6RecordSuccess(item, actualRecord);
+    return {
+      rank: item.rank,
+      kind: item.kind,
+      key: item.key,
+      side: item.side || "recommend",
+      name: item.name,
+      code: item.code,
+      shapeKey: item.shapeKey || "",
+      success,
+      actualNumbers: actualRecord && Array.isArray(actualRecord.numbers) ? actualRecord.numbers.slice(0, 5).map(String) : [],
+      actualFirstFourDigits: firstFourNumbers(actualRecord),
+      actualCompositeHeweiGroup: getCompositeHeweiGroup(actualRecord),
+      actualFirstFourSum: String(firstFourSum(actualRecord))
+    };
+  });
+  const valid = items.filter((item) => typeof item.success === "boolean");
+  const passed = valid.filter((item) => item.success).length;
+  return {
+    ok: valid.length === items.length && items.length > 0,
+    version: snapshot.version || FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION,
+    basePeriod: prediction && prediction.basePeriod || "",
+    success: valid.length === items.length && items.length > 0 ? passed === items.length : null,
+    truthEligible: true,
+    sealedAt: snapshot.sealedAt,
+    sealedBaseUid: snapshot.sealedBaseUid,
+    sealHash: snapshot.sealHash,
+    shot: snapshot.shot || "",
+    passed,
+    total: items.length,
+    items
+  };
+}
+
 function evaluateCompactAttackSnapshot(prediction, actualRecord) {
   const snapshot = prediction && prediction.compactAttack && Array.isArray(prediction.compactAttack.items)
     ? prediction.compactAttack
@@ -12166,6 +12294,7 @@ function bindAlgorithmOrchestrators() {
     ensurePredictionAutoTop6Snapshot,
     ensurePredictionRecommend2Snapshot,
     ensurePredictionKillFrameworkSnapshot,
+    ensurePredictionFourDingFrameworkSnapshot,
     ensurePredictionCompactAttackSnapshot,
     ensurePredictionThreeDingTwoSnapshot,
     ensurePredictionThreeDingOneSnapshot,
@@ -12258,7 +12387,7 @@ function unsealTipForStableMathRebuild(prediction, reason) {
   prediction.snapshotsSealedBaseUid = "";
   prediction.allSnapshotsSealed = false;
   [
-    "autoTop6", "recommend2", "killFramework", "threeDuishu", "fourPosExclude"
+    "autoTop6", "recommend2", "killFramework", "fourDingFramework", "threeDuishu", "fourPosExclude"
   ].forEach((key) => {
     const snap = prediction[key];
     if (snap && typeof snap === "object" && snap.sealed === true) {
@@ -12418,6 +12547,7 @@ function ensurePredictionFrameworkSnapshotsLegacy(prediction, history) {
   ensurePredictionAutoTop6Snapshot(prediction, history);
   ensurePredictionRecommend2Snapshot(prediction, history);
   ensurePredictionKillFrameworkSnapshot(prediction, history);
+  ensurePredictionFourDingFrameworkSnapshot(prediction, history);
   ensurePredictionCompactAttackSnapshot(prediction, history);
   ensurePredictionThreeDingTwoSnapshot(prediction, history);
   ensurePredictionThreeDingOneSnapshot(prediction, history);
@@ -12832,7 +12962,7 @@ function evaluatePrediction(prediction, actualRecord) {
     anyThreeHeweiHit: {
       value: anyThreeHeweiHitValue,
       actualTails: heweiCombinationTails(actualRecord, 3),
-      success: (/^\d{6}$/.test(anyThreeHeweiHitValue) && new Set(anyThreeHeweiHitValue.split("")).size === ANY_THREE_HEWEI_CODE_SIZE && !isUniformParityDigitSet(anyThreeHeweiHitValue))
+      success: (/^\d{5}$/.test(anyThreeHeweiHitValue) && new Set(anyThreeHeweiHitValue.split("")).size === ANY_THREE_HEWEI_CODE_SIZE && !isUniformParityDigitSet(anyThreeHeweiHitValue))
         ? anyHeweiCombinationHit(actualRecord, anyThreeHeweiHitValue, 3, 1)
         : null
     }
@@ -12890,6 +13020,7 @@ function evaluatePrediction(prediction, actualRecord) {
     autoTop6: evaluateAutoTop6Snapshot(prediction, actualRecord),
     recommend2: evaluateRecommend2Snapshot(prediction, actualRecord),
     killFramework: evaluateKillFrameworkSnapshot(prediction, actualRecord),
+    fourDingFramework: evaluateFourDingFrameworkSnapshot(prediction, actualRecord),
     compactAttack: evaluateCompactAttackSnapshot(prediction, actualRecord),
     threeDingTwo: evaluateThreeDingTwoSnapshot(prediction, actualRecord),
     threeDingOne: evaluateThreeDingOneSnapshot(prediction, actualRecord),
@@ -13888,6 +14019,7 @@ function buildModelAuditSummary() {
       autoTop6: savedSnapshotTruthMetrics("autoTop6", AUTO_TOP6_SNAPSHOT_VERSION, autoTop6Total, MODEL_STABLE_WINDOW),
       recommend2: savedSnapshotTruthMetrics("recommend2", RECOMMEND2_SNAPSHOT_VERSION, 8, MODEL_STABLE_WINDOW),
       killFramework: savedSnapshotTruthMetrics("killFramework", KILL_FRAMEWORK_SNAPSHOT_VERSION, KILL_FRAMEWORK_ITEM_COUNT, MODEL_STABLE_WINDOW),
+      fourDingFramework: savedSnapshotTruthMetrics("fourDingFramework", FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION, FOUR_DING_FRAMEWORK_ITEM_COUNT, MODEL_STABLE_WINDOW),
       compactAttack: savedSnapshotTruthMetrics("compactAttack", COMPACT_ATTACK_SNAPSHOT_VERSION, COMPACT_ATTACK_ITEM_COUNT, MODEL_STABLE_WINDOW),
       threeDingTwo: savedSnapshotTruthMetrics("threeDingTwo", THREE_DING_TWO_SNAPSHOT_VERSION, THREE_DING_TWO_ITEM_COUNT, MODEL_STABLE_WINDOW),
       threeDingOne: savedSnapshotTruthMetrics("threeDingOne", THREE_DING_ONE_SNAPSHOT_VERSION, THREE_DING_ONE_ITEM_COUNT, MODEL_STABLE_WINDOW)
@@ -15703,6 +15835,7 @@ function isViewerAllowedRequest(method, pathname) {
     || isAttackTxtPublicPath(pathname)
     || isAccuracyPath(pathname)
     || pathname === "/converter-history"
+    || pathname === "/four-backdelete-opened"
     || pathname === "/backdelete-state"
     || pathname === "/state"
     || pathname === "/robot-state"
@@ -16081,6 +16214,33 @@ async function handleRequest(req, res) {
       await sendConverterHistory(req, res, parsedUrl);
       return;
     }
+    if (req.method === "GET" && pathname === "/four-backdelete-opened") {
+      // 四定回删：直代理 RDS API 轻量接口，不读 runner 内存历史、不拉 converter-history 大包。
+      try { req.setTimeout(20000); } catch (_) {}
+      try { res.setTimeout(20000); } catch (_) {}
+      try {
+        const limit = Math.min(1200, Math.max(1, Number(parsedUrl.searchParams.get("limit") || 1200) || 1200));
+        const upstream = await fetchJsonUrlSync(
+          `${RDS_API_BASE}/four-backdelete-opened?limit=${limit}&nocache=1&_=${Date.now()}`,
+          18000
+        );
+        const body = upstream && upstream.body ? upstream.body : {};
+        const status = Number(upstream && upstream.status || 0) || (body && body.ok === true ? 200 : 503);
+        res.writeHead(status, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          Pragma: "no-cache"
+        });
+        res.end(JSON.stringify(body));
+      } catch (error) {
+        sendJson(res, 503, {
+          ok: false,
+          error: "四定回删直查 RDS 失败：" + String(error && error.message ? error.message : error),
+          source: "rds-direct-proxy"
+        });
+      }
+      return;
+    }
     if (req.method === "GET" && pathname === "/qualified-picks") {
       sendQualifiedPicks(res, authRole, req);
       return;
@@ -16295,7 +16455,7 @@ async function handleRequest(req, res) {
       sendAttackTxtAsset(req, res, pathname);
       return;
     }
-    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /robot-state", "GET /history", "GET /converter-history", "GET /backdelete-state", "POST /backdelete-generate", "GET /stable-math-filter", "GET /exclusion-model", "GET /attack-txt", "GET /accuracy", "POST /sync", "POST /force-regenerate-tip", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "POST /backup"] });
+    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /robot-state", "GET /history", "GET /converter-history", "GET /four-backdelete-opened", "GET /backdelete-state", "POST /backdelete-generate", "GET /stable-math-filter", "GET /exclusion-model", "GET /attack-txt", "GET /accuracy", "POST /sync", "POST /force-regenerate-tip", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "POST /backup"] });
   } catch (err) {
     sendJson(res, 500, { ok: false, error: err.message || String(err) });
   }

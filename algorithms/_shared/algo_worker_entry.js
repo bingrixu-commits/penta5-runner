@@ -18,8 +18,10 @@ const ALGO_LOADERS = Object.freeze({
   "auto-top6": () => require("../auto-top6"),
   recommend2: () => require("../recommend2"),
   "kill-framework": () => require("../kill-framework"),
-  "three-duishu": () => require("../three-duishu")
+  "three-duishu": () => require("../three-duishu"),
+  "four-ding-framework": () => require("../four-ding-framework")
 });
+
 
 function readStdin() {
   return new Promise((resolve, reject) => {

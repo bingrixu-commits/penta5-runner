@@ -704,7 +704,7 @@ function autoTop6RecordSuccess(item, record) {
       const size = item.key === "anyTwoHeweiHit" ? 2 : 3;
       const isValidCode = item.key === "anyTwoHeweiHit"
         ? isAnyTwoHeweiCode(code)
-        : (/^\d{6}$/.test(code) && new Set(code.split("")).size === 6);
+        : (/^\d{5}$/.test(code) && new Set(code.split("")).size === 5);
       if (!isValidCode) return null;
       const scope = (Array.isArray(item.heweiScopeIndexes) ? item.heweiScopeIndexes : [])
         .map((value) => Number(value))
@@ -764,7 +764,7 @@ function killFrameworkSnapshotIsComplete(snapshot) {
   const heweiCount = formal.filter((item) => item && item.kind === "hewei").length;
   const reverseCount = formal.filter((item) => item && item.kind === "derivedReverseShape").length;
   const anyTwoCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyTwoHeweiHit" && isAnyTwoHeweiCode(item.code)).length;
-  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{6}$/.test(String(item.code || ""))).length;
+  const anyThreeCount = formal.filter((item) => item && item.kind === "extra" && item.key === "anyThreeHeweiHit" && /^\d{5}$/.test(String(item.code || ""))).length;
   return !!(
     snapshot &&
     snapshot.version === KILL_FRAMEWORK_SNAPSHOT_VERSION &&
@@ -780,7 +780,7 @@ function killFrameworkSnapshotIsComplete(snapshot) {
 
 function buildKillFrameworkSnapshot(prediction, history, options) {
   const state = getState();
-  // 杀码框架：2定位 + 2合尾 + 2反向形态 + 二数合02468排1码 + 三数合6码（无对数避开）
+  // 杀码框架：2定位 + 2合尾 + 2反向形态 + 二数合02468排1码 + 三数合5码（无对数避开）
   const opts = options && typeof options === "object" ? options : {};
   const comboWindow = Math.max(30, Math.min(MODEL_STABLE_WINDOW, Number(opts.comboWindow || MODEL_STABLE_WINDOW)));
   const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
@@ -966,17 +966,17 @@ function buildKillFrameworkSnapshot(prediction, history, options) {
     chosen.push(killAnyTwo);
   }
 
-  const killFrameworkAnyThree = digitSetCandidatesMixedParity(6)
+  const killFrameworkAnyThree = digitSetCandidatesMixedParity(5)
     .map((code) => autoTop6DecorateItem(safeHistory, {
       kind: "extra",
       key: "anyThreeHeweiHit",
       side: "recommend",
-      name: "全码池三数合尾6码命中",
+      name: "全码池三数合尾5码命中",
       code,
       mode: "hit",
-      algorithm: "kill-framework-any-three-hewei-selected-six",
+      algorithm: "kill-framework-any-three-hewei-selected-five",
       hitMode: true,
-      matchMode: "hit-if-any-three-hewei-tail-in-selected-six",
+      matchMode: "hit-if-any-three-hewei-tail-in-selected-five",
       dynamicEveryPrediction: true
     }, evaluatedCount))
     .sort((a, b) => {
@@ -986,7 +986,7 @@ function buildKillFrameworkSnapshot(prediction, history, options) {
   if (killFrameworkAnyThree) {
     if (killFrameworkAnyThree.lowConfidence) {
       const rate = killFrameworkAnyThree.safetyRate === null ? "样本不足" : `${Number(killFrameworkAnyThree.safetyRate).toFixed(2)}%`;
-      repairReport.push(`杀码框架三数合6码观察加入：${killFrameworkAnyThree.code}，安全率 ${rate}`);
+      repairReport.push(`杀码框架三数合5码观察加入：${killFrameworkAnyThree.code}，安全率 ${rate}`);
       killFrameworkAnyThree.repairedIntoTop = true;
     }
     if (!used.has(autoTop6ItemId(killFrameworkAnyThree))) {
@@ -994,7 +994,7 @@ function buildKillFrameworkSnapshot(prediction, history, options) {
       chosen.push(killFrameworkAnyThree);
     }
   } else {
-    repairReport.push("杀码框架固定模型缺失：anyThreeHeweiHit六码");
+    repairReport.push("杀码框架固定模型缺失：anyThreeHeweiHit五码");
   }
 
   return {
