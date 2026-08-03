@@ -112,6 +112,8 @@ async function handleHistory(req, res) {
 async function handleFourBackdeleteOpened(req, res) {
   const q = parseQuery(req.url || "");
   const limit = Math.min(Math.max(Number(q.limit || 1200) || 1200, 1), 1200);
+  // 与面板/attack_txt 一致：低于 100 期才停；100–limit 之间按实际期数截断继续真删
+  const historyMin = 100;
   const [rows] = await pool.query(
     `SELECT period, open_time, ball1, ball2, ball3, ball4
      FROM official_draws
@@ -119,16 +121,20 @@ async function handleFourBackdeleteOpened(req, res) {
      LIMIT ?`,
     [limit]
   );
-  if (!Array.isArray(rows) || rows.length < limit) {
+  const scanned = Array.isArray(rows) ? rows.length : 0;
+  if (!Array.isArray(rows) || scanned < historyMin) {
     sendJson(res, 503, {
       ok: false,
-      error: "四定回删要求真扫 " + limit + " 期，当前只拿到 " + (rows ? rows.length : 0) + " 期",
-      scanned: rows ? rows.length : 0,
+      error: "四定回删：RDS 不足 " + historyMin + " 期（当前 " + scanned + "），无法回删",
+      scanned,
       limit,
+      historyMin,
+      truncated: true,
       source: "rds-direct",
     });
     return;
   }
+  const truncated = scanned < limit;
   const seenPeriod = Object.create(null);
   const seenCode = Object.create(null);
   const opened = [];
@@ -166,7 +172,8 @@ async function handleFourBackdeleteOpened(req, res) {
     source: "rds-direct",
     cache: false,
     limit,
-    scanned: rows.length,
+    scanned,
+    truncated,
     openedUnique: opened.length,
     latestPeriod: String(rows[0].period || ""),
     oldestPeriod: String(rows[rows.length - 1].period || ""),

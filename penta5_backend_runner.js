@@ -13228,6 +13228,7 @@ function buildVoidedPredictionEvaluation(prediction, actualRecord, reason, trans
     autoTop6: voidFrameworkEvaluation(prediction, "autoTop6", reason),
     recommend2: voidFrameworkEvaluation(prediction, "recommend2", reason),
     killFramework: voidFrameworkEvaluation(prediction, "killFramework", reason),
+    fourDingFramework: voidFrameworkEvaluation(prediction, "fourDingFramework", reason),
     compactAttack: voidFrameworkEvaluation(prediction, "compactAttack", reason),
     threeDingTwo: voidFrameworkEvaluation(prediction, "threeDingTwo", reason),
     threeDingOne: voidFrameworkEvaluation(prediction, "threeDingOne", reason),
@@ -14406,6 +14407,8 @@ function slimEvaluation(evaluation) {
     "autoTop6",
     "recommend2",
     "killFramework",
+    // 四定框架结算必须保留；漏掉会被 /state 与 tip-only 落盘抹掉，真实回测永远 total=0
+    "fourDingFramework",
     "threeDuishu",
     "fourPosExclude",
     "fourPosShapes",
@@ -14420,6 +14423,10 @@ function slimEvaluation(evaluation) {
     "periodTransition"
   ].forEach((key) => {
     if (evaluation[key] !== undefined) out[key] = evaluation[key];
+  });
+  // FRAMEWORK_SNAPSHOT_STORE_KEYS 为权威清单：防止新增框架只进 seal/evaluate 却进不了 slim
+  FRAMEWORK_SNAPSHOT_STORE_KEYS.forEach((key) => {
+    if (evaluation[key] !== undefined && out[key] === undefined) out[key] = evaluation[key];
   });
   FRAMEWORK_SNAPSHOT_STORE_KEYS.concat(["threeDuishu", "fourPosExclude", "fourPosShapes"]).forEach((key) => {
     if (out[key]) out[key] = slimFrameworkEvaluationForPersist(out[key]);
@@ -15268,6 +15275,7 @@ function attackTxtFileForPath(pathname) {
   if (pathname === "/txt_attack_convert.js") return path.join(__dirname, "txt_attack_convert.js");
   if (pathname === "/attack-txt-manifest.json") return path.join(__dirname, "attack_txt_manifest.json");
   if (pathname === "/attack-txt-icon.svg") return path.join(__dirname, "attack_txt_icon.svg");
+  if (pathname === "/four_throw_urls.json") return path.join(__dirname, "four_throw_urls.json");
   return "";
 }
 
@@ -15800,7 +15808,8 @@ function isAttackTxtPublicPath(pathname) {
     || pathname === "/gongjiyu"
     || pathname === "/txt_attack_convert.js"
     || pathname === "/attack-txt-manifest.json"
-    || pathname === "/attack-txt-icon.svg";
+    || pathname === "/attack-txt-icon.svg"
+    || pathname === "/four_throw_urls.json";
 }
 
 function isAccuracyPath(pathname) {
@@ -16154,6 +16163,34 @@ async function handleRequest(req, res) {
     fs.createReadStream(zipPath).pipe(res);
     return;
   }
+  // 四定扔页本机包（免登录）
+  if (
+    (req.method === "GET" || req.method === "HEAD") &&
+    (pathname === "/download/four-throw-local.zip" ||
+      pathname === "/four-throw-local.zip" ||
+      pathname === "/download/四定扔页-本机包.zip" ||
+      pathname === "/四定扔页-本机包.zip")
+  ) {
+    const zipPath = path.join(__dirname, "downloads", "four-throw-local.zip");
+    if (!fs.existsSync(zipPath)) {
+      sendJson(res, 404, { ok: false, error: "package not found" });
+      return;
+    }
+    const st = fs.statSync(zipPath);
+    res.writeHead(200, {
+      "Content-Type": "application/zip",
+      "Content-Length": st.size,
+      "Content-Disposition": 'attachment; filename="four-throw-local.zip"',
+      "Cache-Control": "no-store",
+      "Accept-Ranges": "bytes"
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    fs.createReadStream(zipPath).pipe(res);
+    return;
+  }
   if (!authRole) {
     if (req.method === "GET" && (pathname === "/" || pathname === "/panel")) {
       sendPasswordLoginHtml(req, res, "", "/panel");
@@ -16163,6 +16200,11 @@ async function handleRequest(req, res) {
       // 静态资源需登录后同会话访问；未登录统一进登录页，回跳攻击语页
       if (pathname === "/attack-txt" || pathname === "/gongjiyu") {
         sendPasswordLoginHtml(req, res, "", "/attack-txt");
+        return;
+      }
+      // 三个网址占位配置可匿名读（内容默认全空，不含密钥）
+      if (pathname === "/four_throw_urls.json") {
+        sendAttackTxtAsset(req, res, pathname);
         return;
       }
       sendUnauthorized(res);

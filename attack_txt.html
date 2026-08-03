@@ -90,7 +90,7 @@
     <div class="head">
       <div>
         <h1>四定回删</h1>
-        <div class="sub">按攻击语生成号码后真扫 RDS（回删期数可填 100–1200），同样位置同样号码命中即删（不截断、不改你的除对数）。回删完在本页复制；下方「跨期统计器」记连中/连败。乱了可点「清缓存」。</div>
+        <div class="sub">按攻击语生成号码后真扫 RDS（回删期数可填 100–1200），同样位置同样号码命中即删（窗口不足按实际期数截断；不改你的除对数）。回删完在本页复制；下方「跨期统计器」记连中/连败。乱了可点「清缓存」。</div>
       </div>
       <a class="link" href="/panel">回面板</a>
     </div>
@@ -148,6 +148,50 @@
 
       <div class="one-click-pages" id="oneClickPageBtns" aria-label="按页一键复制"></div>
 
+      <div class="sec" id="batchThrowBox">
+        <div class="sec-title">分批扔页（只照网页实数 · 不脑补组数）</div>
+        <div class="btns" style="grid-template-columns:1fr;align-items:end;">
+          <div style="display:grid;gap:8px;">
+            <div style="font-size:12px;font-weight:900;color:#6ee7b7;">三个网址格式（URL 先留空，你自己填；不脑补地址）</div>
+            <label style="margin:0;display:grid;gap:4px;font-size:12px;">
+              <span><input type="radio" name="throwUrlPick" value="1" checked> 格式1 URL</span>
+              <input id="throwUrl1" type="url" placeholder="格式1网址留空待填" autocomplete="off" style="width:100%;border:1px solid #475569;border-radius:10px;background:#0b1220;color:var(--ink);padding:10px 12px;font-size:13px;font-weight:700;">
+            </label>
+            <label style="margin:0;display:grid;gap:4px;font-size:12px;">
+              <span><input type="radio" name="throwUrlPick" value="2"> 格式2 URL</span>
+              <input id="throwUrl2" type="url" placeholder="格式2网址留空待填" autocomplete="off" style="width:100%;border:1px solid #475569;border-radius:10px;background:#0b1220;color:var(--ink);padding:10px 12px;font-size:13px;font-weight:700;">
+            </label>
+            <label style="margin:0;display:grid;gap:4px;font-size:12px;">
+              <span><input type="radio" name="throwUrlPick" value="3"> 格式3 URL</span>
+              <input id="throwUrl3" type="url" placeholder="格式3网址留空待填" autocomplete="off" style="width:100%;border:1px solid #475569;border-radius:10px;background:#0b1220;color:var(--ink);padding:10px 12px;font-size:13px;font-weight:700;">
+            </label>
+            <button type="button" class="secondary" id="btnThrowUrlSave">记住三个网址</button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div>
+              <label for="throwAmountInput" style="margin:0 0 6px;">金额（你填，机器人不改）</label>
+              <input id="throwAmountInput" type="text" inputmode="decimal" placeholder="例：1 或 0.2" style="width:100%;border:1px solid #475569;border-radius:10px;background:#0b1220;color:var(--ink);padding:10px 12px;font-size:15px;font-weight:800;">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div>
+                <label for="throwPageFrom" style="margin:0 0 6px;">从页</label>
+                <input id="throwPageFrom" type="number" min="1" step="1" value="10" style="width:100%;border:1px solid #475569;border-radius:10px;background:#0b1220;color:var(--ink);padding:10px 12px;font-size:15px;font-weight:800;">
+              </div>
+              <div>
+                <label for="throwPageTo" style="margin:0 0 6px;">到页</label>
+                <input id="throwPageTo" type="number" min="1" step="1" value="11" style="width:100%;border:1px solid #475569;border-radius:10px;background:#0b1220;color:var(--ink);padding:10px 12px;font-size:15px;font-weight:800;">
+              </div>
+            </div>
+          </div>
+          <button type="button" class="orange" id="btnThrowBatchStart">开始分批扔（照网页组数）</button>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <button type="button" class="green" id="btnThrowBatchNext" disabled>已粘好 · 继续扔下一页</button>
+            <button type="button" class="secondary" id="btnThrowBatchStop" disabled>停止分批</button>
+          </div>
+        </div>
+        <div class="hint" style="margin-top:8px;">流程：回删完 → 填金额 → 选格式1/2/3（URL 可空）→ 开始。只取网页该页真实组数拼「码各+金额」。URL 填了会尝试打开该页；空着只进剪贴板。页不存在或组数对不上就停。</div>
+      </div>
+
       <div class="hint">每页最多 500 组封「各」：回删完有几页就出几个「一键复制第N页」。上方「开奖核对」会显示中/不中（等下一期开出后自动判）。不生成 TXT。</div>
       <div class="install">添加到主屏幕：Safari/Chrome 菜单 →「添加到主屏幕」。</div>
     </div>
@@ -163,10 +207,16 @@
   var FOUR_BACKDELETE_HISTORY_DEFAULT=1200;
   var FOUR_BACKDELETE_HISTORY=FOUR_BACKDELETE_HISTORY_DEFAULT;
   var FOUR_BACKDELETE_FETCH_TIMEOUT_MS=20000;
-  var FOUR_VERIFY_KEY="penta5.fourBackdelete.verify.v1";
+  // 与面板共用同一套 v2 键，避免双页各说各话
+  var FOUR_VERIFY_KEY="penta5.fourBackdelete.verify.v2-attack-pool";
   var FOUR_HISTORY_SETTING_KEY="penta5.fourBackdelete.historyLimit.v1";
-  var FOUR_STICKY_KEY="penta5.fourBackdelete.sticky.v1";
-  var FOUR_STATS_KEY="penta5.fourBackdelete.stats.v1";
+  var FOUR_STICKY_KEY="penta5.fourBackdelete.sticky.v2-attack-pool";
+  var FOUR_STATS_KEY="penta5.fourBackdelete.stats.v2-attack-pool";
+  var FOUR_LEGACY_KEYS=[
+    "penta5.fourBackdelete.verify.v1",
+    "penta5.fourBackdelete.sticky.v1",
+    "penta5.fourBackdelete.stats.v1"
+  ];
   var STORE_KEY="penta5AttackTxtPageV2";
   var LEGACY_STORE_KEYS=["penta5AttackTxtPageV1"];
   var HISTORY_KEY="penta5AttackTxtHistoryV1";
@@ -192,6 +242,95 @@
   var btnCopyPage=document.getElementById("btnCopyPage");
   var btnPrevPage=document.getElementById("btnPrevPage");
   var btnNextPage=document.getElementById("btnNextPage");
+  var throwAmountInput=document.getElementById("throwAmountInput");
+  var throwPageFrom=document.getElementById("throwPageFrom");
+  var throwPageTo=document.getElementById("throwPageTo");
+  var throwUrl1=document.getElementById("throwUrl1");
+  var throwUrl2=document.getElementById("throwUrl2");
+  var throwUrl3=document.getElementById("throwUrl3");
+  var btnThrowUrlSave=document.getElementById("btnThrowUrlSave");
+  var btnThrowBatchStart=document.getElementById("btnThrowBatchStart");
+  var btnThrowBatchNext=document.getElementById("btnThrowBatchNext");
+  var btnThrowBatchStop=document.getElementById("btnThrowBatchStop");
+  var THROW_URL_KEY="penta5.fourThrow.urls.v1";
+  var throwBatch={
+    active:false,
+    pages:[],
+    cursor:0,
+    amount:"",
+    urlSlot:"1",
+    url:""
+  };
+  function readThrowUrlSlot(){
+    var picked=document.querySelector('input[name="throwUrlPick"]:checked');
+    return picked?String(picked.value||"1"):"1";
+  }
+  function readThrowUrlsFromInputs(){
+    return {
+      active:readThrowUrlSlot(),
+      urls:{
+        "1":String(throwUrl1&&throwUrl1.value||"").trim(),
+        "2":String(throwUrl2&&throwUrl2.value||"").trim(),
+        "3":String(throwUrl3&&throwUrl3.value||"").trim()
+      }
+    };
+  }
+  function applyThrowUrlsToInputs(cfg){
+    cfg=cfg||{};
+    var urls=cfg.urls||{};
+    if(throwUrl1)throwUrl1.value=String(urls["1"]||"");
+    if(throwUrl2)throwUrl2.value=String(urls["2"]||"");
+    if(throwUrl3)throwUrl3.value=String(urls["3"]||"");
+    var active=String(cfg.active||"1");
+    var radios=document.querySelectorAll('input[name="throwUrlPick"]');
+    for(var i=0;i<radios.length;i++){
+      radios[i].checked=String(radios[i].value)===active;
+    }
+  }
+  function loadThrowUrls(){
+    try{
+      var raw=localStorage.getItem(THROW_URL_KEY);
+      if(raw){
+        var cfg=JSON.parse(raw);
+        if(cfg&&typeof cfg==="object"){
+          applyThrowUrlsToInputs(cfg);
+          return cfg;
+        }
+      }
+    }catch(e){}
+    // 同步服务端空白占位配置（不脑补 URL）
+    return fetch("/four_throw_urls.json",{credentials:"same-origin",cache:"no-store"}).then(function(res){
+      if(!res.ok)return {active:"1",urls:{"1":"","2":"","3":""}};
+      return res.json();
+    }).then(function(cfg){
+      applyThrowUrlsToInputs(cfg||{});
+      return cfg||{};
+    }).catch(function(){
+      applyThrowUrlsToInputs({active:"1",urls:{"1":"","2":"","3":""}});
+      return {active:"1",urls:{"1":"","2":"","3":""}};
+    });
+  }
+  function saveThrowUrls(){
+    var cfg=readThrowUrlsFromInputs();
+    try{localStorage.setItem(THROW_URL_KEY,JSON.stringify(cfg));}catch(e){}
+    setStatus("已记住三个网址格式：1="+(cfg.urls["1"]||"（空）")+"；2="+(cfg.urls["2"]||"（空）")+"；3="+(cfg.urls["3"]||"（空）")+"。","ok");
+    return cfg;
+  }
+  function selectedThrowUrl(){
+    var cfg=readThrowUrlsFromInputs();
+    var slot=cfg.active||"1";
+    return {slot:slot,url:String((cfg.urls&&cfg.urls[slot])||"").trim()};
+  }
+  function openThrowUrlIfAny(url,slot){
+    url=String(url||"").trim();
+    if(!url)return "格式"+slot+" URL 为空，只进剪贴板。";
+    try{
+      window.open(url,"_blank","noopener");
+      return "已打开格式"+slot+"："+url;
+    }catch(e){
+      return "格式"+slot+" URL 打不开，继续只进剪贴板。";
+    }
+  }
   function normalizeFourHistoryLimit(value){
     var n=Math.floor(Number(value));
     if(!isFinite(n))n=FOUR_BACKDELETE_HISTORY_DEFAULT;
@@ -228,8 +367,11 @@
       localStorage.removeItem(FOUR_VERIFY_KEY);
       localStorage.removeItem(FOUR_STICKY_KEY);
       localStorage.removeItem(FOUR_STATS_KEY);
+      FOUR_LEGACY_KEYS.forEach(function(key){localStorage.removeItem(key);});
     }catch(e){}
     window.__penta5FourVerifySnapshot=null;
+    window.__penta5FourSticky=null;
+    window.__penta5FourStatsMemory=null;
     lastResult=null;
     pageIndex=0;
     setMeta(null);
@@ -346,12 +488,13 @@
       localStorage.setItem(FOUR_VERIFY_KEY,JSON.stringify(snapshot));
       window.__penta5FourVerifySnapshot=snapshot;
       saveFourSticky({
-        version:1,
+        version:2,
         codes:codes.slice(),
         basePeriod:basePeriod,
         historyLimit:Number(result.historyLimit||getFourHistoryLimit()),
         scanned:Number(result.scanned||0),
         deletedUnique:Number(result.deletedUnique||0),
+        afterFilter:Number(result.afterFilter||codes.length),
         createdAt:Date.now(),
         left:codes.length
       });
@@ -410,7 +553,7 @@
   function loadFourSticky(){
     try{
       var parsed=JSON.parse(localStorage.getItem(FOUR_STICKY_KEY)||"null");
-      if(parsed&&parsed.version===1&&Array.isArray(parsed.codes))return parsed;
+      if(parsed&&parsed.version===2&&Array.isArray(parsed.codes))return parsed;
     }catch(e){}
     return null;
   }
@@ -755,8 +898,8 @@
     if(result.afterFilter!=null)chips.push('<span class="chip">排除后 '+result.afterFilter+'</span>');
     if(result.targetRemain!=null)chips.push('<span class="chip">目标剩 '+result.targetRemain+'</span>');
     if(result.deletedUnique!=null)chips.push('<span class="chip">已删旧码 '+result.deletedUnique+'</span>');
-    if(result.scanned!=null)chips.push('<span class="chip">扫 '+result.scanned+' 期</span>');
-    if(result.historyLimit!=null)chips.push('<span class="chip">窗口 '+result.historyLimit+'</span>');
+    if(result.scanned!=null)chips.push('<span class="chip">扫 '+result.scanned+(result.historyLimit!=null?('/'+result.historyLimit):'')+' 期'+(result.truncated?'·截断':'')+'</span>');
+    else if(result.historyLimit!=null)chips.push('<span class="chip">窗口 '+result.historyLimit+'</span>');
     if(result.sealedPeriod)chips.push('<span class="chip">RDS '+String(result.sealedPeriod)+'</span>');
     if(result.sealedTargetPeriod)chips.push('<span class="chip">面板目标期 '+String(result.sealedTargetPeriod)+'</span>');
     if(result.sealedPair)chips.push('<span class="chip">面板对数 '+String(result.sealedPair)+'</span>');
@@ -866,10 +1009,9 @@
     setStatus("已出结果："+result.label+"，"+multiHint+"共 "+pages+" 页，请点下方「一键复制第N页」。"+(result.note?" "+result.note:""),"ok");
     schedulePersist();
   }
-  function copyText(value,okMsg){
+  function copyTextAsync(value){
     value=String(value||"");
-    if(!value){setStatus("没有可复制内容。","err");return;}
-    function done(){setStatus(okMsg||("已复制 "+value.length+" 字。"),"ok");schedulePersist();}
+    if(!value)return Promise.reject(new Error("没有可复制内容。"));
     function fallbackCopy(){
       try{
         var ta=document.createElement("textarea");
@@ -884,23 +1026,159 @@
         ta.setSelectionRange(0,ta.value.length);
         var ok=document.execCommand("copy");
         document.body.removeChild(ta);
-        if(ok){done();return;}
+        if(ok)return Promise.resolve();
       }catch(e1){}
       try{
         if(preview){
           preview.value=value;
           preview.focus();
           preview.select();
-          if(document.execCommand("copy")){done();return;}
+          if(document.execCommand("copy"))return Promise.resolve();
         }
       }catch(e2){}
-      setStatus("复制失败，请长按预览区手动复制。","err");
+      return Promise.reject(new Error("复制失败，请长按预览区手动复制。"));
     }
     if(navigator.clipboard&&navigator.clipboard.writeText){
-      navigator.clipboard.writeText(value).then(done).catch(fallbackCopy);
-    }else{
-      fallbackCopy();
+      return navigator.clipboard.writeText(value).catch(function(){return fallbackCopy();});
     }
+    return fallbackCopy();
+  }
+  function copyText(value,okMsg){
+    copyTextAsync(value).then(function(){
+      setStatus(okMsg||("已复制 "+String(value||"").length+" 字。"),"ok");
+      schedulePersist();
+    }).catch(function(err){
+      setStatus(String(err&&err.message||err||"复制失败"),"err");
+    });
+  }
+  function syncThrowBatchButtons(){
+    var busy=!!throwBatch.active;
+    if(btnThrowBatchStart)btnThrowBatchStart.disabled=busy;
+    if(btnThrowBatchNext)btnThrowBatchNext.disabled=!busy||throwBatch.cursor>=throwBatch.pages.length;
+    if(btnThrowBatchStop)btnThrowBatchStop.disabled=!busy;
+    if(throwAmountInput)throwAmountInput.disabled=busy;
+    if(throwPageFrom)throwPageFrom.disabled=busy;
+    if(throwPageTo)throwPageTo.disabled=busy;
+    if(throwUrl1)throwUrl1.disabled=busy;
+    if(throwUrl2)throwUrl2.disabled=busy;
+    if(throwUrl3)throwUrl3.disabled=busy;
+    if(btnThrowUrlSave)btnThrowUrlSave.disabled=busy;
+    var radios=document.querySelectorAll('input[name="throwUrlPick"]');
+    for(var i=0;i<radios.length;i++)radios[i].disabled=busy;
+  }
+  function stopThrowBatch(msg,kind){
+    throwBatch.active=false;
+    throwBatch.pages=[];
+    throwBatch.cursor=0;
+    throwBatch.amount="";
+    throwBatch.urlSlot="1";
+    throwBatch.url="";
+    syncThrowBatchButtons();
+    if(msg)setStatus(msg,kind||"ok");
+  }
+  function readThrowAmount(){
+    var amount=String(throwAmountInput&&throwAmountInput.value||"").trim();
+    if(!amount)throw new Error("请先输入金额（机器人不脑补金额）。");
+    if(!/^\d+(\.\d+)?$/.test(amount))throw new Error("金额只能是数字，例如 1 或 0.2。");
+    return amount;
+  }
+  function buildThrowPagePlan(fromPage,toPage){
+    if(!lastResult||!lastResult.ok)throw new Error("请先回删或转换，网页上要有真实组数。");
+    var pages=pageCountOf(lastResult);
+    if(!pages)throw new Error("网页上当前没有可扔的页。");
+    fromPage=Math.floor(Number(fromPage));
+    toPage=Math.floor(Number(toPage));
+    if(!isFinite(fromPage)||!isFinite(toPage)||fromPage<1||toPage<1){
+      throw new Error("页号必须是从 1 开始的整数。");
+    }
+    if(fromPage>toPage)throw new Error("起始页不能大于结束页。");
+    if(toPage>pages)throw new Error("网页一共只有 "+pages+" 页，没有第 "+toPage+" 页。");
+    var plan=[];
+    for(var pageNo=fromPage;pageNo<=toPage;pageNo++){
+      var idx=pageNo-1;
+      var slice=pageSlice(lastResult,idx);
+      var text=pageText(lastResult,idx);
+      var count=slice.length;
+      if(!count||!text)throw new Error("第 "+pageNo+" 页网页上没有组，已停止。");
+      // 与「一键复制第N页（X组）」同一口径：禁止脑补组数
+      var btn=oneClickPageBtns?oneClickPageBtns.querySelector('[data-copy-page-index="'+idx+'"]'):null;
+      if(btn){
+        var m=String(btn.textContent||"").match(/（(\d+)组）/);
+        if(m&&Number(m[1])!==count){
+          throw new Error("第 "+pageNo+" 页组数对不上按钮（按钮 "+m[1]+" / 实切 "+count+"），已停止，不凑数。");
+        }
+      }
+      if(!/各$/.test(text))throw new Error("第 "+pageNo+" 页原文未以「各」结尾，已停止。");
+      plan.push({pageNo:pageNo,idx:idx,count:count,text:text});
+    }
+    return plan;
+  }
+  function throwCurrentBatchPage(){
+    if(!throwBatch.active||throwBatch.cursor>=throwBatch.pages.length){
+      stopThrowBatch("分批扔已结束。","ok");
+      return;
+    }
+    var item=throwBatch.pages[throwBatch.cursor];
+    // 扔之前再按网页实切一次，防止中途结果被换掉还拿旧数
+    var liveSlice=pageSlice(lastResult,item.idx);
+    var liveText=pageText(lastResult,item.idx);
+    if(liveSlice.length!==item.count||liveText!==item.text){
+      stopThrowBatch("第 "+item.pageNo+" 页网页内容已变化（原 "+item.count+" 组），已停止，请重新开始。","err");
+      return;
+    }
+    var payload=item.text+throwBatch.amount;
+    pageIndex=item.idx;
+    renderPager();
+    if(preview)preview.value=payload;
+    var amountNow=throwBatch.amount;
+    copyTextAsync(payload).then(function(){
+      var firstPage=throwBatch.pages[0].pageNo;
+      var left=throwBatch.pages.length-throwBatch.cursor-1;
+      throwBatch.cursor+=1;
+      if(throwBatch.cursor>=throwBatch.pages.length){
+        stopThrowBatch(
+          "已扔第 "+item.pageNo+" 页："+item.count+" 组（网页实数）+金额 "+amountNow+"。分批扔完成：第 "+firstPage+"–"+item.pageNo+" 页均已按网页组数进剪贴板。",
+          "ok"
+        );
+        return;
+      }
+      syncThrowBatchButtons();
+      setStatus(
+        "已扔第 "+item.pageNo+" 页："+item.count+" 组（网页实数）+金额 "+amountNow+"。粘到投注站后点「已粘好 · 继续扔下一页」。还剩 "+left+" 页。",
+        "ok"
+      );
+      schedulePersist();
+    }).catch(function(err){
+      stopThrowBatch(String(err&&err.message||err||"复制失败"),"err");
+    });
+  }
+  function startThrowBatch(){
+    try{
+      if(throwBatch.active){setStatus("分批扔进行中，先点停止或继续。","err");return;}
+      var amount=readThrowAmount();
+      var fromPage=throwPageFrom?throwPageFrom.value:10;
+      var toPage=throwPageTo?throwPageTo.value:11;
+      var plan=buildThrowPagePlan(fromPage,toPage);
+      var picked=selectedThrowUrl();
+      saveThrowUrls();
+      var openTip=openThrowUrlIfAny(picked.url,picked.slot);
+      throwBatch.active=true;
+      throwBatch.pages=plan;
+      throwBatch.cursor=0;
+      throwBatch.amount=amount;
+      throwBatch.urlSlot=picked.slot;
+      throwBatch.url=picked.url;
+      syncThrowBatchButtons();
+      var summary=plan.map(function(p){return "第"+p.pageNo+"页"+p.count+"组";}).join("、");
+      setStatus("开始分批扔（照网页实数）："+summary+"；金额 "+amount+"；"+openTip+" 先扔第 "+plan[0].pageNo+" 页…","ok");
+      throwCurrentBatchPage();
+    }catch(err){
+      stopThrowBatch(String(err&&err.message||err),"err");
+    }
+  }
+  function continueThrowBatch(){
+    if(!throwBatch.active){setStatus("没有进行中的分批扔。","err");return;}
+    throwCurrentBatchPage();
   }
   function doPaste(){
     if(!(navigator.clipboard&&navigator.clipboard.readText)){
@@ -971,9 +1249,11 @@
           }
           var opened=Array.isArray(payload.opened)?payload.opened:[];
           var scanned=Number(payload.scanned||0);
-          if(scanned<limit){
-            throw new Error("要求真扫 "+limit+" 期，当前只拿到 "+scanned+" 期，已停止");
+          // 窗口不够就按实际期数截断继续真删；低于下限才停
+          if(scanned<FOUR_BACKDELETE_HISTORY_MIN){
+            throw new Error("RDS 不足 "+FOUR_BACKDELETE_HISTORY_MIN+" 期（当前 "+scanned+"），无法回删");
           }
+          var truncated=scanned<limit;
           if(!opened.length&&Number(payload.openedUnique||0)>0){
             throw new Error("RDS 返回了唯一旧码计数但列表为空");
           }
@@ -987,6 +1267,7 @@
             scanned:scanned,
             openedUnique:Number(payload.openedUnique!=null?payload.openedUnique:opened.length),
             historyLimit:limit,
+            truncated:truncated,
             fromCache:false
           };
         });
@@ -1037,20 +1318,31 @@
       return;
     }
     fetchFourBackdeleteOpened1200().then(function(hist){
+      var uniq={};
+      afterFilterCodes.forEach(function(code){uniq[code]=true;});
+      var pool=Object.keys(uniq).sort();
+      if(pool.length!==afterFilterCodes.length){
+        throw new Error("攻击语展开含重复四位码，已停止（拒绝糊弄）");
+      }
       var set={};
-      afterFilterCodes.forEach(function(code){set[code]=true;});
+      pool.forEach(function(code){set[code]=true;});
+      var before=pool.length;
       var deletedUnique=0;
+      var seenOld={};
       var opened=hist.opened||[];
       for(var i=0;i<opened.length;i++){
         var oldCode=String(opened[i]||"");
+        if(!/^\d{4}$/.test(oldCode)||seenOld[oldCode])continue;
+        seenOld[oldCode]=true;
         if(!set[oldCode])continue;
         delete set[oldCode];
         deletedUnique+=1;
       }
       var left=Object.keys(set).sort();
-      if(left.length!==afterFilterCodes.length-deletedUnique){
+      if(left.length!==before-deletedUnique){
         throw new Error("四定回删计数不一致，已停止发布");
       }
+      var truncated=hist.truncated===true||Number(hist.scanned||0)<limit;
       var result={
         ok:true,
         width:4,
@@ -1060,13 +1352,14 @@
         preview:left.slice(0,80).join(" "),
         source:"four-ding-backdelete-rds1200",
         label:"四定回删",
-        afterFilter:afterFilterCodes.length,
+        afterFilter:before,
         deletedUnique:deletedUnique,
         scanned:hist.scanned,
         historyLimit:limit,
+        truncated:truncated,
         expectedPeriod:String(hist.latestPeriod||""),
         sealedPeriod:String(hist.latestPeriod||""),
-        note:"攻击语生成 "+afterFilterCodes.length+" → RDS直查 "+hist.scanned+"/"+limit+" 期唯一旧码 "+hist.openedUnique+"，命中删 "+deletedUnique+"，剩 "+left.length+"；无截断；"+FOUR_BACKDELETE_PAGE_SIZE+" 页封各。"+(converted.note?" 规则："+converted.note:"")
+        note:"攻击语生成 "+before+" → RDS直查 "+hist.scanned+"/"+limit+" 期"+(truncated?"（窗口不足已按实际期数截断）":"")+"唯一旧码 "+hist.openedUnique+"，命中删 "+deletedUnique+"，剩 "+left.length+"；"+FOUR_BACKDELETE_PAGE_SIZE+" 页封各。"+(converted.note?" 规则："+converted.note:"")
       };
       afterFilterCodes.length=0;
       opened.length=0;
@@ -1075,7 +1368,7 @@
       setBusy(false);
       var pages=pageCountOf(result);
       setStatus(
-        "四定回删完成：生成 "+result.afterFilter+" → 扫 "+result.scanned+" 期删 "+result.deletedUnique+" → 剩 "+result.count+" 组，共 "+pages+" 页。"+
+        "四定回删完成：生成 "+result.afterFilter+" → 扫 "+result.scanned+"/"+limit+" 期"+(truncated?"（已截断）":"")+"删 "+result.deletedUnique+" → 剩 "+result.count+" 组，共 "+pages+" 页。"+
         "请逐页点「一键复制第N页」。"+
         (verifySaved?" 已写入开奖核对快照（期 "+result.expectedPeriod+"），等下一期开出看中/不中。":" 核对快照未写入（期号缺失或存储失败）。"),
         "ok"
@@ -1182,6 +1475,14 @@
   });
   btnPrevPage.addEventListener("click",doPrevPage);
   btnNextPage.addEventListener("click",doNextPage);
+  if(btnThrowBatchStart)btnThrowBatchStart.addEventListener("click",startThrowBatch);
+  if(btnThrowBatchNext)btnThrowBatchNext.addEventListener("click",continueThrowBatch);
+  if(btnThrowBatchStop)btnThrowBatchStop.addEventListener("click",function(){
+    stopThrowBatch("已停止分批扔。","ok");
+  });
+  if(btnThrowUrlSave)btnThrowUrlSave.addEventListener("click",saveThrowUrls);
+  syncThrowBatchButtons();
+  loadThrowUrls();
   if(meta)meta.addEventListener("click",function(event){
     var node=event&&event.target;
     while(node&&node!==meta&&(!node.getAttribute||node.getAttribute("data-multi-combo-index")==null))node=node.parentNode;

@@ -536,25 +536,67 @@ button.gray{background:#4b5563}
   </div>
   <div id="txtFourRemainTopBox" class="section-anchor nested-collapse" style="margin:10px 0 0;border:1px solid #0f766e;border-radius:12px;background:#f0fdfa;padding:10px;">
     <div class="card-head" data-collapse-head="txtFourRemainTop">
-      <div class="card-head-title"><b style="font-size:16px;color:#0f766e;">四定回删（千百十个 · 同样位置同样号码 · 手填回删期数 · 粘码跨期统计）</b></div>
+      <div class="card-head-title"><b style="font-size:16px;color:#0f766e;">四定回删（攻击语缩池 · 真旧码命中删 · 手填回删期数 · 粘码跨期统计）</b></div>
       <button type="button" class="card-toggle" data-collapse-toggle="txtFourRemainTop" data-collapse-default="0" aria-expanded="true">收起</button>
     </div>
     <div class="card-body" data-collapse-body="txtFourRemainTop">
-      <div class="small" style="color:#0f766e;font-weight:700;">从 0000–9999 全集出发；真扫 RDS 前四位（回删期数可手填 100–1200）；同样位置同样号码命中多少删多少；生成后粘住码表跨期统计命中率，只有「全量重生成」才换新码。攻击语 500 一页，每页末尾封「各」。</div>
+      <div class="small" style="color:#0f766e;font-weight:700;">先按攻击语展开候选（禁止从 0000–9999 全集糊弄），再真扫 RDS 前四位旧码：同样位置同样号码命中才删。回删期数 100–1200；窗口不足按实际期数截断继续；不做数组截断凑数。剩码粘住跨期核对，只有「全量重生成」才换新码。攻击语 500 一页，每页末尾封「各」。</div>
+      <div id="txtFourAttackBox" class="small" style="margin-top:8px;border:1px solid #99f6e4;border-radius:10px;background:#fff;padding:8px;display:grid;gap:6px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <b style="color:#0f766e;">四定攻击语</b>
+          <button type="button" data-txt-four-attack-fill="1" style="border:0;border-radius:8px;padding:6px 10px;background:#115e59;color:white;font-weight:900;cursor:pointer;font-size:12px;">填入框架攻击语</button>
+          <span style="color:#64748b;">可手贴；空着则自动用上方「四定框架攻击语」</span>
+        </div>
+        <textarea id="txtFourAttackInput" rows="3" placeholder="例：千…百…十…个…四定二数合02468三数合…除对数…各 或短指令：二数合02468三数合…除对数…" style="width:100%;box-sizing:border-box;border:1px solid #99f6e4;border-radius:8px;padding:8px;font-weight:700;color:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.4;"></textarea>
+      </div>
       <div id="txtFourHistoryLimitBox" class="small" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;border:1px solid #99f6e4;border-radius:10px;background:#fff;padding:8px;">
         <label for="txtFourHistoryLimitInput" style="color:#0f766e;font-weight:900;">回删期数</label>
         <input id="txtFourHistoryLimitInput" type="number" min="100" max="1200" step="1" value="1200" style="width:96px;border:1px solid #99f6e4;border-radius:8px;padding:6px 8px;font-weight:800;color:#0f172a;">
-        <span style="color:#64748b;">范围 100–1200（如 1000）；只影响下次全量重生成</span>
+        <span style="color:#64748b;">范围 100–1200（如 600）；只影响下次全量重生成</span>
         <button type="button" data-txt-four-history-limit-save="1" style="border:0;border-radius:8px;padding:6px 10px;background:#115e59;color:white;font-weight:900;cursor:pointer;font-size:12px;">记住</button>
         <button type="button" data-txt-four-cache-clear="1" style="border:0;border-radius:8px;padding:6px 10px;background:#b91c1c;color:white;font-weight:900;cursor:pointer;font-size:12px;">清缓存</button>
         <span style="color:#64748b;">清粘码/统计/开奖核对（保留回删期数）</span>
       </div>
       <div id="txtFourStatsStatus" class="small" style="margin-top:8px;border:1px solid #99f6e4;border-radius:10px;background:#fff;padding:8px;color:#0f766e;font-weight:800;">跨期命中率：生成并粘码后开始累计。</div>
       <div id="txtFourVerifyStatus" class="small" style="margin-top:8px;border:1px solid #99f6e4;border-radius:10px;background:#fff;padding:8px;color:#0f766e;font-weight:800;">开奖核对：生成四定回删后，等最新一期开出再核对。</div>
+      <div id="txtFourThrowBatchBox" class="small" style="margin-top:8px;border:1px solid #0f766e;border-radius:10px;background:#fff;padding:8px;display:grid;gap:8px;">
+        <div style="color:#0f766e;font-weight:900;">分批扔页（只照网页实数 · 不脑补组数）</div>
+        <div style="display:grid;gap:6px;border:1px dashed #99f6e4;border-radius:8px;padding:8px;background:#f0fdfa;">
+          <div style="color:#0f766e;font-weight:900;">三个网址格式（URL 先留空，你自己填）</div>
+          <label style="display:grid;gap:4px;color:#0f766e;font-weight:800;">
+            <span><input type="radio" name="txtFourThrowUrlPick" value="1" checked> 格式1 URL</span>
+            <input id="txtFourThrowUrl1" type="url" placeholder="格式1网址留空待填" autocomplete="off" style="width:100%;box-sizing:border-box;border:1px solid #99f6e4;border-radius:8px;padding:6px 8px;font-weight:700;color:#0f172a;">
+          </label>
+          <label style="display:grid;gap:4px;color:#0f766e;font-weight:800;">
+            <span><input type="radio" name="txtFourThrowUrlPick" value="2"> 格式2 URL</span>
+            <input id="txtFourThrowUrl2" type="url" placeholder="格式2网址留空待填" autocomplete="off" style="width:100%;box-sizing:border-box;border:1px solid #99f6e4;border-radius:8px;padding:6px 8px;font-weight:700;color:#0f172a;">
+          </label>
+          <label style="display:grid;gap:4px;color:#0f766e;font-weight:800;">
+            <span><input type="radio" name="txtFourThrowUrlPick" value="3"> 格式3 URL</span>
+            <input id="txtFourThrowUrl3" type="url" placeholder="格式3网址留空待填" autocomplete="off" style="width:100%;box-sizing:border-box;border:1px solid #99f6e4;border-radius:8px;padding:6px 8px;font-weight:700;color:#0f172a;">
+          </label>
+          <button type="button" data-txt-four-throw-url-save="1" style="justify-self:start;border:0;border-radius:8px;padding:6px 10px;background:#115e59;color:white;font-weight:900;cursor:pointer;font-size:12px;">记住三个网址</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+          <label style="display:grid;gap:4px;color:#0f766e;font-weight:800;">金额（你填）
+            <input id="txtFourThrowAmount" type="text" inputmode="decimal" placeholder="例：1 或 0.2" style="width:110px;border:1px solid #99f6e4;border-radius:8px;padding:6px 8px;font-weight:800;color:#0f172a;">
+          </label>
+          <label style="display:grid;gap:4px;color:#0f766e;font-weight:800;">从页
+            <input id="txtFourThrowFrom" type="number" min="1" step="1" value="10" style="width:72px;border:1px solid #99f6e4;border-radius:8px;padding:6px 8px;font-weight:800;color:#0f172a;">
+          </label>
+          <label style="display:grid;gap:4px;color:#0f766e;font-weight:800;">到页
+            <input id="txtFourThrowTo" type="number" min="1" step="1" value="11" style="width:72px;border:1px solid #99f6e4;border-radius:8px;padding:6px 8px;font-weight:800;color:#0f172a;">
+          </label>
+          <button type="button" data-txt-four-throw-start="1" style="border:0;border-radius:8px;padding:7px 12px;background:#ea580c;color:white;font-weight:900;cursor:pointer;font-size:13px;">开始分批扔</button>
+          <button type="button" data-txt-four-throw-next="1" disabled style="border:0;border-radius:8px;padding:7px 12px;background:#059669;color:white;font-weight:900;cursor:pointer;font-size:13px;">已粘好 · 继续下一页</button>
+          <button type="button" data-txt-four-throw-stop="1" disabled style="border:0;border-radius:8px;padding:7px 12px;background:#64748b;color:white;font-weight:900;cursor:pointer;font-size:13px;">停止</button>
+        </div>
+        <div id="txtFourThrowStatus" style="color:#64748b;font-weight:700;">回删完 → 填金额 → 选格式1/2/3（URL 可空）→ 开始。只照网页组数拼「码各+金额」。URL 填了会打开该页；空着只进剪贴板。</div>
+      </div>
       <div id="txtFourRemainContent" class="small" style="margin-top:8px;">
-        <div style="color:#64748b;">尚未生成。先设回删期数，再点下方按钮真扫 RDS 回删并粘码。</div>
+        <div style="color:#64748b;">尚未生成。先确认攻击语与回删期数，再点下方「按攻击语真旧码回删」。</div>
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button type="button" data-txt-four-backdelete-run="1" data-txt-four-backdelete-force="1" style="border:0;border-radius:8px;padding:7px 12px;background:#0f766e;color:white;font-weight:900;cursor:pointer;font-size:13px;">生成四定回删攻击语</button>
+          <button type="button" data-txt-four-backdelete-run="1" data-txt-four-backdelete-force="1" style="border:0;border-radius:8px;padding:7px 12px;background:#0f766e;color:white;font-weight:900;cursor:pointer;font-size:13px;">按攻击语真旧码回删</button>
         </div>
       </div>
     </div>
@@ -580,6 +622,7 @@ button.gray{background:#4b5563}
 </div>
 <button type="button" id="panelFab" class="panel-fab" title="回到顶部" aria-label="回到顶部">↑</button>
 
+<script src="/txt_attack_convert.js?v=20260803-four-real-attack-pool-v1"></script>
 <script>
 
 
@@ -3603,10 +3646,10 @@ var TXT_FOUR_HISTORY_DEFAULT = 1200;
 var TXT_FOUR_HISTORY_COUNT = TXT_FOUR_HISTORY_DEFAULT; // 兼容旧引用；实际以 txtFourHistoryLimitGet() 为准
 var TXT_FOUR_PAGE_SIZE = 500;
 var TXT_FOUR_POSITIONS = [0, 1, 2, 3];
-var TXT_FOUR_VERIFY_KEY = "penta5.fourBackdelete.verify.v1";
+var TXT_FOUR_VERIFY_KEY = "penta5.fourBackdelete.verify.v2-attack-pool";
 var TXT_FOUR_HISTORY_SETTING_KEY = "penta5.fourBackdelete.historyLimit.v1";
-var TXT_FOUR_STICKY_KEY = "penta5.fourBackdelete.sticky.v1";
-var TXT_FOUR_STATS_KEY = "penta5.fourBackdelete.stats.v1";
+var TXT_FOUR_STICKY_KEY = "penta5.fourBackdelete.sticky.v2-attack-pool";
+var TXT_FOUR_STATS_KEY = "penta5.fourBackdelete.stats.v2-attack-pool";
 var TXT_FOUR_STATS_MAX = 600;
 var txtFourBackdeleteBusy = false;
 function txtFourHistoryLimitNormalize(value){
@@ -3641,15 +3684,15 @@ function txtFourHistoryLimitSyncInput(){
   if(input)input.value=String(txtFourHistoryLimitLoad());
 }
 function txtFourStickyDefault(){
-  return {version:1,codes:[],basePeriod:"",historyLimit:TXT_FOUR_HISTORY_DEFAULT,scanned:0,deletedUnique:0,createdAt:0,left:0};
+  return {version:2,codes:[],basePeriod:"",historyLimit:TXT_FOUR_HISTORY_DEFAULT,scanned:0,deletedUnique:0,afterFilter:0,createdAt:0,left:0};
 }
 function txtFourStickyLoad(){
   var mem=window.__penta5FourSticky||null;
   try{
     var parsed=JSON.parse(localStorage.getItem(TXT_FOUR_STICKY_KEY)||"null");
-    if(parsed&&parsed.version===1&&Array.isArray(parsed.codes))return parsed;
+    if(parsed&&parsed.version===2&&Array.isArray(parsed.codes))return parsed;
   }catch(e){}
-  return mem&&mem.version===1?mem:null;
+  return mem&&mem.version===2?mem:null;
 }
 function txtFourStickySave(sticky){
   window.__penta5FourSticky=sticky||null;
@@ -3794,10 +3837,11 @@ function txtFourResultFromSticky(sticky){
   if(!sticky||!Array.isArray(sticky.codes))return null;
   var codes=sticky.codes.slice().filter(function(code){return /^\d{4}$/.test(String(code));}).sort();
   var pages=txtFourPagesFromCodes(codes);
+  var afterFilter=Number(sticky.afterFilter||0);
   return {
     ok:true,
     kind:"four",
-    label:"四定旧码原位置回删（粘码）",
+    label:"四定真旧码回删（粘码）",
     expectedPeriod:String(sticky.basePeriod||""),
     rdsFirstPeriod:String(sticky.rdsFirstPeriod||""),
     rdsLastPeriod:String(sticky.rdsLastPeriod||""),
@@ -3806,7 +3850,8 @@ function txtFourResultFromSticky(sticky){
     scanned:Number(sticky.scanned||0),
     deletedUnique:Number(sticky.deletedUnique||0),
     excluded:Number(sticky.deletedUnique||0),
-    before:10000,
+    afterFilter:afterFilter,
+    before:afterFilter||codes.length,
     left:codes.length,
     count:codes.length,
     pageSize:TXT_FOUR_PAGE_SIZE,
@@ -3814,18 +3859,20 @@ function txtFourResultFromSticky(sticky){
     codes:codes,
     pages:pages,
     sticky:true,
-    note:"粘码剩 "+codes.length+" 组；回删期数 "+(sticky.historyLimit||"--")+"；跨期只结算不换码。"
+    attackPool:true,
+    note:"粘码剩 "+codes.length+" 组（攻击语缩池后真旧码回删）；回删期数 "+(sticky.historyLimit||"--")+"；跨期只结算不换码。"
   };
 }
 function txtFourStickySaveFromResult(result){
   if(!result||result.ok!==true||!Array.isArray(result.codes))return null;
   var sticky={
-    version:1,
+    version:2,
     codes:result.codes.slice().filter(function(code){return /^\d{4}$/.test(String(code));}).sort(),
     basePeriod:String(result.expectedPeriod||""),
     historyLimit:Number(result.historyLimit||txtFourHistoryLimitGet()),
     scanned:Number(result.scanned||0),
     deletedUnique:Number(result.deletedUnique||0),
+    afterFilter:Number(result.afterFilter||result.before||0),
     rdsFirstPeriod:String(result.rdsFirstPeriod||""),
     rdsLastPeriod:String(result.rdsLastPeriod||""),
     createdAt:Date.now(),
@@ -3840,7 +3887,7 @@ function txtFourBackdeleteActionButtonsHtml(hasSticky){
     +(hasSticky
       ?('<button type="button" data-txt-four-backdelete-run="1" style="border:0;border-radius:8px;padding:7px 12px;background:#0f766e;color:white;font-weight:900;cursor:pointer;font-size:13px;">刷新粘码核对</button>'
         +'<button type="button" data-txt-four-backdelete-run="1" data-txt-four-backdelete-force="1" style="border:0;border-radius:8px;padding:7px 12px;background:#b45309;color:white;font-weight:900;cursor:pointer;font-size:13px;">全量重生成</button>')
-      :('<button type="button" data-txt-four-backdelete-run="1" data-txt-four-backdelete-force="1" style="border:0;border-radius:8px;padding:7px 12px;background:#0f766e;color:white;font-weight:900;cursor:pointer;font-size:13px;">生成四定回删攻击语</button>'))
+      :('<button type="button" data-txt-four-backdelete-run="1" data-txt-four-backdelete-force="1" style="border:0;border-radius:8px;padding:7px 12px;background:#0f766e;color:white;font-weight:900;cursor:pointer;font-size:13px;">按攻击语真旧码回删</button>'))
     +'<button type="button" data-txt-four-cache-clear="1" style="border:0;border-radius:8px;padding:7px 12px;background:#b91c1c;color:white;font-weight:900;cursor:pointer;font-size:13px;">清缓存</button>'
     +'</div>';
 }
@@ -3856,6 +3903,10 @@ function txtFourCacheClear(){
     localStorage.removeItem(TXT_FOUR_STICKY_KEY);
     localStorage.removeItem(TXT_FOUR_STATS_KEY);
     localStorage.removeItem(TXT_FOUR_VERIFY_KEY);
+    // 顺带清掉 attack_txt / 旧版键，避免双页残留各说各话
+    localStorage.removeItem("penta5.fourBackdelete.sticky.v1");
+    localStorage.removeItem("penta5.fourBackdelete.stats.v1");
+    localStorage.removeItem("penta5.fourBackdelete.verify.v1");
   }catch(e){}
   var content=$("txtFourRemainContent");
   if(content){
@@ -3954,6 +4005,23 @@ function txtFourVerifyRender(snapshot,latest){
   if(!el)return;
   setHtml(el,txtFourVerifyHtml(snapshot,latest));
 }
+function txtFourStickyWriteLastCheck(settleBase,poolLeft,latest,hit,evaluatedAt){
+  var sticky=txtFourStickyLoad();
+  var result=txtFourResultFromSticky(sticky);
+  if(result)window.__penta5FourBackdeleteLast=result;
+  var snapshot=result?txtFourVerifySaveFromResult(result):(txtFourVerifyLoad()||null);
+  if(!snapshot)return null;
+  snapshot.lastCheck={
+    basePeriod:String(settleBase||""),
+    left:Number(poolLeft||0),
+    targetPeriod:String(latest&&latest.period||""),
+    targetCode:String(latest&&latest.code||""),
+    hit:hit===true,
+    evaluatedAt:evaluatedAt||Date.now()
+  };
+  txtFourVerifySave(snapshot);
+  return snapshot;
+}
 function txtFourStickyAdvance(latest,data){
   latest=latest||txtFourLatestDraw(data);
   var sticky=txtFourStickyLoad();
@@ -3961,40 +4029,47 @@ function txtFourStickyAdvance(latest,data){
   if(!latest.period||!/^\d{4}$/.test(String(latest.code||"")))return sticky;
   if(!txtFourPeriodNewer(latest.period,sticky.basePeriod))return sticky;
   var store=txtFourStatsLoad();
-  var already=(store.evaluated||[]).some(function(item){
+  var alreadyEntry=(store.evaluated||[]).filter(function(item){
     return item&&item.evaluated===true&&String(item.targetPeriod||"")===String(latest.period);
-  });
-  if(already){
-    // 已记过本期：只把粘码基准推到本期，避免重复结算
+  })[0]||null;
+  if(alreadyEntry){
+    // 已记过本期：只把粘码基准推到本期，并同步核对条显示中/不中
     sticky.basePeriod=String(latest.period);
     sticky.left=sticky.codes.length;
     txtFourStickySave(sticky);
+    txtFourStickyWriteLastCheck(
+      alreadyEntry.basePeriod,
+      alreadyEntry.left,
+      latest,
+      alreadyEntry.hit===true,
+      alreadyEntry.evaluatedAt||Date.now()
+    );
     return sticky;
   }
+  var settleBase=String(sticky.basePeriod||"");
+  var poolLeft=sticky.codes.length;
   var hit=sticky.codes.indexOf(String(latest.code))>=0;
   if(hit){
     sticky.codes=sticky.codes.filter(function(code){return String(code)!==String(latest.code);});
   }
   sticky.left=sticky.codes.length;
+  var evaluatedAt=Date.now();
   var entry={
-    basePeriod:String(sticky.basePeriod||""),
+    basePeriod:settleBase,
     targetPeriod:String(latest.period),
     targetCode:String(latest.code),
     targetDay:txtFourStatsTodayKey(data),
     hit:hit===true,
-    left:sticky.left,
+    left:poolLeft,
     historyLimit:Number(sticky.historyLimit||txtFourHistoryLimitGet()),
     evaluated:true,
-    evaluatedAt:Date.now()
+    evaluatedAt:evaluatedAt
   };
   txtFourStatsAppend(entry);
   sticky.basePeriod=String(latest.period);
   txtFourStickySave(sticky);
-  var result=txtFourResultFromSticky(sticky);
-  if(result){
-    window.__penta5FourBackdeleteLast=result;
-    txtFourVerifySaveFromResult(result);
-  }
+  // 新快照推进到本期；lastCheck 保留刚结算的中/不中，核对条与跨期统计一致
+  txtFourStickyWriteLastCheck(settleBase,poolLeft,latest,hit===true,evaluatedAt);
   return sticky;
 }
 function txtFourVerifyEvaluate(snapshot,latest){
@@ -4073,6 +4148,10 @@ function txtFourVerifySaveFromResult(result){
 function txtFourVerifyRefresh(data){
   data=data||window.__penta5TxtState||{};
   txtFourHistoryLimitSyncInput();
+  if(!window.__penta5FourThrowUrlsLoaded&&typeof txtFourThrowLoadUrls==="function"){
+    window.__penta5FourThrowUrlsLoaded=true;
+    txtFourThrowLoadUrls();
+  }
   var latest=txtFourLatestDraw(data);
   var sticky=txtFourStickyAdvance(latest,data);
   if(sticky&&Array.isArray(sticky.codes)&&sticky.codes.length){
@@ -4093,10 +4172,70 @@ function txtFourVerifyRefresh(data){
   txtFourStatsRender(data);
   return {snapshot:snapshot,latest:latest,sticky:sticky};
 }
-function txtFourBackdeleteUniverse(){
-  var out=[];
-  for(var i=0;i<10000;i++)out.push(String(i).padStart(4,"0"));
-  return out;
+function txtFourAttackTextResolve(){
+  var input=$("txtFourAttackInput");
+  var typed=input?String(input.value||"").trim():"";
+  if(typed)return typed;
+  var fw=$("frameworkAttackFourDing");
+  var fwText=fw?String(fw.value||"").trim():"";
+  if(fwText)return fwText;
+  var data=window.__penta5TxtState||{};
+  var snap=(data.currentPrediction&&data.currentPrediction.fourDingFramework)||{};
+  return String(snap.shot||"").trim();
+}
+function txtFourAttackFillFromFramework(){
+  var input=$("txtFourAttackInput");
+  if(!input)return "";
+  var fw=$("frameworkAttackFourDing");
+  var fwText=fw?String(fw.value||"").trim():"";
+  if(!fwText){
+    var data=window.__penta5TxtState||{};
+    var snap=(data.currentPrediction&&data.currentPrediction.fourDingFramework)||{};
+    fwText=String(snap.shot||"").trim();
+  }
+  if(!fwText){
+    txtSetStatus("四定框架攻击语还没就绪，请等面板出码或手贴攻击语。");
+    return "";
+  }
+  input.value=fwText;
+  txtSetStatus("已填入四定框架攻击语，可点「按攻击语真旧码回删」。");
+  return fwText;
+}
+function txtFourGenerateCandidatesFromAttack(raw){
+  var api=window.Penta5AttackTxtConvert;
+  if(!api||typeof api.convert!=="function"){
+    throw txtPositionMakeError("四定转换脚本未加载，请 Ctrl+F5 硬刷新","FOUR_CONVERT_MISSING",false);
+  }
+  // 故意不传 panelThreeDuishuPair：不覆盖攻击语里的除对数
+  var converted=null;
+  try{
+    converted=api.convert(String(raw||""),{});
+  }catch(err){
+    throw txtPositionMakeError("四定攻击语展开异常："+String(err&&err.message||err),"FOUR_ATTACK_THROW",false);
+  }
+  if(!converted||converted.ok!==true){
+    throw txtPositionMakeError("四定攻击语展开失败："+String(converted&&converted.message||"未识别攻击语"),"FOUR_ATTACK_PARSE",false);
+  }
+  var codes=String(converted.text||"").trim().split(/\s+/).filter(function(token){return /^\d{4}$/.test(token);});
+  if(!codes.length){
+    throw txtPositionMakeError("攻击语展开后没有四位号码，禁止回删","FOUR_ATTACK_EMPTY",false);
+  }
+  if(codes.length!==Number(converted.count||0)){
+    throw txtPositionMakeError("攻击语展开计数不一致：标记 "+converted.count+"，实际 "+codes.length,"FOUR_ATTACK_COUNT",false);
+  }
+  var uniq={};
+  codes.forEach(function(code){uniq[code]=true;});
+  var list=Object.keys(uniq).sort();
+  if(list.length!==codes.length){
+    throw txtPositionMakeError("攻击语展开含重复四位码，已停止（拒绝糊弄）","FOUR_ATTACK_DUP",false);
+  }
+  return {
+    codes:list,
+    count:list.length,
+    note:String(converted.note||""),
+    modelText:String(converted.modelText||raw||""),
+    source:String(converted.source||"attack")
+  };
 }
 function txtFourBackdeleteFetch1200(expectedPeriod,historyLimit){
   // 轻量直查：只拿近 N 期唯一四位旧码，不拉 converter-history 大包。
@@ -4130,9 +4269,11 @@ function txtFourBackdeleteFetch1200(expectedPeriod,historyLimit){
     var scanned=Number(payload.scanned||0);
     var latestPeriod=String(payload.latestPeriod||"").replace(/\D/g,"");
     var oldestPeriod=String(payload.oldestPeriod||"").replace(/\D/g,"");
-    if(scanned<limit){
-      throw txtPositionMakeError("四定回删：要求真扫 "+limit+" 期，当前只拿到 "+scanned+" 期，已停止（不截断、不假扫）","RDS_HISTORY_SHORT",true);
+    // 窗口不够就按实际期数截断继续真删；低于下限才停
+    if(scanned<TXT_FOUR_HISTORY_MIN){
+      throw txtPositionMakeError("四定回删：RDS 不足 "+TXT_FOUR_HISTORY_MIN+" 期（当前 "+scanned+"），无法回删","RDS_HISTORY_SHORT",true);
     }
+    var truncated=scanned<limit;
     if(!opened.length&&Number(payload.openedUnique||0)>0){
       throw txtPositionMakeError("四定回删：RDS 返回了唯一旧码计数但列表为空","RDS_HISTORY_EMPTY",true);
     }
@@ -4151,17 +4292,29 @@ function txtFourBackdeleteFetch1200(expectedPeriod,historyLimit){
       latestPeriod:latestPeriod,
       oldestPeriod:oldestPeriod,
       historyLimit:limit,
+      truncated:truncated,
       source:String(payload.source||"rds-direct")
     };
   });
 }
-function txtFourBackdeleteCompute(hist,expectedPeriod,historyLimit){
+function txtFourBackdeleteCompute(hist,expectedPeriod,historyLimit,candidatePool){
   hist=hist&&typeof hist==="object"?hist:{};
+  candidatePool=candidatePool&&typeof candidatePool==="object"?candidatePool:{};
   var limit=txtFourHistoryLimitNormalize(historyLimit!=null?historyLimit:(hist.historyLimit!=null?hist.historyLimit:txtFourHistoryLimitGet()));
   var opened=Array.isArray(hist.opened)?hist.opened:[];
+  var pool=Array.isArray(candidatePool.codes)?candidatePool.codes:[];
+  if(!pool.length){
+    throw txtPositionMakeError("没有攻击语候选码，禁止从全集糊弄回删","FOUR_NO_ATTACK_POOL",false);
+  }
   var set={};
-  txtFourBackdeleteUniverse().forEach(function(code){set[code]=true;});
-  var before=10000;
+  pool.forEach(function(code){
+    var c=String(code||"");
+    if(/^\d{4}$/.test(c))set[c]=true;
+  });
+  var before=Object.keys(set).length;
+  if(before!==pool.length){
+    throw txtPositionMakeError("攻击语候选池含无效/重复码，已停止","FOUR_ATTACK_POOL_INVALID",false);
+  }
   var seenOld={};
   var deletedSources=[];
   var deletedUnique=0;
@@ -4186,18 +4339,21 @@ function txtFourBackdeleteCompute(hist,expectedPeriod,historyLimit){
   }
   var pages=txtFourPagesFromCodes(codes);
   var scanned=Number(hist.scanned||0);
+  var truncated=hist.truncated===true||scanned<limit;
   return {
     ok:true,
     kind:"four",
-    label:"四定旧码原位置回删",
+    label:"四定真旧码回删",
     expectedPeriod:String(expectedPeriod||""),
     rdsFirstPeriod:String(hist.latestPeriod||""),
     rdsLastPeriod:String(hist.oldestPeriod||""),
     historyCount:scanned,
     historyLimit:limit,
     scanned:scanned,
+    truncated:truncated,
     deletedUnique:deletedUnique,
     excluded:deletedUnique,
+    afterFilter:before,
     before:before,
     left:codes.length,
     count:codes.length,
@@ -4206,8 +4362,10 @@ function txtFourBackdeleteCompute(hist,expectedPeriod,historyLimit){
     codes:codes,
     pages:pages,
     deletedSources:deletedSources,
+    attackPool:true,
+    attackNote:String(candidatePool.note||""),
     sticky:false,
-    note:"千百十个同样位置同样号码；RDS直查 "+scanned+"/"+limit+" 期唯一旧码 "+(hist.openedUnique!=null?hist.openedUnique:opened.length)+"；命中删 "+deletedUnique+"；现剩 "+codes.length+"；已粘码跨期统计；攻击语 "+TXT_FOUR_PAGE_SIZE+" 一页各组封「各」。"
+    note:"攻击语展开 "+before+" → RDS直查 "+scanned+"/"+limit+" 期"+(truncated?"（窗口不足已按实际期数截断）":"")+"唯一旧码 "+(hist.openedUnique!=null?hist.openedUnique:opened.length)+"；同样位置同样号码命中删 "+deletedUnique+"；现剩 "+codes.length+"；无数组截断凑数；已粘码跨期统计；"+TXT_FOUR_PAGE_SIZE+" 一页封「各」。"
   };
 }
 function txtFourBackdeleteRender(result,message){
@@ -4237,10 +4395,13 @@ function txtFourBackdeleteRender(result,message){
   setHtml(content,
     '<div style="margin-top:6px;color:#0f766e;font-weight:800;">当前期 '+txtEsc(result.expectedPeriod)
       +(result.sticky?'（粘码）':'')
-      +'：真扫 '+txtEsc(result.scanned)+'/'+txtEsc(limit)+' 期；删唯一旧码 '+txtEsc(result.deletedUnique)
+      +'：攻击语 '+txtEsc(result.afterFilter!=null?result.afterFilter:result.before)
+      +' → 真扫 '+txtEsc(result.scanned)+'/'+txtEsc(limit)+' 期'
+      +(result.truncated?'（窗口不足已截断）':'')
+      +'；命中删 '+txtEsc(result.deletedUnique)
       +'；现剩 '+txtEsc(result.left)+' 组；分页 '+txtEsc(result.pageCount)+' 页×最多 '+TXT_FOUR_PAGE_SIZE+'。</div>'
     +'<div style="margin-top:5px;color:#64748b;font-size:12px;">窗口 '+txtEsc(result.rdsFirstPeriod)+(result.rdsLastPeriod?(' → '+txtEsc(result.rdsLastPeriod)):'')
-      +' · 同样位置同样号码 · 命中多少删多少 · 粘码跨期统计 · 每页末尾「各」。</div>'
+      +' · 攻击语缩池 · 同样位置同样号码 · 命中多少删多少 · 无数组截断 · 粘码跨期统计 · 每页末尾「各」。</div>'
     +'<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">'
     +'<button type="button" data-txt-four-backdelete-run="1" style="border:0;border-radius:8px;padding:7px 12px;background:#0f766e;color:white;font-weight:900;cursor:pointer;font-size:13px;">刷新粘码核对</button>'
     +'<button type="button" data-txt-four-backdelete-run="1" data-txt-four-backdelete-force="1" style="border:0;border-radius:8px;padding:7px 12px;background:#b45309;color:white;font-weight:900;cursor:pointer;font-size:13px;">全量重生成</button>'
@@ -4279,6 +4440,224 @@ function txtFourBackdeleteCopyPage(pageIndex){
   }
   txtFourBackdeleteCopyText(page.attackText,"已复制四定第 "+page.index+" 页攻击语："+page.count+" 组，末尾「各」。");
 }
+var __txtFourThrowBatch={active:false,pages:[],cursor:0,amount:"",urlSlot:"1",url:""};
+var TXT_FOUR_THROW_URL_KEY="penta5.fourThrow.urls.v1";
+function txtFourThrowReadSlot(){
+  var picked=document.querySelector('input[name="txtFourThrowUrlPick"]:checked');
+  return picked?String(picked.value||"1"):"1";
+}
+function txtFourThrowReadUrls(){
+  return {
+    active:txtFourThrowReadSlot(),
+    urls:{
+      "1":String(($("txtFourThrowUrl1")&&$("txtFourThrowUrl1").value)||"").trim(),
+      "2":String(($("txtFourThrowUrl2")&&$("txtFourThrowUrl2").value)||"").trim(),
+      "3":String(($("txtFourThrowUrl3")&&$("txtFourThrowUrl3").value)||"").trim()
+    }
+  };
+}
+function txtFourThrowApplyUrls(cfg){
+  cfg=cfg||{};
+  var urls=cfg.urls||{};
+  if($("txtFourThrowUrl1"))$("txtFourThrowUrl1").value=String(urls["1"]||"");
+  if($("txtFourThrowUrl2"))$("txtFourThrowUrl2").value=String(urls["2"]||"");
+  if($("txtFourThrowUrl3"))$("txtFourThrowUrl3").value=String(urls["3"]||"");
+  var active=String(cfg.active||"1");
+  var radios=document.querySelectorAll('input[name="txtFourThrowUrlPick"]');
+  for(var i=0;i<radios.length;i++)radios[i].checked=String(radios[i].value)===active;
+}
+function txtFourThrowLoadUrls(){
+  try{
+    var raw=localStorage.getItem(TXT_FOUR_THROW_URL_KEY);
+    if(raw){
+      var cfg=JSON.parse(raw);
+      if(cfg&&typeof cfg==="object"){
+        txtFourThrowApplyUrls(cfg);
+        return;
+      }
+    }
+  }catch(e){}
+  fetch("/four_throw_urls.json",{credentials:"same-origin",cache:"no-store"}).then(function(res){
+    if(!res.ok)return {active:"1",urls:{"1":"","2":"","3":""}};
+    return res.json();
+  }).then(function(cfg){
+    txtFourThrowApplyUrls(cfg||{});
+  }).catch(function(){
+    txtFourThrowApplyUrls({active:"1",urls:{"1":"","2":"","3":""}});
+  });
+}
+function txtFourThrowSaveUrls(){
+  var cfg=txtFourThrowReadUrls();
+  try{localStorage.setItem(TXT_FOUR_THROW_URL_KEY,JSON.stringify(cfg));}catch(e){}
+  txtFourThrowSetStatus(
+    "已记住三个网址：1="+(cfg.urls["1"]||"（空）")+"；2="+(cfg.urls["2"]||"（空）")+"；3="+(cfg.urls["3"]||"（空）")+"。",
+    "ok"
+  );
+  return cfg;
+}
+function txtFourThrowOpenUrlIfAny(url,slot){
+  url=String(url||"").trim();
+  if(!url)return "格式"+slot+" URL 为空，只进剪贴板。";
+  try{
+    window.open(url,"_blank","noopener");
+    return "已打开格式"+slot+"："+url;
+  }catch(e){
+    return "格式"+slot+" URL 打不开，继续只进剪贴板。";
+  }
+}
+function txtFourThrowSetStatus(msg,kind){
+  var el=$("txtFourThrowStatus");
+  if(el){
+    el.textContent=String(msg||"");
+    el.style.color=kind==="err"?"#b91c1c":kind==="ok"?"#0f766e":"#64748b";
+  }
+  if(msg)txtSetStatus(String(msg));
+}
+function txtFourThrowSyncButtons(){
+  var box=$("txtFourThrowBatchBox");
+  if(!box)return;
+  var busy=!!__txtFourThrowBatch.active;
+  var start=box.querySelector("[data-txt-four-throw-start]");
+  var next=box.querySelector("[data-txt-four-throw-next]");
+  var stop=box.querySelector("[data-txt-four-throw-stop]");
+  var save=box.querySelector("[data-txt-four-throw-url-save]");
+  var amount=$("txtFourThrowAmount");
+  var from=$("txtFourThrowFrom");
+  var to=$("txtFourThrowTo");
+  var u1=$("txtFourThrowUrl1");
+  var u2=$("txtFourThrowUrl2");
+  var u3=$("txtFourThrowUrl3");
+  if(start)start.disabled=busy;
+  if(next)next.disabled=!busy||__txtFourThrowBatch.cursor>=__txtFourThrowBatch.pages.length;
+  if(stop)stop.disabled=!busy;
+  if(save)save.disabled=busy;
+  if(amount)amount.disabled=busy;
+  if(from)from.disabled=busy;
+  if(to)to.disabled=busy;
+  if(u1)u1.disabled=busy;
+  if(u2)u2.disabled=busy;
+  if(u3)u3.disabled=busy;
+  var radios=document.querySelectorAll('input[name="txtFourThrowUrlPick"]');
+  for(var i=0;i<radios.length;i++)radios[i].disabled=busy;
+}
+function txtFourThrowStop(msg,kind){
+  __txtFourThrowBatch.active=false;
+  __txtFourThrowBatch.pages=[];
+  __txtFourThrowBatch.cursor=0;
+  __txtFourThrowBatch.amount="";
+  __txtFourThrowBatch.urlSlot="1";
+  __txtFourThrowBatch.url="";
+  txtFourThrowSyncButtons();
+  if(msg)txtFourThrowSetStatus(msg,kind||"ok");
+}
+function txtFourThrowBuildPlan(fromPage,toPage){
+  var result=window.__penta5FourBackdeleteLast||txtFourResultFromSticky();
+  if(!result||!Array.isArray(result.pages)||!result.pages.length){
+    throw new Error("请先回删，网页上要有真实页/组数。");
+  }
+  fromPage=Math.floor(Number(fromPage));
+  toPage=Math.floor(Number(toPage));
+  if(!isFinite(fromPage)||!isFinite(toPage)||fromPage<1||toPage<1){
+    throw new Error("页号必须是从 1 开始的整数。");
+  }
+  if(fromPage>toPage)throw new Error("起始页不能大于结束页。");
+  var maxPage=result.pages.length;
+  if(toPage>maxPage)throw new Error("网页一共只有 "+maxPage+" 页，没有第 "+toPage+" 页。");
+  var plan=[];
+  for(var pageNo=fromPage;pageNo<=toPage;pageNo++){
+    var page=result.pages.filter(function(item){return Number(item.index)===pageNo;})[0];
+    if(!page)throw new Error("网页上找不到第 "+pageNo+" 页。");
+    var codes=Array.isArray(page.codes)?page.codes:[];
+    var count=Number(page.count);
+    if(!isFinite(count)||count!==codes.length){
+      throw new Error("第 "+pageNo+" 页组数不一致（显示 "+page.count+" / 实切 "+codes.length+"），已停止，不凑数。");
+    }
+    var text=String(page.attackText||"");
+    if(!count||!text)throw new Error("第 "+pageNo+" 页网页上没有组，已停止。");
+    if(!/各$/.test(text))throw new Error("第 "+pageNo+" 页原文未以「各」结尾，已停止。");
+    // 再按码表重拼一遍，必须与网页 attackText 完全一致
+    var rebuilt=codes.join(",")+"各";
+    if(rebuilt!==text)throw new Error("第 "+pageNo+" 页原文与码表不一致，已停止，不脑补。");
+    plan.push({pageNo:pageNo,count:count,text:text});
+  }
+  return plan;
+}
+function txtFourThrowCurrentPage(){
+  if(!__txtFourThrowBatch.active||__txtFourThrowBatch.cursor>=__txtFourThrowBatch.pages.length){
+    txtFourThrowStop("分批扔已结束。","ok");
+    return;
+  }
+  var item=__txtFourThrowBatch.pages[__txtFourThrowBatch.cursor];
+  var result=window.__penta5FourBackdeleteLast||txtFourResultFromSticky();
+  var live=(result&&result.pages||[]).filter(function(p){return Number(p.index)===item.pageNo;})[0];
+  if(!live||Number(live.count)!==item.count||String(live.attackText||"")!==item.text){
+    txtFourThrowStop("第 "+item.pageNo+" 页网页内容已变化（原 "+item.count+" 组），已停止，请重新开始。","err");
+    return;
+  }
+  var amountNow=__txtFourThrowBatch.amount;
+  var payload=item.text+amountNow;
+  var firstPage=__txtFourThrowBatch.pages[0].pageNo;
+  var left=__txtFourThrowBatch.pages.length-__txtFourThrowBatch.cursor-1;
+  function afterCopy(){
+    __txtFourThrowBatch.cursor+=1;
+    if(__txtFourThrowBatch.cursor>=__txtFourThrowBatch.pages.length){
+      txtFourThrowStop(
+        "已扔第 "+item.pageNo+" 页："+item.count+" 组（网页实数）+金额 "+amountNow+"。分批扔完成：第 "+firstPage+"–"+item.pageNo+" 页。",
+        "ok"
+      );
+      return;
+    }
+    txtFourThrowSyncButtons();
+    txtFourThrowSetStatus(
+      "已扔第 "+item.pageNo+" 页："+item.count+" 组（网页实数）+金额 "+amountNow+"。粘到投注站后点「已粘好 · 继续下一页」。还剩 "+left+" 页。",
+      "ok"
+    );
+  }
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(payload).then(afterCopy).catch(function(){
+      txtFourThrowStop("复制失败，请手动复制。","err");
+    });
+    return;
+  }
+  txtFourThrowStop("当前环境不支持剪贴板。","err");
+}
+function txtFourThrowStart(){
+  try{
+    if(__txtFourThrowBatch.active){
+      txtFourThrowSetStatus("分批扔进行中，先点停止或继续。","err");
+      return;
+    }
+    var amount=String(($("txtFourThrowAmount")&&$("txtFourThrowAmount").value)||"").trim();
+    if(!amount)throw new Error("请先输入金额（机器人不脑补金额）。");
+    if(!/^\d+(\.\d+)?$/.test(amount))throw new Error("金额只能是数字，例如 1 或 0.2。");
+    var from=($("txtFourThrowFrom")&&$("txtFourThrowFrom").value)||10;
+    var to=($("txtFourThrowTo")&&$("txtFourThrowTo").value)||11;
+    var plan=txtFourThrowBuildPlan(from,to);
+    var cfg=txtFourThrowSaveUrls();
+    var slot=String(cfg.active||"1");
+    var url=String((cfg.urls&&cfg.urls[slot])||"").trim();
+    var openTip=txtFourThrowOpenUrlIfAny(url,slot);
+    __txtFourThrowBatch.active=true;
+    __txtFourThrowBatch.pages=plan;
+    __txtFourThrowBatch.cursor=0;
+    __txtFourThrowBatch.amount=amount;
+    __txtFourThrowBatch.urlSlot=slot;
+    __txtFourThrowBatch.url=url;
+    txtFourThrowSyncButtons();
+    var summary=plan.map(function(p){return "第"+p.pageNo+"页"+p.count+"组";}).join("、");
+    txtFourThrowSetStatus("开始分批扔（照网页实数）："+summary+"；金额 "+amount+"；"+openTip,"ok");
+    txtFourThrowCurrentPage();
+  }catch(err){
+    txtFourThrowStop(String(err&&err.message||err),"err");
+  }
+}
+function txtFourThrowNext(){
+  if(!__txtFourThrowBatch.active){
+    txtFourThrowSetStatus("没有进行中的分批扔。","err");
+    return;
+  }
+  txtFourThrowCurrentPage();
+}
 function txtFourBackdeleteCopyAll(){
   var result=window.__penta5FourBackdeleteLast||null;
   if(!result||!Array.isArray(result.pages)||!result.pages.length){
@@ -4314,16 +4693,33 @@ function txtFourBackdeleteRun(opts){
     return Promise.resolve(Object.assign({ok:true,stickyRefresh:true},stickyResult||{}));
   }
   var limit=txtFourHistoryLimitSave(txtFourHistoryLimitGet());
+  var attackText=txtFourAttackTextResolve();
+  if(!attackText){
+    if(content)setHtml(content,'<div style="color:#b91c1c;font-weight:800;">缺少四定攻击语：请粘贴攻击语，或点「填入框架攻击语」后再回删。禁止从全集糊弄。</div>'+txtFourBackdeleteActionButtonsHtml(hasSticky));
+    txtSetStatus("四定回删已停止：缺少攻击语。");
+    return Promise.resolve({ok:false,code:"FOUR_ATTACK_MISSING"});
+  }
+  var candidatePool=null;
+  try{
+    candidatePool=txtFourGenerateCandidatesFromAttack(attackText);
+  }catch(errPool){
+    var poolMsg=errPool&&errPool.message?errPool.message:String(errPool||"攻击语展开失败");
+    if(content)setHtml(content,'<div style="color:#b91c1c;font-weight:800;">'+txtEsc(poolMsg)+'</div>'+txtFourBackdeleteActionButtonsHtml(hasSticky));
+    txtSetStatus("四定回删已停止："+poolMsg);
+    return Promise.resolve({ok:false,error:poolMsg,code:errPool&&errPool.code||"FOUR_ATTACK_PARSE"});
+  }
+  var inputEl=$("txtFourAttackInput");
+  if(inputEl&&!String(inputEl.value||"").trim())inputEl.value=attackText;
   txtFourBackdeleteBusy=true;
   window.__penta5FourBackdeleteLast=null;
   window.__penta5FourBackdeleteRenderedSticky=false;
-  if(content)setHtml(content,'<div style="margin-top:6px;color:#0f766e;font-weight:800;">正在直查 RDS 近 '+limit+' 期唯一旧码并回删…</div>');
-  txtSetStatus("四定回删：正在直查 RDS 近 "+limit+" 期唯一旧码…");
+  if(content)setHtml(content,'<div style="margin-top:6px;color:#0f766e;font-weight:800;">攻击语已展开 '+candidatePool.count+' 组；正在直查 RDS 近 '+limit+' 期唯一旧码并真删…</div>');
+  txtSetStatus("四定回删：攻击语 "+candidatePool.count+" 组 → 直查 RDS 近 "+limit+" 期唯一旧码…");
   return txtFourBackdeleteFetch1200(period,limit).then(function(hist){
     if(txtPositionLatestPeriod(window.__penta5TxtState||{})!==period){
       throw txtPositionMakeError("四定回删执行中开奖期号已变化，本次结果作废","PERIOD_CHANGED",false);
     }
-    var result=txtFourBackdeleteCompute(hist,period,limit);
+    var result=txtFourBackdeleteCompute(hist,period,limit,candidatePool);
     window.__penta5FourBackdeleteLast=result;
     txtFourStickySaveFromResult(result);
     // 全量重生成不清空历史命中账本；只要清粘码换新码。若要全清请点「清缓存」。
@@ -4335,7 +4731,7 @@ function txtFourBackdeleteRun(opts){
     return result;
   }).catch(function(err){
     var message=err&&err.message?err.message:String(err||"未知错误");
-    txtFourBackdeleteRender(null,message+"。未发布替代结果，未截断、随机删或补码。");
+    txtFourBackdeleteRender(null,message+"。未发布替代结果，未随机删或补码、未数组截断。");
     txtFourVerifyRefresh(window.__penta5TxtState||{});
     txtSetStatus("四定回删已停止："+message);
     return {ok:false,error:message,code:err&&err.code||"FOUR_BACKDELETE_FAILED",retryable:err&&err.retryable===true};
@@ -4344,12 +4740,13 @@ function txtFourBackdeleteRun(opts){
   });
 }
 window.Penta5PanelFourBackdelete={
-  version:"four-history100-1200-sticky-stats-clear-v1",
-  rules:{positions:[0,1,2,3],historyMin:100,historyMax:1200,pageSize:500,newestFirst:true,samePositionSameCode:true,hitDeleteOnly:true,noTruncate:true,sticky:true,pageSeal:"各",historyApi:"/four-backdelete-opened",verify:"latest-after-draw",verifyStore:"localStorage-sticky-stats"},
+  version:"four-attack-pool-real-oldcode-v1",
+  rules:{positions:[0,1,2,3],historyMin:100,historyMax:1200,pageSize:500,newestFirst:true,samePositionSameCode:true,hitDeleteOnly:true,allowWindowTruncate:true,requireAttackPool:true,noUniversePool:true,noArrayTruncate:true,sticky:true,pageSeal:"各",historyApi:"/four-backdelete-opened",verify:"latest-after-draw",verifyStore:"localStorage-sticky-stats-v2"},
   run:function(expectedPeriod){return txtFourBackdeleteRun({expectedPeriod:expectedPeriod,force:true});},
   refresh:function(expectedPeriod){return txtFourBackdeleteRun({expectedPeriod:expectedPeriod,force:false});},
   clearCache:function(){return txtFourCacheClear();},
   verify:function(){return txtFourVerifyRefresh(window.__penta5TxtState||{});},
+  fillAttack:function(){return txtFourAttackFillFromFramework();},
   getLastResult:function(){return window.__penta5FourBackdeleteLast||null;},
   getVerifySnapshot:function(){return txtFourVerifyLoad();},
   getSticky:function(){return txtFourStickyLoad();},
@@ -6039,13 +6436,18 @@ function initTxtConverter(){
     var positionRunDetail=target.getAttribute("data-txt-position-run-detail");
     var customTwoGenerate=target.getAttribute("data-txt-custom-two-generate");
     var syncModelsTxt=target.getAttribute("data-sync-models-txt");
-    var fourBtn=target.closest?target.closest("[data-txt-four-backdelete-run],[data-txt-four-backdelete-copy-page],[data-txt-four-backdelete-copy-all],[data-txt-four-cache-clear],[data-txt-four-history-limit-save]"):null;
+    var fourBtn=target.closest?target.closest("[data-txt-four-backdelete-run],[data-txt-four-backdelete-copy-page],[data-txt-four-backdelete-copy-all],[data-txt-four-cache-clear],[data-txt-four-history-limit-save],[data-txt-four-attack-fill],[data-txt-four-throw-start],[data-txt-four-throw-next],[data-txt-four-throw-stop],[data-txt-four-throw-url-save]"):null;
     var fourBackdeleteRun=fourBtn?fourBtn.getAttribute("data-txt-four-backdelete-run"):null;
     var fourBackdeleteForce=fourBtn?fourBtn.getAttribute("data-txt-four-backdelete-force"):null;
     var fourBackdeleteCopyPage=fourBtn?fourBtn.getAttribute("data-txt-four-backdelete-copy-page"):null;
     var fourBackdeleteCopyAll=fourBtn?fourBtn.getAttribute("data-txt-four-backdelete-copy-all"):null;
     var fourCacheClear=fourBtn?fourBtn.getAttribute("data-txt-four-cache-clear"):null;
+    var fourAttackFill=fourBtn?fourBtn.getAttribute("data-txt-four-attack-fill"):null;
     var fourHistoryLimitSave=fourBtn?fourBtn.getAttribute("data-txt-four-history-limit-save"):null;
+    var fourThrowStart=fourBtn?fourBtn.getAttribute("data-txt-four-throw-start"):null;
+    var fourThrowNext=fourBtn?fourBtn.getAttribute("data-txt-four-throw-next"):null;
+    var fourThrowStop=fourBtn?fourBtn.getAttribute("data-txt-four-throw-stop"):null;
+    var fourThrowUrlSave=fourBtn?fourBtn.getAttribute("data-txt-four-throw-url-save"):null;
     if(downloadKey||downloadInstruction||positionDownload){
       if(event&&event.preventDefault)event.preventDefault();
       if(event&&event.stopPropagation)event.stopPropagation();
@@ -6077,10 +6479,15 @@ function initTxtConverter(){
       var savedLimit=txtFourHistoryLimitSave(txtFourHistoryLimitGet());
       txtSetStatus("已记住回删期数 "+savedLimit+"（下次全量重生成生效）。");
     }
+    if(fourAttackFill)txtFourAttackFillFromFramework();
     if(fourCacheClear)txtFourCacheClear();
     if(fourBackdeleteRun)txtFourBackdeleteRun({force:fourBackdeleteForce==="1"});
     if(fourBackdeleteCopyPage)txtFourBackdeleteCopyPage(fourBackdeleteCopyPage);
     if(fourBackdeleteCopyAll)txtFourBackdeleteCopyAll();
+    if(fourThrowUrlSave)txtFourThrowSaveUrls();
+    if(fourThrowStart)txtFourThrowStart();
+    if(fourThrowNext)txtFourThrowNext();
+    if(fourThrowStop)txtFourThrowStop("已停止分批扔。","ok");
     if(syncModelsTxt){
       var syncedText=syncModelsToTxtTarget(lastModelResults);
       txtSetStatus(syncedText?"已同步最新模型到 TXT 靶场。":"当前没有可同步的模型结果。");
@@ -6969,7 +7376,7 @@ safeOrderRows();
   var practiceLastCelebrationKey = "";
   
   var dailyStreakReportCache = {};
-  var PANEL_UI_VERSION = "20260803_four_backdelete_sticky_clear_v1";
+  var PANEL_UI_VERSION = "20260803_four_attack_pool_real_oldcode_v1";
 var PANEL_SNAPSHOT_VERSIONS = {
     autoTop6:"backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit",
     recommend2:"backend-recommend2-snapshot-v16-formal-anytwo4-pool02468-label-v2",
