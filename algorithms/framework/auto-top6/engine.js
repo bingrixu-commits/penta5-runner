@@ -1,9 +1,34 @@
 "use strict";
 /** Shared L1 framework item pipeline + autoTop6/killFramework builders (extracted). */
+const path = require("path");
+const fs = require("fs");
 const kit = require("../../_shared/formula_kit");
 const { DIGIT_POOL, MODEL_LONG_WINDOW, MODEL_STABLE_WINDOW, MODEL_LOW_HIT_RATE, getModelStat, modelPerformanceSummary, stableWindowScore, wilsonLowerRate, rateVariance } = kit;
 const extraFormula = require("../../extra-kills/formula");
 const heweiFormula = require("../../hewei/formula");
+
+// hardlink 可能从 algorithms/auto-top6 或 algorithms/framework/auto-top6 加载
+const autoTop6MilpSelect = (function loadAutoTop6MilpSelect() {
+  const candidates = [
+    path.join(__dirname, "..", "auto_top6_milp_select.js"),
+    path.join(__dirname, "..", "..", "auto_top6_milp_select.js")
+  ];
+  for (let i = 0; i < candidates.length; i += 1) {
+    if (fs.existsSync(candidates[i])) return require(candidates[i]);
+  }
+  return null;
+})();
+
+const autoTop6MilpBridge = (function loadAutoTop6MilpBridge() {
+  const candidates = [
+    path.join(__dirname, "..", "auto_top6_milp_bridge.js"),
+    path.join(__dirname, "..", "..", "auto_top6_milp_bridge.js")
+  ];
+  for (let i = 0; i < candidates.length; i += 1) {
+    if (fs.existsSync(candidates[i])) return require(candidates[i]);
+  }
+  return null;
+})();
 
 const MODEL_NEAR_WINDOW = Number(process.env.MODEL_NEAR_WINDOW || 40);
 const ANY_TWO_HEWEI_SOURCE_DIGITS = "02468";
@@ -44,7 +69,7 @@ const AUTO_TOP6_EXTRAS = [
   { key: "anyThreeHeweiHit", label: "三数合尾宽命中（高基线参考）", mode: "hit", kind: "heweiTails", scoreClass: "wide-hit-baseline" }
 ];
 
-const AUTO_TOP6_SNAPSHOT_VERSION = "backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit";
+const AUTO_TOP6_SNAPSHOT_VERSION = "backend-auto-top6-snapshot-v11-milp-formal6";
 const RECOMMEND2_SNAPSHOT_VERSION = "backend-recommend2-snapshot-v16-formal-anytwo4-pool02468-label-v2";
 const KILL_FRAMEWORK_SNAPSHOT_VERSION = "backend-kill-framework-snapshot-v8-formal-anytwo4-pool02468-label-v2";
 const KILL_FRAMEWORK_ITEM_COUNT = 8;
@@ -784,7 +809,7 @@ function autoTop6SnapshotIsComplete(snapshot) {
   );
 }
 
-function buildAutoTop6Snapshot(prediction, history) {
+async function buildAutoTop6Snapshot(prediction, history) {
   const state = getState();
   const safeHistory = Array.isArray(history) ? history.filter((record) => record && Array.isArray(record.numbers)) : [];
   const evaluatedCount = Array.isArray(state && state.predictions) ? state.predictions.filter((item) => item && item.evaluated && item.evaluation).length : safeHistory.length;
@@ -886,18 +911,103 @@ function buildAutoTop6Snapshot(prediction, history) {
   let before = chosen.length;
   const formalPositionHealthy = healthy.filter((item) => item.kind === "position" && item.side !== "backup");
   const formalPositionPool = positionPool.filter((item) => item.side !== "backup");
-  while (chosen.length - before < 3 && pickBest(formalPositionHealthy.slice().sort(order), 2, false)) {}
-  while (chosen.length - before < 3 && pickBest(formalPositionPool.slice().sort(order), 2, false)) {
-    const item = chosen[chosen.length - 1];
-    item.repairedIntoTop = true;
-    repairReport.push(`定位池安全阈值内不足，明确加入观察项：${item.name} ${item.code}。`);
+  const formalHeweiHealthy = healthy.filter((item) => item.kind === "hewei" && item.side !== "backup");
+  const formalHeweiPool = heweiPool.filter((item) => item.side !== "backup");
+  const milpMode = String(process.env.PENTA5_AUTOTOP6_MILP || "1").trim().toLowerCase();
+  const milpEnabled = milpMode !== "0" && !!autoTop6MilpSelect;
+  let milpUsed = false;
+  let milpHeweis = [];
+
+  if (milpEnabled) {
+    function setComboScore(items) {
+      const stats = comboStats(items);
+      const full = stats.rate === null ? -1 : Number(stats.rate || 0);
+      const near = stats.nearRate === null ? full : Number(stats.nearRate || 0);
+      const avg = stats.avgRate === null ? 0 : Number(stats.avgRate || 0);
+      const stable = (items || []).reduce((sum, item) => sum + Number(item.stableScore || 0), 0);
+      return full * 10000 + near * 100 + avg + stable / 100;
+    }
+    const milpAttempts = [
+      { positionPool: formalPositionHealthy, heweiPool: formalHeweiHealthy, label: "healthy" },
+      { positionPool: formalPositionPool, heweiPool: formalHeweiPool, label: "full" }
+    ];
+    for (let mi = 0; mi < milpAttempts.length; mi += 1) {
+      const attempt = milpAttempts[mi];
+      if ((attempt.positionPool || []).length < 3 || (attempt.heweiPool || []).length < 2) continue;
+      let milp = null;
+      if (milpMode === "cuopt" && autoTop6MilpBridge && typeof autoTop6MilpBridge.selectFormalPositionHeweiAsync === "function") {
+        const py = await autoTop6MilpBridge.selectFormalPositionHeweiAsync({
+          positionPool: attempt.positionPool,
+          heweiPool: attempt.heweiPool,
+          positionCount: 3,
+          heweiCount: 2,
+          maxPerModel: 2
+        });
+        if (py && py.ok && py.result && py.result.solver === "cuopt" && autoTop6MilpSelect.itemsFromIds) {
+          const items = autoTop6MilpSelect.itemsFromIds(
+            attempt.positionPool,
+            attempt.heweiPool,
+            py.result.selectedIds
+          );
+          if (items.length === 5) {
+            milp = {
+              ok: true,
+              items,
+              meta: Object.assign({}, py.result.meta || {}, { path: "cuopt", solver: "cuopt" })
+            };
+          }
+        }
+        if (!milp || milp.ok !== true) {
+          repairReport.push(
+            `autoTop6 cuOpt 未采用（${(py && py.error) || "fallback"}），回退 JS 穷举`
+          );
+        }
+      }
+      if (!milp || milp.ok !== true) {
+        milp = autoTop6MilpSelect.selectFormalPositionHewei({
+          positionPool: attempt.positionPool,
+          heweiPool: attempt.heweiPool,
+          positionCount: 3,
+          heweiCount: 2,
+          maxPerModel: 2,
+          comboScore: setComboScore
+        });
+      }
+      if (!milp || milp.ok !== true || !Array.isArray(milp.items) || milp.items.length !== 5) continue;
+      const milpPositions = milp.items.filter((item) => item && item.kind === "position");
+      milpHeweis = milp.items.filter((item) => item && item.kind === "hewei");
+      if (milpPositions.length !== 3 || milpHeweis.length !== 2) continue;
+      milpPositions.forEach((item) => {
+        const id = autoTop6ItemId(item);
+        if (used.has(id)) return;
+        if (attempt.label !== "healthy" && !item.stabilityGate) item.repairedIntoTop = true;
+        used.add(id);
+        chosen.push(item);
+      });
+      milpUsed = true;
+      repairReport.push(
+        `autoTop6 MILP 选型：${attempt.label}/${(milp.meta && milp.meta.digitMode) || "n/a"}，solver=${(milp.meta && milp.meta.solver) || (milp.meta && milp.meta.path) || "enumerate"}，enumerated=${(milp.meta && milp.meta.enumerated) || 0}`
+      );
+      break;
+    }
   }
-  while (chosen.length - before < 3 && pickBest(formalPositionPool.slice().sort(order), 2, true)) {
-    const item = chosen[chosen.length - 1];
-    item.repairedIntoTop = true;
-    repairReport.push(`定位池无错开同码替代，被迫保留同码：${item.name} ${item.code}。`);
+
+  if (!milpUsed) {
+    while (chosen.length - before < 3 && pickBest(formalPositionHealthy.slice().sort(order), 2, false)) {}
+    while (chosen.length - before < 3 && pickBest(formalPositionPool.slice().sort(order), 2, false)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+      repairReport.push(`定位池安全阈值内不足，明确加入观察项：${item.name} ${item.code}。`);
+    }
+    while (chosen.length - before < 3 && pickBest(formalPositionPool.slice().sort(order), 2, true)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+      repairReport.push(`定位池无错开同码替代，被迫保留同码：${item.name} ${item.code}。`);
+    }
   }
-  if (chosen.length - before < 3) repairReport.push(`定位池结构不完整：需要3项正式排除（不含替补），实际${chosen.length - before}项。`);
+  if (chosen.filter((item) => item.kind === "position" && item.side !== "backup").length < 3) {
+    repairReport.push(`定位池结构不完整：需要3项正式排除（不含替补），实际${chosen.filter((item) => item.kind === "position" && item.side !== "backup").length}项。`);
+  }
 
   const reversePool = autoTop6ReverseShapeCandidatesFromPositions(chosen.filter((item) => item.kind === "position"), safeHistory)
     .map((item) => autoTop6DecorateItem(safeHistory, item, evaluatedCount))
@@ -923,20 +1033,29 @@ function buildAutoTop6Snapshot(prediction, history) {
   }
 
   before = chosen.length;
-  const formalHeweiHealthy = healthy.filter((item) => item.kind === "hewei" && item.side !== "backup");
-  const formalHeweiPool = heweiPool.filter((item) => item.side !== "backup");
-  while (chosen.length - before < 2 && pickBest(formalHeweiHealthy.slice().sort(order), 2, false)) {}
-  while (chosen.length - before < 2 && pickBest(formalHeweiPool.slice().sort(order), 2, false)) {
-    const item = chosen[chosen.length - 1];
-    item.repairedIntoTop = true;
-    repairReport.push(`合尾池安全阈值内不足，明确加入观察项：${item.name} ${item.code}。`);
+  if (milpUsed) {
+    milpHeweis.forEach((item) => {
+      const id = autoTop6ItemId(item);
+      if (used.has(id)) return;
+      used.add(id);
+      chosen.push(item);
+    });
+  } else {
+    while (chosen.length - before < 2 && pickBest(formalHeweiHealthy.slice().sort(order), 2, false)) {}
+    while (chosen.length - before < 2 && pickBest(formalHeweiPool.slice().sort(order), 2, false)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+      repairReport.push(`合尾池安全阈值内不足，明确加入观察项：${item.name} ${item.code}。`);
+    }
+    while (chosen.length - before < 2 && pickBest(formalHeweiPool.slice().sort(order), 2, true)) {
+      const item = chosen[chosen.length - 1];
+      item.repairedIntoTop = true;
+      repairReport.push(`合尾与定位同码相碰无替代，被迫保留同码：${item.name} ${item.code}。`);
+    }
   }
-  while (chosen.length - before < 2 && pickBest(formalHeweiPool.slice().sort(order), 2, true)) {
-    const item = chosen[chosen.length - 1];
-    item.repairedIntoTop = true;
-    repairReport.push(`合尾与定位同码相碰无替代，被迫保留同码：${item.name} ${item.code}。`);
+  if (chosen.filter((item) => item.kind === "hewei" && item.side !== "backup").length < 2) {
+    repairReport.push(`合尾池结构不完整：需要2项正式排除（不含替补），实际${chosen.filter((item) => item.kind === "hewei" && item.side !== "backup").length}项。`);
   }
-  if (chosen.length - before < 2) repairReport.push(`合尾池结构不完整：需要2项正式排除（不含替补），实际${chosen.length - before}项。`);
 
   // 第6项固定为两数共现避开，绝不写成含对数；也不用对数避开1/2/3组冒充
   const cooccur = candidates
@@ -984,7 +1103,8 @@ function buildAutoTop6Snapshot(prediction, history) {
       heweiCount: 2,
       pairHitCount: 1,
       reverseShapeCount: chosen.some((item) => item.kind === "derivedReverseShape") ? 1 : 0,
-      semantics: "formal-6=3pos+2hewei+1cooccur-avoid; reverse-shape=backup-reference-only"
+      semantics: "formal-6=3pos+2hewei+1cooccur-avoid; reverse-shape=backup-reference-only",
+      selectPath: milpUsed ? "milp-exact" : "greedy"
     },
     items: chosen.slice(0, targetItemCount).map((item, index) => ({
       rank: index + 1,
@@ -1020,10 +1140,10 @@ function buildAutoTop6Snapshot(prediction, history) {
   };
 }
 
-function ensurePredictionAutoTop6Snapshot(prediction, history) {
+async function ensurePredictionAutoTop6Snapshot(prediction, history) {
   if (!prediction || typeof prediction !== "object") return null;
   if (autoTop6SnapshotIsComplete(prediction.autoTop6)) return prediction.autoTop6;
-  prediction.autoTop6 = buildAutoTop6Snapshot(prediction, history);
+  prediction.autoTop6 = await buildAutoTop6Snapshot(prediction, history);
   prediction.autoTop6Items = prediction.autoTop6.items;
   prediction.autoTop6RepairReport = prediction.autoTop6.repairReport;
   if (!prediction.recommendationMeta || typeof prediction.recommendationMeta !== "object") prediction.recommendationMeta = {};

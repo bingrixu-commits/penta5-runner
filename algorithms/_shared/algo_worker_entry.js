@@ -15,11 +15,14 @@ const ALGO_LOADERS = Object.freeze({
   "stable-math": () => require("../stable-math"),
   "extra-kills": () => require("../extra-kills"),
   "four-pos-exclude": () => require("../four-pos-exclude"),
+  "flex-dual-pos-hewei": () => require("../flex-dual-pos-hewei"),
+  "dual-pos-total-hewei": () => require("../dual-pos-total-hewei"),
   "auto-top6": () => require("../auto-top6"),
   recommend2: () => require("../recommend2"),
   "kill-framework": () => require("../kill-framework"),
   "three-duishu": () => require("../three-duishu"),
-  "four-ding-framework": () => require("../four-ding-framework")
+  "four-ding-framework": () => require("../four-ding-framework"),
+  "brother-number-framework": () => require("../brother-number-framework")
 });
 
 

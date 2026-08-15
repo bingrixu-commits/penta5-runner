@@ -1,14 +1,24 @@
 {
   "active": "1",
+  "amount": "1.2",
+  "password": "",
   "urls": {
-    "1": "",
+    "1": "http://973046.15933.cn/c?u=2079242377213566978&sum=a92f2249cee07f3bd0566aef8c2db124",
     "2": "",
     "3": ""
   },
   "labels": {
-    "1": "格式1"http://973046.15933.cn/c?u=2079242377213566978&sum=a92f2249cee07f3bd0566aef8c2db124
+    "1": "格式1",
     "2": "格式2",
     "3": "格式3"
   },
-  "note": "三个网址格式占位，请自行填入真实 URL；空着就不自动开页，只按网页组数分批进剪贴板。"
+  "note": "amount 填金额；password 一般留空，有密码框才填；urls 填三个格式网址。都不脑补。",
+  "forwardPlan": {
+    "startPeriod": "20260810235",
+    "mode": "continue",
+    "keepCodes": true,
+    "autoRegenerate": false,
+    "resetAt": "2026-08-10T11:32:38.507Z",
+    "note": "复位后：下一期启动转发；默认继续转发；号码不变（跨期只结算删命中码）"
+  }
 }

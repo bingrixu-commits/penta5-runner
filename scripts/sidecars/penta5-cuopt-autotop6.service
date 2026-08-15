@@ -1,0 +1,20 @@
+[Unit]
+Description=Penta5 autoTop6 cuOpt HTTP (:8788)
+After=network-online.target nvidia-persistenced.service
+Wants=network-online.target
+Requires=nvidia-persistenced.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/penta5-cuopt
+Environment=PENTA5_CUOPT_BIND=0.0.0.0
+Environment=PENTA5_CUOPT_PORT=8788
+ExecStart=/opt/penta5-cuopt/venv/bin/python3 /opt/penta5-cuopt/cuopt_autotop6_server.py
+Restart=always
+RestartSec=3
+StandardOutput=append:/opt/penta5-cuopt/server.log
+StandardError=append:/opt/penta5-cuopt/server.log
+
+[Install]
+WantedBy=multi-user.target

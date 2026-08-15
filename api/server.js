@@ -89,7 +89,7 @@ async function handleHealth(_req, res) {
 
 async function handleHistory(req, res) {
   const q = parseQuery(req.url || "");
-  const limit = Math.min(Math.max(Number(q.limit || 100) || 100, 1), 5000);
+  const limit = Math.min(Math.max(Number(q.limit || 100) || 100, 1), 8000);
   const offset = Math.max(Number(q.offset || 0) || 0, 0);
   const [countRows] = await pool.query("SELECT COUNT(*) AS c FROM official_draws");
   const [rows] = await pool.query(
@@ -111,16 +111,20 @@ async function handleHistory(req, res) {
 /** 四定回删专用：直查 RDS，只返回近 N 期唯一四位旧码，不走 runner 内存历史缓存。 */
 async function handleFourBackdeleteOpened(req, res) {
   const q = parseQuery(req.url || "");
-  const limit = Math.min(Math.max(Number(q.limit || 1200) || 1200, 1), 1200);
-  // 与面板/attack_txt 一致：低于 100 期才停；100–limit 之间按实际期数截断继续真删
+  // 回删期数可手填（默认 1200，范围 1–5000）；低于 100 期才停；不足请求期数按实际继续，禁止静默截断凑数
+  const limit = Math.min(Math.max(Number(q.limit || 1200) || 1200, 1), 5000);
   const historyMin = 100;
-  const [rows] = await pool.query(
-    `SELECT period, open_time, ball1, ball2, ball3, ball4
-     FROM official_draws
-     ORDER BY period DESC
-     LIMIT ?`,
-    [limit]
-  );
+  const [[countRows], [rows]] = await Promise.all([
+    pool.query("SELECT COUNT(*) AS c FROM official_draws"),
+    pool.query(
+      `SELECT period, open_time, ball1, ball2, ball3, ball4
+       FROM official_draws
+       ORDER BY period DESC
+       LIMIT ?`,
+      [limit]
+    ),
+  ]);
+  const drawCount = Number(countRows && countRows[0] && countRows[0].c || 0);
   const scanned = Array.isArray(rows) ? rows.length : 0;
   if (!Array.isArray(rows) || scanned < historyMin) {
     sendJson(res, 503, {
@@ -128,13 +132,30 @@ async function handleFourBackdeleteOpened(req, res) {
       error: "四定回删：RDS 不足 " + historyMin + " 期（当前 " + scanned + "），无法回删",
       scanned,
       limit,
+      drawCount,
       historyMin,
-      truncated: true,
+      truncated: false,
+      windowShort: true,
       source: "rds-direct",
     });
     return;
   }
-  const truncated = scanned < limit;
+  // 库内够却 LIMIT 没给满：当半截失败，禁止客户端当短窗继续
+  if (scanned < limit && drawCount >= limit) {
+    sendJson(res, 503, {
+      ok: false,
+      error: "四定回删：历史半截（要 " + limit + "，只给 " + scanned + "，库内 " + drawCount + "），禁止截断扫码",
+      scanned,
+      limit,
+      drawCount,
+      truncated: true,
+      windowShort: true,
+      source: "rds-direct",
+    });
+    return;
+  }
+  const truncated = false;
+  const windowShort = scanned < limit;
   const seenPeriod = Object.create(null);
   const seenCode = Object.create(null);
   const opened = [];
@@ -167,19 +188,27 @@ async function handleFourBackdeleteOpened(req, res) {
       opened.push(code);
     }
   }
-  sendJson(res, 200, {
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    Pragma: "no-cache",
+  });
+  res.end(JSON.stringify({
     ok: true,
     source: "rds-direct",
     cache: false,
+    live: true,
     limit,
     scanned,
+    drawCount,
     truncated,
+    windowShort,
     openedUnique: opened.length,
     latestPeriod: String(rows[0].period || ""),
     oldestPeriod: String(rows[rows.length - 1].period || ""),
     opened,
     ts: new Date().toISOString(),
-  });
+  }));
 }
 
 async function handleState(_req, res) {

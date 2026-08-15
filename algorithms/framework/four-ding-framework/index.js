@@ -6,6 +6,6 @@ module.exports = createSnapshotAlgorithm({
   label: "四定框架",
   field: "fourDingFramework",
   ensureKey: "ensurePredictionFourDingFrameworkSnapshot",
-  deps: ["history", "prediction", "extra-kills", "stable-math"],
+  deps: ["history", "prediction", "extra-kills", "stable-math", "position-kills", "hewei"],
   formulaPath: path.join(__dirname, "formula.js")
 });

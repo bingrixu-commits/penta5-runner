@@ -3,7 +3,8 @@
 /** Shared scoring / model-stat helpers used by isolated algorithm formulas. */
 
 const DIGIT_POOL = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
-const MODEL_LONG_WINDOW = Number(process.env.MODEL_LONG_WINDOW || process.env.MAX_HISTORY || 1000);
+// 与 runner MAX_HISTORY=5000 对齐：单定位/合尾长窗默认可吃满 RDS 共享历史（几千期）
+const MODEL_LONG_WINDOW = Number(process.env.MODEL_LONG_WINDOW || process.env.MAX_HISTORY || 5000);
 const MODEL_STABLE_WINDOW = Number(process.env.MODEL_STABLE_WINDOW || 1000);
 const MODEL_LOW_HIT_RATE = Number(process.env.MODEL_LOW_HIT_RATE || 85);
 const MODEL_MIN_SAMPLE = Number(process.env.MODEL_MIN_SAMPLE || 8);
@@ -119,6 +120,7 @@ function modelPerformanceSummary(performance, key) {
 
 function stableWindowStage(total) {
   const n = Number(total || 0);
+  if (n >= MODEL_LONG_WINDOW) return "stable-long";
   if (n >= MODEL_STABLE_WINDOW) return "stable-1000";
   if (n >= 120) return "watch-120-1000";
   return "observe-under-120";
@@ -144,7 +146,10 @@ function stableWindowScore(r30, r60, r120, r300, rLong, missPenalty) {
   const maxMissLong = Number((rLong && rLong.maxMissStreak) || (rLong && rLong.missStreak) || 0);
   const longMiss = Math.max(maxMiss300, maxMissLong);
   let score;
-  if (stage === "stable-1000") {
+  if (stage === "stable-long") {
+    // 已吃满几千期：长窗主导，短窗只作近期风险修正
+    score = v30 * 0.03 + v60 * 0.05 + v120 * 0.12 + v300 * 0.25 + vLong * 0.55;
+  } else if (stage === "stable-1000") {
     score = v30 * 0.04 + v60 * 0.08 + v120 * 0.18 + v300 * 0.35 + vLong * 0.35;
   } else if (stage === "watch-120-1000") {
     score = v30 * 0.08 + v60 * 0.16 + v120 * 0.46 + v300 * 0.30;

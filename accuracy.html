@@ -87,10 +87,11 @@
     autoTop6: "自动Top6",
     recommend2: "推荐2",
     killFramework: "杀框",
+    fourDingFramework: "四定框架",
+    brotherNumberFramework: "取二兄弟框架",
     threeDuishu: "三对数",
-    compactAttack: "紧凑攻",
-    threeDingTwo: "三定二",
-    threeDingOne: "三定一",
+    sixPeiSix: "六配六",
+    fivePeiFive: "五配五四定",
     twoDigitAvoidAllThree: "对数避开(三组)"
   };
 
@@ -104,6 +105,8 @@
     ["bai", "百位双码", 80],
     ["shi", "十位双码", 80],
     ["threeDuishu", "三对数", null],
+    ["sixPeiSix", "六配六", null],
+    ["fivePeiFive", "五配五四定", null],
     ["totalHewei", "总合尾", null],
     ["threeFour", "三合尾避开", null]
   ];
@@ -192,6 +195,19 @@
 
     CORE_SNAP_KEYS.forEach(function(pair){
       var key = pair[0];
+      if (key === "fivePeiFive" || key === "sixPeiSix") {
+        var snapP = (state.currentPrediction || {})[key] || {};
+        var totalP = Number(snapP.walkForwardTotal || 0);
+        items[key] = {
+          label: pair[1],
+          rate: totalP >= 120 ? num(snapP.walkForwardHitRate) : null,
+          total: totalP,
+          hit: snapP.walkForwardHit,
+          baseline: pair[2],
+          source: "walk-forward-120"
+        };
+        return;
+      }
       var d = null;
       if (key === "wanMain") d = detail(rd, "position.wan.main");
       else if (key === "qianMain") d = detail(rd, "position.qian.main");
@@ -348,15 +364,32 @@
     });
     var pt = detail(rd, "positionTotal");
     core += row(pt.label || "定位双码总击", pt.rate != null ? pt.rate : num(rates.positionTotal), pt.total, null, "今日");
-    [["threeDuishu", null],["totalHewei", null],["threeFour", null],["wanQianBai", null],["qianBaiShi", null],["wanQianBaiShi", null]].forEach(function(pair){
+    [["threeDuishu", null],["sixPeiSix", null],["fivePeiFive", null],["totalHewei", null],["threeFour", null],["wanQianBai", null],["qianBaiShi", null],["wanQianBaiShi", null]].forEach(function(pair){
+      if (pair[0] === "fivePeiFive" || pair[0] === "sixPeiSix") {
+        var snapP = (state.currentPrediction || {})[pair[0]] || {};
+        var totalP = Number(snapP.walkForwardTotal || 0);
+        var rateP = totalP >= 120 ? num(snapP.walkForwardHitRate) : null;
+        var noteP = totalP >= 120
+          ? "近120期逐期回放 开奖前选码"
+          : (totalP > 0 ? "回放未满120期，暂不报百分比" : "回放未完成，暂不报");
+        core += row(pair[0] === "fivePeiFive" ? "五配五四定" : "六配六", rateP, totalP, null, noteP);
+        return;
+      }
       var d = detail(rd, pair[0]);
-      core += row(d.label || pair[0], d.rate != null ? d.rate : num(rates[pair[0]]), d.total, pair[1], pair[0]==="threeDuishu"?"今日":"近窗累计");
+      core += row(d.label || pair[0], d.rate != null ? d.rate : num(rates[pair[0]]), d.total, pair[1], pair[0]==="threeDuishu"||pair[0]==="sixPeiSix"?"今日":"近窗累计");
     });
 
     var attack = "";
     Object.keys(truth).forEach(function(k){
       var t = truth[k] || {};
-      attack += row(MODEL_LABELS[k] || k, num(t.rate), t.total, 50, "近窗实绩");
+      var totalT = Number(t.total || 0);
+      var rateT = num(t.rate);
+      var noteT = "近窗实绩";
+      if (k === "fivePeiFive" || k === "sixPeiSix") {
+        noteT = "封存实绩 开奖后另计，不报作命中率";
+        rateT = null;
+      }
+      attack += row(MODEL_LABELS[k] || k, rateT, t.total, 50, noteT);
     });
     if (!attack) attack = "<tr><td colspan=\"4\" class=\"empty\">暂无 truthMetrics</td></tr>";
 

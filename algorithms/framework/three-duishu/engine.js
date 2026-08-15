@@ -370,27 +370,13 @@ function selectThreeDuishuPair(records, candidate, options) {
     const oldHold = Math.max(0, Number(lock.holdCount || 0));
     const samePeriod = String(lock.period || "") === period;
     if (old) {
-      if (oldHold < THREE_DUISHU_MIN_HOLD) {
-        selected = old;
-        selectionReason = "pair-min-hold-keep-current";
-      } else if (old.pair !== primary.pair) {
-        const scoreMargin = Number(primary.score || 0) - Number(old.score || 0);
-        if (scoreMargin >= THREE_DUISHU_SWITCH_MARGIN) {
-          selected = primary;
-          selectionReason = "pair-score-margin-switch";
-        } else if (oldHold >= THREE_DUISHU_PAIR_MAX_HOLD) {
-          selected = primary;
-          selectionReason = "pair-max-hold-switch-primary";
-        } else {
-          selected = old;
-          selectionReason = "pair-stable-keep-current";
-        }
-      } else if (oldHold >= THREE_DUISHU_PAIR_MAX_HOLD && scored.length > 1) {
-        selected = scored[1];
-        selectionReason = "pair-max-hold-rotate-runner-up";
+      const oldScore = Number(old.score || 0);
+      const primScore = Number(primary.score || 0);
+      selected = primary;
+      if (old.pair === primary.pair) {
+        selectionReason = "pair-vote-stick";
       } else {
-        selected = old;
-        selectionReason = "pair-current-primary";
+        selectionReason = primScore > oldScore ? "pair-vote-high-take" : "pair-vote-switch";
       }
     }
     holdCount = oldKey && selected.pair === oldKey
@@ -415,7 +401,7 @@ function selectThreeDuishuPair(records, candidate, options) {
     pair: selected.pair,
     pairCode: selected.pairCode,
     score: selected.score,
-    reason: `对子择一：${selected.pair}（每期复评，持有${holdCount}/${THREE_DUISHU_PAIR_MAX_HOLD}期）`,
+    reason: `对子择一：${selected.pair}（当期票第一，持有${holdCount}期）`,
     selectionReason,
     holdCount,
     minHold: THREE_DUISHU_MIN_HOLD,
@@ -1036,7 +1022,7 @@ function buildThreeDuishuSnapshot(prediction) {
     stableMathOverlap: Number(rec.stableMathOverlap || 0),
     selectedReason: rec.selectedReason || "",
     pairSelectionReason: pairSelection.reason || "",
-    pairSelectionMode: "min3-max8-periodic-rotation",
+    pairSelectionMode: "vote-follow-primary",
     pairSelectionHoldCount: Number(pairSelection.holdCount || 0),
     pairSelectionMaxHold: Number(pairSelection.maxHold || THREE_DUISHU_PAIR_MAX_HOLD),
     selectedLocked: !!rec.selectedLocked,

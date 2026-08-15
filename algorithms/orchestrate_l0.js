@@ -14,6 +14,8 @@ const heweiAlgo = require("./hewei");
 const stableMathAlgo = require("./stable-math");
 const extraKillsAlgo = require("./extra-kills");
 const fourPosExcludeAlgo = require("./four-pos-exclude");
+const flexDualPosHeweiAlgo = require("./flex-dual-pos-hewei");
+const dualPosTotalHeweiAlgo = require("./dual-pos-total-hewei");
 const algoWorkerHost = require("./_shared/algo_worker_host");
 
 const L0_ALGORITHMS = Object.freeze([
@@ -22,7 +24,9 @@ const L0_ALGORITHMS = Object.freeze([
   heweiAlgo,
   stableMathAlgo,
   extraKillsAlgo,
-  fourPosExcludeAlgo
+  fourPosExcludeAlgo,
+  flexDualPosHeweiAlgo,
+  dualPosTotalHeweiAlgo
 ]);
 
 let runnerHost = null;
@@ -118,6 +122,8 @@ function computeL0InProcess(ctx) {
     getStableMathExcludeDigitSet: context.getStableMathExcludeDigitSet
   }));
   const fourPosResult = fourPosExcludeAlgo.compute(context);
+  const flexDualResult = flexDualPosHeweiAlgo.compute(context);
+  const dualPosTotalResult = dualPosTotalHeweiAlgo.compute(context);
   return {
     hewei: heweiResult.payload,
     positionKills,
@@ -125,13 +131,17 @@ function computeL0InProcess(ctx) {
     stableMathFilter: stableResult.payload,
     extraKills: extraResult.payload,
     fourPosExclude: fourPosResult.payload,
+    flexDualPosHewei: flexDualResult.payload,
+    dualPosTotalHewei: dualPosTotalResult.payload,
     meta: {
       hewei: heweiResult.meta,
       positionKills: positionResult.meta,
       codexStable: codexResult.meta,
       stableMath: stableResult.meta,
       extraKills: extraResult.meta,
-      fourPosExclude: fourPosResult.meta
+      fourPosExclude: fourPosResult.meta,
+      flexDualPosHewei: flexDualResult.meta,
+      dualPosTotalHewei: dualPosTotalResult.meta
     },
     processMode: false
   };
@@ -257,6 +267,34 @@ function computeL0Process(ctx) {
     throw new Error("four-pos-exclude worker failed: " + String(fourPosResult.error || "unknown"));
   }
 
+  const flexDualResult = algoWorkerHost.computeSync("flex-dual-pos-hewei", context, {
+    runtime: {
+      stable120Locks: locks,
+      modelSelectionLocks: modelLocks,
+      stableMathFilter,
+      historyMirror: slimHistory,
+      latestRecord: slimHistory[0] || null,
+      predictionsMirror
+    }
+  });
+  if (!flexDualResult.ok) {
+    throw new Error("flex-dual-pos-hewei worker failed: " + String(flexDualResult.error || "unknown"));
+  }
+
+  const dualPosTotalResult = algoWorkerHost.computeSync("dual-pos-total-hewei", context, {
+    runtime: {
+      stable120Locks: locks,
+      modelSelectionLocks: modelLocks,
+      stableMathFilter,
+      historyMirror: slimHistory,
+      latestRecord: slimHistory[0] || null,
+      predictionsMirror
+    }
+  });
+  if (!dualPosTotalResult.ok) {
+    throw new Error("dual-pos-total-hewei worker failed: " + String(dualPosTotalResult.error || "unknown"));
+  }
+
   return {
     hewei: heweiResult.payload,
     positionKills,
@@ -264,13 +302,17 @@ function computeL0Process(ctx) {
     stableMathFilter,
     extraKills: extraResult.payload,
     fourPosExclude: fourPosResult.payload,
+    flexDualPosHewei: flexDualResult.payload,
+    dualPosTotalHewei: dualPosTotalResult.payload,
     meta: {
       hewei: processMeta(heweiResult, "hewei"),
       positionKills: processMeta(positionResult, "position-kills"),
       codexStable: processMeta(codexResult, "codex-stable"),
       stableMath: processMeta(stableResult, "stable-math"),
       extraKills: processMeta(extraResult, "extra-kills"),
-      fourPosExclude: processMeta(fourPosResult, "four-pos-exclude")
+      fourPosExclude: processMeta(fourPosResult, "four-pos-exclude"),
+      flexDualPosHewei: processMeta(flexDualResult, "flex-dual-pos-hewei"),
+      dualPosTotalHewei: processMeta(dualPosTotalResult, "dual-pos-total-hewei")
     },
     processMode: true,
     processAlgoIds: algoWorkerHost.P2_L0_PROCESS_ALGO_IDS.slice()
@@ -284,8 +326,64 @@ function computeL0(ctx) {
   return computeL0InProcess(ctx);
 }
 
-async function computeL0Async(ctx) {
-  return computeL0(ctx);
+async function noopYield() {}
+
+/**
+ * In-process L0 with optional yield between steps so the runner HTTP loop
+ * (panel /state, backdelete /history) can breathe during tip build.
+ * Process-mode falls back to sync computeL0 (already isolated).
+ */
+async function computeL0Async(ctx, yieldFn) {
+  if (algoWorkerHost.isProcessModeEnabled()) {
+    return computeL0(ctx);
+  }
+  const y = typeof yieldFn === "function" ? yieldFn : noopYield;
+  const context = ctx && typeof ctx === "object" ? ctx : {};
+  const heweiResult = heweiAlgo.compute(context);
+  await y();
+  const positionResult = positionKillsAlgo.compute(context);
+  await y();
+  const codexResult = codexStableAlgo.compute(Object.assign({}, context, {
+    prediction: { positionKills: positionResult.payload },
+    positionKills: positionResult.payload
+  }));
+  await y();
+  const codexPayload = asObject(codexResult.payload);
+  const positionKills = codexPayload.positionKills || positionResult.payload;
+  const stableResult = stableMathAlgo.compute(context);
+  await y();
+  const extraResult = extraKillsAlgo.compute(Object.assign({}, context, {
+    getState: context.getState,
+    getStableMathExcludeDigitSet: context.getStableMathExcludeDigitSet
+  }));
+  await y();
+  const fourPosResult = fourPosExcludeAlgo.compute(context);
+  await y();
+  const flexDualResult = flexDualPosHeweiAlgo.compute(context);
+  await y();
+  const dualPosTotalResult = dualPosTotalHeweiAlgo.compute(context);
+  return {
+    hewei: heweiResult.payload,
+    positionKills,
+    codexStable: codexPayload.codexStable || null,
+    stableMathFilter: stableResult.payload,
+    extraKills: extraResult.payload,
+    fourPosExclude: fourPosResult.payload,
+    flexDualPosHewei: flexDualResult.payload,
+    dualPosTotalHewei: dualPosTotalResult.payload,
+    meta: {
+      hewei: heweiResult.meta,
+      positionKills: positionResult.meta,
+      codexStable: codexResult.meta,
+      stableMath: stableResult.meta,
+      extraKills: extraResult.meta,
+      fourPosExclude: fourPosResult.meta,
+      flexDualPosHewei: flexDualResult.meta,
+      dualPosTotalHewei: dualPosTotalResult.meta
+    },
+    processMode: false,
+    yielded: true
+  };
 }
 
 module.exports = {
@@ -298,5 +396,7 @@ module.exports = {
   heweiAlgo,
   stableMathAlgo,
   extraKillsAlgo,
-  fourPosExcludeAlgo
+  fourPosExcludeAlgo,
+  flexDualPosHeweiAlgo,
+  dualPosTotalHeweiAlgo
 };

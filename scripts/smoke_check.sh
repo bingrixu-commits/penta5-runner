@@ -141,20 +141,7 @@ else
   fail=$((fail + 1))
 fi
 
-if curl -sS -m 12 "${PANEL_AUTH[@]}" "http://127.0.0.1:3001/wan-avoid-3" 2>/dev/null | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-assert d.get('ok') is True
-assert d.get('latestPeriod')
-assert isinstance(d.get('groups'), list) and len(d.get('groups'))>=3
-print('wan-avoid-3', d.get('latestPeriod'), 'groups', len(d.get('groups')))
-"; then
-  echo "[OK]   wan-avoid-3"
-  ok=$((ok + 1))
-else
-  echo "[FAIL] wan-avoid-3"
-  fail=$((fail + 1))
-fi
+# wan-avoid-3 已退役（algorithms/_retired_wan_avoid_3_20260803-055601），端点已删，不再检查。
 
 if curl -sS -m 12 "${PANEL_AUTH[@]}" "http://127.0.0.1:3001/claude/state" 2>/dev/null | python3 -c "
 import json,sys
@@ -171,6 +158,25 @@ else
   fail=$((fail + 1))
 fi
 
+# Claude 搭配侧挂：当前 tip 必须带完整 claudeDualPosHewei 快照（含同策略 walk-forward）
+if curl -sS -m 20 "${PANEL_AUTH[@]}" "http://127.0.0.1:3001/state" 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+p=d.get('currentPrediction') or {}
+snap=p.get('claudeDualPosHewei') or {}
+assert snap.get('complete') is True, 'incomplete claudeDualPosHewei'
+assert str(snap.get('version','')).startswith('claude-dual-pos-hewei-'), snap.get('version')
+joint=snap.get('joint') or {}
+assert int(joint.get('evalPeriods') or 0) >= 120, 'walk-forward periods too few'
+print('claude-dual', snap.get('tipText'), '| wf', joint.get('evalPeriods'), 'periods')
+"; then
+  echo "[OK]   claude-dual-pos-hewei"
+  ok=$((ok + 1))
+else
+  echo "[FAIL] claude-dual-pos-hewei"
+  fail=$((fail + 1))
+fi
+
 # 门道：当前 tip 必须走 orchestrate L0/L1，且 L0 关键字段在 /state 可见
 if curl -sS -m 20 "${PANEL_AUTH[@]}" "http://127.0.0.1:3001/state" 2>/dev/null | python3 -c "
 import json,sys
@@ -184,7 +190,8 @@ assert p.get('codexStable') is not None, 'missing codexStable'
 base=str(p.get('basePeriod') or '')
 smf=str((p.get('stableMathFilter') or {}).get('latest_period') or '')
 assert base and smf and smf==base, f'smf lag tip base={base} smf={smf}'
-for k in ('autoTop6','recommend2','killFramework','compactAttack','threeDingTwo','threeDingOne','threeDuishu','fourPosExclude'):
+# compactAttack / threeDingOne / threeDingTwo 已退役，不再要求封存
+for k in ('autoTop6','recommend2','killFramework','threeDuishu','fourPosExclude','fourDingFramework'):
     snap=p.get(k) or {}
     assert isinstance(snap, dict) and snap.get('sealed') is True, k
 print('base', base, 'path', meta.get('path'), 'smf', smf)

@@ -28,7 +28,9 @@ const P2_L0_PROCESS_ALGO_IDS = Object.freeze([
   "position-kills",
   "codex-stable",
   "extra-kills",
-  "four-pos-exclude"
+  "four-pos-exclude",
+  "flex-dual-pos-hewei",
+  "dual-pos-total-hewei"
 ]);
 
 const P2_L1_PROCESS_ALGO_IDS = Object.freeze([
@@ -36,7 +38,8 @@ const P2_L1_PROCESS_ALGO_IDS = Object.freeze([
   "recommend2",
   "kill-framework",
   "three-duishu",
-  "four-ding-framework"
+  "four-ding-framework",
+  "brother-number-framework"
 ]);
 
 const P2_PROCESS_ALGO_IDS = Object.freeze(P2_L0_PROCESS_ALGO_IDS.concat(P2_L1_PROCESS_ALGO_IDS));
@@ -46,7 +49,8 @@ const L1_WAVE1 = Object.freeze([
   "recommend2",
   "kill-framework",
   "three-duishu",
-  "four-ding-framework"
+  "four-ding-framework",
+  "brother-number-framework"
 ]);
 
 const L1_WAVE2 = Object.freeze([]);

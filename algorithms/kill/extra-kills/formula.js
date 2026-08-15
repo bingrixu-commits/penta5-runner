@@ -5,7 +5,9 @@ const heweiFormula = require("../../hewei/formula");
 const ANY_TWO_HEWEI_SOURCE_DIGITS = "02468";
 const ANY_TWO_HEWEI_CODE_SIZE = 4;
 const MODEL_RATE_WINDOW = Number(process.env.MODEL_RATE_WINDOW || 30);
-const HIGH_BASELINE_SCORE_META = { spanAvoid:{scoreClass:"structural-rare-avoid",baseline:99.5,hint:"极罕形态过滤"}, repeatAvoid:{scoreClass:"structural-rare-avoid",baseline:99.5,hint:"极罕形态过滤"}, consecutiveAvoid:{scoreClass:"structural-rare-avoid",baseline:99.5,hint:"极罕形态过滤"}, sumRangeAvoid:{scoreClass:"structural-rare-avoid",baseline:99.0,hint:"极端区间过滤"}, sumAvoid:{scoreClass:"structural-rare-avoid",baseline:97.0,hint:"单点和值过滤"}, parityRatioAvoid:{scoreClass:"structural-rare-avoid",baseline:93.0,hint:"极端奇偶比过滤"}, sizeRatioAvoid:{scoreClass:"structural-rare-avoid",baseline:93.0,hint:"极端大小比过滤"}, anyTwoHeweiHit:{scoreClass:"wide-hit-baseline",baseline:99.0,hint:"宽命中参考"}, anyThreeHeweiHit:{scoreClass:"wide-hit-baseline",baseline:97.0,hint:"宽命中参考"}, twoDigitHit:{scoreClass:"pair-avoid-baseline",baseline:90.0,hint:"除对数（非共现命中）"} };
+// anyTwoHeweiHit / anyThreeHeweiHit 基线为 10^4 前四位全枚举的精确值（所有候选码同质）：
+// 二数合(02468排1码，6个两位和尾任一命中)=98.08%；三数合(5码，4个三位和尾任一命中)=93.75%。
+const HIGH_BASELINE_SCORE_META = { spanAvoid:{scoreClass:"structural-rare-avoid",baseline:99.5,hint:"极罕形态过滤"}, repeatAvoid:{scoreClass:"structural-rare-avoid",baseline:99.5,hint:"极罕形态过滤"}, consecutiveAvoid:{scoreClass:"structural-rare-avoid",baseline:99.5,hint:"极罕形态过滤"}, sumRangeAvoid:{scoreClass:"structural-rare-avoid",baseline:99.0,hint:"极端区间过滤"}, sumAvoid:{scoreClass:"structural-rare-avoid",baseline:97.0,hint:"单点和值过滤"}, parityRatioAvoid:{scoreClass:"structural-rare-avoid",baseline:93.0,hint:"极端奇偶比过滤"}, sizeRatioAvoid:{scoreClass:"structural-rare-avoid",baseline:93.0,hint:"极端大小比过滤"}, anyTwoHeweiHit:{scoreClass:"wide-hit-baseline",baseline:98.08,hint:"宽命中参考"}, anyThreeHeweiHit:{scoreClass:"wide-hit-baseline",baseline:93.75,hint:"宽命中参考"}, twoDigitHit:{scoreClass:"pair-avoid-baseline",baseline:90.0,hint:"除对数（非共现命中）"} };
 let _runtime = { getState: () => ({}), getStableMathExcludeDigitSet: () => new Set() };
 function bindRuntime(runtime) { _runtime = Object.assign({}, _runtime, runtime || {}); }
 function uniqueDigits(value) {
@@ -294,6 +296,7 @@ function scoreHitCandidates(history, candidates, matcher, prior) {
       rate300: hard.s300.total ? Number(hard.s300.rate.toFixed(2)) : null,
       maxMiss120: Number(hard.s120.maxMissStreak || 0),
       maxMissLong: Number(hard.sLong.maxMissStreak || 0),
+      missStreak30: Number(hard.s30.missStreak || 0),
       lower120: hard.lower120,
       stage: hard.stage
     };
@@ -594,11 +597,45 @@ function calculateExtraAvoidKills(history, performance) {
     const topRate120 = Number(scored[0] && scored[0].rate120);
     const low = !!(lowRaw && !(Number.isFinite(topRate120) && topRate120 >= 90));
     let picked = pickByRank(scored, low, `extra.${key}`, opts.rankOptions || null);
+    // 三数共现：短窗实绩落后时跟数据换码（只动该组），避免 hardness 同分把烂码粘死
+    if (["threeDigitAvoid", "threeDigitHit", "threeDigitAvoid2"].includes(key) && picked && picked.selected && picked.primary) {
+      const sel = picked.selected;
+      const pri = picked.primary;
+      const selVal = String(sel.value != null ? sel.value : "");
+      const priVal = String(pri.value != null ? pri.value : "");
+      if (selVal && priVal && selVal !== priVal) {
+        const selR30 = Number(sel.rate30);
+        const priR30 = Number(pri.rate30);
+        const selR120 = Number(sel.rate120);
+        const priR120 = Number(pri.rate120);
+        const lag30 = Number.isFinite(selR30) && Number.isFinite(priR30) && (priR30 - selR30) >= 3;
+        const weak30 = Number.isFinite(selR30) && selR30 < 90 && Number.isFinite(priR30) && priR30 > selR30;
+        const lag120 = Number.isFinite(selR120) && Number.isFinite(priR120) && (priR120 - selR120) >= 2;
+        if (lag30 || weak30 || lag120) {
+          picked = Object.assign({}, picked, { selected: pri, reason: "data-lag-switch", holdCount: 1 });
+          if (typeof state !== "undefined" && state) {
+            if (!state.modelSelectionLocks || typeof state.modelSelectionLocks !== "object") state.modelSelectionLocks = {};
+            const latest = state.latestRecord || (Array.isArray(state.history) && state.history[0]) || {};
+            state.modelSelectionLocks[`v28:extra.${key}:main`] = {
+              value: priVal,
+              period: String(latest.period || latest.uid || ""),
+              holdCount: 1,
+              reason: "data-lag-switch",
+              primaryValue: priVal,
+              primaryScore: Number(pri.score || 0),
+              selectedScore: Number(pri.score || 0),
+              updatedAt: (new Date()).toISOString()
+            };
+          }
+        }
+      }
+    }
     const firstRealCandidate = scored[0];
     let selected = picked.selected || firstRealCandidate;
     let primary = picked.primary || firstRealCandidate;
     let backup = picked.backup || primary;
     let algorithm = hitMode ? (low ? "dynamic-cooccur-hit-backup-low-hit-rate" : "dynamic-cooccur-hit-primary") : (key === "sumAvoid" ? (low ? "dynamic-practical-sum-backup" : "dynamic-practical-sum-rotation") : (low ? "independent-backup-low-hit-rate" : "dynamic-big-data-primary"));
+    if (picked && picked.reason === "data-lag-switch") algorithm = "data-lag-switch-three-digit";
     let rotationPool = [];
     let rotationIndex = null;
     let rotationMaxGap = null;
@@ -611,24 +648,58 @@ function calculateExtraAvoidKills(history, performance) {
     }
   if (hitMode && (key === "anyTwoHeweiHit" || key === "anyThreeHeweiHit") && scored.length) {
       // 二/三数合：尽量锁住上一期数字；仅当旧码掉出近顶分差才换（不要换数字）。
+      // 三数合额外：近窗加权 + 更严解锁（低 rate120 / 近窗连挂），避免烂码粘死拖基线。
       const prevExtra = ((((getState() || {}).currentPrediction || {}).extraKills || {})[key]) || {};
       const prevCode = String(prevExtra.code || prevExtra.value || "").replace(/\D/g, "");
+      if (key === "anyThreeHeweiHit") {
+        scored = scored.map((item) => {
+          const r30 = Number(item && item.rate30 || 0);
+          const lower = Number(item && item.lower120 || 0);
+          const miss30 = Number(item && item.missStreak30 || 0);
+          const nearBonus = r30 * 0.14 + lower * 0.10 - Math.max(0, miss30 - 1) * 0.55;
+          return Object.assign({}, item, {
+            score: Number((Number(item && item.score || 0) + nearBonus).toFixed(4))
+          });
+        });
+        scored.sort((a, b) => b.score !== a.score ? b.score - a.score : a.maxMissLong !== b.maxMissLong ? a.maxMissLong - b.maxMissLong : a.longHits !== b.longHits ? b.longHits - a.longHits : compareCandidateValue(a, b));
+      }
       const bestScore = Number(scored[0] && scored[0].score || 0);
-      const keepGap = 1.0;
+      const keepGap = key === "anyThreeHeweiHit" ? 0.35 : 1.0;
       const prevItem = prevCode
         ? scored.find((item) => String(item && item.value || "").replace(/\D/g, "") === prevCode)
         : null;
       const prevScore = prevItem ? Number(prevItem.score || 0) : NaN;
-      const keepPrev = !!(prevItem && Number.isFinite(prevScore) && Number.isFinite(bestScore) && (bestScore - prevScore) <= keepGap);
+      const scoreKeep = !!(prevItem && Number.isFinite(prevScore) && Number.isFinite(bestScore) && (bestScore - prevScore) <= keepGap);
+      let keepPrev = scoreKeep;
+      let breakReason = "";
+      if (key === "anyThreeHeweiHit") {
+        const rate120Ok = Number(prevItem && prevItem.rate120 || 0) >= 96;
+        const missOk = Number(prevItem && prevItem.missStreak30 || 0) < 2;
+        if (!prevItem) breakReason = "top1";
+        else if (!rate120Ok) breakReason = "low120";
+        else if (!missOk) breakReason = "recent-miss";
+        else if (!scoreKeep) breakReason = "score-gap";
+        keepPrev = !!(prevItem && rate120Ok && missOk && scoreKeep);
+      }
       selected = keepPrev ? prevItem : scored[0];
       primary = scored[0];
       backup = scored[1] || scored[0];
       rotationPool = [];
       rotationIndex = null;
       rotationMaxGap = null;
-      algorithm = keepPrev
-        ? (key === "anyTwoHeweiHit" ? "sticky-hold-two-hewei" : "sticky-hold-three-hewei")
-        : (key === "anyTwoHeweiHit" ? "sticky-top1-two-hewei" : "sticky-top1-three-hewei");
+      if (key === "anyTwoHeweiHit") {
+        algorithm = keepPrev ? "sticky-hold-two-hewei" : "sticky-top1-two-hewei";
+      } else if (keepPrev) {
+        algorithm = "sticky-hold-three-hewei";
+      } else if (breakReason === "low120") {
+        algorithm = "sticky-break-three-hewei-low120";
+      } else if (breakReason === "recent-miss") {
+        algorithm = "sticky-break-three-hewei-recent-miss";
+      } else if (breakReason === "score-gap") {
+        algorithm = "sticky-break-three-hewei-score-gap";
+      } else {
+        algorithm = "sticky-top1-three-hewei";
+      }
     }
     const selectedValue = String(selected.value !== undefined ? selected.value : (selected.candidate !== undefined ? selected.candidate : ""));
     const primaryValue = String(primary.value !== undefined ? primary.value : (primary.candidate !== undefined ? primary.candidate : selectedValue));
@@ -677,6 +748,8 @@ function calculateExtraAvoidKills(history, performance) {
   const twoAvoidCandidates = twoDigitAvoidCandidates();
   const twoAvoidPicked = [];
   const twoAvoidRankOptions = { poolSize: 8, keepGap: 10, unlockGap: 16, backupKeepGap: 8, minHold: 12 };
+  // 三数共现：单独放宽粘性，避免与四定对数共用导致长期不换码
+  const threeAvoidRankOptions = { poolSize: 8, keepGap: 4, unlockGap: 8, backupKeepGap: 4, minHold: 3 };
   const twoAvoid1 = calculateOne("twoDigitAvoid", "对数避开1组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
   if (twoAvoid1.value) twoAvoidPicked.push(twoAvoid1.value);
   const twoAvoid2 = calculateOne("twoDigitAvoid2", "对数避开2组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
@@ -684,11 +757,11 @@ function calculateExtraAvoidKills(history, performance) {
   const twoAvoid3 = calculateOne("twoDigitAvoid3", "对数避开3组", twoAvoidCandidates, (record, value) => threeDigitCooccurs(record, value), 0.45, null, { excludeValues: twoAvoidPicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
   const threeCandidates = threeDigitAvoidCandidates();
   const threePicked = [];
-  const threeAvoid1 = calculateOne("threeDigitAvoid", "三数共现避开1组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  const threeAvoid1 = calculateOne("threeDigitAvoid", "三数共现避开1组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: threeAvoidRankOptions, preferDigits: stablePreferDigits });
   if (threeAvoid1.value) threePicked.push(threeAvoid1.value);
-  const threeAvoid2 = calculateOne("threeDigitHit", "三数共现避开2组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  const threeAvoid2 = calculateOne("threeDigitHit", "三数共现避开2组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: threeAvoidRankOptions, preferDigits: stablePreferDigits });
   if (threeAvoid2.value) threePicked.push(threeAvoid2.value);
-  const threeAvoid3 = calculateOne("threeDigitAvoid2", "三数共现避开3组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  const threeAvoid3 = calculateOne("threeDigitAvoid2", "三数共现避开3组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: threeAvoidRankOptions, preferDigits: stablePreferDigits });
   return {
     sumAvoid: calculateOne("sumAvoid", "单点和值过滤（高基线）", sumAvoidCandidates(), (record, value) => firstFourSum(record) === Number(value), 0.8),
     sumRangeAvoid: calculateOne("sumRangeAvoid", "和值极端区间过滤（高基线）", sumRangeAvoidCandidates(), (record, value) => firstFourSumInRange(record, value), 0.55),
@@ -710,4 +783,11 @@ function calculateExtraAvoidKills(history, performance) {
 }
 
 
-module.exports = { bindRuntime, calculateExtraAvoidKills, anyTwoHeweiCandidates, digitSetCandidatesMixedParity, isAnyTwoHeweiCode };;
+module.exports = {
+  bindRuntime,
+  calculateExtraAvoidKills,
+  anyTwoHeweiCandidates,
+  digitSetCandidatesMixedParity,
+  isAnyTwoHeweiCode,
+  anyHeweiCombinationHit
+};

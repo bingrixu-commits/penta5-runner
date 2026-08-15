@@ -16,10 +16,13 @@ async function tick(force) {
   if (busy) return;
   busy = true;
   try {
-    const state = await refresh();
+    const state = await refresh({
+      force: !!force,
+      prevPeriod: lastPeriod
+    });
     const period = String(state.latestPeriod || "");
-    if (!force && period && period === lastPeriod) {
-      log("skip same period " + period);
+    if (state.skipped) {
+      log("skip same period " + period + " hist=" + (state.historyCount || "?"));
       return;
     }
     lastPeriod = period;
@@ -31,6 +34,8 @@ async function tick(force) {
     log(
       "period=" + period +
       " picks=" + (state.line || "") +
+      " drop7=" + (state.reverseLine || "") +
+      " remain=" + (state.remainCount != null ? state.remainCount : "?") +
       " hist=" + state.historyCount +
       rateTxt
     );

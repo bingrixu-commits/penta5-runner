@@ -1,0 +1,1074 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<!-- panel-build: cold-hot-omit-purged-20260803 -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>五路公交数据库</title>
+<style>
+:root{
+  --bg:#eef2f7;
+  --panel:#fff;
+  --ink:#111827;
+  --muted:#64748b;
+  --line:#e2e8f0;
+  --blue:#2563eb;
+  --blue-soft:#eff6ff;
+  --green:#047857;
+  --green-soft:#e8f8ef;
+  --red:#b91c1c;
+  --red-soft:#fee2e2;
+  --gold:#b45309;
+  --gold-bright:#f59e0b;
+  --ink-deep:#0b1220;
+  --shadow:0 1px 5px rgba(0,0,0,.08);
+  --shadow-lg:0 10px 28px rgba(15,23,42,.10);
+  --radius:14px;
+}
+*{box-sizing:border-box}
+/* 禁止全局 smooth：刷新/重绘时 scrollTo 会拖着整页「漂移」 */
+html{scroll-behavior:auto}
+body{margin:0;background:
+  radial-gradient(1200px 420px at 12% -8%,rgba(245,158,11,.14),transparent 55%),
+  radial-gradient(900px 380px at 92% 0%,rgba(30,58,138,.10),transparent 50%),
+  linear-gradient(180deg,#f8fafc 0%,var(--bg) 100%);
+  color:var(--ink);font-family:"Microsoft YaHei","PingFang SC",-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:0 14px 24px}
+.panel-hero{position:relative;top:auto;left:auto;right:auto;width:auto;z-index:1;background:linear-gradient(180deg,rgba(224,242,254,.38) 0%,rgba(186,230,253,.22) 100%);backdrop-filter:blur(16px) saturate(1.12);border-bottom:1px solid rgba(56,189,248,.28);margin:0 0 14px;padding:14px 14px 12px;box-shadow:0 4px 18px rgba(14,165,233,.07);border-radius:0 0 14px 14px}
+.panel-hero__inner{max-width:none;margin:0}
+.panel-hero__head{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px}
+.panel-hero__brand{min-width:0}
+.panel-hero h1{margin:0;font-size:24px;font-weight:900;letter-spacing:.02em}
+.panel-hero__center{justify-self:center;align-self:center;text-align:center;min-width:0;padding:2px 0}
+.panel-hero__center h1{margin:0;font-size:30px;font-weight:900;letter-spacing:.18em;line-height:1.15;white-space:nowrap;color:#0c4a6e;font-family:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC","Microsoft YaHei",serif;text-shadow:0 1px 0 rgba(186,230,253,.9),0 2px 10px rgba(14,165,233,.12)}
+.panel-hero__center h1 .brand-mark{display:inline-block;margin-right:.12em;color:#0284c7;transform:translateY(-1px)}
+.panel-hero__center .brand-sub{margin-top:5px;font-size:12px;font-weight:700;letter-spacing:.28em;color:rgba(2,132,199,.82);font-family:"Microsoft YaHei","PingFang SC",sans-serif}
+.panel-hero__center .status{display:inline-block;margin-top:8px;max-width:min(100%,420px)}
+.panel-hero__actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;justify-self:end}
+.panel-hero__actions button{padding:10px 14px;font-size:14px;cursor:pointer;transition:transform .15s ease,box-shadow .15s ease}
+.panel-hero__actions button:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(245,158,11,.28)}
+.panel-hero__actions button:active{transform:translateY(0)}
+.topbar-clock{font-size:12px;color:rgba(51,65,85,.68);padding:0 4px;white-space:nowrap;font-family:"Microsoft YaHei","PingFang SC",sans-serif}
+.status{padding:8px 12px;border-radius:999px;background:rgba(37,99,235,.18);color:#bfdbfe;font-weight:800;word-break:break-word;font-size:13px;line-height:1.45;max-width:100%;font-family:"Microsoft YaHei","PingFang SC",sans-serif}
+.status.ok{background:rgba(4,120,87,.22);color:#6ee7b7}
+.status.err{background:rgba(185,28,28,.22);color:#fecaca}
+.status.loading{position:relative;padding-left:28px}
+.status.loading::before{content:"";position:absolute;left:10px;top:50%;width:12px;height:12px;margin-top:-6px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:panelSpin .8s linear infinite}
+.status.is-hidden{display:none}
+@keyframes panelSpin{to{transform:rotate(360deg)}}
+.summary-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:10px}
+.summary-card{background:rgba(255,255,255,.96);border:1px solid rgba(245,158,11,.22);border-radius:10px;padding:10px 12px;box-shadow:0 4px 14px rgba(0,0,0,.12);min-width:0;font-family:"Microsoft YaHei","PingFang SC",sans-serif}
+.summary-card b{display:block;font-size:11px;color:var(--muted);font-weight:700;margin-bottom:4px}
+.summary-card span{display:block;font-size:16px;font-weight:900;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.section-nav{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;font-family:"Microsoft YaHei","PingFang SC",sans-serif}
+.section-nav a{display:inline-flex;align-items:center;padding:6px 11px;border-radius:999px;background:rgba(255,255,255,.92);border:1px solid rgba(245,158,11,.28);color:#334155;font-size:12px;font-weight:800;text-decoration:none;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.section-nav a:hover{background:#fff7ed;border-color:#f59e0b;color:#92400e}
+.section-anchor,[id^="section-"],#txtConvertBox,#txtThreeRemainTopBox,#txtFourRemainTopBox,#txtFourThrowTopBox,#section-pos-reverse,#frameworkVisibleMount,#fourDingFrameworkBox,#twoDigitAvoidGroupBox,#brotherNumberFrameworkBox{scroll-margin-top:12px}
+.panel-hero__extras{margin-top:0}
+.panel-hero__extras.is-collapsed{display:none!important;margin:0!important;padding:0!important;border:0!important}
+.panel-hero.is-extras-collapsed{padding-bottom:8px}
+.panel-hero__actions .card-toggle{margin:0}
+.panel-hero__actions button,.panel-hero__actions .card-toggle{font-family:"Microsoft YaHei","PingFang SC",sans-serif}
+.panel-hero__actions button:not(.card-toggle):not(.gray){background:linear-gradient(180deg,#f59e0b,#d97706)!important;color:#111827!important}
+.panel-hero__actions button.gray{background:#334155!important}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{background:var(--panel);border-radius:var(--radius);padding:14px;margin-bottom:12px;box-shadow:var(--shadow);border:1px solid rgba(226,232,240,.9);transition:box-shadow .2s ease}
+.composer-stable-zone{border:2px solid #059669;background:linear-gradient(180deg,#ecfdf5 0%,#fff 72%);box-shadow:0 4px 18px rgba(5,150,105,.12)}
+.composer-stable-zone .card-head-title h2{color:#047857}
+.composer-stable-zone .composer-zone-badge{display:inline-block;font-size:11px;font-weight:900;padding:3px 10px;border-radius:999px;background:#059669;color:#fff;margin-left:8px;letter-spacing:.04em;vertical-align:middle}
+.composer-stable-zone .composer-zone-note{margin-top:6px;color:#047857;font-size:12px;font-weight:700;line-height:1.5}
+.composer-position-zone{border:2px solid #0284c7;background:linear-gradient(180deg,#eff6ff 0%,#fff 72%);box-shadow:0 4px 18px rgba(2,132,199,.12)}
+.composer-position-zone .card-head-title h2{color:#0369a1}
+.composer-position-zone .composer-zone-badge{display:inline-block;font-size:11px;font-weight:900;padding:3px 10px;border-radius:999px;background:#0284c7;color:#fff;margin-left:8px;letter-spacing:.04em;vertical-align:middle}
+.composer-position-zone .composer-zone-note{margin-top:6px;color:#0369a1;font-size:12px;font-weight:700;line-height:1.5}
+.composer-section-gap{height:28px;margin:8px 0 20px;border:0;border-top:2px dashed #cbd5e1}
+
+.claude-board{margin:0}
+.claude-board iframe{width:100%;min-height:520px;border:1px solid #e2e8f0;border-radius:12px;background:#0f1420}
+.claude-board__actions{margin-top:8px;font-size:12px;color:#64748b}
+.claude-board__actions a{color:#0f766e;font-weight:700;text-decoration:none;margin-right:12px}
+.sha-ma-board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0}
+.sha-ma-board__card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 12px;text-align:center;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.sha-ma-board__pos{font-size:13px;font-weight:800;color:#64748b;letter-spacing:.06em;margin-bottom:8px}
+.sha-ma-board__digit{font-size:42px;font-weight:900;line-height:1;color:#0f172a;font-variant-numeric:tabular-nums}
+.sha-ma-board__action{margin-top:8px;font-size:13px;font-weight:900;min-height:1.3em}
+.sha-ma-board__meta{margin-top:6px;font-size:12px;color:#64748b}
+.sha-ma-board__card.is-reverse{border-color:#fdba74;background:#fff7ed}
+.sha-ma-board__card.is-reverse .sha-ma-board__digit{color:#9a3412}
+.sha-ma-board__card.is-forward{border-color:#bbf7d0;background:#f0fdf4}
+.sha-ma-board__head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+.sha-ma-board__title{font-size:16px;font-weight:900;color:#0f172a;margin:0}
+.sha-ma-board__note{font-size:12px;color:#64748b}
+@media (max-width:900px){.sha-ma-board{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:520px){.sha-ma-board{grid-template-columns:1fr}}
+.shape-avoid-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0}
+.shape-avoid-board__card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 12px;text-align:center;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.shape-avoid-board__pos{font-size:13px;font-weight:800;color:#64748b;letter-spacing:.04em;margin-bottom:8px}
+.shape-avoid-board__code{font-size:26px;font-weight:900;line-height:1.15;color:#0f172a;letter-spacing:.04em}
+.shape-avoid-board__meta{margin-top:8px;font-size:12px;color:#64748b}
+@media (max-width:900px){.shape-avoid-board{grid-template-columns:1fr}}
+.panel-section-label{display:flex;align-items:center;gap:10px;margin:18px 0 10px;padding:0 2px}
+.panel-section-label::before,.panel-section-label::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,transparent,#cbd5e1,transparent)}
+.panel-section-label span{font-size:13px;font-weight:900;color:#475569;letter-spacing:.08em;white-space:nowrap}
+.composer-pos-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.composer-pos-grid>.composer-pos-folder{margin-bottom:0}
+@media(max-width:700px){.composer-pos-grid{grid-template-columns:1fr}}
+
+.composer-pos-folder{border:2px solid #0284c7;background:linear-gradient(180deg,#eff6ff 0%,#fff 75%);box-shadow:0 4px 18px rgba(2,132,199,.12);margin-bottom:16px}
+.composer-pos-folder .card-head-title h2{color:#0369a1}
+.composer-pos-folder .composer-zone-badge{display:inline-block;font-size:11px;font-weight:900;padding:3px 10px;border-radius:999px;background:#0284c7;color:#fff;margin-left:8px;letter-spacing:.04em;vertical-align:middle}
+.composer-pos-folder .composer-zone-note{margin-top:6px;color:#0369a1;font-size:12px;font-weight:700;line-height:1.5}
+.composer-pos-folder .composer-pos-body{font-size:18px;font-weight:800;padding:8px 0}
+.composer-pos-folder.wan{border-color:#b45309;background:linear-gradient(180deg,#fff7ed 0%,#fff 75%)}
+.composer-pos-folder.wan .card-head-title h2,.composer-pos-folder.wan .composer-zone-note{color:#b45309}
+.composer-pos-folder.wan .composer-zone-badge{background:#b45309}
+.composer-pos-folder.qian{border-color:#7c3aed;background:linear-gradient(180deg,#f5f3ff 0%,#fff 75%)}
+.composer-pos-folder.qian .card-head-title h2,.composer-pos-folder.qian .composer-zone-note{color:#6d28d9}
+.composer-pos-folder.qian .composer-zone-badge{background:#7c3aed}
+.composer-pos-folder.bai{border-color:#0d9488;background:linear-gradient(180deg,#f0fdfa 0%,#fff 75%)}
+.composer-pos-folder.bai .card-head-title h2,.composer-pos-folder.bai .composer-zone-note{color:#0f766e}
+.composer-pos-folder.bai .composer-zone-badge{background:#0d9488}
+.composer-pos-folder.shi{border-color:#dc2626;background:linear-gradient(180deg,#fef2f2 0%,#fff 75%)}
+.composer-pos-folder.shi .card-head-title h2,.composer-pos-folder.shi .composer-zone-note{color:#b91c1c}
+.composer-pos-folder.shi .composer-zone-badge{background:#dc2626}
+.card:hover{box-shadow:var(--shadow-lg)}
+.card h2{font-size:18px;margin:0 0 12px;padding-bottom:8px;border-bottom:2px solid var(--blue-soft)}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--blue-soft)}
+.card-head h2{margin:0;padding:0;border:0}
+.card-head-title{min-width:0;flex:1}
+.card-head-title h2,.card-head-title b{margin:0;padding:0;border:0;display:block}
+.card-head-title .small{margin-top:4px}
+.card-toggle{border:1px solid var(--line)!important;background:#fff!important;color:#475569!important;padding:6px 10px!important;font-size:12px!important;font-weight:800!important;border-radius:8px!important;cursor:pointer;flex:0 0 auto}
+.card-body.is-collapsed,.nested-collapse>.card-body.is-collapsed,.prediction-section.is-collapsible>.card-body.is-collapsed{display:none!important;max-height:0!important;overflow:hidden!important;margin:0!important;padding:0!important;border:0!important}
+.prediction-section.is-collapsible{max-height:none;overflow:visible}
+.prediction-section.is-collapsible>.card-head{margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #cbd5e1}
+.prediction-section.is-collapsible>.card-body{max-height:220px;overflow-y:auto}
+.nested-collapse{margin-top:10px}
+.nested-collapse>.card-head{margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(15,23,42,.12)}
+.table{width:100%;border-collapse:collapse}
+.table td{border-bottom:1px solid #edf0f3;padding:11px 8px;vertical-align:middle}
+.table td:first-child{background:#f3f4f6;font-weight:700;width:32%}
+.ball{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;margin:3px;background:#e11d48;color:#fff;font-weight:900}
+.ball.dark{background:#111827}
+.ball.blue{background:#4338ca}
+.tag{display:inline-block;background:#eef2ff;border-radius:999px;padding:5px 9px;margin:3px;font-size:13px}
+.btns{display:flex;gap:10px;margin-bottom:0;flex-wrap:wrap}
+button{border:0;border-radius:10px;background:var(--blue);color:#fff;font-weight:800;padding:12px 14px;font-size:16px}
+button.gray{background:#4b5563}
+.small{font-size:13px;color:#6b7280;line-height:1.6}
+.rate{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #eee;padding:9px 0}
+.rate span{text-align:right}
+.shape-choice{display:flex;flex-direction:column;gap:8px;min-width:0}
+.shape-choice__head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.shape-choice__code{font-weight:800;font-size:20px;color:#0f172a;line-height:1.25;word-break:break-all}
+.shape-choice__rate{font-size:13px;color:#475569;white-space:nowrap}
+.shape-choice__details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.shape-choice__detail{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:7px 9px;min-width:0}
+.shape-choice__label{font-size:12px;color:#64748b;line-height:1.3;margin-bottom:3px}
+.shape-choice__value{display:block;min-width:0}
+.shape-token-list{display:grid;grid-template-columns:repeat(4,max-content);gap:4px;align-items:center;min-width:0}
+.shape-token{display:inline-flex;align-items:center;justify-content:center;background:#fff;border:1px solid #cbd5e1;border-radius:6px;min-width:26px;padding:2px 5px;font-size:13px;font-weight:800;line-height:1.25;color:#0f172a;white-space:nowrap}
+.shape-choice__percent{display:block;margin-top:5px;font-size:13px;font-weight:800;line-height:1.25;color:#0f172a;white-space:nowrap}
+#practiceFireworks{position:fixed;inset:0;z-index:9999;pointer-events:none;overflow:hidden}
+#practiceFireworks canvas{position:absolute;inset:0;width:100%;height:100%}
+.practice-toast{position:absolute;left:50%;top:18%;transform:translateX(-50%);background:rgba(15,23,42,.94);color:white;border-radius:14px;padding:14px 22px;font-size:22px;font-weight:900;box-shadow:0 14px 38px rgba(15,23,42,.32);white-space:nowrap}
+.practice-hit-strong{font-size:16px!important;font-weight:900!important;padding:10px 12px!important;box-shadow:0 8px 22px rgba(22,101,52,.15)}
+#predictionPanel{width:100%;box-sizing:border-box;padding:0;overflow:hidden;scroll-margin-top:96px}
+.prediction-section{margin:12px 0;padding:12px;border:1px solid #333;border-radius:10px;background:rgba(255,255,255,.72);max-height:260px;overflow-y:auto}
+.prediction-title{font-weight:700;margin-bottom:8px}
+.prediction-list{display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start;white-space:normal;word-break:break-word}
+.prediction-chip{display:inline-flex;align-items:center;justify-content:center;gap:2px;min-width:48px;max-width:none;overflow:visible;padding:4px 10px;border-radius:999px;border:1px solid #555;font-family:monospace;font-size:14px;line-height:1.4;white-space:nowrap;box-sizing:border-box}
+.prediction-chip__name{color:#475569;font-weight:600}
+.prediction-chip__code{color:#1d4ed8;font-weight:900;letter-spacing:.03em}
+.prediction-empty{color:#64748b;font-size:13px;line-height:1.5}
+/* 四框架替补号：参考样式，绿色大圈内显示百分比 */
+.fw-backup-ref{display:inline-flex;align-items:center;gap:10px;margin:4px 0 0;padding:6px 14px 6px 6px;border-radius:999px;background:#ecfdf5;border:1px solid #86efac;vertical-align:middle;line-height:1.2;box-sizing:border-box;max-width:100%}
+.fw-backup-ref__ring{position:relative;width:44px;height:44px;border-radius:50%;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;background:conic-gradient(#16a34a calc(var(--p,0)*1%),#dcfce7 0);box-shadow:inset 0 0 0 1px rgba(22,163,74,.22),0 1px 2px rgba(15,23,42,.06)}
+.fw-backup-ref__ring::before{content:"";position:absolute;inset:6px;border-radius:50%;background:#ecfdf5;box-shadow:inset 0 0 0 1px #bbf7d0;z-index:0}
+.fw-backup-ref__pct{position:relative;z-index:1;font-size:12px;font-weight:900;color:#14532d;white-space:nowrap;letter-spacing:-.02em;line-height:1}
+.fw-backup-ref__label{font-size:15px;font-weight:800;color:#334155;white-space:nowrap}
+@media(max-width:700px){
+  .fw-backup-ref{gap:8px;padding:5px 12px 5px 5px}
+  .fw-backup-ref__ring{width:40px;height:40px}
+  .fw-backup-ref__ring::before{inset:5px}
+  .fw-backup-ref__pct{font-size:11px}
+  .fw-backup-ref__label{font-size:14px}
+}
+.panel-fab{position:fixed;right:18px;bottom:18px;z-index:130;width:44px;height:44px;border-radius:50%;background:#1e293b;color:#fff;font-size:20px;font-weight:900;cursor:pointer;box-shadow:0 10px 24px rgba(15,23,42,.28);opacity:0;pointer-events:none;transform:translateY(8px);transition:opacity .2s ease,transform .2s ease}
+.panel-fab.is-visible{opacity:1;pointer-events:auto;transform:translateY(0)}
+.storm-banner{display:none;margin:10px 0 0;padding:10px 12px;border-radius:10px;border:1px solid #fecaca;background:#fef2f2;color:#7f1d1d;font-size:13px;font-weight:800;line-height:1.45}
+.storm-banner.is-on{display:block}
+.tip-ready-banner{display:none;margin:10px 0 0;padding:10px 12px;border-radius:10px;border:1px solid #fde68a;background:#fffbeb;color:#92400e;font-size:13px;font-weight:800;line-height:1.45}
+.tip-ready-banner.is-on{display:block}
+.tip-ready-banner.is-ok{border-color:#86efac;background:#ecfdf5;color:#14532d}
+.section-anchor{scroll-margin-top:96px}
+@media(max-width:900px){.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.grid2{grid-template-columns:1fr}.ball{width:34px;height:34px}.rate{display:block}.rate span{text-align:left;display:block;margin-top:4px}.panel-hero__head{grid-template-columns:minmax(0,1fr) auto;gap:8px}.panel-hero__actions{grid-column:2;grid-row:1;justify-self:end}.panel-hero__center{grid-column:1 / -1;grid-row:2;justify-self:center;text-align:center}.panel-hero__center h1,.panel-hero h1{font-size:22px;letter-spacing:.12em;white-space:normal}.panel-hero__center .brand-sub{letter-spacing:.18em;font-size:11px}.summary-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.shape-choice__details{grid-template-columns:1fr}.shape-choice__code{font-size:18px}}
+
+body.kill-side-page .kill-side-hide-on-side{display:none!important}
+body.kill-side-forward .kill-side-only-reverse{display:none!important}
+body.kill-side-reverse .kill-side-only-forward{display:none!important}
+.kill-side-banner{margin:10px 0 0;padding:12px 14px;border-radius:12px;border:2px solid #0f766e;background:#ecfdf5;color:#115e59;font-weight:900;display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+body.kill-side-reverse .kill-side-banner{border-color:#c2410c;background:#fff7ed;color:#9a3412}
+.kill-side-banner a{display:inline-flex;align-items:center;padding:7px 12px;border-radius:8px;font-weight:900;text-decoration:none}
+.kill-side-banner a.is-on{background:#0f766e;color:#fff}
+body.kill-side-reverse .kill-side-banner a.is-on{background:#c2410c;color:#fff}
+.kill-side-banner a.is-off{background:#fff;border:1px solid currentColor;color:inherit}
+</style>
+</head>
+<body>
+<script>try{document.addEventListener("DOMContentLoaded",function(){if(typeof penta5ApplyKillSidePage==="function")penta5ApplyKillSidePage();});}catch(e){}</script>
+<div class="wrap">
+<div class="panel-hero" id="panelHero">
+  <div class="panel-hero__inner">
+  <div class="panel-hero__head">
+    <div class="panel-hero__brand" aria-hidden="true"></div>
+    <div class="panel-hero__center">
+      <h1><span class="brand-mark" aria-hidden="true">◆</span>五路公交数据库</h1>
+      <div class="brand-sub">五路数据 · 公交查询</div>
+      <div id="status" class="status is-hidden">等待同步...</div>
+    </div>
+    <div class="panel-hero__actions btns">
+      <span id="topbarClock" class="topbar-clock"></span>
+      <button type="button" class="card-toggle" id="panelHeroExtrasToggle" data-collapse-toggle="panelHeroExtras" data-collapse-default="0" aria-expanded="true" title="收起或展开顶栏摘要与分区按键">收起顶栏</button>
+      <button type="button" onclick="loadState()">刷新数据</button>
+      <button type="button" class="gray" onclick="manualSync()">手动同步</button>
+    </div>
+  </div>
+  <div class="panel-hero__extras card-body" id="panelHeroExtras" data-collapse-body="panelHeroExtras">
+    <div class="summary-grid" id="panelSummary">
+      <div class="summary-card"><b>当前期号</b><span id="summaryPeriod">--</span></div>
+      <div class="summary-card"><b>开奖号码</b><span id="summaryNumbers">--</span></div>
+      <div class="summary-card"><b>预测基准</b><span id="summaryBasePeriod">--</span></div>
+      <div class="summary-card"><b>最后同步</b><span id="summarySync">--</span></div>
+      <div class="summary-card"><b>共享历史</b><span id="summaryHistory">--</span></div>
+    </div>
+        <div id="killSidePageBanner" class="kill-side-banner" style="display:none;">
+      <div id="killSidePageTitle">杀码专页</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a id="killSideLinkZheng" class="is-off" href="/kill-zheng">正车网页</a>
+        <a id="killSideLinkFan" class="is-off" href="/kill-fan">反车网页</a>
+        <a class="is-off" href="/panel">完整面板</a>
+      </div>
+    </div>
+<div id="stormBanner" class="storm-banner" role="status" aria-live="polite"></div>
+    <div id="tipReadyBanner" class="tip-ready-banner" role="status" aria-live="polite"></div>
+    <nav class="section-nav" id="sectionNav" aria-label="页面分区">
+      <a href="/kill-zheng">正车页</a>
+      <a href="/kill-fan">反车页</a>
+      <a href="#section-lottery">①开奖</a>
+      <a href="#section-composer-stable-math" class="kill-side-only-forward kill-side-hide-on-side">②更稳</a>
+      <a href="#section-sha-ma" class="kill-side-only-forward">排除单号</a>
+      <a href="#section-pos-reverse" class="kill-side-only-reverse">定位反车</a>
+      <a href="#heweiReverseBox" class="kill-side-only-reverse">合尾反车</a>
+      <a href="#section-four-pos-drop6" class="kill-side-only-reverse">反车1号剩号</a>
+      <a href="#section-four-fan-model-2" class="kill-side-only-reverse">反车2号剩号</a>
+      <a href="#section-dual-pos-total" class="kill-side-only-forward">搭配二定合尾</a>
+      <a href="#section-four-factor" class="kill-side-only-forward">四因子</a>
+      <a href="#section-shape-avoid-3" class="kill-side-only-forward">形态三组</a>
+      <a href="#frameworkVisibleMount" class="kill-side-only-forward">四定框架</a>
+      <a href="#section-four-ding-shape" class="kill-side-only-forward">四定形态</a>
+      <a href="#section-claude" class="kill-side-only-forward kill-side-hide-on-side">Claude</a>
+      <a href="#section-prediction" class="kill-side-only-forward kill-side-hide-on-side">④预测</a>
+      <a href="#twoDigitAvoidGroupBox" class="kill-side-only-forward">四定对数</a>
+      <a href="#brotherNumberFrameworkBox" class="kill-side-hide-on-side">兄弟</a>
+      <a href="#txtConvertBox" class="kill-side-only-forward">⑤正车回删</a>
+      <a href="#txtFourThrowTopBox" class="kill-side-only-forward">⑤出页转发</a>
+      <a href="#txtFourThrowTopBox" class="kill-side-only-reverse">⑤反车转发</a>
+      <a href="/attack-txt" class="kill-side-hide-on-side">转换攻击</a>
+      <a href="#section-history" class="kill-side-hide-on-side">⑥历史</a>
+    </nav>
+  </div>
+  </div>
+</div>
+
+<div class="panel-section-label"><span>一 · 开奖与合尾排除</span></div>
+<div class="grid2 section-anchor" id="section-lottery">
+  <div class="card">
+    <h2>最新开奖数据</h2>
+    <table class="table">
+      <tr><td>期号</td><td id="period">--</td></tr>
+      <tr><td>开奖时间</td><td id="opentime">--</td></tr>
+      <tr><td>开奖号码</td><td id="numbers">--</td></tr>
+      <tr><td>三对数排除</td><td id="threeDuishuCode">--</td></tr>
+      <tr><td>总合尾</td><td id="totalHewei">--</td></tr>
+      <tr><td>综合合尾</td><td id="subHewei">--</td></tr>
+    </table>
+    <!-- fourDingPanelGrabBox retired: 四定抓码五项一起算已删除；仅保留三数共现三组 -->
+    <div id="threeDigitCooccurBox"></div>
+    <div id="dailyColdCodeReportBox"></div>
+    <div class="small" id="meta"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-head-title"><h2 class="kill-side-only-forward">正车 · 下一期大数据排除</h2><h2 class="kill-side-only-reverse">反车 · 合尾会出现</h2></div>
+      <button type="button" class="card-toggle" data-collapse-toggle="nextBigDataKill" data-collapse-default="0" aria-expanded="true">收起</button>
+    </div>
+    <div class="card-body" data-collapse-body="nextBigDataKill">
+    <table class="table kill-side-only-forward">
+      <tr><td>合尾综合排除</td><td id="killTotalHewei">--</td></tr>
+      <tr><td>三四字合尾杀码</td><td id="killThreeFour">--</td></tr>
+      <tr><td>千百十合尾避开码</td><td id="killWanQianBai">--</td></tr>
+      <tr><td>百十个合尾避开码</td><td id="killQianBaiShi">--</td></tr>
+      <tr><td>千百个合尾避开码(稳定)</td><td id="killWanQianGe">--</td></tr>
+      <tr><td>千百个合尾避开码(频次)</td><td id="killWanQianGeFreq">--</td></tr>
+      <tr><td>千十个合尾避开码(稳定)</td><td id="killWanBaiShi">--</td></tr>
+      <tr><td>千十个合尾避开码(频次)</td><td id="killWanBaiShiFreq">--</td></tr>
+      <tr><td>千百十个合尾避开码</td><td id="killWanQianBaiShi">--</td></tr>
+
+      <tr id="qualifiedPositionRow" style="display:none;"><td>定位稳杀</td><td id="qualifiedPositionCell"></td></tr>
+      <tr id="qualifiedHeweiRow" style="display:none;"><td>合尾稳杀</td><td id="qualifiedHeweiCell"></td></tr>
+      <tr id="qualifiedDualRow" style="display:none;"><td>双位稳杀</td><td id="qualifiedDualCell"></td></tr>
+      <tr id="qualifiedPicksAuditRow" style="display:none;"><td>验真</td><td id="qualifiedPicksAuditCell" class="small"></td></tr>
+    </table>
+    <div id="heweiReverseBox" class="small kill-side-only-reverse" style="margin-top:10px;border:1px solid #fdba74;border-radius:10px;background:#fff7ed;padding:8px;color:#9a3412;font-weight:800;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+        <div>合尾反车（分页看，不挤乱）</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <button type="button" data-kill-rev-page="-1" data-kill-rev-tab="hewei" style="border:1px solid #fdba74;border-radius:8px;padding:4px 8px;background:#fff;color:#9a3412;font-weight:900;cursor:pointer;font-size:12px;">上一页</button>
+          <span id="heweiRevPageLabel" style="font-size:12px;color:#7c2d12;">1/1</span>
+          <button type="button" data-kill-rev-page="1" data-kill-rev-tab="hewei" style="border:1px solid #fdba74;border-radius:8px;padding:4px 8px;background:#fff;color:#9a3412;font-weight:900;cursor:pointer;font-size:12px;">下一页</button>
+        </div>
+      </div>
+      <div id="heweiReverseLine" style="margin-top:8px;display:grid;gap:6px;">等待合尾杀码…</div>
+    </div>
+    <div id="boardLatestEvalMount" class="small" style="margin-top:8px;"></div>
+    <div class="small" id="predMeta"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-forward" id="section-framework-visible-label"><span>四定框架 · 四定对数 · 取二兄弟（常显）</span></div>
+<div id="frameworkVisibleMount" class="section-anchor kill-side-only-forward" style="display:grid;gap:10px;margin:0 0 12px;width:100%;box-sizing:border-box;"></div>
+
+<div class="panel-section-label kill-side-only-reverse" id="section-four-pos-drop6-label"><span>反车 · 四定反车1号模型剩号</span></div>
+<div class="card section-anchor kill-side-only-reverse" id="section-four-pos-drop6">
+  <div class="card-head">
+    <div class="card-head-title">
+      <div class="sha-ma-board__head">
+        <h2 class="sha-ma-board__title">四定反车1号模型剩号</h2>
+        <div class="sha-ma-board__note" id="fourPosDrop6Meta">四定反车1号 · 共丢6 · 剩余出号 · 直接接转发器</div>
+      </div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="fourPosDrop6Board" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="fourPosDrop6Board">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+      <b id="fourPosDrop6Remain" style="color:#9a3412;font-size:18px;">剩余 -- 组</b>
+      <button type="button" id="fourPosDrop6Download" style="border:1px solid #fdba74;border-radius:8px;padding:6px 10px;background:#fff7ed;color:#9a3412;font-weight:900;cursor:pointer;font-size:13px;">下载剩余TXT</button>
+      <button type="button" id="fourPosDrop6Copy" style="border:1px solid #fdba74;border-radius:8px;padding:6px 10px;background:#fff;color:#9a3412;font-weight:900;cursor:pointer;font-size:13px;">复制剩余号码</button>
+      <span style="color:#7c2d12;font-size:12px;">反路不进回删：到下方转发器点「接四定反车1号剩号」</span>
+    </div>
+    <div class="shape-avoid-board" id="fourPosDrop6Grid" style="grid-template-columns:repeat(3,minmax(0,1fr));"></div>
+    <div class="small" id="fourPosDrop6Pos" style="margin-top:12px;">--</div>
+    <div class="small" id="fourPosDrop6Shot" style="margin-top:8px;">--</div>
+    <div class="small" id="fourPosDrop6Joint" style="margin-top:8px;">--</div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-reverse" id="section-four-fan-model-2-label"><span>反车 · 四定反车2号模型剩号</span></div>
+<div class="card section-anchor kill-side-only-reverse" id="section-four-fan-model-2">
+  <div class="card-head">
+    <div class="card-head-title">
+      <div class="sha-ma-board__head">
+        <h2 class="sha-ma-board__title">四定反车2号模型剩号</h2>
+        <div class="sha-ma-board__note" id="fourFanModel2Meta">四定反车2号 · 共丢8 · 剩余出号 · 直接接转发器</div>
+      </div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="fourFanModel2Board" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="fourFanModel2Board">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+      <b id="fourFanModel2Remain" style="color:#9a3412;font-size:18px;">剩余 -- 组</b>
+      <button type="button" id="fourFanModel2Download" style="border:1px solid #fdba74;border-radius:8px;padding:6px 10px;background:#fff7ed;color:#9a3412;font-weight:900;cursor:pointer;font-size:13px;">下载剩余TXT</button>
+      <button type="button" id="fourFanModel2Copy" style="border:1px solid #fdba74;border-radius:8px;padding:6px 10px;background:#fff;color:#9a3412;font-weight:900;cursor:pointer;font-size:13px;">复制剩余号码</button>
+      <span style="color:#7c2d12;font-size:12px;">反路不进回删：到下方转发器点「接四定反车2号模型剩号」</span>
+    </div>
+    <div class="shape-avoid-board" id="fourFanModel2Grid" style="grid-template-columns:repeat(3,minmax(0,1fr));"></div>
+    <div class="small" id="fourFanModel2Pos" style="margin-top:12px;">--</div>
+    <div class="small" id="fourFanModel2Shot" style="margin-top:8px;">--</div>
+    <div class="small" id="fourFanModel2Joint" style="margin-top:8px;">--</div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-reverse" id="section-pos-reverse-label"><span>反车 · 定位会出现</span></div>
+<div class="card section-anchor kill-side-only-reverse" id="section-pos-reverse">
+  <div class="card-head">
+    <div class="card-head-title"><h2>定位反车（会出现）</h2></div>
+  </div>
+  <div class="card-body">
+    <div id="shaMaReverseBox" class="small" style="border:1px solid #fdba74;border-radius:10px;background:#fff7ed;padding:8px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <b style="color:#9a3412;">反车开关</b>
+        <button type="button" data-pos-reverse-mode="off" style="border:1px solid #fdba74;border-radius:8px;padding:5px 9px;background:#fff;color:#9a3412;font-weight:900;cursor:pointer;font-size:12px;">关（正向）</button>
+        <button type="button" data-pos-reverse-mode="on" style="border:1px solid #fdba74;border-radius:8px;padding:5px 9px;background:#fff;color:#9a3412;font-weight:900;cursor:pointer;font-size:12px;">强制反车</button>
+        <button type="button" data-pos-reverse-mode="auto" style="border:1px solid #fdba74;border-radius:8px;padding:5px 9px;background:#fff;color:#9a3412;font-weight:900;cursor:pointer;font-size:12px;">低谷自动</button>
+        <span style="color:#7c2d12;font-size:12px;">定位+合尾+对数共用</span>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        <button type="button" data-kill-rev-page="-1" data-kill-rev-tab="pos" style="border:1px solid #fdba74;border-radius:8px;padding:4px 8px;background:#fff;color:#9a3412;font-weight:900;cursor:pointer;font-size:12px;">上一页</button>
+        <span id="posRevPageLabel" style="font-size:12px;color:#7c2d12;">1/1</span>
+        <button type="button" data-kill-rev-page="1" data-kill-rev-tab="pos" style="border:1px solid #fdba74;border-radius:8px;padding:4px 8px;background:#fff;color:#9a3412;font-weight:900;cursor:pointer;font-size:12px;">下一页</button>
+      </div>
+      <div id="shaMaReverseLine" style="margin-top:8px;display:grid;gap:6px;color:#9a3412;font-weight:800;">定位反车待命…</div>
+    </div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-forward" id="section-sha-ma-label"><span>正车 · 千百十个排除单号</span></div>
+<div class="card section-anchor kill-side-only-forward" id="section-sha-ma">
+  <div class="card-head">
+    <div class="card-head-title">
+      <div class="sha-ma-board__head">
+        <h2 class="sha-ma-board__title">千百十个排除单号</h2>
+        <div class="sha-ma-board__note" id="shaMaMeta">fourPosExclude · 每位1码 · 长窗几千期选码</div>
+      </div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="shaMaBoard" data-collapse-default="1" aria-expanded="false">展开</button>
+  </div>
+  <div class="card-body" data-collapse-body="shaMaBoard" hidden>
+    <div class="sha-ma-board kill-side-only-forward" id="shaMaBoardGrid">
+      <div class="sha-ma-board__card" id="shaMaWanCard"><div class="sha-ma-board__pos">千</div><div class="sha-ma-board__digit" id="shaMaWan">--</div><div class="sha-ma-board__action" id="shaMaWanAction">本位置算法待命</div><div class="sha-ma-board__meta" id="shaMaWanMeta">--</div></div>
+      <div class="sha-ma-board__card" id="shaMaQianCard"><div class="sha-ma-board__pos">百</div><div class="sha-ma-board__digit" id="shaMaQian">--</div><div class="sha-ma-board__action" id="shaMaQianAction">本位置算法待命</div><div class="sha-ma-board__meta" id="shaMaQianMeta">--</div></div>
+      <div class="sha-ma-board__card" id="shaMaBaiCard"><div class="sha-ma-board__pos">十</div><div class="sha-ma-board__digit" id="shaMaBai">--</div><div class="sha-ma-board__action" id="shaMaBaiAction">本位置算法待命</div><div class="sha-ma-board__meta" id="shaMaBaiMeta">--</div></div>
+      <div class="sha-ma-board__card" id="shaMaShiCard"><div class="sha-ma-board__pos">个</div><div class="sha-ma-board__digit" id="shaMaShi">--</div><div class="sha-ma-board__action" id="shaMaShiAction">本位置算法待命</div><div class="sha-ma-board__meta" id="shaMaShiMeta">--</div></div>
+    </div>
+    <div class="small kill-side-only-forward" id="shaMaLine" style="margin-top:12px;">--</div>
+    <div id="flexDualPosBox" class="kill-side-only-forward" style="margin-top:14px;padding-top:12px;border-top:1px dashed #cbd5e1;">
+      <div style="font-weight:900;color:#0f172a;margin-bottom:6px;">灵活二位排除 · 千百/百十合尾</div>
+      <div class="small" id="flexDualPosMeta">等待 flexDualPosHewei…</div>
+      <div id="flexDualPosLine" style="margin-top:8px;font-size:15px;font-weight:800;color:#14532d;">--</div>
+    </div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-forward" id="section-dual-pos-total-label"><span>搭配模型 · 二定 + 千百十个合尾（三件全过才算中）</span></div>
+<div class="card section-anchor kill-side-only-forward" id="section-dual-pos-total">
+  <div class="card-head">
+    <div class="card-head-title">
+      <div class="sha-ma-board__head">
+        <h2 class="sha-ma-board__title">搭配模型 · 二定 + 千百十个合尾</h2>
+        <div class="sha-ma-board__note" id="dualPosTotalHeweiMeta">dualPosTotalHewei · 2定位避开 + 千百十个合尾 · 全过才算</div>
+      </div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="dualPosTotalBoard" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="dualPosTotalBoard">
+    <div id="dualPosTotalHeweiBox">
+      <div id="dualPosTotalHeweiLine" style="font-size:18px;font-weight:900;color:#166534;line-height:1.5;">--</div>
+      <div class="small" id="dualPosTotalHeweiComboSim" style="margin-top:8px;color:#0f766e;font-weight:800;">--</div>
+      <div class="small" style="margin-top:8px;color:#64748b;">口径：选优+粘性与 walk-forward 同构；随机基线 72.9%；两个定位避开 + 千百十个合尾；三件同时过才算命中。近窗回放不是硬指标。</div>
+      <div class="small" style="font-weight:800;margin:12px 0 6px;">联合命中率（walk-forward · 选优重选）</div>
+      <table class="table" id="dualPosTotalHeweiJointTable">
+        <tr><td>窗口</td><td>命中</td><td>总数</td><td>命中率</td><td>下界</td><td>连挂</td></tr>
+        <tr><td colspan="6">--</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-forward" id="section-claude-dual-pos-label"><span>Claude搭配模型 · 二定 + 合尾（长窗收缩选码 · 诚实指标）</span></div>
+<div class="card section-anchor kill-side-only-forward" id="section-claude-dual-pos">
+  <div class="card-head">
+    <div class="card-head-title">
+      <div class="sha-ma-board__head">
+        <h2 class="sha-ma-board__title">Claude搭配模型 · 二定 + 合尾</h2>
+        <div class="sha-ma-board__note" id="claudeDualPosHeweiMeta">claudeDualPosHewei · 长窗收缩后验选码 · 全过才算</div>
+      </div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="claudeDualPosBoard" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="claudeDualPosBoard">
+    <div id="claudeDualPosHeweiBox">
+      <div id="claudeDualPosHeweiLine" style="font-size:18px;font-weight:900;color:#1e3a8a;line-height:1.5;">--</div>
+      <div class="small" style="margin-top:8px;color:#64748b;">口径：600期长窗 + Dirichlet 收缩后验选"最不可能出现"的码；两个定位避开 + 千百十个合尾；三件同时过才算命中。无近窗回放指标——walk-forward 与实盘同一选码函数，是唯一口径。</div>
+      <div class="small" style="font-weight:800;margin:12px 0 6px;">联合命中率（walk-forward · 同策略 · 基线72.9%）</div>
+      <table class="table" id="claudeDualPosHeweiJointTable">
+        <tr><td>窗口</td><td>命中</td><td>总数</td><td>命中率</td><td>下界</td><td>对基线超额</td><td>连挂</td></tr>
+        <tr><td colspan="7">--</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-forward" id="section-four-factor-label"><span>四因子排码 · 90期加权+热度+转移+弱遗漏 · walk-forward%</span></div>
+<div class="card section-anchor kill-side-only-forward" id="section-four-factor">
+  <div class="card-head">
+    <div class="card-head-title">
+      <div class="sha-ma-board__head">
+        <h2 class="sha-ma-board__title">四因子排码</h2>
+        <div class="sha-ma-board__note" id="fourFactorMeta">four-factor-rank · 每位排1码 · 服务器旁路</div>
+      </div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="fourFactorBoard" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="fourFactorBoard">
+    <div class="sha-ma-board" id="fourFactorBoardGrid">
+      <div class="sha-ma-board__card"><div class="sha-ma-board__pos">千</div><div class="sha-ma-board__digit" id="fourFactorWan">--</div><div class="sha-ma-board__meta" id="fourFactorWanMeta">--</div></div>
+      <div class="sha-ma-board__card"><div class="sha-ma-board__pos">百</div><div class="sha-ma-board__digit" id="fourFactorQian">--</div><div class="sha-ma-board__meta" id="fourFactorQianMeta">--</div></div>
+      <div class="sha-ma-board__card"><div class="sha-ma-board__pos">十</div><div class="sha-ma-board__digit" id="fourFactorBai">--</div><div class="sha-ma-board__meta" id="fourFactorBaiMeta">--</div></div>
+      <div class="sha-ma-board__card"><div class="sha-ma-board__pos">个</div><div class="sha-ma-board__digit" id="fourFactorShi">--</div><div class="sha-ma-board__meta" id="fourFactorShiMeta">--</div></div>
+    </div>
+    <div class="small" id="fourFactorLine" style="margin-top:12px;">--</div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-forward" id="section-shape-avoid-3-label"><span>形态三组 · 一起避开（显示命中率）</span></div>
+<div class="card section-anchor kill-side-only-forward" id="section-shape-avoid-3">
+  <div class="card-head">
+    <div class="card-head-title">
+      <div class="sha-ma-board__head">
+        <h2 class="sha-ma-board__title">形态三组一起避开</h2>
+        <div class="sha-ma-board__note" id="shapeAvoid3Meta">shape-avoid-3 · 四定千百十个 · 服务器旁路</div>
+      </div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="shapeAvoid3Board" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="shapeAvoid3Board">
+    <div class="shape-avoid-board" id="shapeAvoid3Grid">
+      <div class="shape-avoid-board__card"><div class="shape-avoid-board__pos" id="shapeAvoid3G1Name">1组</div><div class="shape-avoid-board__code" id="shapeAvoid3G1Code">--</div><div class="shape-avoid-board__meta" id="shapeAvoid3G1Meta">--</div></div>
+      <div class="shape-avoid-board__card"><div class="shape-avoid-board__pos" id="shapeAvoid3G2Name">2组</div><div class="shape-avoid-board__code" id="shapeAvoid3G2Code">--</div><div class="shape-avoid-board__meta" id="shapeAvoid3G2Meta">--</div></div>
+      <div class="shape-avoid-board__card"><div class="shape-avoid-board__pos" id="shapeAvoid3G3Name">3组</div><div class="shape-avoid-board__code" id="shapeAvoid3G3Code">--</div><div class="shape-avoid-board__meta" id="shapeAvoid3G3Meta">--</div></div>
+    </div>
+    <div class="small" id="shapeAvoid3Shot" style="margin-top:12px;">--</div>
+    <div style="margin-top:14px;">
+      <div class="small" style="font-weight:800;margin-bottom:6px;">一起通（三组AND）统计</div>
+      <table class="table" id="shapeAvoid3JointTable">
+        <tr><td>窗口</td><td>命中</td><td>总数</td><td>命中率</td><td>下界</td><td>连挂</td></tr>
+        <tr><td colspan="6">--</td></tr>
+      </table>
+      <div class="small" style="font-weight:800;margin:14px 0 6px;">分项统计</div>
+      <table class="table" id="shapeAvoid3GroupTable">
+        <tr><td>组</td><td>类型</td><td>条件</td><td>近30</td><td>近120</td><td>近1000</td></tr>
+        <tr><td colspan="6">--</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-forward" id="section-four-ding-shape-label"><span>四定形态杀码 · 大小 / 单双</span></div>
+<div class="card section-anchor kill-side-only-forward" id="section-four-ding-shape">
+  <div class="card-head">
+    <div class="card-head-title">
+      <div class="sha-ma-board__head">
+        <h2 class="sha-ma-board__title">四定形态杀码</h2>
+        <div class="sha-ma-board__note" id="fourDingShapeMeta">four-ding-shape-kills · 服务器旁路</div>
+      </div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="fourDingShapeBoard" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="fourDingShapeBoard">
+    <div class="shape-avoid-board" id="fourDingShapeGrid" style="grid-template-columns:repeat(2,minmax(0,1fr));">
+      <div class="shape-avoid-board__card">
+        <div class="shape-avoid-board__pos" id="fourDingShapeSizeName">大小形态</div>
+        <div class="shape-avoid-board__code" id="fourDingShapeSizeCode">--</div>
+        <div class="shape-avoid-board__meta" id="fourDingShapeSizeMeta">--</div>
+      </div>
+      <div class="shape-avoid-board__card">
+        <div class="shape-avoid-board__pos" id="fourDingShapeParityName">单双形态</div>
+        <div class="shape-avoid-board__code" id="fourDingShapeParityCode">--</div>
+        <div class="shape-avoid-board__meta" id="fourDingShapeParityMeta">--</div>
+      </div>
+    </div>
+    <div class="small" id="fourDingShapeShot" style="margin-top:12px;">--</div>
+  </div>
+</div>
+
+<!-- wan-avoid-3 retired -->
+
+<div class="panel-section-label kill-side-hide-on-side"><span>二 · Composer 更稳排除</span></div>
+<div class="card section-anchor composer-stable-zone kill-side-hide-on-side" id="section-composer-stable-math">
+  <div class="card-head">
+    <div class="card-head-title">
+      <h2>更稳排除<span class="composer-zone-badge">STABLE</span></h2>
+      <div class="composer-zone-note">stableMathFilter · 单码/形态/跨度等</div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="composerStableMath" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="composerStableMath">
+    <table class="table">
+      <tr><td>更稳排除单码</td><td id="stableMathDigits">--</td></tr>
+      <tr><td>更稳排除形态</td><td id="stableMathShapes">--</td></tr>
+      <tr><td>更稳排除跨度</td><td id="stableMathSpans">--</td></tr>
+      <tr><td>更稳排除和值</td><td id="stableMathSums">--</td></tr>
+      <tr><td>更稳排除重号</td><td id="stableMathRepeats">--</td></tr>
+      <tr><td>更稳排除连号</td><td id="stableMathConsecutives">--</td></tr>
+      <tr><td>更稳排除奇偶比</td><td id="stableMathParity">--</td></tr>
+      <tr><td>更稳排除大小比</td><td id="stableMathSize">--</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-hide-on-side" id="section-claude-label"><span>Claude 集成评分</span></div>
+<div class="card section-anchor kill-side-hide-on-side" id="section-claude">
+  <div class="card-head">
+    <div class="card-head-title">
+      <h2 class="sha-ma-board__title">Claude 模型</h2>
+      <div class="sha-ma-board__note">服务器旁路 claude-ensemble · 与杀码分栏</div>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="claudeBoard" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="claudeBoard">
+    <div class="claude-board">
+      <iframe id="claudeFrame" src="/claude/" title="Claude集成评分" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+      <div class="claude-board__actions">
+        <a href="/claude/" target="_blank" rel="noopener">新窗口打开</a>
+        <a href="/claude/state" target="_blank" rel="noopener">查看 state JSON</a>
+        <span id="claudeMeta">等待旁路产出…</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel-section-label" id="section-composer-positions" style="display:none" aria-hidden="true"><span>三 · 四位各排1码（千 / 百 / 十 / 个）</span></div>
+<div class="composer-pos-grid" id="composerPosGrid" style="display:none" aria-hidden="true">
+<div class="card section-anchor composer-pos-folder wan" id="section-composer-wan">
+  <div class="card-head">
+    <div class="card-head-title">
+      <h2>千位杀码<span class="composer-zone-badge">千</span></h2>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="composerPosWan" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="composerPosWan">
+    <table class="table">
+      <tr><td>单码杀</td><td id="wan" class="composer-pos-body">--</td></tr>
+    </table>
+  </div>
+</div>
+<div class="card section-anchor composer-pos-folder qian" id="section-composer-qian">
+  <div class="card-head">
+    <div class="card-head-title">
+      <h2>百位杀码<span class="composer-zone-badge">百</span></h2>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="composerPosQian" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="composerPosQian">
+    <table class="table">
+      <tr><td>单码杀</td><td id="qian" class="composer-pos-body">--</td></tr>
+    </table>
+  </div>
+</div>
+<div class="card section-anchor composer-pos-folder bai" id="section-composer-bai">
+  <div class="card-head">
+    <div class="card-head-title">
+      <h2>十位杀码<span class="composer-zone-badge">十</span></h2>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="composerPosBai" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="composerPosBai">
+    <table class="table">
+      <tr><td>单码杀</td><td id="bai" class="composer-pos-body">--</td></tr>
+    </table>
+  </div>
+</div>
+<div class="card section-anchor composer-pos-folder shi" id="section-composer-shi">
+  <div class="card-head">
+    <div class="card-head-title">
+      <h2>个位杀码<span class="composer-zone-badge">个</span></h2>
+    </div>
+    <button type="button" class="card-toggle" data-collapse-toggle="composerPosShi" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body" data-collapse-body="composerPosShi">
+    <table class="table">
+      <tr><td>单码杀</td><td id="shi" class="composer-pos-body">--</td></tr>
+    </table>
+  </div>
+</div>
+</div>
+
+<div class="panel-section-label kill-side-hide-on-side"><span>四 · 下一期预测与模型</span></div>
+<div class="card section-anchor kill-side-hide-on-side" id="section-prediction">
+  <div class="card-head">
+    <div class="card-head-title"><h2>下一期预测</h2><div class="small">框架模型与旁路区 · 定位/合尾已集中在上方专区 · 默认收起</div></div>
+    <button type="button" class="card-toggle" data-collapse-toggle="predictionShell" data-collapse-default="1" aria-expanded="false">展开</button>
+  </div>
+  <div class="card-body is-collapsed" data-collapse-body="predictionShell">
+    <div id="predictionPanel" aria-live="polite"></div>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-only-forward" id="section-txt-zheng-label"><span>五 · 正车回删器</span></div>
+<div class="panel-section-label kill-side-only-reverse" id="section-txt-fan-label"><span>五 · 反车转发器（不经回删）</span></div>
+<div class="card section-anchor" id="txtConvertBox">
+  <div class="card-head kill-side-only-forward">
+    <h2>正车 · 三定 / 四定回删</h2>
+    <button type="button" class="card-toggle" id="txtConvertToggle" data-collapse-toggle="txtConvert" data-collapse-default="1" aria-expanded="false">展开</button>
+  </div>
+  <div class="card-head kill-side-only-reverse">
+    <h2>反车 · 剩号转发（1号/2号直接接）</h2>
+    <button type="button" class="card-toggle" data-collapse-toggle="txtConvert" data-collapse-default="0" aria-expanded="true">收起</button>
+  </div>
+  <div class="card-body is-collapsed" id="txtConvertBody" data-collapse-body="txtConvert">
+  <div class="small kill-side-only-forward">正车专用：攻击语缩池 → 真旧码回删。反车不要走这里，去反车页用转发器。</div>
+  <div class="small kill-side-only-reverse" style="color:#9a3412;font-weight:800;">反车专用：接 1号/2号剩号 → 填金额网址 → 分批真发。不经正车回删，不跟正页混。</div>
+
+  <div id="txtThreeRemainTopBox" class="section-anchor nested-collapse kill-side-only-forward" style="margin:10px 0 0;border:1px solid #f97316;border-radius:12px;background:#fff7ed;padding:10px;">
+    <div class="card-head" data-collapse-head="txtThreeRemainTop">
+    <div class="card-head-title"><b style="font-size:16px;color:#9a3412;">三定回删命中率（四种三位组合 · 最多近5000期真实旧码回删）</b></div>
+      <button type="button" class="card-toggle" data-collapse-toggle="txtThreeRemainTop" data-collapse-default="0" aria-expanded="true">收起</button>
+    </div>
+    <div class="card-body" data-collapse-body="txtThreeRemainTop">
+      <div id="txtThreeFrameworkInfo" class="small">等待远程数据...</div>
+      <div id="txtThreeRemainContent" class="small" style="margin-top:8px;"></div>
+    </div>
+  </div>
+  <div id="txtFourRemainTopBox" class="section-anchor nested-collapse" style="margin:10px 0 0;border:1px solid #0f766e;border-radius:12px;background:#f0fdfa;padding:10px;">
+    <div class="card-head" data-collapse-head="txtFourRemainTop">
+      <div class="card-head-title">
+        <b class="kill-side-only-forward" style="font-size:16px;color:#0f766e;">正车 · 四定回删 + 出页转发</b>
+        <b class="kill-side-only-reverse" style="font-size:16px;color:#9a3412;">反车 · 剩号转发（不经回删）</b>
+        <b class="kill-side-hide-on-side" style="font-size:16px;color:#0f766e;">四定回删 + 分批转发</b>
+      </div>
+      <button type="button" class="card-toggle" data-collapse-toggle="txtFourRemainTop" data-collapse-default="0" aria-expanded="true">收起</button>
+    </div>
+    <div class="card-body" data-collapse-body="txtFourRemainTop">
+      <div class="kill-side-only-forward">
+        <div class="small" style="color:#0f766e;font-weight:700;">正车固定流程：填入框架攻击语 → 选回删期数 →「按攻击语真旧码回删」→ 出页后立即下方转发。不掺反车。</div>
+        <div id="txtFourAttackBox" class="small" style="margin-top:8px;border:1px solid #99f6e4;border-radius:10px;background:#fff;padding:8px;display:grid;gap:6px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <b style="color:#0f766e;">四定攻击语</b>
+            <button type="button" data-txt-four-attack-fill="1" style="border:0;border-radius:8px;padding:6px 10px;background:#115e59;color:white;font-weight:900;cursor:pointer;font-size:12px;">填入框架攻击语</button>
+            <span style="color:#64748b;">跟框架排除/避开走</span>
+          </div>
+          <textarea id="txtFourAttackInput" rows="3" placeholder="例：千…百…十…个…四定二数合02468三数合…除对数…各" style="width:100%;box-sizing:border-box;border:1px solid #99f6e4;border-radius:8px;padding:8px;font-weight:700;color:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.4;"></textarea>
+        </div>
+        <div id="txtFourHistoryLimitBox" class="small" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;border:1px solid #99f6e4;border-radius:10px;background:#fff;padding:8px;">
+          <label for="txtFourHistoryLimitInput" style="color:#0f766e;font-weight:900;">回删期数</label>
+          <input id="txtFourHistoryLimitInput" type="number" min="100" max="5000" step="1" value="1200" style="width:96px;border:1px solid #99f6e4;border-radius:8px;padding:6px 8px;font-weight:800;color:#0f172a;">
+          <span style="color:#0f766e;font-weight:900;">快捷档</span>
+          <button type="button" data-txt-four-history-preset="100" style="border:1px solid #99f6e4;border-radius:8px;padding:6px 10px;background:#ecfdf5;color:#0f766e;font-weight:900;cursor:pointer;font-size:12px;">回删100</button>
+          <button type="button" data-txt-four-history-preset="800" style="border:1px solid #99f6e4;border-radius:8px;padding:6px 10px;background:#ecfdf5;color:#0f766e;font-weight:900;cursor:pointer;font-size:12px;">回删800</button>
+          <button type="button" data-txt-four-history-preset="1200" style="border:1px solid #99f6e4;border-radius:8px;padding:6px 10px;background:#ecfdf5;color:#0f766e;font-weight:900;cursor:pointer;font-size:12px;">回删1200</button>
+          <button type="button" data-txt-four-history-preset="1500" style="border:1px solid #99f6e4;border-radius:8px;padding:6px 10px;background:#ecfdf5;color:#0f766e;font-weight:900;cursor:pointer;font-size:12px;">回删1500</button>
+          <span style="color:#64748b;">点档位即记住；填 N 扫 N，禁止截断造假。</span>
+          <button type="button" data-txt-four-history-limit-save="1" style="border:0;border-radius:8px;padding:6px 10px;background:#115e59;color:white;font-weight:900;cursor:pointer;font-size:12px;">记住</button>
+          <button type="button" data-txt-four-cache-clear="1" style="border:0;border-radius:8px;padding:6px 10px;background:#b91c1c;color:white;font-weight:900;cursor:pointer;font-size:12px;">清缓存</button>
+          <button type="button" data-txt-four-stats-clear="1" style="border:0;border-radius:8px;padding:6px 10px;background:#7c2d12;color:white;font-weight:900;cursor:pointer;font-size:12px;">清中奖统计</button>
+          <button type="button" data-txt-four-sticky-restore="1" style="border:0;border-radius:8px;padding:6px 10px;background:#0369a1;color:white;font-weight:900;cursor:pointer;font-size:12px;">恢复粘码</button>
+        </div>
+        <div id="txtFourStatsStatus" class="small" style="margin-top:8px;border:1px solid #99f6e4;border-radius:10px;background:#fff;padding:8px;color:#0f766e;font-weight:800;">四档命中率：回删100 / 800 / 1200 / 1500。</div>
+        <div id="txtFourVerifyStatus" class="small" style="margin-top:8px;border:1px solid #99f6e4;border-radius:10px;background:#fff;padding:8px;color:#0f766e;font-weight:800;">开奖核对：回删生成后，等最新一期开出再核对。</div>
+        <div id="txtFourRemainContent" class="small" style="margin-top:8px;">
+          <div style="color:#64748b;">尚未生成。确认攻击语与回删期数后，点「按攻击语真旧码回删」。</div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <button type="button" data-txt-four-backdelete-run="1" data-txt-four-backdelete-force="1" style="border:0;border-radius:8px;padding:7px 12px;background:#0f766e;color:white;font-weight:900;cursor:pointer;font-size:13px;">按攻击语真旧码回删</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="txtFourThrowTopBox" class="section-anchor nested-collapse" style="margin:10px 0 0;border:1px solid #ea580c;border-radius:12px;background:#fff7ed;padding:10px;">
+        <div class="card-head" data-collapse-head="txtFourThrowTop">
+          <div class="card-head-title">
+            <b class="kill-side-only-forward" style="font-size:16px;color:#0f766e;">正车 · 回删出页转发</b>
+            <b class="kill-side-only-reverse" style="font-size:16px;color:#9a3412;">反车 · 剩号转发（不经回删）</b>
+            <b class="kill-side-hide-on-side" style="font-size:16px;color:#c2410c;">分批转发器</b>
+          </div>
+          <button type="button" class="card-toggle" data-collapse-toggle="txtFourThrowTop" data-collapse-default="0" aria-expanded="true">收起</button>
+        </div>
+        <div class="card-body" data-collapse-body="txtFourThrowTop">
+          <div class="small kill-side-only-forward" style="color:#0f766e;font-weight:700;">正车：上方回删出页后，在此填金额网址真发。不要点反车1/2号。</div>
+          <div class="small kill-side-only-reverse" style="color:#9a3412;font-weight:700;">反车：接 1号/2号剩号后真发。不经正车回删。</div>
+          <div id="txtFourThrowBatchBox" class="small" style="margin-top:10px;border:2px solid #ea580c;border-radius:10px;background:#fff;padding:10px;display:grid;gap:8px;">
+            <div class="kill-side-only-reverse" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <button type="button" data-txt-four-fan-throw="1" style="border:0;border-radius:8px;padding:6px 10px;background:#9a3412;color:white;font-weight:900;cursor:pointer;font-size:12px;">接四定反车1号模型剩号</button>
+              <button type="button" data-txt-four-fan-throw="2" style="border:0;border-radius:8px;padding:6px 10px;background:#c2410c;color:white;font-weight:900;cursor:pointer;font-size:12px;">接四定反车2号模型剩号</button>
+              <span style="color:#7c2d12;font-size:12px;">反车页才显示 · 不经回删</span>
+            </div>
+            <div id="txtFourPoolMark" style="display:none;border:1px solid #fdba74;border-radius:8px;background:#fff;padding:6px 8px;color:#9a3412;font-weight:900;"></div>
+            <div style="display:grid;gap:6px;border:1px dashed #fdba74;border-radius:8px;padding:8px;background:#fff;">
+              <div style="color:#c2410c;font-weight:900;">网址 + 金额（存服务端）</div>
+              <label style="display:grid;gap:4px;color:#9a3412;font-weight:800;">金额
+                <input id="txtFourThrowAmount" type="text" inputmode="decimal" placeholder="例：0.5（必填）" style="width:160px;border:1px solid #fdba74;border-radius:8px;padding:6px 8px;font-weight:800;color:#0f172a;">
+              </label>
+              <label style="display:grid;gap:4px;color:#9a3412;font-weight:800;">网址
+                <input id="txtFourThrowUrl1" type="url" placeholder="转发目标网址" autocomplete="off" style="width:100%;box-sizing:border-box;border:1px solid #fdba74;border-radius:8px;padding:6px 8px;font-weight:700;color:#0f172a;">
+              </label>
+              <button type="button" data-txt-four-throw-url-save="1" style="justify-self:start;border:0;border-radius:8px;padding:6px 10px;background:#c2410c;color:white;font-weight:900;cursor:pointer;font-size:12px;">保存金额+网址到服务</button>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+              <label style="display:grid;gap:4px;color:#9a3412;font-weight:800;">从页
+                <input id="txtFourThrowFrom" type="number" min="1" step="1" value="1" style="width:72px;border:1px solid #fdba74;border-radius:8px;padding:6px 8px;font-weight:800;color:#0f172a;">
+              </label>
+              <label style="display:grid;gap:4px;color:#9a3412;font-weight:800;">到页
+                <input id="txtFourThrowTo" type="number" min="1" step="1" value="" placeholder="回删/接号后自动填" style="width:110px;border:1px solid #fdba74;border-radius:8px;padding:6px 8px;font-weight:800;color:#0f172a;">
+              </label>
+              <button type="button" data-txt-four-throw-start="1" style="border:0;border-radius:8px;padding:7px 12px;background:#ea580c;color:white;font-weight:900;cursor:pointer;font-size:13px;">服务端分批真发</button>
+              <button type="button" data-txt-four-throw-continue="1" disabled style="border:0;border-radius:8px;padding:7px 12px;background:#c2410c;color:white;font-weight:900;cursor:pointer;font-size:13px;">继续发失败页</button>
+              <button type="button" data-txt-four-throw-stop="1" disabled style="border:0;border-radius:8px;padding:7px 12px;background:#64748b;color:white;font-weight:900;cursor:pointer;font-size:13px;">停止</button>
+              <button type="button" data-txt-four-throw-status="1" style="border:0;border-radius:8px;padding:7px 12px;background:#334155;color:white;font-weight:900;cursor:pointer;font-size:13px;">刷新任务状态</button>
+              <button type="button" data-txt-four-throw-reset="1" style="border:0;border-radius:8px;padding:7px 12px;background:#0f172a;color:white;font-weight:900;cursor:pointer;font-size:13px;">复位转发</button>
+            </div>
+            <div id="txtFourThrowStatus" class="kill-side-only-forward" style="color:#0f766e;font-weight:700;">正车：回删出页 → 填金额网址 → 分批真发。最多 350 组/页。</div>
+            <div id="txtFourThrowStatusFan" class="kill-side-only-reverse" style="color:#9a3412;font-weight:700;">反车：接 1号/2号剩号 → 填金额网址 → 分批真发。最多 350 组/页。</div>
+            <div id="txtFourThrowAlertPages" style="display:none;color:#c2410c;font-weight:900;font-size:14px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:8px;"></div>
+            <div id="txtFourThrowFailPages" style="display:none;color:#b91c1c;font-weight:900;font-size:14px;"></div>
+          </div>
+        </div>
+      </div>
+      <div id="txtFourRemainPages" class="small kill-side-only-forward" style="margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <div id="txtConvertStatus" class="small" style="margin-top:8px;"></div>
+  <textarea id="txtTwoFrameworkOutput" readonly aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;"></textarea>
+  <textarea id="txtThreeFrameworkOutput" readonly aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;"></textarea>
+  <textarea id="txtPreview" data-role="txt-target" readonly aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;"></textarea>
+  </div>
+</div>
+
+<div class="panel-section-label kill-side-hide-on-side"><span>六 · 后台历史</span></div>
+<div class="card section-anchor kill-side-hide-on-side" id="section-history">
+  <div class="card-head">
+    <h2>最近后台历史</h2>
+    <button type="button" class="card-toggle" data-collapse-toggle="history" data-collapse-default="1" aria-expanded="false">展开</button>
+  </div>
+  <div class="card-body is-collapsed" data-collapse-body="history">
+    <div id="history">--</div>
+  </div>
+</div>
+
+</div>
+<button type="button" id="panelFab" class="panel-fab" title="回到顶部" aria-label="回到顶部">↑</button>
+
+<script src="/txt_attack_convert.js?v=20260803-four-real-attack-pool-v1"></script>
+<script>
+
+
+var COLD_HOT_WINDOW = 60;
+var PENTA5_DAY_RESET_HOUR = 5;
+function penta5ParseLocalDateTime(value){
+  var text=String(value==null?"":value).trim();
+  if(!text)return null;
+  var match=text.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if(match){
+    return new Date(Number(match[1]),Number(match[2])-1,Number(match[3]),Number(match[4]),Number(match[5]),Number(match[6]||0),0);
+  }
+  match=text.match(/^(\d{4})(\d{2})(\d{2})(\d{3})$/);
+  if(match){
+    var seq=Number(match[4]);
+    if(seq>=1&&seq<=288){
+      var minutes=(seq-1)*5;
+      return new Date(Number(match[1]),Number(match[2])-1,Number(match[3]),Math.floor(minutes/60),minutes%60,0,0);
+    }
+    return new Date(Number(match[1]),Number(match[2])-1,Number(match[3]),12,0,0,0);
+  }
+  var parsed=new Date(text);
+  return Number.isFinite(parsed.getTime())?parsed:null;
+}
+function penta5BusinessDayKey(value){
+  var dt=penta5ParseLocalDateTime(value);
+  if(dt&&Number.isFinite(dt.getTime())){
+    var shifted=new Date(dt.getTime()-PENTA5_DAY_RESET_HOUR*60*60*1000);
+    var y=shifted.getFullYear();
+    var m=String(shifted.getMonth()+1).padStart(2,"0");
+    var d=String(shifted.getDate()).padStart(2,"0");
+    return y+"-"+m+"-"+d;
+  }
+  var text=String(value==null?"":value).trim();
+  var match=text.match(/(\d{4})[-\/]?(\d{2})[-\/]?(\d{2})/);
+  if(match)return match[1]+"-"+match[2]+"-"+match[3];
+  return "";
+}
+function penta5CurrentBusinessDayKey(data){
+  if(data&&data.positionDayScope)return String(data.positionDayScope);
+  var latest=data&&data.latestRecord||{};
+  return penta5BusinessDayKey(latest.opentime)
+    ||penta5BusinessDayKey(latest.period)
+    ||penta5BusinessDayKey(new Date());
+}
+function penta5DayResetHour(data){
+  var h=data&&data.positionDayResetHour;
+  if(h!=null&&isFinite(Number(h)))return Math.max(0,Math.min(23,Number(h)));
+  return PENTA5_DAY_RESET_HOUR;
+}
+function penta5HistorySourceRows(data){
+  // /state 默认只带近 120 期；今日号码出现次数要用 /history 扩展缓存，否则会被截成「今日120期」
+  var cached=Array.isArray(window.__penta5HistoryCache)?window.__penta5HistoryCache:[];
+  var stateRows=Array.isArray(data&&data.history)?data.history:(Array.isArray(data&&data.records)?data.records:[]);
+  if(cached.length>stateRows.length)return cached;
+  return stateRows;
+}
+function penta5RowBusinessDayKey(row){
+  return penta5BusinessDayKey(row&&row.opentime)
+    ||penta5BusinessDayKey(row&&row.period)
+    ||penta5BusinessDayKey(row&&row.uid);
+}
+function penta5EvalRowBusinessDayKey(row){
+  var ev=row&&row.evaluation||{};
+  return penta5BusinessDayKey(ev.targetOpenTime)
+    ||penta5BusinessDayKey(ev.evaluatedAtText)
+    ||penta5BusinessDayKey(ev.evaluatedAt)
+    ||penta5BusinessDayKey(row&&row.baseOpenTime)
+    ||penta5BusinessDayKey(row&&row.basePeriod)
+    ||penta5BusinessDayKey(ev.targetPeriod)
+    ||penta5BusinessDayKey(row&&row.opentime)
+    ||penta5BusinessDayKey(row&&row.period);
+}
+function penta5TodayHistoryRows(data){
+  var day=penta5CurrentBusinessDayKey(data);
+  var rows=penta5HistorySourceRows(data);
+  if(!day)return rows.slice(0,COLD_HOT_WINDOW);
+  return rows.filter(function(row){return penta5RowBusinessDayKey(row)===day;});
+}
+function penta5HeweiDigitFromRow(row,field){
+  var metrics=row&&row.metrics||{};
+  var digit=metrics[field];
+  if((digit===undefined||digit===null||String(digit)==="--")&&Array.isArray(row&&row.numbers)){
+    var nums=row.numbers.slice(0,4).map(function(value){return Number(value);});
+    if(nums.length===4&&nums.every(function(value){return isFinite(value)&&value>=0&&value<=9;})){
+      if(field==="totalHewei")digit=(nums[0]+nums[1]+nums[2]+nums[3])%10;
+      else if(field==="wanQianBaiHewei")digit=(nums[0]+nums[1]+nums[2])%10;
+      else if(field==="qianBaiShiHewei")digit=(nums[1]+nums[2]+nums[3])%10;
+      else if(field==="wanQianBaiShiHewei")digit=(nums[0]+nums[1]+nums[2]+nums[3])%10;
+      else if(field==="wanQianGeHewei")digit=(nums[0]+nums[1]+nums[3])%10;
+      else if(field==="wanBaiShiHewei")digit=(nums[0]+nums[2]+nums[3])%10;
+    }
+  }
+  digit=digit===undefined||digit===null?"":String(digit);
+  return /^\d$/.test(digit)?digit:"";
+}
+function penta5ColdHotFromCounts(counts,total){
+  if(!total)return {total:0,cold:[],hot:[],min:null,max:null,counts:counts||{}};
+  var cold=[],hot=[],min=Infinity,max=-Infinity;
+  Object.keys(counts).sort().forEach(function(digit){
+    var n=counts[digit];
+    if(n<min){min=n;cold=[digit];}
+    else if(n===min)cold.push(digit);
+    if(n>max){max=n;hot=[digit];}
+    else if(n===max)hot.push(digit);
+  });
+  return {total:total,cold:cold,hot:hot,min:min,max:max,counts:counts};
+}
+function $(id){return document.getElementById(id)}
+function esc(s){return String(s==null?"--":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function ball(n,cls){return '<span class="ball '+(cls||'')+'">'+esc(n)+'</span>'}
+function tag(t){return '<span class="tag">'+esc(t)+'</span>'}
+function heweiConfidenceTag(meta){
+  if(!meta||typeof meta!=="object")return "";
+  if(meta.recommendable===false||meta.confidence==="low")return "";
+  if(meta.confidence==="normal")return "";
+  return "";
+}
+function setHtml(target,html){
+  if(!target)return;
+  var parsed=new DOMParser().parseFromString("<!doctype html><html><body>"+String(html==null?"":html)+"</body></html>","text/html");
+  target.replaceChildren.apply(target,Array.from(parsed.body.childNodes));
+}
+function setStatus(t,ok){
+  var el=$("status");
+  if(!el)return;
+  var text=String(t||"");
+  var isLoading=/正在|等待|准备/.test(text);
+  el.textContent=text;
+  if(isLoading){
+    el.className="status loading"+(ok?" ok":" err");
+    return;
+  }
+  if(ok){
+    el.className="status ok is-hidden";
+    return;
+  }
+  el.className="status err";
+  if(typeof updatePanelClock==="function")updatePanelClock();
+}
+function rate(total,match){return total?((match/total)*100).toFixed(2)+"%":"暂无命中记录"}
+function panelCollapseStorageKey(id){return "penta5Collapse:"+String(id||"");}
+/** 四位各排1码卡片：刷新后始终展开，避免历史折叠把内容收成空壳 */
+function panelCollapseIsComposerPosForceOpen(id){
+  return id==="composerPosWan"||id==="composerPosQian"||id==="composerPosBai"||id==="composerPosShi";
+}
+function panelCollapseIsStored(id,defaultCollapsed){
+  try{
+    if(panelCollapseIsComposerPosForceOpen(id)){
+      try{localStorage.removeItem(panelCollapseStorageKey(id));}catch(eForce){}
+      return false;
+    }
+    if(id==="txtConvert"){
+      var legacy=localStorage.getItem("penta5TxtCollapsed");
+      if(legacy==="1"||legacy==="0"){
+        localStorage.setItem(panelCollapseStorageKey("txtConvert"),legacy);
+        localStorage.removeItem("penta5TxtCollapsed");
+        return legacy==="1";
+      }
+    }
+    var saved=localStorage.getItem(panelCollapseStorageKey(id));
+    if(saved==="1")return true;
+    if(saved==="0")return false;
+  }catch(e){}
+  return !!defaultCollapsed;
+}
+function panelCollapseApply(toggle,body,collapsed){
+  if(!body)return;
+  body.classList.toggle("is-collapsed",!!collapsed);
+  if(toggle){
+    var heroExtras=toggle.getAttribute("data-collapse-toggle")==="panelHeroExtras";
+    toggle.textContent=collapsed?(heroExtras?"展开顶栏":"展开"):(heroExtras?"收起顶栏":"收起");
+    toggle.setAttribute("aria-expanded",collapsed?"false":"true");
+  }
+  if(body.id==="panelHeroExtras"||(body.getAttribute&&body.getAttribute("data-collapse-body")==="panelHeroExtras")){
+    var hero=document.getElementById("panelHero");
+    if(hero)hero.classList.toggle("is-extras-collapsed",!!collapsed);
+  }
+}
+function panelCollapseSet(id,collapsed,toggle,body){
+  // 四位各排1码四卡：禁止再次折叠，避免「收起」但正文被掏空后看起来像白卡
+  if(panelCollapseIsComposerPosForceOpen(id))collapsed=false;
+  panelCollapseApply(toggle,body,collapsed);
+  try{
+    if(panelCollapseIsComposerPosForceOpen(id))localStorage.removeItem(panelCollapseStorageKey(id));
+    else localStorage.setItem(panelCollapseStorageKey(id),collapsed?"1":"0");
+  }catch(e){}
+}
+function panelCollapseHeadHtml(titleInnerHtml,collapseId,defaultCollapsed){
+  var collapsed=panelCollapseIsStored(collapseId,!!defaultCollapsed);
+  return '<div class="card-head" data-collapse-head="'+esc(collapseId)+'">'
+    +'<div class="card-head-title">'+titleInnerHtml+'</div>'
+    +'<button type="button" class="card-toggle" data-collapse-toggle="'+esc(collapseId)+'" data-collapse-default="'+(defaultCollapsed?"1":"0")+'" aria-expanded="'+(collapsed?"false":"true")+'">'+(collapsed?"展开":"收起")+'</button>'
+    +'</div>';
+}
+function panelCollapseBodyOpen(collapseId,defaultCollapsed){
+  var collapsed=panelCollapseIsStored(collapseId, defaultCollapsed==null?true:!!defaultCollapsed);
+  return '<div class="card-body'+(collapsed?" is-collapsed":"")+'" data-collapse-body="'+esc(collapseId)+'">';
+}
+function panelCollapseBodyClose(){return "</div>";}
+function restorePanelCollapsibles(root){
+  var scope=root&&root.querySelectorAll?root:document;
+  var toggles=scope.querySelectorAll("[data-collapse-toggle]");
+  for(var i=0;i<toggles.length;i++){
+    var toggle=toggles[i];
+    var id=toggle.getAttribute("data-collapse-toggle");
+    if(!id)continue;
+    var body=(root&&root.querySelector)
+      ?root.querySelector('[data-collapse-body="'+id+'"]')
+      :document.querySelector('[data-collapse-body="'+id+'"]');
+    if(!body&&root!==document)body=document.querySelector('[data-collapse-body="'+id+'"]');
+    if(!body)continue;
+    var defaultCollapsed=toggle.getAttribute("data-collapse-default")==="1";
+    panelCollapseApply(toggle,body,panelCollapseIsStored(id,defaultCollapsed));
+  }
+}
+function panelExpandCollapseId(id){
+  if(!id)return;
+  var body=document.querySelector('[data-collapse-body="'+id+'"]');
+  var toggle=document.querySelector('[data-collapse-toggle="'+id+'"]');
+  if(!body)return;
+  panelCollapseSet(id,false,toggle,body);
+}
+function panelOpenNavTarget(hash){
+  var id=String(hash||"").replace(/^#/,"");
+  if(!id)return null;
+  var el=document.getElementById(id);
+  if(!el)return null;
+  if(id==="practiceModelBox"||id==="section-practice"){
+    panelExpandCollapseId("practiceModel");
+  }
+  if(id==="section-singlePosition"||id==="txtTwoRemainContent"||id==="txtThreeRemainContent"){
+    panelExpandCollapseId("txtConvert");
+    panelExpandCollapseId("txtThreeRemainTop");
+  }
+  if(id==="txtConvertBox"||id==="txtThreeRemainTopBox"||id==="txtFourRemainTopBox"){
+    panelExpandCollapseId("txtConvert");
+    if(id==="txtThreeRemainTopBox")panelExpandCollapseId("txtThreeRemainTop");
+    if(id==="txtFourRemainTopBox")panelExpandCollapseId("txtFourRemainTop");

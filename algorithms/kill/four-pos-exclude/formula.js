@@ -16,8 +16,18 @@ const {
   wilsonLowerRate
 } = require("../../_shared/formula_kit");
 
-const VERSION = "four-pos-exclude-v2";
-const LABEL = "四位各排1码";
+const VERSION = "four-pos-exclude-v7-show-all";
+const LABEL = "四位各排1码·近60";
+const LONG_RATE_FLOOR = 88.5;
+const LONG_LOWER_FLOOR = 88;
+const MISS_LEAVE = 1;
+const LEGACY_VERSIONS = Object.freeze([
+  "four-pos-exclude-v7-show-all",
+  "four-pos-exclude-v6-primary-only",
+  "four-pos-exclude-v5-top1-r60",
+  "four-pos-exclude-v4-flex-short",
+  "four-pos-exclude-v3-long5k"
+]);
 const SHAPE_COUNT = 2;
 const SHAPE_SCOPE = Object.freeze([0, 1, 2]); // 千百十
 const SHAPE_SCOPE_LABEL = "千百十";
@@ -93,11 +103,17 @@ function scoreDigit(digit, rateWindows) {
   const weighted = stableWindowScore(r30, r60, r120, r300, rLong, 3.2);
   const lower120 = wilsonLowerRate(r120.hit, r120.total, 1.44);
   const lower300 = wilsonLowerRate(r300.hit, r300.total, 1.44);
+  const lowerLong = wilsonLowerRate(rLong.hit, rLong.total, 1.44);
   let score = weighted.score;
   if (Number(r30.rate || 0) < MODEL_LOW_HIT_RATE) score -= 2.4;
-  if (Number(r30.missStreak || 0) >= 2) score -= 1.8;
-  score += Math.max(0, lower120 - 88) * 0.08;
-  score += Math.max(0, lower300 - 88) * 0.05;
+  if (Number(r30.missStreak || 0) >= 1) score -= 3.2;
+  // 长窗只作资格，近窗决定谁上场，避免 5k 窗把同一码粘死
+  score += Math.max(0, Number(r30.rate || 0) - 88) * 0.14;
+  score += Math.max(0, Number(r60.rate || 0) - 88) * 0.08;
+  score += Math.max(0, lowerLong - 88) * 0.05;
+  score += Math.max(0, Number(rLong.rate || 0) - 90) * 0.03;
+  score += Math.max(0, lower300 - 88) * 0.04;
+  score += Math.max(0, lower120 - 88) * 0.06;
   return {
     digit: String(digit),
     score: Number(score.toFixed(4)),
@@ -108,8 +124,56 @@ function scoreDigit(digit, rateWindows) {
     r300,
     rLong,
     lower120: Number(lower120.toFixed(2)),
-    lower300: Number(lower300.toFixed(2))
+    lower300: Number(lower300.toFixed(2)),
+    lowerLong: Number(lowerLong.toFixed(2))
   };
+}
+
+function leadingHitStreak(digit, records, index, limit) {
+  const cap = Math.max(1, Number(limit || 40));
+  const sliced = (records || []).slice(0, cap);
+  let n = 0;
+  for (let i = 0; i < sliced.length; i += 1) {
+    const actual = actualDigit(sliced[i], index);
+    if (!/^\d$/.test(actual)) continue;
+    if (actual !== String(digit)) n += 1;
+    else break;
+  }
+  return n;
+}
+
+function compareShortWindow(a, b) {
+  const am = Number(a && a.r30 && a.r30.missStreak || 0);
+  const bm = Number(b && b.r30 && b.r30.missStreak || 0);
+  if (am !== bm) return am - bm;
+  const ar60 = Number(a && a.r60 && a.r60.rate || 0);
+  const br60 = Number(b && b.r60 && b.r60.rate || 0);
+  if (ar60 !== br60) return br60 - ar60;
+  const ar30 = Number(a && a.r30 && a.r30.rate || 0);
+  const br30 = Number(b && b.r30 && b.r30.rate || 0);
+  if (ar30 !== br30) return br30 - ar30;
+  const al120 = Number(a && a.lower120 || 0);
+  const bl120 = Number(b && b.lower120 || 0);
+  if (al120 !== bl120) return bl120 - al120;
+  return String(a && a.digit || "").localeCompare(String(b && b.digit || ""));
+}
+
+function pickFromSafePool(candidates) {
+  const safe = (candidates || []).filter((item) => item && /^\d$/.test(item.digit));
+  const eligible = safe.filter((item) => (
+    Number(item.rLong && item.rLong.rate || 0) >= LONG_RATE_FLOOR
+    && Number(item.lowerLong || 0) >= LONG_LOWER_FLOOR
+  ));
+  const pool = eligible.length >= 2 ? eligible.slice() : safe.slice();
+  pool.sort(compareShortWindow);
+  const fresh = pool.filter((item) => Number(item.r30 && item.r30.missStreak || 0) < MISS_LEAVE);
+  const ranked = fresh.length ? fresh : pool;
+  const best = ranked[0] || null;
+  const reason = eligible.length >= 2 ? "long-eligible-r60" : "r60-fallback";
+  const backup = ranked.find((item) => best && item.digit !== best.digit)
+    || safe.find((item) => best && item.digit !== best.digit)
+    || null;
+  return { best, backup, reason };
 }
 
 function pickPositionExclude(history, position) {
@@ -117,17 +181,13 @@ function pickPositionExclude(history, position) {
   const index = Number(position.index);
   const candidates = DIGIT_POOL.map((digit) => {
     const windows = digitRateMultiWindow(digit, safeHistory, index, RATE_WINDOWS);
-    return scoreDigit(digit, windows);
+    const scored = scoreDigit(digit, windows);
+    scored.rideStreak = leadingHitStreak(digit, safeHistory, index, 40);
+    return scored;
   });
-  candidates.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (b.lower120 !== a.lower120) return b.lower120 - a.lower120;
-    if (Number(b.r120.rate || 0) !== Number(a.r120.rate || 0)) return Number(b.r120.rate || 0) - Number(a.r120.rate || 0);
-    if (Number(b.rLong.rate || 0) !== Number(a.rLong.rate || 0)) return Number(b.rLong.rate || 0) - Number(a.rLong.rate || 0);
-    return String(a.digit).localeCompare(String(b.digit));
-  });
-  const best = candidates[0] || null;
-  const backup = candidates.find((item) => item && best && item.digit !== best.digit) || null;
+  const picked = pickFromSafePool(candidates);
+  const best = picked.best;
+  const backup = picked.backup;
   return {
     key: position.key,
     label: position.label,
@@ -143,12 +203,32 @@ function pickPositionExclude(history, position) {
     rateLong: best ? Number(Number(best.rLong.rate || 0).toFixed(2)) : null,
     lower120: best ? best.lower120 : null,
     lower300: best ? best.lower300 : null,
+    lowerLong: best ? best.lowerLong : null,
     sample120: best ? Number(best.r120.total || 0) : 0,
     sampleLong: best ? Number(best.rLong.total || 0) : 0,
+    longWindow: MODEL_LONG_WINDOW,
     missStreak30: best ? Number(best.r30.missStreak || 0) : 0,
+    rideStreak: best ? Number(best.rideStreak || 0) : 0,
     algorithm: "four-pos-exclude",
-    reason: "independent-per-position-multi-window"
+    reason: picked.reason || "long-eligible-r60"
   };
+}
+
+function pickPrimaryKey(items) {
+  const rows = (items || []).filter((item) => item && /^\d$/.test(String(item.code || "")));
+  rows.sort((a, b) => {
+    const am = Number(a.missStreak30 || 0);
+    const bm = Number(b.missStreak30 || 0);
+    if (am !== bm) return am - bm;
+    const a60 = Number(a.rate60 || 0);
+    const b60 = Number(b.rate60 || 0);
+    if (a60 !== b60) return b60 - a60;
+    const a30 = Number(a.rate30 || 0);
+    const b30 = Number(b.rate30 || 0);
+    if (a30 !== b30) return b30 - a30;
+    return String(a.key || "").localeCompare(String(b.key || ""));
+  });
+  return rows[0] ? String(rows[0].key) : "";
 }
 
 function actualShapeCode(record, shapeKey, scopeIndexes) {
@@ -315,7 +395,8 @@ function shapesComplete(snapshot) {
 
 function snapshotIsComplete(snapshot) {
   if (!snapshot || typeof snapshot !== "object") return false;
-  if (snapshot.version !== VERSION) return false;
+  const ver = String(snapshot.version || "");
+  if (LEGACY_VERSIONS.indexOf(ver) < 0) return false;
   return positionsComplete(snapshot) && shapesComplete(snapshot);
 }
 
@@ -324,12 +405,17 @@ function buildSnapshot(history, options) {
   const safeHistory = asHistory(history);
   const items = POSITION_LIST.map((position) => pickPositionExclude(safeHistory, position));
   const shapeItems = pickStableShapes(safeHistory, SHAPE_COUNT);
+  const primaryKey = pickPrimaryKey(items);
+  items.forEach((item) => {
+    if (item && typeof item === "object") item.featured = item.key === primaryKey;
+  });
   return {
     version: VERSION,
     kind: "fourPosExclude",
     label: LABEL,
     itemCount: 4,
     shapeCount: SHAPE_COUNT,
+    primaryKey,
     sealed: false,
     sealedAt: null,
     sealedBaseUid: null,
@@ -340,7 +426,7 @@ function buildSnapshot(history, options) {
       historyCount: safeHistory.length,
       builtAt: new Date().toISOString()
     },
-    note: opts.note || "定位4项与形态2项同框展示，结算各跑各的"
+    note: opts.note || "四位都显示杀码；主推位数看面板设置"
   };
 }
 
@@ -367,6 +453,7 @@ function evaluatePositions(snapshot, actualRecord) {
     ? actualRecord.numbers.map(String)
     : [];
   const items = Array.isArray(snapshot && snapshot.items) ? snapshot.items : [];
+  const primaryKey = String(snapshot && snapshot.primaryKey || "");
   const positions = {};
   let hit = 0;
   let judged = 0;
@@ -374,6 +461,7 @@ function evaluatePositions(snapshot, actualRecord) {
     const item = items.find((row) => row && row.key === pos.key) || null;
     const code = item && /^\d$/.test(String(item.code || "")) ? String(item.code) : "";
     const actual = numbers[pos.index] != null ? String(numbers[pos.index]) : "";
+    const featured = primaryKey ? pos.key === primaryKey : !!(item && item.featured);
     let success = null;
     if (/^\d$/.test(code) && /^\d$/.test(actual)) {
       success = code !== actual;
@@ -385,6 +473,8 @@ function evaluatePositions(snapshot, actualRecord) {
       code,
       backup: item && item.backup != null ? String(item.backup) : "",
       actualDigit: actual,
+      featured,
+      ignored: false,
       success
     };
   });
@@ -395,6 +485,7 @@ function evaluatePositions(snapshot, actualRecord) {
     kind: "fourPosExclude",
     label: LABEL,
     total: 4,
+    primaryKey,
     hit,
     passed: hit,
     judged,

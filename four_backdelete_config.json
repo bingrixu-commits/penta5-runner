@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "historyMin": 100,
+  "historyMax": 5000,
+  "historyDefault": 1200,
+  "historyLimit": 800,
+  "presets": [
+    100,
+    800,
+    1200,
+    1500
+  ],
+  "rateEval": 400,
+  "rates": {
+    "ok": true,
+    "latestPeriod": "20260809257",
+    "evalLimit": 400,
+    "scanned": 1900,
+    "byLimit": {
+      "100": {
+        "hit": 396,
+        "total": 400,
+        "rate": 99
+      },
+      "800": {
+        "hit": 376,
+        "total": 400,
+        "rate": 94
+      },
+      "1200": {
+        "hit": 359,
+        "total": 400,
+        "rate": 89.75
+      },
+      "1500": {
+        "hit": 352,
+        "total": 400,
+        "rate": 88
+      }
+    },
+    "at": "2026-08-09T13:29:32.461Z",
+    "source": "rds-history-no-attack"
+  },
+  "updatedAt": "2026-08-10T10:33:26.044Z",
+  "note": "回删期服务端同步：presets/historyLimit；rates=无攻击语真开奖回算百分比"
+}

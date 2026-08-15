@@ -1,0 +1,24 @@
+# T4 主机：autoTop6 cuOpt HTTP（CPU 面板机连这里）
+# 用法（有 GPU 的机器）：
+#   docker compose -f scripts/sidecars/docker-compose.cuopt-autotop6.yml up -d --build
+# CPU 现网 .env：
+#   PENTA5_AUTOTOP6_MILP=cuopt
+#   PENTA5_CUOPT_URL=http://T4内网IP:8788
+#   PENTA5_CUOPT_TIMEOUT_MS=1200
+# T4 停止后 CPU 会连接失败并在超时内回退 JS，面板继续跑。
+
+services:
+  cuopt-autotop6:
+    build:
+      context: ../..
+      dockerfile: scripts/sidecars/Dockerfile.cuopt-autotop6
+    image: penta5-cuopt-autotop6:cuda12.9
+    container_name: penta5-cuopt-autotop6
+    restart: unless-stopped
+    gpus: all
+    ports:
+      - "8788:8788"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - PENTA5_CUOPT_BIND=0.0.0.0
+      - PENTA5_CUOPT_PORT=8788

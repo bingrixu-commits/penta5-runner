@@ -12,6 +12,7 @@ const recommend2 = require("./recommend2");
 const killFramework = require("./kill-framework");
 const threeDuishu = require("./three-duishu");
 const fourDingFramework = require("./four-ding-framework");
+const brotherNumberFramework = require("./brother-number-framework");
 const algoWorkerHost = require("./_shared/algo_worker_host");
 
 const L1_ALGORITHMS = Object.freeze([
@@ -19,7 +20,8 @@ const L1_ALGORITHMS = Object.freeze([
   recommend2,
   killFramework,
   threeDuishu,
-  fourDingFramework
+  fourDingFramework,
+  brotherNumberFramework
 ]);
 
 
@@ -142,6 +144,9 @@ function computeL1InProcess(ctx) {
     }
     const result = algo.compute(context);
     meta[algo.id] = result.meta || null;
+    if (algo.id === "three-duishu" && typeof context.ensureDuishuJointPush === "function") {
+      context.ensureDuishuJointPush();
+    }
   });
   return {
     prediction: context.prediction,
@@ -179,8 +184,41 @@ function computeL1(ctx) {
   return computeL1InProcess(ctx);
 }
 
-async function computeL1Async(ctx) {
-  return computeL1(ctx);
+async function noopYield() {}
+
+/**
+ * In-process L1 with optional yield between each framework algo.
+ * Keeps panel/backdelete responsive while tip frameworks rebuild.
+ */
+async function computeL1Async(ctx, yieldFn) {
+  if (algoWorkerHost.isProcessModeEnabled()) {
+    return computeL1(ctx);
+  }
+  const y = typeof yieldFn === "function" ? yieldFn : noopYield;
+  const context = ctx && typeof ctx === "object" ? ctx : {};
+  if (!context.prediction || typeof context.prediction !== "object") {
+    throw new Error("computeL1 requires ctx.prediction");
+  }
+  const meta = {};
+  for (let i = 0; i < L1_ALGORITHMS.length; i += 1) {
+    const algo = L1_ALGORITHMS[i];
+    if (algo.id === "three-duishu" && typeof context.recomputeThreeDuishuRecommendation === "function") {
+      context.recomputeThreeDuishuRecommendation();
+    }
+    const runner = typeof algo.computeAsync === "function" ? algo.computeAsync : null;
+    const result = runner ? await runner(context) : algo.compute(context);
+    meta[algo.id] = result.meta || null;
+    if (algo.id === "three-duishu" && typeof context.ensureDuishuJointPush === "function") {
+      context.ensureDuishuJointPush();
+    }
+    await y();
+  }
+  return {
+    prediction: context.prediction,
+    meta,
+    processMode: false,
+    yielded: true
+  };
 }
 
 module.exports = {
@@ -192,5 +230,6 @@ module.exports = {
   recommend2,
   killFramework,
   threeDuishu,
-  fourDingFramework
+  fourDingFramework,
+  brotherNumberFramework
 };

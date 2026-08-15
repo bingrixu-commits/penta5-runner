@@ -8,13 +8,11 @@ kill/       杀码类（一位一杀等）
 ai/         AI 旁路
   - claude-ensemble
   - qualified-picks
-framework/  L1 框架
+framework/  L1 框架（现行 orchestrate_l1）
   - auto-top6
   - recommend2
-  - compact-attack
-  - three-ding-one
-  - three-ding-two
   - three-duishu
+  - four-ding-framework
   - core-runner
 filter/     过滤 / 合尾
   - stable-math
@@ -23,5 +21,11 @@ filter/     过滤 / 合尾
   - hewei-qian-bai-ge-stable
   - hewei-qian-shi-ge-freq
   - hewei-qian-shi-ge-stable
+  - flex-dual-pos-hewei
+
+retired/    已退役（勿当主路径）
+  - three-ding-one → algorithms/_retired_three_ding_*
+  - three-ding-two → algorithms/_retired_three_ding_*
+  - compact-attack → algorithms/_retired_three_ding_*
 
 旧路径 algorithms/<name> 仍为符号链接，兼容原有 require。

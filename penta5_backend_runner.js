@@ -36,6 +36,7 @@ const { spawn } = require("child_process");
 })();
 
 const stableMathFilterBridge = require("./algorithms/stable_math_filter_bridge");
+const adaptiveExclusionBridge = require("./algorithms/adaptive_exclusion_bridge");
 const codexStablePosition = require("./algorithms/codex_stable_position");
 const algorithmProjectIsolation = require("./algorithms/project_isolation");
 const fourPosExcludeAlgo = require("./algorithms/four-pos-exclude");
@@ -129,6 +130,15 @@ const FRAMEWORK_SNAPSHOT_STORE_KEYS = [
 ];
 const MODEL_VERSION = "adaptive-independent-v70-remove-fourcode-oldcode";
 const THREE_DUISHU_SNAPSHOT_VERSION = "backend-three-duishu-snapshot-v3-single-pair-rotation";
+const SIX_PEI_SIX_SNAPSHOT_VERSION = "backend-six-pei-six-snapshot-v1-overlap4";
+const SIX_PEI_SIX_ITEM_COUNT = 1;
+const SIX_PEI_SIX_THEORETICAL_HIT_RATE = 93.76;
+const FIVE_PEI_FIVE_SNAPSHOT_VERSION = "backend-five-pei-five-snapshot-v2-fixed-42368";
+const FIVE_PEI_FIVE_ITEM_COUNT = 1;
+const FIVE_PEI_FIVE_LEFT = "42368";
+const FIVE_PEI_FIVE_RIGHT = "52147";
+const FIVE_PEI_FIVE_SHOT = "42368配52147四定";
+const FIVE_PEI_FIVE_THEORETICAL_HIT_RATE = 87.02;
 const FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION = fourDingFrameworkAlgo.FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION
   || "backend-four-ding-framework-snapshot-v2-hewei-duishu3-shape3-mixed-vote";
 const FOUR_DING_FRAMEWORK_ITEM_COUNT = Number(fourDingFrameworkAlgo.FOUR_DING_FRAMEWORK_ITEM_COUNT || 8);
@@ -149,6 +159,10 @@ function envFlagEnabled(name, defaultValue) {
   const raw = process.env[name];
   if (raw === undefined || raw === null || String(raw).trim() === "") return !!defaultValue;
   return !/^(0|false|off|no)$/i.test(String(raw).trim());
+}
+
+function freshSelectEnabled() {
+  return envFlagEnabled("PENTA5_FRESH_SELECT", false);
 }
 const FRAMEWORK_SIM_ENABLED = envFlagEnabled("FRAMEWORK_SIM_ENABLED", false);
 const FRAMEWORK_BACKFILL_ENABLED = envFlagEnabled("FRAMEWORK_BACKFILL_ENABLED", false);
@@ -694,6 +708,8 @@ function createDefaultCounters() {
     wanBaiShi: { label: "千十个合尾(稳定)", total: 0, match: 0 },
     wanBaiShiFreq: { label: "千十个合尾(频次)", total: 0, match: 0 },
     threeDuishu: { label: "三对数排除", total: 0, match: 0 },
+    sixPeiSix: { label: "六配六", total: 0, match: 0 },
+    fivePeiFive: { label: "五配五四定", total: 0, match: 0 },
     sumAvoid: { label: "单点和值过滤（高基线）", total: 0, match: 0 },
     threeDigitAvoid: { label: "三数共现避开1组", total: 0, match: 0 },
     twoDigitAvoid: { label: "四定对数避开1组", total: 0, match: 0 },
@@ -1749,6 +1765,44 @@ function refreshBackendDailyStreaks() {
   if (threeDuishuRows.length || (state.currentPrediction && state.currentPrediction.threeDuishu)) {
     mergeDailyStreakStats("threeDuishu", day, streakStatsFromResults(day, threeDuishuRows), THREE_DUISHU_SNAPSHOT_VERSION);
   }
+  const sixPeiSixRows = state.predictions
+    .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation && predictionDateKey(prediction) === day)
+    .map((prediction) => {
+      const ev = prediction.evaluation || {};
+      const rec = ev.sixPeiSix || {};
+      if (typeof rec.success !== "boolean") return null;
+      if (rec.truthEligible !== true) return null;
+      if (rec.reconstructed === true) return null;
+      if (rec.version && rec.version !== SIX_PEI_SIX_SNAPSHOT_VERSION) return null;
+      return {
+        period: ev.targetPeriod || prediction.basePeriod || "",
+        success: rec.success
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a.period).localeCompare(String(b.period)));
+  if (sixPeiSixRows.length || (state.currentPrediction && state.currentPrediction.sixPeiSix)) {
+    mergeDailyStreakStats("sixPeiSix", day, streakStatsFromResults(day, sixPeiSixRows), SIX_PEI_SIX_SNAPSHOT_VERSION);
+  }
+  const fivePeiFiveRows = state.predictions
+    .filter((prediction) => prediction && prediction.evaluated && prediction.evaluation && predictionDateKey(prediction) === day)
+    .map((prediction) => {
+      const ev = prediction.evaluation || {};
+      const rec = ev.fivePeiFive || {};
+      if (typeof rec.success !== "boolean") return null;
+      if (rec.truthEligible !== true) return null;
+      if (rec.reconstructed === true) return null;
+      if (rec.version && rec.version !== FIVE_PEI_FIVE_SNAPSHOT_VERSION) return null;
+      return {
+        period: ev.targetPeriod || prediction.basePeriod || "",
+        success: rec.success
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a.period).localeCompare(String(b.period)));
+  if (fivePeiFiveRows.length || (state.currentPrediction && state.currentPrediction.fivePeiFive)) {
+    mergeDailyStreakStats("fivePeiFive", day, streakStatsFromResults(day, fivePeiFiveRows), FIVE_PEI_FIVE_SNAPSHOT_VERSION);
+  }
 }
 
 let backendDailyStreakRefreshKey = "";
@@ -2446,7 +2500,7 @@ function slimEvaluationForPersist(evaluation) {
   const base = slimEvaluation(evaluation);
   if (!base || typeof base !== "object") return base || null;
   // fourDingFramework 已在 FRAMEWORK_SNAPSHOT_STORE_KEYS
-  FRAMEWORK_SNAPSHOT_STORE_KEYS.concat(["threeDuishu"]).forEach((key) => {
+  FRAMEWORK_SNAPSHOT_STORE_KEYS.concat(["threeDuishu", "sixPeiSix", "fivePeiFive"]).forEach((key) => {
     if (base[key]) base[key] = slimFrameworkEvaluationForPersist(base[key]);
   });
   return base;
@@ -2511,9 +2565,16 @@ function slimPredictionForDisk(prediction, keepRich) {
     if (prediction.orchestrateMeta && typeof prediction.orchestrateMeta === "object") {
       out.orchestrateMeta = prediction.orchestrateMeta;
     }
+    if (prediction.adaptiveExclusion && typeof prediction.adaptiveExclusion === "object") {
+      out.adaptiveExclusion = prediction.adaptiveExclusion;
+    }
+    if (prediction.sixPeiSix) out.sixPeiSix = prediction.sixPeiSix;
+    if (prediction.fivePeiFive) out.fivePeiFive = prediction.fivePeiFive;
   } else {
     if (prediction.threeDuishu) out.threeDuishu = slimThreeDuishuSnapshot(prediction.threeDuishu);
     if (prediction.fourPosExclude) out.fourPosExclude = slimFourPosExcludeSnapshot(prediction.fourPosExclude);
+    if (prediction.sixPeiSix) out.sixPeiSix = slimPeiSnapshot(prediction.sixPeiSix);
+    if (prediction.fivePeiFive) out.fivePeiFive = slimPeiSnapshot(prediction.fivePeiFive);
   }
   return out;
 }
@@ -4476,6 +4537,230 @@ function evaluateThreeDuishuSnapshot(prediction, actualRecord) {
   };
 }
 
+function peiSortedDigits(values) {
+  const out = [];
+  (Array.isArray(values) ? values : String(values || "").split("")).forEach((digit) => {
+    const text = String(digit);
+    if (/^\d$/.test(text) && !out.includes(text)) out.push(text);
+  });
+  return out.sort((a, b) => Number(a) - Number(b));
+}
+
+function peiRecordHits(record, leftDigits, rightDigits) {
+  const actual = firstFourNumbers(record).map(String);
+  if (actual.length < 4) return false;
+  const left = new Set(peiSortedDigits(leftDigits));
+  const right = new Set(peiSortedDigits(rightDigits));
+  for (let i = 0; i < actual.length; i += 1) {
+    if (!left.has(actual[i])) continue;
+    for (let j = 0; j < actual.length; j += 1) {
+      if (j === i) continue;
+      if (right.has(actual[j])) return true;
+    }
+  }
+  return false;
+}
+
+function sixPeiSixDigitPresence(history, windowSize) {
+  const rows = (Array.isArray(history) ? history : [])
+    .filter((record) => firstFourNumbers(record).length >= 4)
+    .slice(0, Math.max(1, Number(windowSize || 120)));
+  const freq = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  rows.forEach((record) => {
+    const seen = new Set(firstFourNumbers(record).map(String));
+    seen.forEach((digit) => {
+      const value = Number(digit);
+      if (value >= 0 && value <= 9) freq[value] += 1;
+    });
+  });
+  return freq;
+}
+
+function selectSixPeiSixPartition(history) {
+  const freq = sixPeiSixDigitPresence(history, 120);
+  const digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].sort((a, b) => {
+    const delta = freq[Number(a)] - freq[Number(b)];
+    return delta !== 0 ? delta : Number(a) - Number(b);
+  });
+  const neither = digits.slice(0, 2);
+  const leftOnly = digits.slice(2, 4);
+  const rightOnly = digits.slice(4, 6);
+  const overlap = digits.slice(6, 10);
+  return {
+    left: peiSortedDigits(overlap.concat(leftOnly)),
+    right: peiSortedDigits(overlap.concat(rightOnly)),
+    overlap: peiSortedDigits(overlap),
+    leftOnly: peiSortedDigits(leftOnly),
+    rightOnly: peiSortedDigits(rightOnly),
+    neither: peiSortedDigits(neither)
+  };
+}
+
+function selectFivePeiFivePartition() {
+  const left = peiSortedDigits(FIVE_PEI_FIVE_LEFT);
+  const right = peiSortedDigits(FIVE_PEI_FIVE_RIGHT);
+  const overlap = left.filter((digit) => right.includes(digit));
+  const leftOnly = left.filter((digit) => !right.includes(digit));
+  const rightOnly = right.filter((digit) => !left.includes(digit));
+  const neither = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+    .filter((digit) => !left.includes(digit) && !right.includes(digit));
+  return { left, right, overlap, leftOnly, rightOnly, neither };
+}
+
+function slimPeiSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return snapshot || null;
+  const out = {};
+  [
+    "version", "kind", "key", "name", "mode", "code", "shot",
+    "left", "right", "overlap", "leftOnly", "rightOnly", "neither",
+    "theoreticalHitRate", "structure", "dingMode",
+    "sealed", "sealedAt", "sealedBaseUid", "sealedBasePeriod", "sealHash",
+    "success", "truthEligible"
+  ].forEach((key) => {
+    if (snapshot[key] !== undefined) out[key] = snapshot[key];
+  });
+  return out;
+}
+
+function sixPeiSixSnapshotIsComplete(snapshot) {
+  return !!(
+    snapshot &&
+    snapshot.version === SIX_PEI_SIX_SNAPSHOT_VERSION &&
+    /^\d{6}配\d{6}配$/.test(String(snapshot.shot || "")) &&
+    peiSortedDigits(snapshot.left).length === 6 &&
+    peiSortedDigits(snapshot.right).length === 6 &&
+    peiSortedDigits(snapshot.overlap).length === 4
+  );
+}
+
+function fivePeiFiveSnapshotIsComplete(snapshot) {
+  return !!(
+    snapshot &&
+    snapshot.version === FIVE_PEI_FIVE_SNAPSHOT_VERSION &&
+    String(snapshot.shot || "") === FIVE_PEI_FIVE_SHOT &&
+    peiSortedDigits(snapshot.left).join("") === peiSortedDigits(FIVE_PEI_FIVE_LEFT).join("") &&
+    peiSortedDigits(snapshot.right).join("") === peiSortedDigits(FIVE_PEI_FIVE_RIGHT).join("")
+  );
+}
+
+function buildSixPeiSixSnapshot(history) {
+  const part = selectSixPeiSixPartition(history);
+  return {
+    version: SIX_PEI_SIX_SNAPSHOT_VERSION,
+    kind: "sixPeiSix",
+    key: "sixPeiSix",
+    name: "六配六",
+    shot: `${part.left.join("")}配${part.right.join("")}配`,
+    left: part.left.join(""),
+    right: part.right.join(""),
+    overlap: part.overlap.join(""),
+    leftOnly: part.leftOnly.join(""),
+    rightOnly: part.rightOnly.join(""),
+    neither: part.neither.join(""),
+    theoreticalHitRate: SIX_PEI_SIX_THEORETICAL_HIT_RATE,
+    structure: "overlap4-exclusive2-2-neither2",
+    sealed: false
+  };
+}
+
+function buildFivePeiFiveSnapshot() {
+  const part = selectFivePeiFivePartition();
+  return {
+    version: FIVE_PEI_FIVE_SNAPSHOT_VERSION,
+    kind: "fivePeiFive",
+    key: "fivePeiFive",
+    name: "五配五四定",
+    shot: FIVE_PEI_FIVE_SHOT,
+    left: part.left.join(""),
+    right: part.right.join(""),
+    overlap: part.overlap.join(""),
+    leftOnly: part.leftOnly.join(""),
+    rightOnly: part.rightOnly.join(""),
+    neither: part.neither.join(""),
+    theoreticalHitRate: FIVE_PEI_FIVE_THEORETICAL_HIT_RATE,
+    structure: "fixed-42368-52147",
+    dingMode: "四定",
+    sealed: false
+  };
+}
+
+function ensurePredictionSixPeiSixSnapshot(prediction, history) {
+  if (!prediction || typeof prediction !== "object" || prediction.evaluated) return prediction;
+  if (sixPeiSixSnapshotIsComplete(prediction.sixPeiSix)) return prediction;
+  prediction.sixPeiSix = buildSixPeiSixSnapshot(history);
+  return prediction;
+}
+
+function ensurePredictionFivePeiFiveSnapshot(prediction) {
+  if (!prediction || typeof prediction !== "object" || prediction.evaluated) return prediction;
+  if (fivePeiFiveSnapshotIsComplete(prediction.fivePeiFive)) return prediction;
+  prediction.fivePeiFive = buildFivePeiFiveSnapshot();
+  return prediction;
+}
+
+function sealPeiSidecarSnapshots(prediction) {
+  if (!prediction || prediction.evaluated) return prediction;
+  if (sixPeiSixSnapshotIsComplete(prediction.sixPeiSix) && prediction.sixPeiSix.sealed !== true) {
+    sealSnapshot(prediction.sixPeiSix, prediction);
+  }
+  if (fivePeiFiveSnapshotIsComplete(prediction.fivePeiFive) && prediction.fivePeiFive.sealed !== true) {
+    sealSnapshot(prediction.fivePeiFive, prediction);
+  }
+  return prediction;
+}
+
+function ensurePeiSidecarSnapshots(prediction, history) {
+  if (!prediction || typeof prediction !== "object" || prediction.evaluated) return prediction;
+  ensurePredictionSixPeiSixSnapshot(prediction, history);
+  ensurePredictionFivePeiFiveSnapshot(prediction);
+  sealPeiSidecarSnapshots(prediction);
+  return prediction;
+}
+
+function evaluatePeiSnapshot(prediction, actualRecord, storeName, isComplete, versionConst) {
+  const snapshot = prediction && prediction[storeName];
+  const truthEligible = isComplete(snapshot) &&
+    snapshotSealIsValid(snapshot, prediction) &&
+    snapshotSealPredatesTarget(snapshot, actualRecord) &&
+    predictionPredatesTarget(prediction, actualRecord);
+  if (!truthEligible) {
+    return {
+      ok: false,
+      success: null,
+      passed: 0,
+      total: 0,
+      version: snapshot && snapshot.version || versionConst,
+      shot: snapshot && snapshot.shot || "",
+      reason: "unsealed-or-incomplete-" + storeName + "-snapshot",
+      truthEligible: false
+    };
+  }
+  const success = peiRecordHits(actualRecord, snapshot.left, snapshot.right);
+  return {
+    ok: true,
+    success,
+    passed: success ? 1 : 0,
+    total: 1,
+    version: snapshot.version,
+    shot: snapshot.shot,
+    left: snapshot.left,
+    right: snapshot.right,
+    truthEligible: true,
+    sealedAt: snapshot.sealedAt,
+    sealedBaseUid: snapshot.sealedBaseUid,
+    sealHash: snapshot.sealHash,
+    actualFirstFourDigits: firstFourNumbers(actualRecord)
+  };
+}
+
+function evaluateSixPeiSixSnapshot(prediction, actualRecord) {
+  return evaluatePeiSnapshot(prediction, actualRecord, "sixPeiSix", sixPeiSixSnapshotIsComplete, SIX_PEI_SIX_SNAPSHOT_VERSION);
+}
+
+function evaluateFivePeiFiveSnapshot(prediction, actualRecord) {
+  return evaluatePeiSnapshot(prediction, actualRecord, "fivePeiFive", fivePeiFiveSnapshotIsComplete, FIVE_PEI_FIVE_SNAPSHOT_VERSION);
+}
+
 function calculateModelPerformance(predictions) {
   const stats = {};
   const businessDay = currentBusinessDayKey();
@@ -5056,6 +5341,33 @@ function deleteLockIfPresent(container, key, actions, issueKey, reason) {
   if (!container || typeof container !== "object" || !key || container[key] === undefined) return;
   delete container[key];
   actions.push({ type: "delete-lock", issueKey, lockKey: key, reason });
+}
+
+function clearAllSelectionLocks(reason) {
+  if (!freshSelectEnabled()) return { ok: false, skipped: "fresh-select-off" };
+  const storm = typeof normalizeStormMode === "function" ? normalizeStormMode(state.stormMode) : (state.stormMode || {});
+  if (storm && storm.active && storm.lockFreeze) {
+    if (typeof addLog === "function") {
+      addLog("新期清锁跳过：风暴锁冻", { reason: reason || "fresh-select", lockFreeze: true });
+    }
+    return { ok: false, skipped: "storm-lock-freeze" };
+  }
+  const stableBefore = state.stable120Locks && typeof state.stable120Locks === "object"
+    ? Object.keys(state.stable120Locks).length
+    : 0;
+  const modelBefore = state.modelSelectionLocks && typeof state.modelSelectionLocks === "object"
+    ? Object.keys(state.modelSelectionLocks).length
+    : 0;
+  state.stable120Locks = {};
+  state.modelSelectionLocks = {};
+  if (typeof addLog === "function") {
+    addLog("新期已清选择锁（fresh-select）", {
+      reason: reason || "fresh-select",
+      stableBefore,
+      modelBefore
+    });
+  }
+  return { ok: true, stableBefore, modelBefore };
 }
 
 function clearLocksForIssue(issue, actions) {
@@ -7490,7 +7802,7 @@ function buildAutoTop6Snapshot(prediction, history) {
   };
 }
 
-const AUTO_TOP6_SNAPSHOT_VERSION = "backend-auto-top6-snapshot-v10-formal6-unique-exclude-digit";
+const AUTO_TOP6_SNAPSHOT_VERSION = "backend-auto-top6-snapshot-v11-milp-formal6";
 const RECOMMEND2_SNAPSHOT_VERSION = "backend-recommend2-snapshot-v16-formal-anytwo4-pool02468-label-v2";
 const KILL_FRAMEWORK_SNAPSHOT_VERSION = "backend-kill-framework-snapshot-v8-formal-anytwo4-pool02468-label-v2";
 // FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION / ITEM_COUNT 见顶部 fourDingFrameworkAlgo
@@ -7735,6 +8047,24 @@ function snapshotSealPayload(snapshot, prediction) {
       selectedPairCode: String(snapshot.selectedPairCode || "")
     };
   }
+  if (snapshot && String(snapshot.version || "") === SIX_PEI_SIX_SNAPSHOT_VERSION) {
+    payload.sixPeiSix = {
+      shot: String(snapshot.shot || ""),
+      left: String(snapshot.left || ""),
+      right: String(snapshot.right || ""),
+      overlap: String(snapshot.overlap || ""),
+      neither: String(snapshot.neither || "")
+    };
+  }
+  if (snapshot && String(snapshot.version || "") === FIVE_PEI_FIVE_SNAPSHOT_VERSION) {
+    payload.fivePeiFive = {
+      shot: String(snapshot.shot || ""),
+      left: String(snapshot.left || ""),
+      right: String(snapshot.right || ""),
+      overlap: String(snapshot.overlap || ""),
+      neither: String(snapshot.neither || "")
+    };
+  }
   return payload;
 }
 
@@ -7746,6 +8076,7 @@ function predictionSnapshotsAreImmutable(prediction) {
   return !!(
     prediction &&
     prediction.evaluated !== true &&
+    prediction.allSnapshotsSealed === true &&
     prediction.snapshotsSealedAt &&
     prediction.snapshotsSealedBaseUid &&
     String(prediction.snapshotsSealedBaseUid) === String(prediction.baseUid || "")
@@ -9717,7 +10048,7 @@ function scheduleStableMathFilterRefresh(reason) {
   stableMathFilterQueued = false;
   setImmediate(() => {
     Promise.resolve(stableMathFilterBridge.runStableMathFilterAsync(history, { timeoutMs: 25000 }))
-      .then((outcome) => {
+      .then(async (outcome) => {
         const filter = outcome && outcome.result ? outcome.result : null;
         // 假成功禁令：仅 stdout JSON 真成功才写入；失败不得用旧缓存冒充已刷新
         if (outcome && outcome.ok && filter && typeof filter === "object") {
@@ -9731,7 +10062,7 @@ function scheduleStableMathFilterRefresh(reason) {
           });
           // 若 tip 已封存但更稳仍落后，立刻解封重算（异步刷新追上后的补救）
           try {
-            const catchup = rebuildTipAfterStableMathCatchup("async-smf-" + trigger);
+            const catchup = await rebuildTipAfterStableMathCatchup("async-smf-" + trigger);
             if (catchup && catchup.rebuilt) {
               addLog("异步更稳追上后已重算 tip", catchup);
             }
@@ -9761,6 +10092,125 @@ function scheduleStableMathFilterRefresh(reason) {
       });
   });
   return { ok: true, started: true, trigger };
+}
+
+let adaptiveExclusionRefreshing = false;
+function extractLiveKillsFromPrediction(prediction) {
+  const live = { position: {}, hewei: {}, extra: {}, locks: { stable120: [], modelSelection: [] } };
+  const posMap = { wan: "1", qian: "2", bai: "3", shi: "4" };
+  const positionKills = (prediction && prediction.positionKills) || {};
+  Object.keys(posMap).forEach((key) => {
+    const entry = normalizePositionKillEntry(positionKills[key]);
+    const digits = (entry.digits || []).map((d) => Number(d)).filter((n) => n >= 0 && n <= 9);
+    live.position[posMap[key]] = digits;
+  });
+  const hewei = (prediction && prediction.independentHeweiKills) || {};
+  ["wanQianBai", "qianBaiShi", "wanQianBaiShi"].forEach((key) => {
+    const item = hewei[key];
+    const value = item && typeof item === "object" ? (item.killDigit || item.primaryDigit || item.value) : item;
+    if (/^\d$/.test(String(value == null ? "" : value))) live.hewei[key] = Number(value);
+  });
+  if (/^\d$/.test(String(prediction && prediction.totalHeweiKill == null ? "" : prediction.totalHeweiKill))) {
+    live.hewei.total = Number(prediction.totalHeweiKill);
+  }
+  if (/^\d$/.test(String(prediction && prediction.threeFourHeweiKillDigit == null ? "" : prediction.threeFourHeweiKillDigit))) {
+    live.hewei.unified = Number(prediction.threeFourHeweiKillDigit);
+  }
+  const extra = (prediction && prediction.extraKills) || (prediction && prediction.detail && prediction.detail.extraKills) || {};
+  Object.keys(extra).forEach((key) => {
+    const item = extra[key];
+    if (!item || typeof item !== "object") return;
+    const raw = item.value != null ? item.value : (item.primary != null ? item.primary : item.code);
+    if (raw != null && String(raw).length <= 16) live.extra[key] = String(raw);
+  });
+  const s120 = (typeof state !== "undefined" && state && state.stable120Locks) ? state.stable120Locks : {};
+  const model = (typeof state !== "undefined" && state && state.modelSelectionLocks) ? state.modelSelectionLocks : {};
+  live.locks.stable120 = Object.keys(s120).slice(0, 80);
+  live.locks.modelSelection = Object.keys(model).slice(0, 80);
+  return live;
+}
+
+function applyAdaptiveExclusionSidecar(prediction, payload) {
+  if (!prediction || typeof prediction !== "object") return prediction;
+  if (!payload || typeof payload !== "object" || payload.appliesToTip !== false) return prediction;
+  prediction.adaptiveExclusion = payload;
+  return prediction;
+}
+
+function attachOrScheduleAdaptiveExclusion(prediction, history) {
+  if (!prediction || typeof prediction !== "object") return;
+  const cached = (typeof state !== "undefined" && state && state.adaptiveExclusion)
+    || adaptiveExclusionBridge.readCachedSidecar()
+    || null;
+  if (cached && adaptiveExclusionBridge.isValidSidecarResult(cached)) {
+    applyAdaptiveExclusionSidecar(prediction, cached);
+  }
+  if (adaptiveExclusionRefreshing) return;
+  adaptiveExclusionRefreshing = true;
+  const historySnapshot = Array.isArray(history) ? history.slice(0, 160) : [];
+  const liveKills = extractLiveKillsFromPrediction(prediction);
+  const targetPeriod = prediction.targetPeriod ? String(prediction.targetPeriod) : "";
+  Promise.resolve()
+    .then(() => adaptiveExclusionBridge.runAdaptiveExclusionAsync(historySnapshot, liveKills, {
+      timeoutMs: 15000,
+      targetPeriod,
+      replayWindow: 80
+    }))
+    .then((ran) => {
+      const result = ran && ran.result ? ran.result : null;
+      if (result && adaptiveExclusionBridge.isValidSidecarResult(result)) {
+        if (typeof state !== "undefined" && state) state.adaptiveExclusion = result;
+        if (state && state.currentPrediction) applyAdaptiveExclusionSidecar(state.currentPrediction, result);
+        try { invalidatePanelStateCache(); } catch (_) {}
+        addLog("自适应排除 sidecar 已刷新", {
+          ok: !!(ran && ran.ok),
+          action: result.decision && result.decision.action,
+          engineState: result.engineState || (result.decision && result.decision.engine_state) || "",
+          targetPeriod: result.targetPeriod || targetPeriod,
+          error: ran && ran.ok ? null : String((ran && ran.error) || "")
+        });
+      } else if (ran && ran.ok === false) {
+        addLog("自适应排除 sidecar 刷新失败", { error: String(ran.error || "unknown") });
+      }
+    })
+    .catch((err) => {
+      addLog("自适应排除 sidecar 异常", { error: err && err.message ? err.message : String(err) });
+    })
+    .then(() => {
+      adaptiveExclusionRefreshing = false;
+    });
+}
+
+async function handleAdaptiveExclusionRequest(req, res, parsedUrl) {
+  const refresh = parsedUrl.searchParams.get("refresh") === "1"
+    || parsedUrl.searchParams.get("refresh") === "true";
+  const cached = (state && state.currentPrediction && state.currentPrediction.adaptiveExclusion)
+    || (state && state.adaptiveExclusion)
+    || adaptiveExclusionBridge.readCachedSidecar();
+  if (!refresh && cached) {
+    sendJson(res, 200, { ok: true, sidecar: "adaptive-exclusion", readOnly: true, result: cached, cached: true });
+    return;
+  }
+  const history = state && Array.isArray(state.history) ? state.history : [];
+  const liveKills = extractLiveKillsFromPrediction((state && state.currentPrediction) || {});
+  const outcome = await adaptiveExclusionBridge.runAdaptiveExclusionAsync(history, liveKills, {
+    timeoutMs: 15000,
+    targetPeriod: state && state.currentPrediction && state.currentPrediction.targetPeriod || "",
+    replayWindow: 80
+  });
+  const result = outcome && outcome.result ? outcome.result : adaptiveExclusionBridge.readCachedSidecar();
+  if (result && adaptiveExclusionBridge.isValidSidecarResult(result)) {
+    if (state) state.adaptiveExclusion = result;
+    if (state && state.currentPrediction) applyAdaptiveExclusionSidecar(state.currentPrediction, result);
+    try { invalidatePanelStateCache(); } catch (_) {}
+  }
+  sendJson(res, result ? 200 : 503, {
+    ok: !!(result && adaptiveExclusionBridge.isValidSidecarResult(result)),
+    sidecar: "adaptive-exclusion",
+    readOnly: true,
+    result: result || null,
+    error: outcome && outcome.ok === false ? outcome.error : undefined
+  });
 }
 
 async function handleStableMathFilterRequest(req, res, parsedUrl) {
@@ -9927,7 +10377,7 @@ async function handleExclusionModelRequest(req, res, parsedUrl) {
       state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(filter);
       if (state.currentPrediction) {
         applyStableMathFilterToPrediction(state.currentPrediction, filter);
-        ensurePredictionFrameworkSnapshots(state.currentPrediction, state.history);
+        await ensurePredictionFrameworkSnapshotsAsync(state.currentPrediction, state.history);
       }
       invalidatePanelStateCache();
     }
@@ -12446,7 +12896,7 @@ function ensureStableMathFilterCurrentForTip(history, reason) {
   return { ok: false, error: String((outcome && outcome.error) || "empty-result"), latestPeriod };
 }
 
-function rebuildTipAfterStableMathCatchup(reason) {
+async function rebuildTipAfterStableMathCatchup(reason) {
   const prediction = state && state.currentPrediction;
   const history = state && Array.isArray(state.history) ? state.history : [];
   const latest = history[0] || (state && state.latestRecord) || null;
@@ -12463,7 +12913,7 @@ function rebuildTipAfterStableMathCatchup(reason) {
   }
   unsealTipForStableMathRebuild(prediction, reason || "async-smf-catchup");
   attachCachedStableMathFilter(prediction);
-  ensurePredictionFrameworkSnapshots(prediction, history);
+  await ensurePredictionFrameworkSnapshotsAsync(prediction, history);
   sealPredictionSnapshots(prediction, latest);
   try {
     ensureTipStructurePerfect({
@@ -12526,6 +12976,7 @@ function ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history) {
   prediction.orchestrateMeta.l1ProcessMode = !!(l1 && l1.processMode);
   prediction.orchestrateMeta.at = isoNow();
   prediction.orchestrateMeta.path = "orchestrate-l0-l1";
+  if (prediction.orchestrateMeta.error) delete prediction.orchestrateMeta.error;
   addLog("orchestrate L0/L1 完成", {
     basePeriod: prediction.basePeriod || null,
     baseUid: prediction.baseUid || null,
@@ -12536,6 +12987,72 @@ function ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history) {
     l1Keys: l1 && l1.meta ? Object.keys(l1.meta) : []
   });
   return prediction;
+}
+
+async function ensurePredictionFrameworkSnapshotsViaOrchestrateAsync(prediction, history) {
+  bindAlgorithmOrchestrators();
+  const safeHistory = Array.isArray(history) ? history : [];
+  ensureStableMathFilterCurrentForTip(safeHistory, "orchestrate-pre-l0");
+  attachCachedStableMathFilter(prediction);
+  ensureTipTargetPeriod(prediction);
+  const modelPerformance = (state && state.modelPerformance) || {};
+  const l0 = await algoOrchestrateL0.computeL0Async({
+    history: safeHistory,
+    modelPerformance,
+    prediction,
+    getState: () => state || {},
+    getStableMathExcludeDigitSet
+  }, yieldEventLoop);
+  applyOrchestrateL0ToPrediction(prediction, l0);
+  const l1 = await algoOrchestrateL1.computeL1Async({
+    history: safeHistory,
+    prediction,
+    modelPerformance,
+    getState: () => state || {},
+    recomputeThreeDuishuRecommendation
+  }, yieldEventLoop);
+  prediction.orchestrateMeta = prediction.orchestrateMeta && typeof prediction.orchestrateMeta === "object"
+    ? prediction.orchestrateMeta
+    : {};
+  prediction.orchestrateMeta.l1 = l1 && l1.meta ? l1.meta : null;
+  prediction.orchestrateMeta.l1ProcessMode = !!(l1 && l1.processMode);
+  prediction.orchestrateMeta.at = isoNow();
+  prediction.orchestrateMeta.path = "orchestrate-l0-l1";
+  if (prediction.orchestrateMeta.error) delete prediction.orchestrateMeta.error;
+  addLog("orchestrate L0/L1 完成", {
+    basePeriod: prediction.basePeriod || null,
+    baseUid: prediction.baseUid || null,
+    hasHewei: !!(prediction.hewei && prediction.independentHeweiKills),
+    hasCodex: !!prediction.codexStable,
+    hasExtra: !!prediction.extraKills,
+    hasFourPos: !!prediction.fourPosExclude,
+    l1Keys: l1 && l1.meta ? Object.keys(l1.meta) : [],
+    asyncPath: true
+  });
+  return prediction;
+}
+
+async function ensurePredictionFrameworkSnapshotsAsync(prediction, history) {
+  if (!prediction || typeof prediction !== "object") return prediction;
+  if (predictionSnapshotsAreImmutable(prediction)) return prediction;
+  try {
+    await ensurePredictionFrameworkSnapshotsViaOrchestrateAsync(prediction, history);
+    ensurePredictionFrameworkSnapshotsLegacy(prediction, history);
+    return prediction;
+  } catch (err) {
+    addLog("orchestrate L0/L1 失败，回退内联 ensure*", {
+      error: String(err && err.message || err),
+      baseUid: prediction.baseUid || null,
+      basePeriod: prediction.basePeriod || null,
+      asyncPath: true
+    });
+    prediction.orchestrateMeta = {
+      path: "legacy-ensure-fallback",
+      error: String(err && err.message || err),
+      at: isoNow()
+    };
+    return ensurePredictionFrameworkSnapshotsLegacy(prediction, history);
+  }
 }
 
 /** 内联 ensure* 补洞 / orchestrate 失败回退（已完整的快照会自行 no-op） */
@@ -12553,12 +13070,16 @@ function ensurePredictionFrameworkSnapshotsLegacy(prediction, history) {
   ensurePredictionThreeDingOneSnapshot(prediction, history);
   recomputeThreeDuishuRecommendation();
   ensurePredictionThreeDuishuSnapshot(prediction);
+  ensurePeiSidecarSnapshots(prediction, history);
   return prediction;
 }
 
 function ensurePredictionFrameworkSnapshots(prediction, history) {
   if (!prediction || typeof prediction !== "object") return prediction;
-  if (predictionSnapshotsAreImmutable(prediction)) return prediction;
+  if (predictionSnapshotsAreImmutable(prediction)) {
+    ensurePeiSidecarSnapshots(prediction, history);
+    return prediction;
+  }
   try {
     ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history);
     // 补洞：orchestrate 未写满时用内联 ensure*（完整快照不会被覆盖）
@@ -12753,7 +13274,10 @@ function generateBigDataPrediction(history) {
 }
 function fillPredictionDetail(prediction, history) {
   const safeHistory = Array.isArray(history) && history.length ? history : [DEFAULT_RECORD];
-  if (predictionSnapshotsAreImmutable(prediction)) return prediction;
+  if (predictionSnapshotsAreImmutable(prediction)) {
+    attachOrScheduleAdaptiveExclusion(prediction, safeHistory);
+    return prediction;
+  }
   if (!prediction.detail) prediction.detail = {};
   if (!fourPosExcludeAlgo.snapshotIsComplete(prediction.fourPosExclude) || prediction.fourPosExclude.sealed !== true) {
     ensurePredictionFourPosExcludeSnapshot(prediction, safeHistory);
@@ -12775,6 +13299,7 @@ function fillPredictionDetail(prediction, history) {
     codexStablePosition.applyCodexStablePositionOverlay(prediction.positionKills, safeHistory);
   }
   attachCachedStableMathFilter(prediction);
+  attachOrScheduleAdaptiveExclusion(prediction, safeHistory);
   return prediction;
 }
 
@@ -13025,6 +13550,8 @@ function evaluatePrediction(prediction, actualRecord) {
     threeDingTwo: evaluateThreeDingTwoSnapshot(prediction, actualRecord),
     threeDingOne: evaluateThreeDingOneSnapshot(prediction, actualRecord),
     threeDuishu: evaluateThreeDuishuSnapshot(prediction, actualRecord),
+    sixPeiSix: evaluateSixPeiSixSnapshot(prediction, actualRecord),
+    fivePeiFive: evaluateFivePeiFiveSnapshot(prediction, actualRecord),
     fourPosExclude: evaluateFourPosExcludeSnapshot(prediction, actualRecord),
     fourPosShapes: evaluateFourPosShapesSnapshot(prediction, actualRecord),
     allFourPositionSuccess,
@@ -13232,7 +13759,9 @@ function buildVoidedPredictionEvaluation(prediction, actualRecord, reason, trans
     compactAttack: voidFrameworkEvaluation(prediction, "compactAttack", reason),
     threeDingTwo: voidFrameworkEvaluation(prediction, "threeDingTwo", reason),
     threeDingOne: voidFrameworkEvaluation(prediction, "threeDingOne", reason),
-    threeDuishu: voidFrameworkEvaluation(prediction, "threeDuishu", reason)
+    threeDuishu: voidFrameworkEvaluation(prediction, "threeDuishu", reason),
+    sixPeiSix: voidFrameworkEvaluation(prediction, "sixPeiSix", reason),
+    fivePeiFive: voidFrameworkEvaluation(prediction, "fivePeiFive", reason)
   };
 }
 
@@ -13495,6 +14024,7 @@ function alignTipPredictionAfterHydrate(reason) {
     };
   }
   if (!isPredictionCompatible(currentPrediction, latest)) {
+    clearAllSelectionLocks(reason || "hydrate-align-new-period");
     currentPrediction = fillPredictionDetail(generateBigDataPrediction(history), history);
     state.predictions = [currentPrediction].concat(Array.isArray(state.predictions) ? state.predictions : []);
     resetAlgorithmProjectHealthForPrediction(currentPrediction);
@@ -13644,6 +14174,7 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
     };
   }
   if (!isPredictionCompatible(currentPrediction, latest)) {
+    clearAllSelectionLocks("integrate-record-new-period");
     currentPrediction = fillPredictionDetail(generateBigDataPrediction(state.history), state.history);
     state.predictions.unshift(currentPrediction);
     resetAlgorithmProjectHealthForPrediction(currentPrediction);
@@ -13651,7 +14182,7 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
   await yieldEventLoop();
 
   // 统一走 L0→L1 orchestrate（含四位/三对数）；避免先 seal 导致门闩跳过编排
-  ensurePredictionFrameworkSnapshots(currentPrediction, state.history);
+  await ensurePredictionFrameworkSnapshotsAsync(currentPrediction, state.history);
   await yieldEventLoop();
   sealPredictionSnapshots(currentPrediction, latest);
   state.predictions = state.predictions.slice(0, MAX_PREDICTION_LOG);
@@ -14023,7 +14554,9 @@ function buildModelAuditSummary() {
       fourDingFramework: savedSnapshotTruthMetrics("fourDingFramework", FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION, FOUR_DING_FRAMEWORK_ITEM_COUNT, MODEL_STABLE_WINDOW),
       compactAttack: savedSnapshotTruthMetrics("compactAttack", COMPACT_ATTACK_SNAPSHOT_VERSION, COMPACT_ATTACK_ITEM_COUNT, MODEL_STABLE_WINDOW),
       threeDingTwo: savedSnapshotTruthMetrics("threeDingTwo", THREE_DING_TWO_SNAPSHOT_VERSION, THREE_DING_TWO_ITEM_COUNT, MODEL_STABLE_WINDOW),
-      threeDingOne: savedSnapshotTruthMetrics("threeDingOne", THREE_DING_ONE_SNAPSHOT_VERSION, THREE_DING_ONE_ITEM_COUNT, MODEL_STABLE_WINDOW)
+      threeDingOne: savedSnapshotTruthMetrics("threeDingOne", THREE_DING_ONE_SNAPSHOT_VERSION, THREE_DING_ONE_ITEM_COUNT, MODEL_STABLE_WINDOW),
+      sixPeiSix: savedSnapshotTruthMetrics("sixPeiSix", SIX_PEI_SIX_SNAPSHOT_VERSION, SIX_PEI_SIX_ITEM_COUNT, MODEL_STABLE_WINDOW),
+      fivePeiFive: savedSnapshotTruthMetrics("fivePeiFive", FIVE_PEI_FIVE_SNAPSHOT_VERSION, FIVE_PEI_FIVE_ITEM_COUNT, MODEL_STABLE_WINDOW)
     },
     simMetrics: {
       compactAttack: savedSnapshotSimMetrics("compactAttack", COMPACT_ATTACK_SNAPSHOT_VERSION, COMPACT_ATTACK_ITEM_COUNT, FRAMEWORK_SIM_SAMPLE_TARGET),
@@ -14410,6 +14943,8 @@ function slimEvaluation(evaluation) {
     // 四定框架结算必须保留；漏掉会被 /state 与 tip-only 落盘抹掉，真实回测永远 total=0
     "fourDingFramework",
     "threeDuishu",
+    "sixPeiSix",
+    "fivePeiFive",
     "fourPosExclude",
     "fourPosShapes",
     "independentTotalHeweiSuccess",
@@ -14428,7 +14963,7 @@ function slimEvaluation(evaluation) {
   FRAMEWORK_SNAPSHOT_STORE_KEYS.forEach((key) => {
     if (evaluation[key] !== undefined && out[key] === undefined) out[key] = evaluation[key];
   });
-  FRAMEWORK_SNAPSHOT_STORE_KEYS.concat(["threeDuishu", "fourPosExclude", "fourPosShapes"]).forEach((key) => {
+  FRAMEWORK_SNAPSHOT_STORE_KEYS.concat(["threeDuishu", "sixPeiSix", "fivePeiFive", "fourPosExclude", "fourPosShapes"]).forEach((key) => {
     if (out[key]) out[key] = slimFrameworkEvaluationForPersist(out[key]);
   });
   return out;
@@ -14495,6 +15030,9 @@ function slimPredictionForPanel(prediction, includeMeta) {
   if (prediction.orchestrateMeta && typeof prediction.orchestrateMeta === "object") {
     out.orchestrateMeta = prediction.orchestrateMeta;
   }
+  if (prediction.adaptiveExclusion && typeof prediction.adaptiveExclusion === "object") {
+    out.adaptiveExclusion = prediction.adaptiveExclusion;
+  }
   if (includeMeta && prediction.detail) {
     out.detail = slimThreeFourDetail(prediction.detail, true);
   } else if (prediction.detail && prediction.detail.threeFourHeweiKill) {
@@ -14508,6 +15046,8 @@ function slimPredictionForPanel(prediction, includeMeta) {
   }
   if (prediction.threeDuishu) out.threeDuishu = slimThreeDuishuSnapshot(prediction.threeDuishu);
   if (prediction.fourPosExclude) out.fourPosExclude = slimFourPosExcludeSnapshot(prediction.fourPosExclude);
+  if (prediction.sixPeiSix) out.sixPeiSix = slimPeiSnapshot(prediction.sixPeiSix);
+  if (prediction.fivePeiFive) out.fivePeiFive = slimPeiSnapshot(prediction.fivePeiFive);
   return out;
 }
 
@@ -15530,10 +16070,15 @@ async function syncNow(trigger) {
     if (err.name === "AbortError") reason = `请求超时，超过 ${REQUEST_TIMEOUT}ms 未响应`;
     else if (err instanceof TypeError) reason = "网络错误、DNS失败、旧代理未运行、3000端口未开放或目标站拒绝";
     else if (err && err.message) reason = err.message;
-    state.lastError = { at: isoNow(), text: nowText(), trigger, reason, name: err.name || "Error" };
-    addLog("后台同步失败，已保留硬盘历史数据", state.lastError);
-    saveState();
-    return { ok: false, error: state.lastError, summary: buildHealthSummary({ lite: true }) };
+    const startupTimeoutWithTip = trigger === "startup" && err && err.name === "AbortError" && state.tipReady === true;
+    if (startupTimeoutWithTip) {
+      addLog("启动同步超时，但 tip 已就绪，不记 lastError", { reason, trigger });
+    } else {
+      state.lastError = { at: isoNow(), text: nowText(), trigger, reason, name: err.name || "Error" };
+      addLog("后台同步失败，已保留硬盘历史数据", state.lastError);
+      saveState();
+    }
+    return { ok: false, error: startupTimeoutWithTip ? null : state.lastError, summary: buildHealthSummary({ lite: true }) };
   } finally {
     syncRunning = false;
   }
@@ -15851,6 +16396,7 @@ function isViewerAllowedRequest(method, pathname) {
     || pathname === "/history"
     || pathname === "/health"
     || pathname === "/stable-math-filter"
+    || pathname === "/adaptive-exclusion"
     || pathname === "/exclusion-model"
     || pathname === "/shape-avoid-3"
     || pathname === "/four-factor-rank"
@@ -16404,6 +16950,14 @@ async function handleRequest(req, res) {
       await handleStableMathFilterRequest(req, res, parsedUrl);
       return;
     }
+    if (req.method === "GET" && pathname === "/adaptive-exclusion") {
+      if ((parsedUrl.searchParams.get("refresh") === "1" || parsedUrl.searchParams.get("refresh") === "true") && authRole !== "admin") {
+        sendForbidden(res);
+        return;
+      }
+      await handleAdaptiveExclusionRequest(req, res, parsedUrl);
+      return;
+    }
     if (req.method === "GET" && pathname === "/exclusion-model") {
       if ((parsedUrl.searchParams.get("refresh") === "1" || parsedUrl.searchParams.get("refresh") === "true") && authRole !== "admin") {
         sendForbidden(res);
@@ -16497,7 +17051,7 @@ async function handleRequest(req, res) {
       sendAttackTxtAsset(req, res, pathname);
       return;
     }
-    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /robot-state", "GET /history", "GET /converter-history", "GET /four-backdelete-opened", "GET /backdelete-state", "POST /backdelete-generate", "GET /stable-math-filter", "GET /exclusion-model", "GET /attack-txt", "GET /accuracy", "POST /sync", "POST /force-regenerate-tip", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "POST /backup"] });
+    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /robot-state", "GET /history", "GET /converter-history", "GET /four-backdelete-opened", "GET /backdelete-state", "POST /backdelete-generate", "GET /stable-math-filter", "GET /adaptive-exclusion", "GET /exclusion-model", "GET /attack-txt", "GET /accuracy", "POST /sync", "POST /force-regenerate-tip", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "POST /backup"] });
   } catch (err) {
     sendJson(res, 500, { ok: false, error: err.message || String(err) });
   }
@@ -17023,7 +17577,9 @@ server.listen(PORT, BIND_HOST, () => {
           if (state.currentPrediction) attachCachedStableMathFilter(state.currentPrediction);
           if (state.currentPrediction && Array.isArray(state.history) && state.history.length) {
             const smfLagging = tipStableMathFilterLagging(state.currentPrediction);
-            if (!state.currentPrediction.orchestrateMeta || smfLagging) {
+            const orchPath = state.currentPrediction.orchestrateMeta && state.currentPrediction.orchestrateMeta.path;
+            const needReorchestrate = !state.currentPrediction.orchestrateMeta || smfLagging || orchPath !== "orchestrate-l0-l1";
+            if (needReorchestrate) {
               if (smfLagging) {
                 unsealTipForStableMathRebuild(state.currentPrediction, "startup-smf-lag");
               } else {
@@ -17033,16 +17589,20 @@ server.listen(PORT, BIND_HOST, () => {
               }
             }
             fillPredictionDetail(state.currentPrediction, state.history);
-            ensurePredictionFrameworkSnapshots(state.currentPrediction, state.history);
+            if (needReorchestrate) {
+              await ensurePredictionFrameworkSnapshotsAsync(state.currentPrediction, state.history);
+            }
             const latestHydrate = state.history[0] || state.latestRecord;
             if (latestHydrate) sealPredictionSnapshots(state.currentPrediction, latestHydrate);
             try { ensureTipStructurePerfect({ trigger: "startup-orchestrate-align", log: true, fromSync: false }); } catch (_) {}
+            state.lastError = null;
           }
           state.stableMathFilter = stableMathFilterBridge.slimStableMathFilter(
             state.stableMathFilter || stableMathFilterBridge.readCachedFilter()
           ) || null;
           saveState();
           scheduleStableMathFilterRefresh("startup-hydrate");
+          try { attachOrScheduleAdaptiveExclusion(state.currentPrediction, state.history); } catch (_) {}
         } catch (err) {
           console.error("[RDS hydrate] startup save failed", err && err.message ? err.message : err);
         }
@@ -17050,6 +17610,7 @@ server.listen(PORT, BIND_HOST, () => {
         addLog("RDS 历史灌注跳过/失败", { reason: "startup-blocking", ...(result || {}) });
         console.warn("[RDS hydrate] startup", result);
         try { scheduleStableMathFilterRefresh("startup-no-hydrate"); } catch (_) {}
+        try { attachOrScheduleAdaptiveExclusion(state.currentPrediction, state.history); } catch (_) {}
       }
       scheduleRdsCatchupRetry("startup");
     }).catch((err) => {

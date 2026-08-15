@@ -1,7 +1,30 @@
 #!/bin/bash
 set -e
-cp -f /tmp/penta5_backend_runner.js /root/penta5-runner/penta5_backend_runner.js
-cp -f /tmp/mirror_incremental.js /root/penta5-runner/api/mirror_incremental.js
+SRC_RUNNER="/tmp/penta5_backend_runner.js"
+SRC_MIRROR="/tmp/mirror_incremental.js"
+DST_RUNNER="/root/penta5-runner/penta5_backend_runner.js"
+DST_MIRROR="/root/penta5-runner/api/mirror_incremental.js"
+MIN_RUNNER_BYTES=100000
+
+if [ ! -f "$SRC_RUNNER" ]; then
+  echo "refuse: missing $SRC_RUNNER" >&2
+  exit 1
+fi
+SRC_SIZE=$(wc -c < "$SRC_RUNNER")
+if [ "$SRC_SIZE" -lt "$MIN_RUNNER_BYTES" ]; then
+  echo "refuse: $SRC_RUNNER too small (${SRC_SIZE} bytes)" >&2
+  exit 1
+fi
+if ! grep -q 'const MODEL_VERSION' "$SRC_RUNNER" || ! grep -q 'function startServer' "$SRC_RUNNER"; then
+  echo "refuse: $SRC_RUNNER incomplete (missing MODEL_VERSION or startServer)" >&2
+  exit 1
+fi
+cp -f "$SRC_RUNNER" "$DST_RUNNER"
+if [ -f "$SRC_MIRROR" ]; then
+  cp -f "$SRC_MIRROR" "$DST_MIRROR"
+else
+  echo "skip mirror: missing $SRC_MIRROR"
+fi
 echo "=== file check ==="
 rg -n "stripRetiredFourCodeArtifacts|scheduleRdsMirrorAfterSave|killFrameworkItems" /root/penta5-runner/penta5_backend_runner.js | head -20
 rg -n "JSON.stringify\(value\)" /root/penta5-runner/penta5_backend_runner.js | head -5

@@ -67,6 +67,8 @@ ROBOT_HEALTH_FILES = {
 DEFAULT_INTERVAL = int(os.environ.get("PENTA5_SUPERVISOR_INTERVAL", "90"))
 RESTART_COOLDOWN_SEC = int(os.environ.get("PENTA5_SUPERVISOR_RESTART_COOLDOWN", "300"))
 RUNNER_HEALTH_FAIL_CONFIRM_TICKS = int(os.environ.get("PENTA5_SUPERVISOR_RUNNER_HEALTH_FAIL_CONFIRM_TICKS", "2"))
+# /health 超时 = 事件循环卡死；与「返回 body 且 syncing/build」区分，避免永久 skip 重启。
+RUNNER_HANG_CONFIRM_TICKS = int(os.environ.get("PENTA5_SUPERVISOR_RUNNER_HANG_CONFIRM_TICKS", "1"))
 INTEGRITY_FAIL_THRESHOLD = int(os.environ.get("PENTA5_SUPERVISOR_INTEGRITY_FAILS", "5"))
 WATCHDOG_ERROR_THRESHOLD = int(os.environ.get("PENTA5_SUPERVISOR_WATCHDOG_ERRORS", "2"))
 SYNC_COOLDOWN_SEC = int(os.environ.get("PENTA5_SUPERVISOR_SYNC_COOLDOWN", "120"))
@@ -80,6 +82,9 @@ RUNNER_WARMUP_SEC = int(os.environ.get("PENTA5_RUNNER_WARMUP_SEC", "120"))
 RDS_LAG_ALERT_PERIODS = int(os.environ.get("PENTA5_SUPERVISOR_RDS_LAG_PERIODS", "3"))
 ROBOT_HEALTH_MAX_AGE_SEC = int(os.environ.get("PENTA5_ROBOT_HEALTH_MAX_AGE", "180"))
 ROBOT_PERIOD_LAG_LIMIT = int(os.environ.get("PENTA5_ROBOT_PERIOD_LAG_LIMIT", "3"))
+RUNNER_JS = ROOT / "penta5_backend_runner.js"
+RUNNER_GOLDEN = Path(os.environ.get("PENTA5_RUNNER_GOLDEN", str(ROOT / "penta5_backend_runner.js.GOLDEN")))
+MIN_RUNNER_BYTES = int(os.environ.get("PENTA5_RUNNER_MIN_BYTES", "100000"))
 
 
 def now_iso() -> str:
@@ -407,19 +412,43 @@ def ensure_health_probes(state: Dict[str, Any], client: PanelClient) -> Dict[str
     }
     if report["probes"]["runner"]["ok"]:
         state["runnerHealthFailStreak"] = 0
+        state["runnerHangFailStreak"] = 0
     else:
         err_text = str(err_runner or "")
+        err_lower = err_text.lower()
         auth_fail = err_text in {"http-401", "http-403"} or "401" in err_text or "403" in err_text or "Unauthorized" in err_text
-        busy_fail = syncing or prediction_build_running or "timed out" in err_text.lower() or "timeout" in err_text.lower()
+        # 仅当探针实际拿到 body 且标记 busy 时跳过；timeout/无响应 = 挂死，不得永久 skip。
+        hang_fail = ("timed out" in err_lower) or ("timeout" in err_lower) or ("timedout" in err_lower)
+        reported_busy = bool(syncing or prediction_build_running) and not hang_fail
         if auth_fail:
             state["runnerHealthFailStreak"] = 0
+            state["runnerHangFailStreak"] = 0
             log(f"skip runner restart: auth error ({err_text}); check PANEL_USER/PANEL_PASSWORD in .env")
             report["restarts"].append({"app": "penta5-runner", "reason": "runner-health-skipped-auth", "ok": False})
-        elif busy_fail:
+        elif reported_busy:
             state["runnerHealthFailStreak"] = 0
-            log(f"skip runner restart: busy/timeout during health fail ({err_text})")
+            state["runnerHangFailStreak"] = 0
+            log(f"skip runner restart: pipeline busy during health fail ({err_text or 'ok-body-busy'})")
             report["restarts"].append({"app": "penta5-runner", "reason": "runner-health-skipped-busy", "ok": False})
+        elif hang_fail:
+            state["runnerHealthFailStreak"] = 0
+            if runner_in_warmup_window(state):
+                log(f"skip runner restart: health hang during warmup ({err_text or 'timeout'})")
+                report["restarts"].append({"app": "penta5-runner", "reason": "runner-health-hang-warmup", "ok": False})
+            else:
+                hang_streak = int(state.get("runnerHangFailStreak") or 0) + 1
+                state["runnerHangFailStreak"] = hang_streak
+                need = max(1, RUNNER_HANG_CONFIRM_TICKS)
+                if hang_streak < need:
+                    log(f"defer runner restart: health hang {hang_streak}/{need} ({err_text or 'timeout'})")
+                    report["restarts"].append({"app": "penta5-runner", "reason": "runner-health-hang-await-confirm", "ok": False})
+                else:
+                    app = APP_BY_PROBE["runner"]
+                    restarted = restart_app(app, state, f"runner-health-hang:{err_runner};streak={hang_streak}")
+                    state["runnerHangFailStreak"] = 0
+                    report["restarts"].append({"app": app, "reason": "runner-health-hang", "ok": restarted})
         else:
+            state["runnerHangFailStreak"] = 0
             streak = int(state.get("runnerHealthFailStreak") or 0) + 1
             state["runnerHealthFailStreak"] = streak
             if streak < max(1, RUNNER_HEALTH_FAIL_CONFIRM_TICKS):
@@ -1322,11 +1351,56 @@ def Number_or(*values: Any) -> int:
     return 0
 
 
+def runner_file_looks_complete(path: Path) -> bool:
+    try:
+        if not path.exists() or path.stat().st_size < MIN_RUNNER_BYTES:
+            return False
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(0)
+            head = handle.read(12000).decode("utf-8", "replace")
+            handle.seek(max(0, size - 120000))
+            tail = handle.read().decode("utf-8", "replace")
+        return "const MODEL_VERSION" in head and "function startServer" in tail
+    except Exception:
+        return False
+
+
+def guard_runner_source_file() -> Dict[str, Any]:
+    """Restore runner.js from GOLDEN if it was zeroed/truncated. Disk only; no restart."""
+    report: Dict[str, Any] = {"ok": True, "restored": False, "size": 0}
+    try:
+        size = RUNNER_JS.stat().st_size if RUNNER_JS.exists() else 0
+    except Exception as exc:
+        return {"ok": False, "restored": False, "error": str(exc)}
+    report["size"] = size
+    if runner_file_looks_complete(RUNNER_JS):
+        return report
+    if not runner_file_looks_complete(RUNNER_GOLDEN):
+        report["ok"] = False
+        report["error"] = "runner incomplete and GOLDEN missing/invalid"
+        log(f"runner-file-guard FAIL size={size} golden={RUNNER_GOLDEN.exists()}")
+        return report
+    try:
+        data = RUNNER_GOLDEN.read_bytes()
+        RUNNER_JS.write_bytes(data)
+        report["restored"] = True
+        report["size"] = len(data)
+        log(f"runner-file-guard restored from GOLDEN bytes={len(data)} was={size}")
+    except Exception as exc:
+        report["ok"] = False
+        report["error"] = str(exc)
+        log(f"runner-file-guard restore failed: {exc}")
+    return report
+
+
 def run_once() -> int:
     env = load_dotenv(ENV_FILE)
     state = read_supervisor_state()
     client = PanelClient(env)
 
+    file_guard = guard_runner_source_file()
     process_report = ensure_core_processes(state)
     health_report = ensure_health_probes(state, client)
     exclusion_report = ensure_exclusion_model(state, client, health_report)
@@ -1363,6 +1437,7 @@ def run_once() -> int:
     summary = {
         "ok": True,
         "ts": now_iso(),
+        "fileGuard": file_guard,
         "process": {
             "pm2": process_report.get("pm2"),
             "restartCount": len(process_report.get("restarts") or []),

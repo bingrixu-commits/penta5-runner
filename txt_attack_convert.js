@@ -34,7 +34,11 @@ function txtFixedHeweiBaseText(){
 }
 
 function txtShotNormalize(text){
-  return String(text||"").replace(/[，,。；;\s\r\n\t]/g,"");
+  // 脏尾巴：各0.1 / 各。 → 各（微信挂牌常粘金额；禁止数字渗进定位/合尾解析）
+  var raw=String(text||"").replace(/[，,。；;\s\r\n\t]/g,"");
+  raw=raw.replace(/各[0-9]+(?:\.[0-9]+)?$/,"各");
+  raw=raw.replace(/各[。．.]+$/,"各");
+  return raw;
 }
 
 function txtNormalizeRange(a,b){
@@ -153,6 +157,11 @@ function txtRemoveExcludedDigitFromList(list,digit){
   return next.length?next:source;
 }
 
+function txtKeepOnlyDigitInList(list,digit){
+  digit=String(digit);
+  if(!/^\d$/.test(digit))return Array.isArray(list)?list.slice():[];
+  return [digit];
+}
 function txtApplyShortShotExclusions(raw,rule){
   var text=String(raw||"");
   var match;
@@ -162,10 +171,25 @@ function txtApplyShortShotExclusions(raw,rule){
     "十":"shi","十位":"shi",
     "个":"ge","个位":"ge"
   };
-  var positionRegex=/除(千位|百位|十位|个位|千|百|十|个)([0-9])/g;
+  // 认：除千7 / 除千位7；兼容四因子旧口令 千除7 / 千位除7
+  var positionRegex=/(?:除(千位|百位|十位|个位|千|百|十|个)|(千位|百位|十位|个位|千|百|十|个)除)([0-9])/g;
   while((match=positionRegex.exec(text))){
-    var key=positionTargets[match[1]];
-    if(key&&rule[key])rule[key]=txtRemoveExcludedDigitFromList(rule[key],match[2]);
+    var posLabel=match[1]||match[2];
+    var key=positionTargets[posLabel];
+    if(key&&rule[key])rule[key]=txtRemoveExcludedDigitFromList(rule[key],match[3]);
+  }
+  // 反车：出千2 / 定千2 / 千出2 / 千定2 → 该位只保留该码（会出现）
+  // 禁止把「四定千123… / 三定百4…」里的「定千/定百」误吃成反车定码
+  var appearPosRegex=/(?:(?:出|定)(千位|百位|十位|个位|千|百|十|个)|(千位|百位|十位|个位|千|百|十|个)(?:出|定))([0-9])/g;
+  while((match=appearPosRegex.exec(text))){
+    var posLabel=match[1]||match[2];
+    if(match[1]){
+      var token=text.charAt(match.index);
+      var prev=match.index>0?text.charAt(match.index-1):"";
+      if(token==="定"&&(prev==="四"||prev==="三"))continue;
+    }
+    var key2=positionTargets[posLabel];
+    if(key2&&rule[key2])rule[key2]=txtKeepOnlyDigitInList(rule[key2],match[3]);
   }
   var heweiRules=[
     {regex:/除(?:千百十个|四位|四定|四合|总合)(?:合|尾)?([0-9])/g,key:"qianBaiShiGeHewei"},
@@ -179,11 +203,30 @@ function txtApplyShortShotExclusions(raw,rule){
       if(rule[cfg.key])rule[cfg.key]=txtRemoveExcludedDigitFromList(rule[cfg.key],match[1]);
     }
   });
+  // 反车合尾：出千百十个合3 → 只保留该合尾
+  var heweiAppearRules=[
+    {regex:/出(?:千百十个|四位|四定|四合|总合)(?:合|尾)?([0-9])/g,key:"qianBaiShiGeHewei"},
+    {regex:/出(?:千百个)(?:合|尾)?([0-9])/g,key:"qianBaiGeHewei"},
+    {regex:/出(?:千百十|千百合|前三|前3)(?:合|尾)?([0-9])/g,key:"qianBaiShiHewei"},
+    {regex:/出(?:百十个|百十合|后三|后3)(?:合|尾)?([0-9])/g,key:"baiShiGeHewei"}
+  ];
+  heweiAppearRules.forEach(function(cfg){
+    cfg.regex.lastIndex=0;
+    while((match=cfg.regex.exec(text))){
+      if(rule[cfg.key])rule[cfg.key]=txtKeepOnlyDigitInList(rule[cfg.key],match[1]);
+    }
+  });
   return rule;
 }
 
 function txtShotExcludeShapes(text){
   var out=[],match;
+  // 五星5字形态：四定取后四位（丢掉万位），如「除大大大小大」→四定「大大小大」
+  var regex5=/除([大小单双]{5})(?![大小单双])/g;
+  while((match=regex5.exec(text))){
+    var four=String(match[1]||"").slice(1);
+    if(four.length===4&&out.indexOf(four)<0)out.push(four);
+  }
   // 四定形态必须恰好4字：除小大小小；禁止把「除小小大小小」误吃成「小小大小」
   var regex4=/除([大小单双]{4})(?![大小单双])/g;
   while((match=regex4.exec(text))){
@@ -252,10 +295,24 @@ function txtApplyPanelThreeDuishuPair(raw,pair){
 }
 
 function txtShotExcludeSums(text){
-  var out=[],match,regex=/除(?:和值|值)(\d+)(?![\d到至-])/g;
+  // 仅「除和值N」= 四位数字之和；裸「除值N」见 txtShotExcludeHeweiValues（合尾）
+  var out=[],match,regex=/除和值(\d+)(?![\d到至-])/g;
   while((match=regex.exec(String(text||"")))){
     var value=Number(match[1]);
     if(Number.isFinite(value)&&out.indexOf(value)<0)out.push(value);
+  }
+  return out;
+}
+
+function txtShotExcludeHeweiValues(text){
+  // 裸「除值N」= 千百十个合尾（和%10），对齐靶场套内口径；不吃「除和值N」
+  var out=[],match,raw=String(text||"");
+  var regex=/除值(\d+)(?![\d到至-])/g;
+  while((match=regex.exec(raw))){
+    var prev=match.index>0?raw.slice(Math.max(0,match.index-2),match.index):"";
+    if(/和$/.test(prev))continue;
+    var digit=String(match[1]||"").replace(/\D/g,"");
+    if(digit.length&&out.indexOf(digit)<0)out.push(digit.length>1?String(Number(digit)%10):digit);
   }
   return out;
 }
@@ -320,6 +377,59 @@ function txtShotHitPairs(text){
   return out;
 }
 
+function txtShotDigitsUnique(value){
+  var out=[], seen={};
+  String(value==null?"":value).replace(/\D/g,"").split("").forEach(function(digit){
+    if(!digit||seen[digit])return;
+    seen[digit]=true;
+    out.push(digit);
+  });
+  return out;
+}
+
+function txtShotParsePeiPairs(text){
+  var raw=String(text||"");
+  var pairs=[], seen={};
+  function add(leftRaw,rightRaw){
+    var left=txtShotDigitsUnique(leftRaw);
+    var right=txtShotDigitsUnique(rightRaw);
+    if(left.length<5||left.length>6||right.length<5||right.length>6)return;
+    var shot="配"+left.join("")+"配"+right.join("");
+    if(seen[shot])return;
+    seen[shot]=true;
+    pairs.push({left:left,right:right,shot:shot});
+  }
+  var match, reLead=/配(\d{5,6})配(\d{5,6})/g;
+  while((match=reLead.exec(raw)))add(match[1],match[2]);
+  var reOld=/(\d{5,6})配(\d{5,6})(?:配|四定)/g;
+  while((match=reOld.exec(raw)))add(match[1],match[2]);
+  return pairs;
+}
+
+function txtShotPeiHits(code,leftDigits,rightDigits){
+  var actual=String(code||"");
+  if(!/^\d{4}$/.test(actual))return false;
+  var left={}, right={};
+  (leftDigits||[]).forEach(function(d){left[String(d)]=true;});
+  (rightDigits||[]).forEach(function(d){right[String(d)]=true;});
+  for(var i=0;i<4;i++){
+    if(!left[actual.charAt(i)])continue;
+    for(var j=0;j<4;j++){
+      if(i===j)continue;
+      if(right[actual.charAt(j)])return true;
+    }
+  }
+  return false;
+}
+
+function txtShotPeiPairsHit(code,pairs){
+  if(!Array.isArray(pairs)||!pairs.length)return true;
+  for(var i=0;i<pairs.length;i++){
+    if(!txtShotPeiHits(code,pairs[i].left,pairs[i].right))return false;
+  }
+  return true;
+}
+
 function txtShotLooksLikeFullModel(text){
   var raw=txtShotNormalize(text);
   return raw.indexOf("千")>=0&&raw.indexOf("百")>=0&&raw.indexOf("十")>=0&&raw.indexOf("个")>=0&&raw.indexOf("四定")>=0;
@@ -328,7 +438,7 @@ function txtShotLooksLikeFullModel(text){
 function txtShotLooksLikeShortExclusionCommand(text){
   var raw=txtShotNormalize(text);
   if(!raw||txtShotLooksLikeFullModel(raw))return false;
-  if(/(?:排除|避开|杀|除)/.test(raw))return true;
+  if(/(?:排除|避开|杀|除|出|定)/.test(raw))return true;
   if(/(?:二数合|三数合|和值|跨度|对数)/.test(raw))return true;
   return false;
 }
@@ -353,7 +463,8 @@ function txtShotRuleFromText(text,options){
     // 千十个合 / 万十个合：千+十+个（跳过百位）
     wanBaiShiHewei:txtShotOptionalDigitsFirst(raw,["千十个合","万十个合"],["百十个合","千百十个合"].concat(tailEnds)),
     baiShiGeHewei:txtShotOptionalDigits(raw,"百十个合",["千百十个合"].concat(tailEnds)),
-    qianBaiShiGeHewei:txtShotOptionalDigits(raw,"千百十个合",tailEnds),
+    // 必须在「千百十合」前截断，否则「千百十个合123456780千百十合123456890」会把后面的9吃进四合尾
+    qianBaiShiGeHewei:txtShotOptionalDigits(raw,"千百十个合",["千百十合","千百合","千百个合","千十个合","万十个合","百十个合"].concat(tailEnds)),
     twoHeweiHit:(function(){
       var qianBaiShi=txtShotHitHeweiDigits(raw,"千百十二数合");
       return qianBaiShi.length?qianBaiShi:txtShotHitHeweiDigits(raw,"二数合");
@@ -370,8 +481,13 @@ function txtShotRuleFromText(text,options){
     consecutiveAvoid:txtShotExcludeConsecutiveShapes(raw),
     parityRatioAvoid:txtShotExcludeParityRatios(raw),
     sizeRatioAvoid:txtShotExcludeSizeRatios(raw),
-    hitPairs:txtShotHitPairs(raw)
+    hitPairs:txtShotHitPairs(raw),
+    peiPairs:txtShotParsePeiPairs(raw)
   };
+  // 裸「除值N」从千百十个合尾保留集剔除（可覆盖前面的千百十个合保留码）
+  txtShotExcludeHeweiValues(raw).forEach(function(digit){
+    rule.qianBaiShiGeHewei=txtRemoveExcludedDigitFromList(rule.qianBaiShiGeHewei,digit);
+  });
   txtApplyShortShotExclusions(raw,rule);
   var missing=[];
   [["千",rule.qian],["百",rule.bai],["十",rule.shi],["个",rule.ge]].forEach(function(item){
@@ -590,6 +706,7 @@ function txtShotPassesRule(code,rule){
   for(var h=0;h<rule.hitPairs.length;h++){
     if(!txtShotCodeContainsPair(code,rule.hitPairs[h]))return false;
   }
+  if(!txtShotPeiPairsHit(code,rule.peiPairs))return false;
   return true;
 }
 
@@ -623,7 +740,8 @@ function txtShotRuleSummary(rule){
     +(rule.parityRatioAvoid.length?" 除奇偶比"+rule.parityRatioAvoid.join("、除奇偶比"):"")
     +(rule.sizeRatioAvoid.length?" 除大小比"+rule.sizeRatioAvoid.join("、除大小比"):"")
     +(rule.pairs.length?" 除对数"+rule.pairs.join("-"):"")
-    +(rule.hitPairs.length?" 含对数"+rule.hitPairs.join("-"):"");
+    +(rule.hitPairs.length?" 含对数"+rule.hitPairs.join("-"):"")
+    +((rule.peiPairs&&rule.peiPairs.length)?" "+rule.peiPairs.map(function(item){return item.shot;}).join(""):"");
 }
 
 function txtShotResultFromInput(raw,day,options){
@@ -1490,6 +1608,8 @@ function downloadTxt(fileName,text){
 global.Penta5AttackTxtConvert={
   THREE_DING_BACKDELETE_VERSION:"20260725",
   convert:convertAttackText,
+  parsePeiPairs:txtShotParsePeiPairs,
+  peiHits:txtShotPeiHits,
   convertThreeDingBackDelete:convertThreeDingBackDelete,
   convertThreeDingHistoryHitDelete:convertThreeDingHistoryHitDelete,
   formatThreeDingGeList:txtFormatThreeDingGeList,
@@ -1504,6 +1624,10 @@ global.Penta5AttackTxtConvert={
   looksLikeShort:txtShotLooksLikeShortExclusionCommand,
   canonicalizeAttackText:txtCanonicalizeAttackHeweiAndDuishu,
   applyPanelThreeDuishuPair:txtApplyPanelThreeDuishuPair,
+  normalizeThreeDingAttackText:txtNormalizeThreeDingAttackText,
+  threeDingFilterCandidates:txtThreeDingFilterCandidates,
+  threeDingIndependentSegments:txtThreeDingIndependentSegments,
+  shotRuleFromText:txtShotRuleFromText,
   THREE_DING_FULL_GROUP_SIZE:THREE_DING_FULL_GROUP_SIZE,
   THREE_DING_DELETE_TARGET:THREE_DING_DELETE_TARGET,
   THREE_DING_REMAIN_TARGET:THREE_DING_REMAIN_TARGET,

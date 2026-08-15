@@ -1,0 +1,12 @@
+# T4 上跑 autoTop6 cuOpt HTTP。构建上下文是仓库根目录。
+FROM nvidia/cuopt:latest-cuda12.9-py3.13
+
+WORKDIR /app
+COPY algorithms/auto_top6_milp.py /app/auto_top6_milp.py
+COPY scripts/sidecars/cuopt_autotop6_server.py /app/cuopt_autotop6_server.py
+
+ENV PYTHONUNBUFFERED=1
+ENV PENTA5_CUOPT_BIND=0.0.0.0
+ENV PENTA5_CUOPT_PORT=8788
+EXPOSE 8788
+CMD ["python3", "/app/cuopt_autotop6_server.py"]

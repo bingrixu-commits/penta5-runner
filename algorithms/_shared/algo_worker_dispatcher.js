@@ -23,11 +23,14 @@ const ALL_ALGOS = Object.freeze([
   "codex-stable",
   "extra-kills",
   "four-pos-exclude",
+  "flex-dual-pos-hewei",
+  "dual-pos-total-hewei",
   "auto-top6",
   "recommend2",
   "kill-framework",
   "three-duishu",
-  "four-ding-framework"
+  "four-ding-framework",
+  "brother-number-framework"
 ]);
 
 
