@@ -21,7 +21,7 @@ from stats_history import (TZ, beijing_now, business_start, parse_period,
                            parse_time, period_slot, valid_draw_record,
                            validate_conflicting_periods)
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 VERSION = 1
 LEGACY_REVISION = 'cold-framework-v1-30-pos3-tail3'
 FIVE_REVISION = 'cold-framework-v2-30-pos3-tail2'

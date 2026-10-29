@@ -21,12 +21,12 @@ from app_secrets import safe_error
 from stats_history import beijing_now, load_snapshot, parse_period, parse_time, period_slot
 from ai_verified_stats import next_period
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 TIMEOUT_SECONDS = 270
 JOBS = {
-    'framework': {'script': 'auto_r1_framework.py', 'marker': 'R1_FRAMEWORK',
+    'framework': {'script': 'lib/auto_r1_framework.py', 'marker': 'R1_FRAMEWORK',
                   'seals': 'r1_framework_seals.json', 'label': '杀码框架', 'copy': 'r1_copy_btn'},
-    'killer': {'script': 'auto_r1_killer.py', 'marker': 'R1_KILLER',
+    'killer': {'script': 'lib/auto_r1_killer.py', 'marker': 'R1_KILLER',
                'seals': 'r1_stats.json', 'label': '智能排除', 'copy': 'r1_killer_copy_btn'},
 }
 

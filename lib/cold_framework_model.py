@@ -21,7 +21,7 @@ from killer_ai_client import request_killer_response
 from stats_history import TZ, beijing_now, business_start, load_snapshot, period_slot
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 MODEL = 'deepseek-v4-pro'
 REASONING_EFFORT = 'low'
 THINKING_ENABLED = False

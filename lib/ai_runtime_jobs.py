@@ -9,7 +9,8 @@ _ENTRYPOINTS=frozenset(('scripts/run_ai_ready_job.py','scripts/run_ai_job.py',
     'scripts/run_selected_six.py','scripts/run_cold_framework.py','cold_framework_model.py',
     'scripts/run_cold_fixed_framework.py','cold_fixed_framework_model.py',
     'selected_framework_model.py','selected_six_model.py',
-    'auto_r1_killer.py','auto_r1_framework.py'))
+    'auto_r1_killer.py','auto_r1_framework.py',
+    'lib/auto_r1_killer.py','lib/auto_r1_framework.py'))
 _NAMES=frozenset(Path(name).name for name in _ENTRYPOINTS)
 
 def _owned_entrypoint(argument,cwd):
