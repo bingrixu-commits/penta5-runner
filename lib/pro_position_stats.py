@@ -4,7 +4,9 @@ from fastcopy import json_copy
 from datetime import datetime
 from pathlib import Path
 import fcntl
+import hashlib
 import json
+import os
 
 from ai_verified_stats import atomic_json, next_period, publication_evidence_error
 from stats_history import (TZ, business_start, load_snapshot, parse_period, parse_time,
@@ -237,6 +239,55 @@ def refresh_pro_stats(snapshot=None, root=ROOT):
     now = _current(snapshot['now'])
     path = root / 'data/pro_position_hit_stats.json'
     path.parent.mkdir(parents=True, exist_ok=True)
+    # --- 2026-10-30 performance: reuse the previous summary while no input changed.
+    # Rationale: one refresh deep-copies 1339 proofs (~90MB) and costs ~23s CPU,
+    # yet seals/ledger/state change only when a new period publishes. Disable with
+    # PENTA5_PRO_STATS_CACHE=0. Only reused when the cached summary has no pending
+    # entries, because overdue_count would then depend on wall-clock progress.
+    stamp_path = root / 'data/pro_position_refresh.stamp.json'
+    inputs = {}
+    for name, target_path in (('seals', root / 'data/pro_position_seals.json'),
+                              ('ledger', path)):
+        try:
+            info = target_path.stat()
+            inputs[name] = [info.st_mtime_ns, info.st_size]
+        except OSError:
+            inputs[name] = None
+    # state.json is rewritten every few seconds by prediction/counter updates,
+    # so its mtime would defeat this cache. Only the settled draw records that
+    # pro4 actually reads are relevant; hash just those (800 rows, ~74KB).
+    try:
+        inputs['records'] = hashlib.sha256(
+            json.dumps(snapshot.get('records'), sort_keys=True, default=str).encode('utf-8')).hexdigest()
+    except (TypeError, ValueError):
+        inputs['records'] = None
+    try:
+        inputs['conflicting'] = hashlib.sha256(
+            json.dumps(snapshot.get('conflicting_periods', ()), sort_keys=True, default=str).encode('utf-8')).hexdigest()
+    except (TypeError, ValueError):
+        inputs['conflicting'] = None
+    try:
+        code_mtime = Path(__file__).stat().st_mtime_ns
+    except OSError:
+        code_mtime = None
+    stamp = {'inputs': inputs, 'revision': REVISION, 'code_mtime': code_mtime,
+             'biz_date': business_start(now).strftime('%Y-%m-%d')}
+    if os.environ.get('PENTA5_PRO_STATS_CACHE', '1') != '0':
+        try:
+            cached_stamp = json.loads(stamp_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            cached_stamp = None
+        if cached_stamp == stamp:
+            try:
+                cached_summary = json.loads(
+                    (root / 'data/pro_position_stats.json').read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                cached_summary = None
+            if (isinstance(cached_summary, dict)
+                    and cached_summary.get('stats_error') is not True
+                    and cached_summary.get('biz_date') == stamp['biz_date']
+                    and cached_summary.get('pending_count') == 0):
+                return cached_summary
     with Path(str(path) + '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
@@ -261,4 +312,8 @@ def refresh_pro_stats(snapshot=None, root=ROOT):
         else:
             atomic_json(path, ledger)
         atomic_json(root / 'data/pro_position_stats.json', summary)
+        try:
+            atomic_json(stamp_path, stamp)
+        except (OSError, ValueError):
+            pass
         return summary
