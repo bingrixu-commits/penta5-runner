@@ -1,10 +1,12 @@
 """Verified five-tail accounting; never changes a published prediction."""
 from copy import deepcopy
 from datetime import datetime
+from hashlib import sha256
 from itertools import combinations
 from pathlib import Path
 import fcntl
 import json
+import os
 
 from ai_verified_stats import atomic_json, publication_evidence_error
 from ai_prediction_guard import read_stats
@@ -13,6 +15,16 @@ from stats_history import (TZ, business_start, load_snapshot, parse_period, pars
 
 ROOT = Path('/root/penta5-runner')
 REVISION = 'he3-five-stats-v1'
+
+CACHE_VERSION = 1
+CACHE_ENV = 'PENTA5_HE3_STATS_CACHE'
+# Any of these modules can change what a refresh validates or renders. Kept
+# explicit instead of a package-wide mtime so an unrelated deploy cannot leave
+# a stale summary behind, while unrelated files never force a recomputation.
+CODE_FILES = ('he3_refine_stats.py', 'he3_refine_view.py', 'he3_refine.py',
+              'stat50_compare.py', 'framework_hit_stats.py', 'ai_prediction_guard.py',
+              'ai_verified_stats.py', 'stats_history.py', 'he3_comparison_stats.py',
+              'ai_model_context.py', 'strategy_features.py', 'position_input_features.py')
 
 
 def _current(now):
@@ -177,22 +189,247 @@ def _read(path):
     return result
 
 
+def _stat_signature(path):
+    try:
+        info = Path(path).stat()
+    except OSError:
+        return None
+    return [info.st_mtime_ns, info.st_size]
+
+
+def _input_signatures(root):
+    return {'seals': _stat_signature(root / 'data/he3_refine_seals.json'),
+            'ledger': _stat_signature(root / 'data/he3_refine_hit_stats.json'),
+            'parent_seals': _stat_signature(root / 'data/r1_framework_seals.json')}
+
+
+def _code_signature():
+    base = Path(__file__).resolve().parent
+    return {name: _stat_signature(base / name) for name in CODE_FILES}
+
+
+def _digest_value(value):
+    return sha256(json.dumps(value, sort_keys=True, default=str).encode('utf-8')).hexdigest()
+
+
+def _record_periods(records):
+    periods = set()
+    for row in records:
+        if isinstance(row, dict):
+            period = row.get('period')
+            if isinstance(period, str) and period:
+                periods.add(period)
+    return periods
+
+
+def _record_fingerprint(records, boundary):
+    """Fingerprint the draw snapshot, bounded at the last already-settled period.
+
+    Settlement can only change a pending target and the comparison anchor always
+    sits at the newest real draw, so records up to ``boundary`` are immutable
+    history while the small tail holds anything newer. Splitting the hash keeps
+    the historical part stable across new draws (the selected_six pattern); the
+    tail keeps the total fingerprint exact so a new draw -- which moves the
+    anchor and may settle a pending publication -- always misses the cache.
+    """
+    historical, tail = [], []
+    for row in records:
+        period = str(row.get('period') or '') if isinstance(row, dict) else ''
+        if boundary is not None and period and period <= boundary:
+            historical.append(row)
+        else:
+            tail.append(row)
+    periods = [str(row.get('period')) for row in records
+               if isinstance(row, dict) and row.get('period')]
+    return {'boundary': boundary, 'historical': _digest_value(historical),
+            'tail': _digest_value(tail), 'count': len(records),
+            'max_period': max(periods, default=None)}
+
+
+def _evidence_times(seals, parent_seals, records):
+    """Newest input timestamp that any validation compares against ``now``.
+
+    Every such check rejects evidence dated after ``now``. When all input
+    timestamps are already in the past, moving the wall clock forward cannot
+    change a validation outcome, so a cached summary stays exact.
+    """
+    latest = None
+
+    def consider(value):
+        nonlocal latest
+        moment = value if isinstance(value, datetime) else parse_time(value)
+        if moment is not None and (latest is None or moment > latest):
+            latest = moment
+
+    if isinstance(seals, dict):
+        for seal in seals.get('prediction_seals', {}).values():
+            if not isinstance(seal, dict):
+                continue
+            consider(seal.get('generated_at'))
+            history = seal.get('history')
+            if isinstance(history, (list, tuple)):
+                for row in history:
+                    if isinstance(row, dict):
+                        consider(row.get('opentime'))
+    if isinstance(parent_seals, dict):
+        for seal in parent_seals.get('prediction_seals', {}).values():
+            if isinstance(seal, dict):
+                consider(seal.get('published_at'))
+    for row in records:
+        if isinstance(row, dict):
+            consider(row.get('opentime'))
+    return latest
+
+
+def _write_summary_stamp(stamp_path, summary_path, snapshot, now, root, seals,
+                         parent_seals, ledger, summary):
+    """Persist the input fingerprint for the summary that was just written."""
+    try:
+        records = snapshot.get('records') or ()
+        boundary = None
+        for target in ledger.get('verified', {}):
+            text = str(target)
+            if boundary is None or text > boundary:
+                boundary = text
+        latest = _evidence_times(seals, parent_seals, records)
+        if latest is not None and latest > now:
+            # Future-dated evidence is rejected now but would flip valid once
+            # the clock passes it: never cache through that boundary.
+            return
+        conflicts = set(ledger.get('conflicts', ()))
+        day = business_start(now).strftime('%Y-%m-%d')
+        pending_targets = sorted(str(target) for target in ledger.get('pending', {}))
+        pending_slots = []
+        for target in ledger.get('pending', {}):
+            slot = period_slot(target)
+            if slot is None:
+                return
+            if target not in conflicts and business_start(slot).strftime('%Y-%m-%d') == day:
+                pending_slots.append(slot.isoformat())
+        archives = {}
+        for seal in seals.get('prediction_seals', {}).values():
+            if not isinstance(seal, dict):
+                continue
+            audit = seal.get('model_context_audit')
+            relative = audit.get('input_archive') if isinstance(audit, dict) else None
+            if not isinstance(relative, str) or relative in archives:
+                continue
+            archives[relative] = _stat_signature(root / 'data' / relative)
+        encoded = summary_path.read_bytes()
+        stamp = {'version': CACHE_VERSION, 'revision': REVISION, 'biz_date': day,
+                 'inputs': _input_signatures(root), 'code': _code_signature(),
+                 'records': _record_fingerprint(records, boundary),
+                 'conflicting': _digest_value(snapshot.get('conflicting_periods', ())),
+                 'pending_targets': pending_targets, 'pending_slots': pending_slots,
+                 'pending_count': len(pending_slots),
+                 'overdue_count': summary.get('overdue_count'),
+                 'latest_settled_period': summary.get('latest_settled_period'),
+                 'archives': archives, 'summary_sha256': sha256(encoded).hexdigest()}
+        atomic_json(stamp_path, stamp)
+    except (OSError, ValueError, TypeError, KeyError):
+        # A cache that cannot describe this run must not block the refresh.
+        return
+
+
+def _cached_summary(stamp_path, summary_path, snapshot, now, root):
+    """Return the stored summary only when every input that shapes it is unchanged.
+
+    Deliberately conservative: a missing/corrupt stamp, any changed stat or hash
+    of the seal/ledger/parent/archive inputs, a changed code mtime, a pending
+    publication that now has an actual draw, a clock-dependent output field that
+    moved, or an unreadable summary all fall back to the full, fully validated
+    recomputation.
+    """
+    try:
+        stamp = json.loads(stamp_path.read_text(encoding='utf-8'))
+        if not isinstance(stamp, dict) or stamp.get('version') != CACHE_VERSION:
+            return None
+        if stamp.get('revision') != REVISION:
+            return None
+        if stamp.get('biz_date') != business_start(now).strftime('%Y-%m-%d'):
+            return None
+        if stamp.get('inputs') != _input_signatures(root):
+            return None
+        if stamp.get('code') != _code_signature():
+            return None
+        if stamp.get('conflicting') != _digest_value(snapshot.get('conflicting_periods', ())):
+            return None
+        records = stamp.get('records')
+        if not isinstance(records, dict):
+            return None
+        if _record_fingerprint(snapshot.get('records') or (), records.get('boundary')) != records:
+            return None
+        pending = stamp.get('pending_targets')
+        slots = stamp.get('pending_slots')
+        if (not isinstance(pending, list) or not isinstance(slots, list)
+                or len(pending) < len(slots)):
+            return None
+        if set(pending).intersection(_record_periods(snapshot.get('records') or ())):
+            # A draw now exists for a still-pending publication: the next full
+            # run would settle it, so the stored summary is already stale.
+            return None
+        overdue = 0
+        for slot in slots:
+            moment = parse_time(slot)
+            if moment is not None and moment <= now:
+                overdue += 1
+        if overdue != stamp.get('overdue_count'):
+            return None
+        archives = stamp.get('archives')
+        if not isinstance(archives, dict):
+            return None
+        for relative, signature in archives.items():
+            if _stat_signature(root / 'data' / relative) != signature:
+                return None
+        encoded = summary_path.read_bytes()
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    if sha256(encoded).hexdigest() != stamp.get('summary_sha256'):
+        return None
+    try:
+        summary = json.loads(encoded.decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if (not isinstance(summary, dict) or summary.get('stats_error') is not False
+            or summary.get('biz_date') != stamp.get('biz_date')
+            or summary.get('pending_count') != stamp.get('pending_count')
+            or summary.get('overdue_count') != stamp.get('overdue_count')
+            or summary.get('latest_settled_period') != stamp.get('latest_settled_period')):
+        return None
+    return summary
+
+
+
+
 def refresh_he3_stats(snapshot=None, root=ROOT):
     root = Path(root)
     snapshot = snapshot if snapshot is not None else load_snapshot(
         state_path=root / 'data/state.json', cache_path=root / 'data/stats_draw_history.json', persist=False)
     now = _current(snapshot['now'])
     path = root / 'data/he3_refine_hit_stats.json'
+    summary_path = root / 'data/he3_refine_stats.json'
+    stamp_path = root / 'data/he3_refresh.stamp.json'
     path.parent.mkdir(parents=True, exist_ok=True)
+    # --- 2026-10-30 performance: reuse the previous summary while no input
+    # changed. One refresh re-reads a 61MB seal ledger and a 61MB proof ledger,
+    # opens the 2300 archived model inputs and revalidates every historical
+    # publication twice (~45-65s per cycle, PENTA5_STATS_TIMING stage
+    # he3_extra). A cache hit only returns the stored summary; every miss still
+    # runs the full parent/hash/history/archive/settlement validation.
+    # Disable with PENTA5_HE3_STATS_CACHE=0.
+    if os.environ.get(CACHE_ENV, '1') != '0':
+        cached = _cached_summary(stamp_path, summary_path, snapshot, now, root)
+        if cached is not None:
+            return cached
     with Path(str(path) + '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             previous = _read(path)
+            seals = _read(root / 'data/he3_refine_seals.json')
             # Scope this snapshot to one refresh only. Every child still runs
             # the full parent/hash/history/archive/settlement validation.
             parent_seals = read_stats(root / 'data/r1_framework_seals.json')
-            ledger = refresh_stats(_read(root / 'data/he3_refine_seals.json'), snapshot['records'],
-                                   now, previous, root=root,
+            ledger = refresh_stats(seals, snapshot['records'], now, previous, root=root,
                                    conflicting_periods=snapshot.get('conflicting_periods', ()),
                                    _parent_seals=parent_seals)
             summary = make_summary(ledger, now, root=root, _parent_seals=parent_seals,
@@ -205,5 +442,9 @@ def refresh_he3_stats(snapshot=None, root=ROOT):
                     'overdue_count': 0, 'conflict_count': 0, 'stats_error': True}
         if ledger != previous:
             atomic_json(path, ledger)
-        atomic_json(root / 'data/he3_refine_stats.json', summary)
+        atomic_json(summary_path, summary)
+        # Write the stamp last: a concurrent reader must never see it matching a
+        # half-updated ledger/summary pair.
+        _write_summary_stamp(stamp_path, summary_path, snapshot, now, root, seals,
+                             parent_seals, ledger, summary)
         return summary
