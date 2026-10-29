@@ -15,6 +15,7 @@ from ai_strategy_validation import StrategyValidationError, validation_report
 from selected_framework_contract import (REVISION as SEVEN_REVISION,
                                           SUPPORTED_REVISIONS as SEVEN_REVISIONS)
 from selected_six_contract import (REVISION as SIX_REVISION,
+                                    PREVIOUS_REVISION as SIX_PREVIOUS_REVISION,
                                     SUPPORTED_REVISIONS as SIX_REVISIONS)
 from stat50_compare import validate_history
 
@@ -68,10 +69,16 @@ def _items(response):
             + [(field, None, response[field]) for field in ('he2_keep', 'he3_keep')])
 
 
-def _options(item, response, masks):
+def _options(item, response, masks, revision=None):
     field, key, _ = item
     if key is None:
-        return [(field, None, value) for value in masks[(field, None)]]
+        values = list(masks[(field, None)])
+        if field == 'he3_keep' and revision == SIX_REVISION:
+            # v3 compares only balanced 2:3 keep sets; older revisions keep the
+            # complete legal domain byte-for-byte.
+            values = [value for value in values
+                      if 2 <= sum(int(digit) % 2 for digit in value) <= 3]
+        return [(field, None, value) for value in values]
     keys = POSITION_KEYS if field == 'selected_positions' else tuple(TAIL_POSITIONS)
     occupied = set(response[field]) - {key}
     return [(field, candidate, value) for candidate in keys if candidate not in occupied
@@ -125,11 +132,11 @@ def _joint(response, masks):
             'historical_union_failures': achieved, 'legal_single_item_comparisons': comparisons}
 
 
-def _minimax(response, masks):
+def _minimax(response, masks, revision=None):
     comparisons, scores = 0, []
     for item in _items(response):
         achieved = _score(_mask(masks, item))
-        for option in _options(item, response, masks):
+        for option in _options(item, response, masks, revision=revision):
             comparisons += 1
             alternative = _score(_mask(masks, option))
             if alternative < achieved:
@@ -152,10 +159,14 @@ def selected_validator(input_doc, base_validator, *, kind, revision):
                          else (SIX_REVISIONS, SIX_REVISION))
     if revision not in supported:
         raise ValueError('strategy-response-invalid-selected-revision')
-    if revision != active:
+    # Six-item v2/v3 seals carry the fast-transport option context, so their
+    # saved minimax context must be revalidated under its own rule version
+    # (v3 restricts the balanced he3 domain).  Seven-item behavior is unchanged.
+    strict_six = kind == 'six' and revision in (SIX_PREVIOUS_REVISION, SIX_REVISION)
+    if revision != active and not strict_six:
         return base_validator
     frozen = deepcopy(input_doc)
-    if (not isinstance(frozen, dict) or frozen.get('revision') != active
+    if (not isinstance(frozen, dict) or frozen.get('revision') != revision
             or not isinstance(frozen.get('strategy'), dict)
             or frozen['strategy'].get('strategy_id') != METHODS[kind]):
         raise ValueError('strategy-response-invalid-selected-input')
@@ -175,8 +186,10 @@ def selected_validator(input_doc, base_validator, *, kind, revision):
               'history_sha256': history_hash}
     def validator(payload):
         report['checked'] = False
-        result = base_validator(payload)
-        details = (_joint if kind == 'seven' else _minimax)(result, masks)
+        result = (base_validator(payload, revision=revision) if kind == 'six'
+                  else base_validator(payload))
+        details = (_joint if kind == 'seven' else _minimax)(
+            result, masks, revision=(revision if kind == 'six' else None))
         report.update(details, checked=True)
         return result
     validator.strategy_validation = report

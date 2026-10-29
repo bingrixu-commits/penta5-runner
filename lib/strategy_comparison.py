@@ -20,7 +20,7 @@ ROOT=Path('/root/penta5-runner')
 ORIGINAL_MODELS=('killer','framework','pro4','selected')
 MODELS=ORIGINAL_MODELS+('six',)
 DISPLAY_MODELS=tuple(model for model in MODELS if model!='selected')
-LABELS={'killer':'Flash 智能深排','framework':'Flash 固定八码框架','pro4':'Pro 四位独立单排','selected':'Pro 自选七项','six':'Pro 自选六项（独立）'}
+LABELS={'killer':'Flash 智能深排','framework':'Flash 固定八码框架','pro4':'Pro 四位独立单排','selected':'Pro 自选七项','six':'Pro 自选八项（独立）'}
 STRATEGIES=dict(zip(MODELS,(KILLER_STRATEGY,FRAMEWORK_STRATEGY,PRO4_STRATEGY,SELECTED_STRATEGY,SIX_STRATEGY)))
 LEGACY_STRATEGIES=dict(zip(MODELS,(LEGACY_KILLER_STRATEGY,LEGACY_FRAMEWORK_STRATEGY,LEGACY_PRO4_STRATEGY,LEGACY_SELECTED_STRATEGY,LEGACY_SIX_STRATEGY)))
 SUPPORTED_STRATEGIES={model:frozenset((STRATEGIES[model],LEGACY_STRATEGIES[model])) for model in MODELS}
@@ -287,7 +287,12 @@ def build_comparison(snapshot,*,root=ROOT,ledgers=None,delivery=None):
                     if business_start(parse_time(actual['opentime'])).strftime('%Y-%m-%d')!=day:continue
                     if publication_evidence_error(entry['proof'],actual):raise ValueError('late-strategy-evidence')
                     result=_outcomes(entry,model,actual['numbers'])
-                    if not isinstance(result,dict) or len(result)!=dict(killer=9,framework=8,pro4=4,selected=7,six=6)[model] or any(type(value) is not bool for value in result.values()):raise ValueError('invalid-strategy-outcomes')
+                    if model=='six':
+                        from selected_six_contract import item_count as six_item_count
+                        expected_count=six_item_count(entry['proof']['revision'])
+                    else:
+                        expected_count=dict(killer=9,framework=8,pro4=4,selected=7)[model]
+                    if not isinstance(result,dict) or len(result)!=expected_count or any(type(value) is not bool for value in result.values()):raise ValueError('invalid-strategy-outcomes')
                     publications[model][target]=entry
                     closed_series[model].append((target,all(result.values())))
                     for key,kill in entry['positions'].items():positions[key].append((target,actual['numbers'][POSITIONS.index(key)]!=kill))
@@ -428,7 +433,7 @@ def render_board(summary):
     day=summary['biz_date'];cards=[]
     for model in DISPLAY_MODELS:
         item=summary['models'][model];overall=item['overall']
-        overall_label='整组6项全部通过' if model=='six' else '本策略原任务整组通过'
+        overall_label='本策略原任务整组通过'
         error=item['source_error'];latest=item['latest']
         status=('来源核验暂不可用' if error else '等待本策略首次发布' if latest is None else
                 '最近目标 '+latest['target']+' ｜ 发布时距关盘 '+str(latest['seconds_before_close'])+'秒')

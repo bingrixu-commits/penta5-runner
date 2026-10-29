@@ -17,7 +17,7 @@ _POSITIONS = ('q', 'b', 's', 'g')
 _TAILS = ('all', 'qbs', 'qbg', 'qsg', 'bsg')
 _CURRENT_REVISIONS = {
     'selected': 'selected-seven-v6-three-positions',
-    'six': 'selected-six-independent-v2-minimax',
+    'six': 'selected-six-independent-v3-minimax-reverse',
 }
 
 
@@ -71,7 +71,18 @@ def _build_cached(model, revision, positions, tails, he2_keep, he3_keep):
     he3_mask = sum(1 << int(value) for value in he3_keep)
     mask = bytearray(10000)
     for code, (digits, tail_values, pair_mask, triple_mask) in enumerate(_UNIVERSE):
-        if any(digits[index] == kill for index, kill in positions):
+        blocked = False
+        for index, kill in positions:
+            if isinstance(kill, str):
+                # Current six-item rule narrows a selected position to the
+                # intersection of the two derived reverse-form digit classes.
+                if str(digits[index]) not in kill:
+                    blocked = True
+                    break
+            elif digits[index] == kill:
+                blocked = True
+                break
+        if blocked:
             continue
         if any(tail_values[index] == kill for index, kill in tails):
             continue
@@ -92,8 +103,12 @@ def build_coverage(model, response, revision):
             or not isinstance(revision, str) or revision != _CURRENT_REVISIONS[model]):
         raise ValueError('unsupported-framework-coverage-model-or-revision')
     normalized = _CONTRACTS[model].validate_response(response, revision=revision)
-    positions = tuple((_POSITIONS.index(key), kill)
-                      for key, kill in normalized['selected_positions'].items())
+    if model == 'six' and revision == _CURRENT_REVISIONS['six']:
+        positions = tuple((_POSITIONS.index(key), six_contract.reverse_keep_digits(kill))
+                          for key, kill in normalized['selected_positions'].items())
+    else:
+        positions = tuple((_POSITIONS.index(key), kill)
+                          for key, kill in normalized['selected_positions'].items())
     tails = tuple((_TAILS.index(key), kill)
                   for key, kill in normalized['selected_tails'].items())
     return _build_cached(model, revision, positions, tails,

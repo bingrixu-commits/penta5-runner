@@ -15,7 +15,7 @@ TZ = timezone(timedelta(hours=8))
 MODELS = (
     ('killer', 'Flash 杀码'), ('framework', 'Flash 框架'),
     ('pro4', 'Pro 四定位'),
-    ('selected6', 'Pro 六项'), ('he3_refine', '三合五尾'),
+    ('selected6', 'Pro 八项'), ('he3_refine', '三合五尾'),
     ('cold', 'Pro 冷码框架'),
     ('cold_fixed', 'Pro 30期固定冷码'),
     ('cold50', 'Pro 50期冷码'),

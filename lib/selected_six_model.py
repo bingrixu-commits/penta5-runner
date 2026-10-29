@@ -33,7 +33,8 @@ RETRY_INSTRUCTION = (
     '上次响应未通过校验。只返回完整JSON对象，恰好含selected_positions、selected_tails、he2_keep、he3_keep、reason。'
     'selected_positions从q/b/s/g恰好选两个不同键，每个值为一个0至9整数；'
     'selected_tails从all/qbs/qbg/qsg/bsg恰好选两个不同键，每个值为一个0至9整数。'
-    'he2_keep恰好4个不重复ASCII数字且仅从02468选择；he3_keep恰好5个不重复ASCII数字，尽量2奇3偶或3奇2偶。'
+    'he2_keep恰好4个不重复ASCII数字且仅从02468选择；he3_keep恰好5个不重复ASCII数字，'
+    '且必须2奇3偶或3奇2偶（5奇0偶、4奇1偶、1奇4偶、0奇5偶均不合格）。'
     '没有extra_exclusion第七项；reason为简短字符串。禁止布尔、小数、默认补位、重复键、额外字段和分析过程。')
 
 # Only application-owned codes may reach operator status/logs. A regex alone
@@ -60,7 +61,7 @@ _DIAGNOSTIC_CODES = frozenset((
     'invalid-selected-six-card', 'invalid-selected-six-publication-evidence',
     'unpublished-selected-six-state', 'invalid-selected-six-ledger',
     'invalid-selected-six-index',
-    'unknown-selected-six-revision',
+    'unknown-selected-six-revision', 'invalid-selected-six-he3-parity',
     'selected-six-platform-close-passed', 'selected-six-insufficient-close-budget',
     'selected-six-insufficient-operation-budget', 'selected-six-operation-window-passed',
     'invalid-selected-six-request-transport',
@@ -137,7 +138,7 @@ def _operation_deadline(reference):
 
 def _request_transport(input_doc, context):
     from selected_six_request_options import wire_prompt
-    prompt = wire_prompt(context)
+    prompt = wire_prompt(context, revision=input_doc.get('revision'))
     evidence = {'version': FAST_TRANSPORT_VERSION, 'input_sha256': _digest(input_doc),
                 'context': deepcopy(context), 'context_sha256': _digest(context),
                 'prompt_sha256': sha256(prompt.encode('utf-8')).hexdigest(),
@@ -160,7 +161,8 @@ def _valid_transport(value, input_doc):
         validate_request_context(input_doc, value['context'])
     except (ValueError, TypeError, KeyError, OverflowError):
         return False
-    return value.get('prompt_sha256') == sha256(wire_prompt(value['context']).encode('utf-8')).hexdigest()
+    return value.get('prompt_sha256') == sha256(
+        wire_prompt(value['context'], revision=input_doc.get('revision')).encode('utf-8')).hexdigest()
 
 
 def _log(log, message):

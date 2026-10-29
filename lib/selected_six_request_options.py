@@ -11,7 +11,8 @@ import json
 import random
 
 from ai_verified_stats import next_period
-from selected_six_contract import REVISION, build_input_doc, validate_response
+from selected_six_contract import (REVISION, SUPPORTED_REVISIONS, build_input_doc,
+                                   validate_response)
 from selected_strategy_validation import (POSITION_KEYS, TAIL_POSITIONS, SIX_RETRY_ADDITION,
     _failure_maps, _score, selected_validator, validation_report)
 
@@ -38,6 +39,30 @@ WIRE_PREFIX = (
     '尽量2奇3偶或3奇2偶，仅为偏好。整组六项必须全部成功。reason用60字内简短中文，'
     '只输出完整JSON，不输出思考过程。候选不是强制答案，无默认补位、不强行为异号换码。\n'
     '【独立六项冻结输入与minimax候选context】\n')
+INSTRUCTION_REVERSE = (
+    '独立八项仅按固定五个10期区块比较每个单项：(最大单段失败次数,方差分子/25,总失败)词典序最小。'
+    '不使用七项失败并集、近期权重、相邻转移或任何其他模型结果。以下候选供AI自主比较；'
+    '可输出其中任意方案，也可自主输出任何通过同一原始八项校验的其他完整JSON，程序不补号。'
+    'he3_keep必须2奇3偶或3奇2偶（5奇0偶、4奇1偶、1奇4偶、0奇5偶均不合格）。'
+    '六项自选之外，程序按两个已选定位的排除码自动推导单双反向、大小反向两项；'
+    '单项样本内稳定性不是未来命中率保证。' + SIX_RETRY_ADDITION)
+WIRE_PREFIX_REVERSE = (
+    '你是独立八项Pro（六项自选+两项自动反向形态）。只预测context.target_period，参考context.reference_period。\n'
+    'history_codes为旧到新连续50期的千百十个，前导0有效，第五球不参与。'
+    '严格固定分为五段各10期；score=[最大单段失败,方差分子,总失败]，方差=分子/25。'
+    '按score词典序选每项，必须考虑未选物理项；position_pairs/tail_pairs为合法物理对，'
+    '各key的digits为本key同分最小排除码。保留集候选也按相同五段失败规则比较。\n'
+    'options.scores按选中定位、选中合尾、二数合、三数合顺序列同一score三元组。\n'
+    '输出恰好五字段严格JSON：selected_positions从q/b/s/g选2个不同键、各整数排1码；'
+    'selected_tails从all/qbs/qbg/qsg/bsg选2个不同键、各整数排1码。'
+    'all是四位和%10，qbs/qbg/qsg/bsg分别是对应三位和%10；不等于排除码才成功。'
+    'he2_keep从02468选4个不同数字字符串，任意两位六组合的任一合尾落入即命中；'
+    'he3_keep从0123456789选5个不同数字字符串，必须2奇3偶或3奇2偶'
+    '（5奇0偶、4奇1偶、1奇4偶、0奇5偶均不合格），任意三位四组合的任一合尾落入即命中。'
+    '程序会按两个已选定位的排除码自动推导单双反向形态与大小反向形态两项（取排除码形态的反面），'
+    '连同六项自选共八项，整组八项全部成功才命中；你只需输出六项自选字段，不得为凑反向形态改动自选项。'
+    'reason用60字内简短中文，只输出完整JSON，不输出思考过程。候选不是强制答案，无默认补位、不强行为异号换码。\n'
+    '【独立八项冻结输入与minimax候选context】\n')
 
 
 def _canonical(value):
@@ -75,7 +100,11 @@ def _tables(frozen, masks):
         domains[field] = [{a: da, b: db} for a, b in legal_pairs
                           for da, db in product(digits[a], digits[b])]
     for field in ('he2_keep', 'he3_keep'):
-        scores = {keep: _score(mask) for keep, mask in masks[(field, None)].items()}
+        allowed = list(masks[(field, None)])
+        if field == 'he3_keep' and frozen['revision'] == REVISION:
+            # Current rule: only 2:3 balanced keep sets are legal candidates.
+            allowed = [keep for keep in allowed if 2 <= sum(int(digit) % 2 for digit in keep) <= 3]
+        scores = {keep: _score(masks[(field, None)][keep]) for keep in allowed}
         minimum = min(scores.values())
         candidates[field] = [{'keep': keep, 'score': list(score)}
                              for keep, score in scores.items() if score == minimum]
@@ -85,14 +114,15 @@ def _tables(frozen, masks):
 
 def _frozen(input_doc, *, rebuild):
     frozen = deepcopy(input_doc)
-    if not isinstance(frozen, dict) or frozen.get('revision') != REVISION:
+    if not isinstance(frozen, dict) or frozen.get('revision') not in SUPPORTED_REVISIONS:
         raise ValueError('selected-six-request-options-invalid-input')
+    revision = frozen['revision']
     if rebuild:
-        original = build_input_doc(frozen['reference_period'], frozen['history'], revision=REVISION)
+        original = build_input_doc(frozen['reference_period'], frozen['history'], revision=revision)
         if _canonical(frozen) != _canonical(original):
             raise ValueError('selected-six-request-options-invalid-input')
-    validator = selected_validator(frozen, validate_response, kind='six', revision=REVISION)
-    return frozen, validator, _failure_maps(frozen['history'])
+    validator = selected_validator(frozen, validate_response, kind='six', revision=revision)
+    return frozen, revision, validator, _failure_maps(frozen['history'])
 
 
 def _base_context(frozen, candidates, pairs):
@@ -101,7 +131,8 @@ def _base_context(frozen, candidates, pairs):
             'history_sha256': frozen['strategy']['history_sha256'], 'input_sha256': _hash(frozen),
             'history_codes': [''.join(map(str, row['numbers'])) for row in frozen['history']],
             'block_size': 10, 'block_count': 5, 'variance_denominator': 25,
-            'validation_scope': SCOPE, 'instruction': INSTRUCTION,
+            'validation_scope': SCOPE,
+            'instruction': INSTRUCTION_REVERSE if frozen['revision'] == REVISION else INSTRUCTION,
             'candidates': candidates, 'position_pairs': pairs['selected_positions'],
             'tail_pairs': pairs['selected_tails']}
 
@@ -115,7 +146,7 @@ def build_request_options(input_doc, *, max_options=8):
     if type(max_options) is not int or not 1 <= max_options <= 8:
         raise ValueError('selected-six-request-options-invalid-limit')
     try:
-        frozen, validator, masks = _frozen(input_doc, rebuild=True)
+        frozen, revision, validator, masks = _frozen(input_doc, rebuild=True)
         candidates, pairs, domains = _tables(frozen, masks)
         context = _base_context(frozen, candidates, pairs)
         fields = ('selected_positions', 'selected_tails', 'he2_keep', 'he3_keep')
@@ -154,7 +185,7 @@ def build_request_options(input_doc, *, max_options=8):
 def validate_request_context(input_doc, context):
     """Recheck fixed features and offered scores without sampling/search again."""
     try:
-        frozen, validator, masks = _frozen(input_doc, rebuild=False)
+        frozen, revision, validator, masks = _frozen(input_doc, rebuild=False)
         saved = deepcopy(context)
         candidates, pairs, _ = _tables(frozen, masks)
         base = _base_context(frozen, candidates, pairs)
@@ -183,5 +214,7 @@ def validate_request_context(input_doc, context):
         raise ValueError('selected-six-request-options-invalid-context') from None
 
 
-def wire_prompt(context):
+def wire_prompt(context, *, revision=None):
+    if revision == REVISION:
+        return WIRE_PREFIX_REVERSE + _canonical(context)
     return WIRE_PREFIX + _canonical(context)
