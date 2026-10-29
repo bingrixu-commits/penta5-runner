@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import position_cold_report as report  # noqa: E402
 import kill_three_pick  # noqa: E402
+import model_significance  # noqa: E402
 
 WATCH = Path('/root/penta5-runner/data/stats_draw_history.json')
 SLOT_SECONDS = 300
@@ -76,12 +77,21 @@ def main():
                         kill_code = kill_three_pick.main()
                 except Exception as error:
                     print(f'kill-three failed: {type(error).__name__}: {error}', flush=True)
+                signi_code = None
+                try:
+                    import contextlib as _ctx
+                    import io as _io
+                    _buffer = _io.StringIO()
+                    with _ctx.redirect_stdout(_buffer):
+                        signi_code = model_significance.main()
+                except Exception as error:
+                    print(f'significance failed: {type(error).__name__}: {error}', flush=True)
                 elapsed = time.monotonic() - started
                 last_signature = signature()
                 last_slot = slot
                 last_run = time.monotonic()
                 stamp = datetime.now().astimezone().strftime('%H:%M:%S')
-                print(f'{stamp} regenerated rc={code} kill3={kill_code} elapsed={elapsed:.2f}s '
+                print(f'{stamp} regenerated rc={code} kill3={kill_code} signi={signi_code} elapsed={elapsed:.2f}s '
                       f'trigger={"+".join(reason)}', flush=True)
         except Exception as error:
             print(f'regenerate failed: {type(error).__name__}: {error}', flush=True)
