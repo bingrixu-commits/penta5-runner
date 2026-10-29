@@ -91,6 +91,25 @@ def evaluate(rows, window):
                                'rate': round(hits / len(seq), 6) if seq else None,
                                'max_win_streak': best_win, 'max_loss_streak': best_loss}
         report['positions'][key] = {'label': LABELS[key], **entry}
+
+    # --- 契约字段:hit_rate / buy_hit_rate / n / per_position ---
+    # hit_rate 与 rate 同值(rate 保留给面板视图);buy_hit_rate 为互补口径,
+    # 满足 hit_rate + buy_hit_rate == 1,可用于交叉校验方向是否正确。
+    for bucket in (report['tops'], {k: v for k, v in report['positions'].items()}):
+        for value in bucket.values():
+            if not isinstance(value, dict):
+                continue
+            targets = [value] if 'rate' in value else \
+                [value[t] for t in ('1', '2', '3') if isinstance(value.get(t), dict)]
+            for item in targets:
+                rate = item.get('rate')
+                item['n'] = report['samples']
+                item['hit_rate'] = rate
+                item['buy_hit_rate'] = round(1 - rate, 6) if isinstance(rate, (int, float)) else None
+
+    report['per_position'] = report['positions']
+    report['n'] = report['samples']
+    report['bets'] = report['samples'] * len(POSITION_KEYS)
     return report
 
 
@@ -106,7 +125,7 @@ def main():
         return 1
 
     result = {'generated_at': __import__('datetime').datetime.now(TZ).isoformat(),
-              'revision': 'cold-hit-stats-v2-kill',
+              'revision': 'cold-hit-stats-v3-contract',
               'records': len(rows),
               'as_of_period': rows[-1]['period'],
               'windows': [evaluate(rows, window) for window in WINDOWS]}
