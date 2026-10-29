@@ -37,9 +37,12 @@ from scipy.stats import chisquare
 
 import datetime, json, os, re, sys, time
 try:
-    FRAMEWORK_MODEL = get_secret('PENTA5_DEEPSEEK_MODEL')
+    FRAMEWORK_MODEL = get_secret('PENTA5_MODEL_FRAMEWORK')
 except RuntimeError:
-    FRAMEWORK_MODEL = 'deepseek-flash'
+    try:
+        FRAMEWORK_MODEL = get_secret('PENTA5_DEEPSEEK_MODEL')
+    except RuntimeError:
+        FRAMEWORK_MODEL = 'deepseek-flash'
 from collections import Counter
 
 

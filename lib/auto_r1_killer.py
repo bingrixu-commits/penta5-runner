@@ -158,9 +158,12 @@ def enforce_stable_kill(kill_digits, draws_list):
 # -*- coding: utf-8 -*-
 import datetime, json, os, re, sys, time, urllib.request
 try:
-    KILLER_MODEL = get_secret('PENTA5_DEEPSEEK_MODEL')
+    KILLER_MODEL = get_secret('PENTA5_MODEL_KILLER')
 except RuntimeError:
-    KILLER_MODEL = 'deepseek-flash'
+    try:
+        KILLER_MODEL = get_secret('PENTA5_DEEPSEEK_MODEL')
+    except RuntimeError:
+        KILLER_MODEL = 'deepseek-flash'
 KILLER_MODEL_LABEL = {'deepseek-flash': 'DeepSeek-V4.1-Flash',
                       'deepseek-v4-flash': 'DeepSeek-V4-Flash',
                       'deepseek-v4-pro': 'DeepSeek-V4-Pro'}.get(KILLER_MODEL, KILLER_MODEL)
