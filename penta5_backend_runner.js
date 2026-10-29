@@ -8,9 +8,13 @@
  */
 
 const http = require("http");
+const webSecurity = require("./web_security");
+const { createAiControlHandler } = require("./ai_control_routes");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const predictionOutbox = require("./api/prediction_outbox");
+const { createDurableBootRecovery } = require("./boot_durable_recovery");
 const zlib = require("zlib");
 const v8 = require("v8");
 const { spawn } = require("child_process");
@@ -34,6 +38,9 @@ const { spawn } = require("child_process");
     }
   } catch (_) {}
 })();
+
+// All period slots and the 05:00 business boundary use Beijing time.
+process.env.TZ = "Asia/Shanghai";
 
 const stableMathFilterBridge = require("./algorithms/stable_math_filter_bridge");
 const adaptiveExclusionBridge = require("./algorithms/adaptive_exclusion_bridge");
@@ -312,6 +319,10 @@ let autoTimer = null;
 let watchdogTimer = null;
 let syncRunning = false;
 let predictionBuildRunning = false;
+let drawIntegrationRunning = false;
+let drawIntegrationTail = Promise.resolve();
+const drawIntegrationTasks = new Map();
+let predictionIntegrationEpoch = 0;
 let stableMathFilterRunning = false;
 let stableMathFilterQueued = false;
 let algorithmProjectSyncQueued = false;
@@ -487,6 +498,7 @@ function markAlgorithmProjectIssues(issues, actions) {
 }
 
 function scheduleAlgorithmProjectStateSync(reason) {
+  if (!durableBootRecovery.isReady()) return;
   if (algorithmProjectSyncQueued) return;
   algorithmProjectSyncQueued = true;
   setImmediate(() => {
@@ -662,7 +674,12 @@ function buildCounterTruthRecord(counter, key) {
     rate,
     mainMatch: counter && counter.mainMatch !== undefined ? Number(counter.mainMatch || 0) : undefined,
     sampleOk: total >= MODEL_MIN_SAMPLE,
-    truthSource: "official-counter-truth-eligible-only"
+    truthSource: String(counter && counter.truthSource || "official-counter-truth-eligible-only"),
+    dayScope: counter && counter.dayScope || "",
+    businessDay: counter && counter.businessDay || "",
+    dayResetHour: counter && counter.dayResetHour,
+    timezone: counter && counter.timezone || "",
+    truthAvailable: total > 0
   };
   decorateTruthScoreFields(record, key, rate);
   if (record.predictivePower === false && rate !== null && total >= MODEL_MIN_SAMPLE) {
@@ -1093,6 +1110,11 @@ const PENTA5_DAY_RESET_HOUR = Math.max(0, Math.min(23, Number(process.env.PENTA5
 function parseLocalDateTimeValue(value) {
   const text = String(value || "").trim();
   if (!text) return null;
+  // Preserve explicit timezone offsets before parsing timezone-free local values.
+  if (/[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+    const zoned = new Date(text);
+    return Number.isFinite(zoned.getTime()) ? zoned : null;
+  }
   let match = text.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
   if (match) {
     return new Date(
@@ -1109,7 +1131,7 @@ function parseLocalDateTimeValue(value) {
   if (match) {
     const seq = Number(match[4]);
     if (Number.isInteger(seq) && seq >= 1 && seq <= PENTA5_PERIODS_PER_DAY) {
-      const minutes = (seq - 1) * 5;
+      const minutes = seq * 5;
       return new Date(
         Number(match[1]),
         Number(match[2]) - 1,
@@ -1140,6 +1162,177 @@ function businessDayKey(value) {
 
 function currentBusinessDayKey() {
   return businessDayKey(new Date());
+}
+
+function dailyDisplayScope(now) {
+  const at = now instanceof Date && Number.isFinite(now.getTime()) ? now : new Date();
+  const shifted = new Date(at.getTime() - PENTA5_DAY_RESET_HOUR * 60 * 60 * 1000);
+  const start = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate(), PENTA5_DAY_RESET_HOUR, 0, 0, 0);
+  const businessDay = businessDayKey(at);
+  return {
+    businessDay,
+    businessDate: businessDay,
+    bizStart: start.toISOString(),
+    dayResetHour: PENTA5_DAY_RESET_HOUR,
+    timezone: "Asia/Shanghai"
+  };
+}
+
+function actualDrawTimestamp(value) {
+  // A period, evaluation wall clock, or missing time is not actual draw-time evidence.
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(text)) return null;
+  const parsed = parseLocalDateTimeValue(text);
+  return parsed && Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function filterDailyDisplayPredictions(predictions, day, now) {
+  const at = now instanceof Date ? now : new Date();
+  const scope = dailyDisplayScope(at);
+  if (day && String(day) !== scope.businessDay) return [];
+  const startMs = Date.parse(scope.bizStart);
+  const rows = (Array.isArray(predictions) ? predictions : []).filter((prediction) => {
+    if (!prediction || prediction.evaluated !== true || prediction.counterSkipped === true) return false;
+    const ev = prediction.evaluation;
+    if (!ev || ev.truthEligible !== true || ev.voided === true) return false;
+    const opened = actualDrawTimestamp(ev.targetOpenTime);
+    if (!opened || opened.getTime() < startMs || opened.getTime() > at.getTime()) return false;
+    const transition = immediatePenta5PeriodTransition(prediction.basePeriod || prediction.baseUid, ev.targetPeriod || ev.targetUid);
+    if (!transition || transition.immediate !== true) return false;
+    const targetSlot = parseLocalDateTimeValue(cleanPeriodKey(ev.targetPeriod || ev.targetUid));
+    if (!targetSlot || Math.floor(targetSlot.getTime() / 60000) !== Math.floor(opened.getTime() / 60000)) return false;
+    if (!predictionPredatesTarget(prediction, { opentime: ev.targetOpenTime })) return false;
+    return Array.isArray(ev.actualNumbers) && ev.actualNumbers.length >= 4
+      && ev.actualNumbers.slice(0, 4).every((digit) => /^\d$/.test(String(digit)));
+  }).sort((a, b) => actualDrawTimestamp(b.evaluation.targetOpenTime).getTime() - actualDrawTimestamp(a.evaluation.targetOpenTime).getTime());
+  const seen = new Set();
+  return rows.filter((prediction) => {
+    const key = cleanPeriodKey(prediction.evaluation.targetPeriod || prediction.evaluation.targetUid);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function projectDailyDisplayCounters(predictions, day, now) {
+  const scope = dailyDisplayScope(now);
+  // Build a fresh projection. normalizeCounters mutates its argument, so it must
+  // never receive state.counters on this display-only path.
+  const out = normalizeCounters(createDefaultCounters());
+  const rows = filterDailyDisplayPredictions(predictions, day || scope.businessDay, now);
+  const heweiKeys = ["wanQianBai", "qianBaiShi", "wanQianBaiShi", "wanQianGe", "wanQianGeFreq", "wanBaiShi", "wanBaiShiFreq"];
+  const extraKeys = ["sumAvoid", "sumRangeAvoid", "spanAvoid", "repeatAvoid", "consecutiveAvoid", "parityRatioAvoid", "sizeRatioAvoid", "threeDigitAvoid", "twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit", "threeDigitHit", "threeDigitAvoid2", "anyTwoHeweiHit", "anyThreeHeweiHit"];
+  function add(key, success, mainSuccess) {
+    if (typeof success !== "boolean") return;
+    if (!out[key]) out[key] = { label: modelKeyLabel(key), total: 0, match: 0 };
+    addCounterResult(out, key, success, mainSuccess);
+  }
+  rows.forEach((prediction) => {
+    const ev = prediction.evaluation;
+    add("positionTotal", ev.positionTotalSuccess);
+    ["wan", "qian", "bai", "shi"].forEach((key) => {
+      const item = ev.independentPosition && ev.independentPosition[key];
+      if (!item) return;
+      add(key, item.success, item.mainSuccess);
+      add(`position.${key}.main`, item.mainSuccess);
+      add(`position.${key}.backup`, item.backupSuccess);
+      add(`position.${key}.dual`, item.success);
+    });
+    add("totalHewei", ev.independentTotalHeweiSuccess);
+    add("threeFour", ev.independentThreeFourSuccess);
+    heweiKeys.forEach((key) => add(key, ev.independentHewei && ev.independentHewei[key] && ev.independentHewei[key].success));
+    extraKeys.forEach((key) => add(key, ev.independentExtras && ev.independentExtras[key] && ev.independentExtras[key].success));
+    ["threeDuishu", "sixPeiSix", "fivePeiFive"].forEach((key) => {
+      const item = ev[key];
+      if (!item || item.truthEligible !== true || item.reconstructed === true) return;
+      if (key === "threeDuishu" && item.version && item.version !== THREE_DUISHU_SNAPSHOT_VERSION) return;
+      add(key, item.success);
+    });
+  });
+  ["wan", "qian", "bai", "shi"].forEach((key) => {
+    ["main", "backup", "dual"].forEach((part) => {
+      const modelKey = `position.${key}.${part}`;
+      if (!out[modelKey]) out[modelKey] = { label: modelKeyLabel(modelKey), total: 0, match: 0 };
+    });
+  });
+  Object.keys(out).forEach((key) => {
+    const counter = out[key];
+    if (!counter || typeof counter !== "object" || !Object.prototype.hasOwnProperty.call(counter, "total")) return;
+    counter.rate = calcRateNumber(counter.total, counter.match);
+    decorateTruthScoreFields(counter, key, counter.rate);
+    Object.assign(counter, scope, {
+      dayScope: scope.businessDay,
+      truthSource: "official-counter-truth-eligible-only-daily",
+      truthAvailable: Number(counter.total || 0) > 0,
+      sampleScope: "verified-in-memory-business-day"
+    });
+  });
+  return out;
+}
+
+function projectDailyDisplayStreakLedger(predictions, now) {
+  const scope = dailyDisplayScope(now);
+  const rows = filterDailyDisplayPredictions(predictions, scope.businessDay, now);
+  const versions = {
+    autoTop6: AUTO_TOP6_SNAPSHOT_VERSION, recommend2: RECOMMEND2_SNAPSHOT_VERSION,
+    killFramework: KILL_FRAMEWORK_SNAPSHOT_VERSION, fourDingFramework: FOUR_DING_FRAMEWORK_SNAPSHOT_VERSION,
+    compactAttack: COMPACT_ATTACK_SNAPSHOT_VERSION, threeDingTwo: THREE_DING_TWO_SNAPSHOT_VERSION,
+    threeDingOne: THREE_DING_ONE_SNAPSHOT_VERSION, threeDuishu: THREE_DUISHU_SNAPSHOT_VERSION,
+    sixPeiSix: SIX_PEI_SIX_SNAPSHOT_VERSION, fivePeiFive: FIVE_PEI_FIVE_SNAPSHOT_VERSION
+  };
+  const out = {};
+  Object.keys(versions).concat(["twoDigitAvoidAllThree"]).forEach((key) => {
+    const results = rows.map((prediction) => {
+      const ev = prediction.evaluation;
+      let success;
+      if (key === "twoDigitAvoidAllThree") {
+        const items = ["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3"].map((name) => ev.independentExtras && ev.independentExtras[name]);
+        if (!items.every((item) => item && typeof item.success === "boolean")) return null;
+        success = items.every((item) => item.success);
+      } else {
+        const item = ev[key];
+        if (!item || item.truthEligible !== true || item.reconstructed === true || typeof item.success !== "boolean") return null;
+        if (item.version && item.version !== versions[key]) return null;
+        success = item.success;
+      }
+      return { period: ev.targetPeriod || ev.targetUid, success };
+    }).filter(Boolean).reverse();
+    out[key] = { [scope.businessDay]: Object.assign(streakStatsFromResults(scope.businessDay, results), scope, {
+      dayScope: scope.businessDay, source: "verified-target-draw-business-day", truthAvailable: results.length > 0
+    }) };
+  });
+  return out;
+}
+
+function projectDailyDisplayModelAudit(audit, predictions, now) {
+  const scope = dailyDisplayScope(now);
+  const rows = filterDailyDisplayPredictions(predictions, scope.businessDay, now);
+  const out = Object.assign({}, audit);
+  out.truthMetrics = {};
+  Object.keys(audit && audit.truthMetrics || {}).forEach((key) => {
+    const original = audit.truthMetrics[key] || {};
+    const results = rows.map((prediction) => {
+      const ev = prediction.evaluation;
+      const item = ev[key];
+      if (!item || item.truthEligible !== true || item.reconstructed === true || typeof item.success !== "boolean") return null;
+      if (original.version && item.version !== original.version) return null;
+      if (Number(original.expectedTotal || 0) > 0 && Number(item.total || 0) !== Number(original.expectedTotal)) return null;
+      return { period: ev.targetPeriod || ev.targetUid, success: item.success, passed: Number(item.passed || 0), total: Number(item.total || 0) };
+    }).filter(Boolean);
+    const today = Object.assign(streakStatsFromResults(scope.businessDay, results.slice().reverse()), scope);
+    const passedItems = results.reduce((total, row) => total + row.passed, 0);
+    const checkedItems = results.reduce((total, row) => total + row.total, 0);
+    const nearHit = results.filter((row) => row.total > 1 && row.passed >= row.total - 1).length;
+    out.truthMetrics[key] = Object.assign({}, original, scope, {
+      total: today.total, hit: today.hit, rate: today.rate,
+      nearHit, nearRate: results.length ? Number((100 * nearHit / results.length).toFixed(2)) : null,
+      passedItems, checkedItems, avgPassRate: checkedItems ? Number((100 * passedItems / checkedItems).toFixed(2)) : null,
+      latestSettledPeriod: results.length ? results[0].period : "",
+      today, todayStats: today, dayScope: scope.businessDay,
+      truthAvailable: results.length > 0
+    });
+  });
+  return out;
 }
 
 function currentLocalDayKey() {
@@ -2078,6 +2271,7 @@ function scheduleRdsCatchupRetry(reason) {
 }
 
 async function flushPendingOfficialDrawsToRds(reason) {
+  if (!durableBootRecovery.isReady()) return { ok: false, skipped: true, reason: "boot-durable-pending" };
   if (!RDS_PRIMARY_WRITE || typeof upsertOfficialDraw !== "function") {
     return { ok: false, reason: "unavailable" };
   }
@@ -2166,10 +2360,14 @@ function fetchJsonUrlSync(url, timeoutMs) {
   });
 }
 
-async function hydrateSharedHistoryFromRds(targetState) {
+async function hydrateSharedHistoryFromRds(targetState, options) {
   if (!HISTORY_FROM_RDS || !targetState) return { ok: false, reason: "disabled" };
+  const canCommit = options && typeof options.canCommit === "function" ? options.canCommit : () => true;
+  const deferred = () => ({ ok: false, skipped: true, deferred: true, reason: "prediction-pipeline-busy" });
+  if (!canCommit()) return deferred();
   try {
     const health = await fetchJsonUrlSync(`${RDS_API_BASE}/health`, 8000);
+    if (!canCommit()) return deferred();
     if (!health.body || health.body.ok !== true) return { ok: false, reason: "rds-unhealthy" };
     const limit = Math.min(Math.max(Number(MAX_HISTORY || 1000), 1), 5000);
     const hist = await fetchJsonUrlSync(`${RDS_API_BASE}/history?limit=${limit}`, 20000);
@@ -2200,6 +2398,10 @@ async function hydrateSharedHistoryFromRds(targetState) {
     mapped.sort((a, b) => String(b.period || b.uid || "").localeCompare(String(a.period || a.uid || "")));
     const rdsLatest = health.body.latestPeriod || (mapped[0] && mapped[0].period);
     const rdsLatestStr = String(rdsLatest || "");
+    // Background hydration may have begun while idle and completed its HTTP
+    // read during a yielded new-draw build. Never mutate live history first
+    // and merely skip alignment later. Sync-owned calls retain their old path.
+    if (!canCommit()) return deferred();
     const localExtras = [];
     const priorHistory = Array.isArray(targetState.history) ? targetState.history : [];
     for (const row of priorHistory) {
@@ -2651,7 +2853,11 @@ function buildMirrorFreezeState(source) {
 }
 
 function saveState(options) {
+  if (!durableBootRecovery.isReady()) return false;
   const opts = options && typeof options === "object" ? options : {};
+  const recoveringWriteFailure = !!runtimePersistenceWriteFailure;
+  runtimePersistenceWriteFailure = null;
+  try {
   ensureDir(DATA_DIR);
   state.updatedAt = isoNow();
   stripRetiredFourCodeState(state);
@@ -2665,6 +2871,9 @@ function saveState(options) {
     state.currentPrediction,
     state.latestRecord || (Array.isArray(state.history) && state.history[0]) || null
   );
+  // Capture the real complete pre-draw object before disk/in-memory slimming.
+  // A failed durable commit aborts this save instead of losing first evidence.
+  stageCurrentPredictionForRds();
   const tmp = path.join(
     DATA_DIR,
     `.state.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
@@ -2681,7 +2890,7 @@ function saveState(options) {
     // A periodic sync writes a new timestamp even when the current prediction
     // and its evaluated history have not changed.  Keep the expensive audit
     // cache in that case; its key below is based on actual audit inputs.
-    invalidatePanelStateCache({ invalidateModelAudit: false });
+    invalidatePanelStateCache({ invalidateModelAudit: recoveringWriteFailure });
     // tip-only / RDS 持久化：禁止被 skipMirror 饿死
     const mustMirror = LOCAL_TIP_ONLY || ALGO_RDS_DURABLE || opts.forceMirror === true;
     if (opts.skipMirror !== true || mustMirror) scheduleRdsMirrorAfterSave();
@@ -2691,6 +2900,11 @@ function saveState(options) {
     } catch (_) {}
     throw err;
   }
+
+  } catch (error) {
+    markRuntimePersistenceFailure(error);
+    throw error;
+  }
 }
 
 let rdsMirrorTimer = null;
@@ -2698,6 +2912,7 @@ let rdsMirrorRunning = false;
 let rdsMirrorPending = false;
 let rdsHydrateTimer = null;
 let rdsHydrateRunning = false;
+let rdsHydratePendingReason = null;
 const RDS_MIRROR_ENABLED = String(process.env.RDS_MIRROR_ENABLED || "1") !== "0";
 const RDS_MIRROR_DEBOUNCE_MS = Math.max(30 * 1000, Number(process.env.RDS_MIRROR_DEBOUNCE_MS || 120 * 1000));
 const RDS_HYDRATE_AFTER_MIRROR_MS = Math.max(1000, Number(process.env.RDS_HYDRATE_AFTER_MIRROR_MS || 5000));
@@ -2706,22 +2921,111 @@ const ALGO_DURABLE_STORE = String(process.env.ALGO_DURABLE_STORE || "local").toL
 const LOCAL_STATE_MODE = String(process.env.LOCAL_STATE_MODE || "full").toLowerCase();
 const ALGO_RDS_DURABLE = ALGO_DURABLE_STORE === "rds";
 const LOCAL_TIP_ONLY = LOCAL_STATE_MODE === "tip-only";
+const durableBootRecovery = createDurableBootRecovery({
+  required: ALGO_RDS_DURABLE || LOCAL_TIP_ONLY,
+  readLocal: () => state,
+  clone: (value) => JSON.parse(safeJsonStringify(value)),
+  hydrate: (candidate) => hydrateAlgoDurableFromRds(candidate),
+  commit: (candidate) => {
+    const restoredKeys = ["counters", "dailyStreakLedger", "modelWatchdog", "modelSelectionLocks",
+      "positionStrategyLocks", "stable120Locks", "threeDuishuSelectionLock", "algorithmProjectHealth",
+      "lastSync", "lastError", "tipReady", "currentPrediction", "algorithmProjectSnapshots",
+      "algoDurableHydratedAt", "algoDurableSource"];
+    for (const key of restoredKeys) {
+      if (Object.prototype.hasOwnProperty.call(candidate, key)) state[key] = candidate[key];
+    }
+  },
+  onStatus: (status) => {
+    if (state) state.bootRecovery = status;
+    if (status.status === "ready") {
+      if (state) delete state.threeDuishuRecommendationCache;
+      invalidatePanelStateCache({ invalidateModelAudit: true });
+    }
+  }
+});
+const rdsOutboxCapturedIds = new Map();
+
+let runtimePersistenceWriteFailure = null;
+
+function markRuntimePersistenceFailure(error) {
+  const allowed = new Set(["ENOSPC", "EDQUOT", "EIO", "EACCES", "EPERM", "EROFS"]);
+  const code = allowed.has(error && error.code) ? error.code : "STATE_PERSISTENCE_FAILED";
+  runtimePersistenceWriteFailure = {code, at: isoNow()};
+  try { applyTipReadyState(state.currentPrediction, state.latestRecord); } catch (_) {
+    if (state) {
+      state.tipReady = false; state.operationalReady = false;
+      if (state.currentPrediction) { state.currentPrediction.tipReady = false; state.currentPrediction.operationalReady = false; }
+    }
+  }
+  try { invalidatePanelStateCache({invalidateModelAudit: true}); } catch (_) {}
+}
+
+
+function stageCurrentPredictionForRds() {
+  if (!durableBootRecovery.isReady()) return;
+  if (!RDS_MIRROR_ENABLED || !(LOCAL_TIP_ONLY || ALGO_RDS_DURABLE)) return;
+  const prediction = state && state.currentPrediction;
+  if (!prediction || prediction.evaluated || prediction.allSnapshotsSealed !== true) return;
+  const checks = [
+    ["fourPosExclude", snap => fourPosExcludeAlgo.snapshotIsComplete(snap)],
+    ["autoTop6", autoTop6SnapshotIsComplete], ["recommend2", recommend2SnapshotIsComplete],
+    ["killFramework", killFrameworkSnapshotIsComplete],
+    ["fourDingFramework", fourDingFrameworkSnapshotIsComplete], ["threeDuishu", threeDuishuSnapshotIsComplete]
+  ];
+  if (!checks.every(([key, complete]) => complete(prediction[key]) && snapshotSealIsValid(prediction[key], prediction))) return;
+  const identity = JSON.stringify([prediction.id, prediction.baseUid, prediction.basePeriod, prediction.generatedAt,
+    prediction.snapshotsSealedAt, ...checks.map(([key]) => prediction[key].sealHash)]);
+  const id = String(prediction.id || "");
+  if (rdsOutboxCapturedIds.has(id)) {
+    if (rdsOutboxCapturedIds.get(id) !== identity) throw new Error("RDS first-seal identity changed; refusing replacement");
+    return;
+  }
+  predictionOutbox.enqueue(DATA_DIR, prediction);
+  rdsOutboxCapturedIds.set(id, identity);
+  while (rdsOutboxCapturedIds.size > 1000) rdsOutboxCapturedIds.delete(rdsOutboxCapturedIds.keys().next().value);
+}
+
+function sharedHistoryHydrateBusy() {
+  return syncRunning || predictionBuildRunning || drawIntegrationRunning;
+}
+
+function drainSharedHistoryHydrate() {
+  if (rdsHydratePendingReason && !rdsHydrateTimer && !rdsHydrateRunning && !sharedHistoryHydrateBusy()) {
+    scheduleSharedHistoryHydrate(rdsHydratePendingReason);
+  }
+}
 
 function scheduleSharedHistoryHydrate(reason) {
   if (!HISTORY_FROM_RDS || !state) return;
-  if (rdsHydrateTimer) clearTimeout(rdsHydrateTimer);
+  rdsHydratePendingReason = String(reason || rdsHydratePendingReason || "schedule");
+  // Coalesce to one existing deadline; busy work is drained by the owner at
+  // completion, rather than dropped or retried by a polling timer.
+  if (rdsHydrateTimer || rdsHydrateRunning) return;
   rdsHydrateTimer = setTimeout(() => {
     rdsHydrateTimer = null;
-    if (rdsHydrateRunning) return;
+    if (rdsHydrateRunning || sharedHistoryHydrateBusy()) {
+      addLog("RDS 后台灌注已延后", { code: "rds-hydrate-pipeline-busy", reason: rdsHydratePendingReason,
+        syncing: syncRunning, predictionBuildRunning, drawIntegrationRunning });
+      return;
+    }
+    const currentReason = rdsHydratePendingReason || "schedule";
+    rdsHydratePendingReason = null;
     rdsHydrateRunning = true;
+    const epoch = predictionIntegrationEpoch;
     const prevSource = state.sharedHistorySource || null;
     const prevPeriod = state.sharedHistoryLatestPeriod || null;
-    hydrateSharedHistoryFromRds(state).then((result) => {
-      rdsHydrateRunning = false;
+    const canCommit = () => !sharedHistoryHydrateBusy() && predictionIntegrationEpoch === epoch;
+    hydrateSharedHistoryFromRds(state, { canCommit }).then((result) => {
+      if (!canCommit() || result && result.deferred) {
+        rdsHydratePendingReason = rdsHydratePendingReason || currentReason;
+        addLog("RDS 后台灌注提交已延后", { code: "rds-hydrate-commit-deferred", reason: currentReason,
+          epoch, currentEpoch: predictionIntegrationEpoch });
+        return;
+      }
       if (result && result.ok) {
-        addLog("共享历史已从 RDS 灌注", { reason: reason || "schedule", ...result });
-        const catchup = settleMissedPredictionEvaluations({ reason: "hydrate-" + String(reason || "schedule"), save: false });
-        const tip = alignTipPredictionAfterHydrate("hydrate-" + String(reason || "schedule"));
+        addLog("共享历史已从 RDS 灌注", { reason: currentReason, ...result });
+        const catchup = settleMissedPredictionEvaluations({ reason: "hydrate-" + currentReason, save: false });
+        const tip = alignTipPredictionAfterHydrate("hydrate-" + currentReason);
         const changed =
           prevSource !== "rds" ||
           String(prevPeriod || "") !== String(result.latestPeriod || "") ||
@@ -2732,19 +3036,27 @@ function scheduleSharedHistoryHydrate(reason) {
             console.error("[RDS hydrate] save failed", err && err.message ? err.message : err);
           }
         }
+        addLog("RDS 后台灌注协调完成", { code: "rds-hydrate-committed", reason: currentReason,
+          latestPeriod: result.latestPeriod || null, created: !!(tip && tip.created),
+          settled: Number(catchup && catchup.settled || 0) });
       } else {
-        addLog("RDS 历史灌注跳过/失败", { reason: reason || "schedule", ...(result || {}) });
+        addLog("RDS 历史灌注跳过/失败", { reason: currentReason, ...(result || {}) });
       }
     }).catch((err) => {
-      rdsHydrateRunning = false;
       console.error("[RDS hydrate] failed", err && err.message ? err.message : err);
+    }).finally(() => {
+      rdsHydrateRunning = false;
+      drainSharedHistoryHydrate();
     });
   }, RDS_HYDRATE_AFTER_MIRROR_MS);
 }
 
 function scheduleRdsMirrorAfterSave() {
+  if (!durableBootRecovery.isReady()) return;
   if (!RDS_MIRROR_ENABLED) return;
-  if (rdsMirrorTimer) clearTimeout(rdsMirrorTimer);
+  // Keep the first dirty deadline. Frequent saves must not postpone it forever.
+  if (rdsMirrorRunning) { rdsMirrorPending = true; return; }
+  if (rdsMirrorTimer) return;
   rdsMirrorTimer = setTimeout(() => {
     rdsMirrorTimer = null;
     if (rdsMirrorRunning) {
@@ -2755,17 +3067,21 @@ function scheduleRdsMirrorAfterSave() {
     if (!fs.existsSync(script)) return;
     rdsMirrorRunning = true;
     rdsMirrorPending = false;
+    let logFd;
     try {
       const logDir = path.join(DATA_DIR, "logs");
       try { fs.mkdirSync(logDir, { recursive: true }); } catch (_) {}
       const backupDir = path.join(DATA_DIR, "backups");
       try { fs.mkdirSync(backupDir, { recursive: true }); } catch (_) {}
       const logFile = path.join(logDir, "rds-mirror.log");
-      const logFd = fs.openSync(logFile, "a");
+      logFd = fs.openSync(logFile, "a");
       const mirrorHeapMb = Math.max(512, Number(process.env.RDS_MIRROR_HEAP_MB || 1536) || 1536);
       // tip-only 本地文件不含账本：从内存打全量 freeze 再导入 RDS
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const freezePath = path.join(backupDir, `state_mirror_${stamp}.json`);
+      const mirrorNonce = crypto.randomBytes(16).toString("hex");
+      const freezePath = path.join(backupDir, `state_mirror_${stamp}_${mirrorNonce}.json`);
+      const receiptPath = path.join(DATA_DIR, "rds-mirror-receipts", mirrorNonce + ".json");
+      let mirrorBatch, freezeSha256;
       try {
         // 确保项目快照最新再冻结
         try {
@@ -2783,11 +3099,22 @@ function scheduleRdsMirrorAfterSave() {
         } catch (syncErr) {
           console.error("[RDS mirror] project sync failed", syncErr && syncErr.message ? syncErr.message : syncErr);
         }
-        fs.writeFileSync(freezePath, safeJsonStringify(buildMirrorFreezeState(state)));
+        mirrorBatch = predictionOutbox.readBatch(DATA_DIR);
+        if (mirrorBatch.quarantined && mirrorBatch.quarantined.length) {
+          console.error("[RDS outbox] corrupt entries durably quarantined", mirrorBatch.quarantined);
+          addLog("【报警】RDS封存原件队列异常已持久隔离", {entries: mirrorBatch.quarantined});
+        }
+        const frozen = predictionOutbox.mergeIntoState(buildMirrorFreezeState(state), mirrorBatch);
+        frozen.rdsMirrorOutbox = {version: 1, ids: mirrorBatch.entries.map(entry => entry.id),
+          entries: mirrorBatch.entries.map(entry => ({id: entry.id, sha256: entry.sha256}))};
+        const serialized = safeJsonStringify(frozen);
+        fs.writeFileSync(freezePath, serialized, {mode: 0o600});
+        freezeSha256 = crypto.createHash("sha256").update(serialized).digest("hex");
       } catch (freezeErr) {
         try { fs.closeSync(logFd); } catch (_) {}
         rdsMirrorRunning = false;
         console.error("[RDS mirror] freeze failed", freezeErr && freezeErr.message ? freezeErr.message : freezeErr);
+        scheduleRdsMirrorAfterSave();
         return;
       }
       fs.writeSync(logFd, `\n==== mirror schedule ${new Date().toISOString()} heap=${mirrorHeapMb} freeze=${path.basename(freezePath)} ====\n`);
@@ -2801,7 +3128,8 @@ function scheduleRdsMirrorAfterSave() {
       } catch (_) {}
       const child = spawn(
         process.execPath,
-        [`--max-old-space-size=${mirrorHeapMb}`, script, "--file", freezePath],
+        [`--max-old-space-size=${mirrorHeapMb}`, script, "--file", freezePath,
+          "--receipt", receiptPath, "--receipt-nonce", mirrorNonce, "--expected-freeze-sha", freezeSha256],
         {
           cwd: path.join(__dirname, "api"),
           detached: true,
@@ -2815,9 +3143,27 @@ function scheduleRdsMirrorAfterSave() {
           fs.closeSync(logFd);
         } catch (_) {}
         rdsMirrorRunning = false;
+        let confirmed = false;
         if (Number(code) === 0) {
-          scheduleSharedHistoryHydrate("after-mirror");
+          try {
+            if (fs.statSync(receiptPath).size > 64 * 1024) throw new Error("oversized-mirror-receipt");
+            const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+            const acknowledged = predictionOutbox.acknowledge(DATA_DIR, mirrorBatch, receipt,
+              {nonce: mirrorNonce, freezeSha256, freezePath});
+            confirmed = true;
+            if (acknowledged.conflicted) {
+              console.error("[RDS outbox] pending immutable DB conflicts=" + acknowledged.conflicted);
+              addLog("【报警】RDS封存原件部分待核验，已保留并轮转重试", {
+                verified: acknowledged.deleted, conflicted: receipt.conflicted_outbox_entries});
+            }
+            if (predictionOutbox.pendingCount(DATA_DIR)) rdsMirrorPending = true;
+            try { fs.unlinkSync(receiptPath); } catch (_) {}
+            scheduleSharedHistoryHydrate("after-mirror");
+          } catch (receiptErr) {
+            console.error("[RDS mirror] import unconfirmed; outbox retained", receiptErr && receiptErr.message ? receiptErr.message : receiptErr);
+          }
         }
+        if (!confirmed) rdsMirrorPending = true;
         if (rdsMirrorPending) {
           rdsMirrorPending = false;
           scheduleRdsMirrorAfterSave();
@@ -2829,14 +3175,18 @@ function scheduleRdsMirrorAfterSave() {
           fs.closeSync(logFd);
         } catch (_) {}
         rdsMirrorRunning = false;
+        rdsMirrorPending = true;
         if (rdsMirrorPending) {
           rdsMirrorPending = false;
           scheduleRdsMirrorAfterSave();
         }
       });
       child.unref();
-    } catch (_) {
+    } catch (mirrorErr) {
+      try { if (logFd !== undefined) fs.closeSync(logFd); } catch (_) {}
       rdsMirrorRunning = false;
+      console.error("[RDS mirror] scheduling failed", mirrorErr && mirrorErr.message ? mirrorErr.message : mirrorErr);
+      scheduleRdsMirrorAfterSave();
     }
   }, RDS_MIRROR_DEBOUNCE_MS);
 }
@@ -4139,6 +4489,9 @@ function buildThreeDuishuRecommendationPayload(history, period) {
 }
 
 function recomputeThreeDuishuRecommendation() {
+  if (!durableBootRecovery.isReady()) {
+    return { ok: false, code: "", shot: "", pairs: [], error: "boot-durable-pending" };
+  }
   const history = (Array.isArray(state && state.history) ? state.history : []).filter((record) => firstFourNumbers(record).length >= 4);
   const period = state.latestRecord && state.latestRecord.period ? state.latestRecord.period : "";
   const signature = threeDuishuHistorySignature(history, period);
@@ -4154,6 +4507,9 @@ function recomputeThreeDuishuRecommendation() {
 }
 
 function getThreeDuishuRecommendation() {
+  if (!durableBootRecovery.isReady()) {
+    return { ok: false, code: "", shot: "", pairs: [], error: "boot-durable-pending" };
+  }
   const history = (Array.isArray(state && state.history) ? state.history : []).filter((record) => firstFourNumbers(record).length >= 4);
   const period = state.latestRecord && state.latestRecord.period ? state.latestRecord.period : "";
   const signature = threeDuishuHistorySignature(history, period);
@@ -4577,7 +4933,7 @@ function sixPeiSixDigitPresence(history, windowSize) {
 }
 
 function selectSixPeiSixPartition(history) {
-  const freq = sixPeiSixDigitPresence(history, 120);
+  const freq = sixPeiSixDigitPresence(history, 30);
   const digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].sort((a, b) => {
     const delta = freq[Number(a)] - freq[Number(b)];
     return delta !== 0 ? delta : Number(a) - Number(b);
@@ -5279,10 +5635,18 @@ function applyTipReadyState(prediction, latest, issues) {
   const structureReady = coreIssues.length === 0;
   const truthReady = structureReady && projectIssues.length === 0;
   const qualityReady = truthReady && projectHealthSummary.degradedProjectCount === 0 && stabilityIssues.length === 0;
-  const operationalReady = qualityReady;
+  const operationalReady = qualityReady && durableBootRecovery.isReady() && !runtimePersistenceWriteFailure;
+  const readinessIssues = list.concat(stabilityIssues, projectHealthSummary.degradedProjectIds.map((projectId) => ({
+    type: "algorithm-project-degraded", key: `project.${projectId}`, label: projectId,
+    action: "inspect-algorithm-project"
+  })));
+  if (runtimePersistenceWriteFailure) readinessIssues.push({
+    type: "persistence-write-failed", key: "persistence", label: "数据尚未安全保存",
+    code: runtimePersistenceWriteFailure.code, action: "restore-persistence-and-retry"
+  });
   if (prediction && typeof prediction === "object") {
     prediction.tipStructurePerfect = structureReady;
-    prediction.tipReady = structureReady;
+    prediction.tipReady = operationalReady;
     prediction.structureReady = structureReady;
     prediction.truthReady = truthReady;
     prediction.qualityReady = qualityReady;
@@ -5294,14 +5658,14 @@ function applyTipReadyState(prediction, latest, issues) {
     prediction.algorithmProjectDegradedIds = projectHealthSummary.degradedProjectIds;
   }
   if (state) {
-    state.tipReady = structureReady;
+    state.tipReady = operationalReady;
     state.structureReady = structureReady;
     state.truthReady = truthReady;
     state.qualityReady = qualityReady;
     state.operationalReady = operationalReady;
     state.tipReadyCheckedAt = isoNow();
-    state.tipReadyIssueCount = coreIssues.length;
-    state.tipReadyIssues = coreIssues.slice(0, 40);
+    state.tipReadyIssueCount = readinessIssues.length;
+    state.tipReadyIssues = readinessIssues.slice(0, 40);
     state.algorithmProjectIssueCount = projectIssues.length;
     state.algorithmProjectIssues = projectIssues.slice(0, 80);
     // Keep this separate from algorithmProjectIssueCount: that field is for
@@ -5310,10 +5674,10 @@ function applyTipReadyState(prediction, latest, issues) {
     state.algorithmProjectDegradedCount = projectHealthSummary.degradedProjectCount;
     state.algorithmProjectDegradedIssueCount = projectHealthSummary.degradedIssueCount;
     state.algorithmProjectDegradedIds = projectHealthSummary.degradedProjectIds;
-    if (structureReady) state.tipReadyFailedAt = "";
+    if (operationalReady) state.tipReadyFailedAt = "";
     else if (!state.tipReadyFailedAt) state.tipReadyFailedAt = isoNow();
   }
-  return structureReady;
+  return operationalReady;
 }
 
 function collectRuntimeIssues() {
@@ -5432,11 +5796,12 @@ function trimRuntimeCaches(actions) {
 
 function regenerateCurrentPredictionForWatchdog(actions) {
   if (!Array.isArray(state.history) || !state.history.length) return false;
-  if (predictionBuildRunning) {
+  if (predictionBuildRunning || drawIntegrationRunning) {
     actions.push({ type: "regenerate-skip", reason: "prediction-build-running" });
     return false;
   }
   predictionBuildRunning = true;
+  predictionIntegrationEpoch += 1;
   try {
     const duishuBefore = collectDuishuCaptureIssues(state.currentPrediction);
     const latest = state.history[0];
@@ -5451,6 +5816,7 @@ function regenerateCurrentPredictionForWatchdog(actions) {
     resetAlgorithmProjectHealthForPrediction(regenerated);
     ensurePredictionFrameworkSnapshots(regenerated, state.history);
     sealPredictionSnapshots(regenerated, latest);
+    attachAdaptiveExclusionAfterCommit(regenerated, state.history);
     invalidatePanelStateCache();
     if (duishuBefore.length) {
       const remaining = collectDuishuCaptureIssues(regenerated);
@@ -5482,6 +5848,7 @@ function regenerateCurrentPredictionForWatchdog(actions) {
     return true;
   } finally {
     predictionBuildRunning = false;
+    drainSharedHistoryHydrate();
   }
 }
 
@@ -5632,6 +5999,7 @@ function forceRegenerateTipForAdmin(options) {
 let modelWatchdogRunning = false;
 
 function runModelWatchdog(trigger, options) {
+  if (!durableBootRecovery.isReady()) return { ok: false, skipped: true, reason: "boot-durable-pending" };
   const opts = options && typeof options === "object" ? options : {};
   state.modelWatchdog = normalizeModelWatchdog(state.modelWatchdog);
   if (!state.modelWatchdog.enabled) {
@@ -8135,6 +8503,12 @@ function sealPredictionSnapshots(prediction, latest) {
     ["threeDuishu", threeDuishuSnapshotIsComplete]
   ];
 
+  // Revalidation must not change the evidence or its original sealing time.
+  if (predictionSnapshotsAreImmutable(prediction)) {
+    return frameworkSeals.every(([key, isComplete]) =>
+      isComplete(prediction[key]) && snapshotSealIsValid(prediction[key], prediction));
+  }
+
   let sealedCount = 0;
   frameworkSeals.forEach(([key, isComplete]) => {
     const snapshot = prediction[key];
@@ -8144,9 +8518,8 @@ function sealPredictionSnapshots(prediction, latest) {
         sealedCount += 1;
         return;
       }
-      // 半成品封存（缺 hash / 期号字段）允许重签一次，否则 allSnapshotsSealed 永久卡住
-      snapshot.sealed = false;
-      snapshot.sealHash = "";
+      // Invalid sealed evidence must fail the gate; never make it valid by re-signing.
+      return;
     }
     if (key === "fourPosExclude") {
       fourPosExcludeAlgo.sealSnapshot(snapshot, prediction);
@@ -8159,10 +8532,10 @@ function sealPredictionSnapshots(prediction, latest) {
     if (snapshotSealIsValid(snapshot, prediction)) sealedCount += 1;
   });
   const allSealed = sealedCount === frameworkSeals.length;
-  if (sealedCount > 0) {
+  if (allSealed) {
     prediction.snapshotsSealedAt = isoNow();
     prediction.snapshotsSealedBaseUid = String(prediction.baseUid || "");
-    prediction.allSnapshotsSealed = allSealed;
+    prediction.allSnapshotsSealed = true;
   } else {
     prediction.allSnapshotsSealed = false;
   }
@@ -10095,6 +10468,9 @@ function scheduleStableMathFilterRefresh(reason) {
 }
 
 let adaptiveExclusionRefreshing = false;
+let adaptiveExclusionQueued = null;
+let adaptiveExclusionRunningTarget = "";
+let adaptiveExclusionPendingResult = null;
 function extractLiveKillsFromPrediction(prediction) {
   const live = { position: {}, hewei: {}, extra: {}, locks: { stable120: [], modelSelection: [] } };
   const posMap = { wan: "1", qian: "2", bai: "3", shi: "4" };
@@ -10130,26 +10506,89 @@ function extractLiveKillsFromPrediction(prediction) {
   return live;
 }
 
+function adaptiveExclusionContext(prediction) {
+  return {
+    basePeriod: String(prediction && (prediction.basePeriod || prediction.baseUid) || ""),
+    targetPeriod: String(prediction && (prediction.targetPeriod || prediction.targetUid) || "")
+  };
+}
+
+function adaptiveExclusionMatchesPrediction(prediction, payload) {
+  if (!prediction || typeof prediction !== "object") return false;
+  const context = adaptiveExclusionContext(prediction);
+  return immediatePenta5PeriodTransition(context.basePeriod, context.targetPeriod).immediate === true
+    && adaptiveExclusionBridge.isValidSidecarResult(payload, context);
+}
+
 function applyAdaptiveExclusionSidecar(prediction, payload) {
   if (!prediction || typeof prediction !== "object") return prediction;
-  if (!payload || typeof payload !== "object" || payload.appliesToTip !== false) return prediction;
+  if (!adaptiveExclusionMatchesPrediction(prediction, payload)) return prediction;
   prediction.adaptiveExclusion = payload;
   return prediction;
 }
 
+function cachedAdaptiveExclusionForPrediction(prediction) {
+  return [prediction && prediction.adaptiveExclusion, adaptiveExclusionPendingResult,
+    typeof state !== "undefined" && state && state.adaptiveExclusion,
+    adaptiveExclusionBridge.readCachedSidecar()
+  ].filter((candidate) => adaptiveExclusionMatchesPrediction(prediction, candidate))
+    .sort((left, right) => Date.parse(right.generatedAt) - Date.parse(left.generatedAt))[0] || null;
+}
+
+function attachCachedAdaptiveExclusion(prediction) {
+  const payload = cachedAdaptiveExclusionForPrediction(prediction);
+  if (!payload) return false;
+  // The sidecar remains top-level read-only metadata: never copy its digits
+  // into positionKills, framework snapshots, or snapshotSealPayload.
+  let changed = JSON.stringify(prediction.adaptiveExclusion) !== JSON.stringify(payload);
+  if (changed) applyAdaptiveExclusionSidecar(prediction, payload);
+  const current = typeof state !== "undefined" && state && state.currentPrediction;
+  if (adaptiveExclusionMatchesPrediction(current, payload)) {
+    const prior = state.adaptiveExclusion;
+    if (!adaptiveExclusionBridge.isValidSidecarResult(prior)
+      || prior.targetPeriod < payload.targetPeriod
+      || (prior.targetPeriod === payload.targetPeriod && Date.parse(prior.generatedAt) <= Date.parse(payload.generatedAt))) {
+      if (JSON.stringify(prior) !== JSON.stringify(payload)) {
+        state.adaptiveExclusion = payload;
+        changed = true;
+      }
+    }
+    if (adaptiveExclusionPendingResult && adaptiveExclusionPendingResult.targetPeriod <= payload.targetPeriod) {
+      adaptiveExclusionPendingResult = null;
+    }
+    if (changed) { try { invalidatePanelStateCache(); } catch (_) {} }
+  }
+  return true;
+}
+
+function attachAdaptiveExclusionAfterCommit(prediction, history) {
+  // Called only once a fully orchestrated/sealed tip is the active object.
+  // A result produced earlier can now attach without polling or recomputing.
+  if (!state || state.currentPrediction !== prediction) return;
+  try { attachOrScheduleAdaptiveExclusion(prediction, history); }
+  catch (_) { addLog("自适应排除 sidecar 挂载异常", { error: "adaptive-sidecar-attach-exception" }); }
+}
+
 function attachOrScheduleAdaptiveExclusion(prediction, history) {
   if (!prediction || typeof prediction !== "object") return;
-  const cached = (typeof state !== "undefined" && state && state.adaptiveExclusion)
-    || adaptiveExclusionBridge.readCachedSidecar()
-    || null;
-  if (cached && adaptiveExclusionBridge.isValidSidecarResult(cached)) {
-    applyAdaptiveExclusionSidecar(prediction, cached);
+  const context = adaptiveExclusionContext(prediction);
+  if (immediatePenta5PeriodTransition(context.basePeriod, context.targetPeriod).immediate !== true) return;
+  const targetKey = `${context.basePeriod}:${context.targetPeriod}`;
+  if (attachCachedAdaptiveExclusion(prediction)) return;
+  if (prediction.adaptiveExclusion) delete prediction.adaptiveExclusion;
+  if (adaptiveExclusionRefreshing) {
+    if (targetKey !== adaptiveExclusionRunningTarget
+      && (!adaptiveExclusionQueued || context.targetPeriod >= adaptiveExclusionContext(adaptiveExclusionQueued.prediction).targetPeriod)) {
+      adaptiveExclusionQueued = { prediction, history };
+    }
+    return;
   }
-  if (adaptiveExclusionRefreshing) return;
+  if (adaptiveExclusionQueued && context.targetPeriod >= adaptiveExclusionContext(adaptiveExclusionQueued.prediction).targetPeriod) adaptiveExclusionQueued = null;
   adaptiveExclusionRefreshing = true;
+  adaptiveExclusionRunningTarget = targetKey;
   const historySnapshot = Array.isArray(history) ? history.slice(0, 160) : [];
   const liveKills = extractLiveKillsFromPrediction(prediction);
-  const targetPeriod = prediction.targetPeriod ? String(prediction.targetPeriod) : "";
+  const targetPeriod = context.targetPeriod;
   Promise.resolve()
     .then(() => adaptiveExclusionBridge.runAdaptiveExclusionAsync(historySnapshot, liveKills, {
       timeoutMs: 15000,
@@ -10158,10 +10597,24 @@ function attachOrScheduleAdaptiveExclusion(prediction, history) {
     }))
     .then((ran) => {
       const result = ran && ran.result ? ran.result : null;
-      if (result && adaptiveExclusionBridge.isValidSidecarResult(result)) {
-        if (typeof state !== "undefined" && state) state.adaptiveExclusion = result;
-        if (state && state.currentPrediction) applyAdaptiveExclusionSidecar(state.currentPrediction, result);
-        try { invalidatePanelStateCache(); } catch (_) {}
+      const current = typeof state !== "undefined" && state && state.currentPrediction;
+      if (ran && ran.ok === true && adaptiveExclusionBridge.isValidSidecarResult(result, context)) {
+        const currentTarget = adaptiveExclusionContext(current).targetPeriod;
+        if (currentTarget && currentTarget > result.targetPeriod) {
+          addLog("自适应排除 sidecar 旧目标已跳过", { status: "superseded", code: "adaptive-sidecar-superseded-target", targetPeriod: result.targetPeriod });
+          return;
+        }
+        const pending = adaptiveExclusionPendingResult;
+        if (!adaptiveExclusionBridge.isValidSidecarResult(pending)
+          || pending.targetPeriod < result.targetPeriod
+          || (pending.targetPeriod === result.targetPeriod && Date.parse(pending.generatedAt) <= Date.parse(result.generatedAt))) {
+          adaptiveExclusionPendingResult = result;
+        }
+        if (!adaptiveExclusionMatchesPrediction(current, result)) {
+          addLog("自适应排除 sidecar 等待当前预测就绪", { status: "waiting", code: "adaptive-sidecar-awaiting-current-target", targetPeriod: result.targetPeriod });
+          return;
+        }
+        attachCachedAdaptiveExclusion(current);
         addLog("自适应排除 sidecar 已刷新", {
           ok: !!(ran && ran.ok),
           action: result.decision && result.decision.action,
@@ -10169,47 +10622,73 @@ function attachOrScheduleAdaptiveExclusion(prediction, history) {
           targetPeriod: result.targetPeriod || targetPeriod,
           error: ran && ran.ok ? null : String((ran && ran.error) || "")
         });
-      } else if (ran && ran.ok === false) {
-        addLog("自适应排除 sidecar 刷新失败", { error: String(ran.error || "unknown") });
+      } else {
+        const detail = String(ran && ran.error || "");
+        const code = ran && ran.ok === true ? "adaptive-sidecar-mismatched-target"
+          : detail === "timeout" ? "adaptive-sidecar-timeout"
+          : detail.startsWith("invalid-sidecar-or-exit:") ? "adaptive-sidecar-invalid-output"
+          : "adaptive-sidecar-worker-failed";
+        addLog("自适应排除 sidecar 刷新失败", { error: code, targetPeriod });
       }
     })
     .catch((err) => {
-      addLog("自适应排除 sidecar 异常", { error: err && err.message ? err.message : String(err) });
+      addLog("自适应排除 sidecar 异常", { error: "adaptive-sidecar-exception", targetPeriod });
     })
     .then(() => {
       adaptiveExclusionRefreshing = false;
+      adaptiveExclusionRunningTarget = "";
+      const queued = adaptiveExclusionQueued;
+      adaptiveExclusionQueued = null;
+      const current = state && state.currentPrediction;
+      if (queued && current && JSON.stringify(adaptiveExclusionContext(current)) === JSON.stringify(adaptiveExclusionContext(queued.prediction))) {
+        attachOrScheduleAdaptiveExclusion(current, queued.history);
+      } else if (queued && adaptiveExclusionContext(queued.prediction).targetPeriod > adaptiveExclusionContext(current).targetPeriod) {
+        adaptiveExclusionQueued = queued;
+      }
     });
 }
 
 async function handleAdaptiveExclusionRequest(req, res, parsedUrl) {
   const refresh = parsedUrl.searchParams.get("refresh") === "1"
     || parsedUrl.searchParams.get("refresh") === "true";
-  const cached = (state && state.currentPrediction && state.currentPrediction.adaptiveExclusion)
-    || (state && state.adaptiveExclusion)
-    || adaptiveExclusionBridge.readCachedSidecar();
-  if (!refresh && cached) {
-    sendJson(res, 200, { ok: true, sidecar: "adaptive-exclusion", readOnly: true, result: cached, cached: true });
+  const prediction = state && state.currentPrediction;
+  const cached = [prediction && prediction.adaptiveExclusion, state && state.adaptiveExclusion,
+    adaptiveExclusionBridge.readCachedSidecar()
+  ].find((candidate) => adaptiveExclusionMatchesPrediction(prediction, candidate));
+  const cacheMatches = adaptiveExclusionMatchesPrediction(prediction, cached);
+  if (!refresh) {
+    sendJson(res, cacheMatches ? 200 : 503, {
+      ok: cacheMatches, sidecar: "adaptive-exclusion", readOnly: true,
+      result: cacheMatches ? cached : null, cached: cacheMatches,
+      stale: !cacheMatches,
+      error: cacheMatches ? undefined : "adaptive-exclusion-not-ready-or-stale"
+    });
     return;
   }
   const history = state && Array.isArray(state.history) ? state.history : [];
-  const liveKills = extractLiveKillsFromPrediction((state && state.currentPrediction) || {});
+  const liveKills = extractLiveKillsFromPrediction(prediction || {});
   const outcome = await adaptiveExclusionBridge.runAdaptiveExclusionAsync(history, liveKills, {
     timeoutMs: 15000,
-    targetPeriod: state && state.currentPrediction && state.currentPrediction.targetPeriod || "",
+    targetPeriod: prediction && prediction.targetPeriod || "",
     replayWindow: 80
   });
-  const result = outcome && outcome.result ? outcome.result : adaptiveExclusionBridge.readCachedSidecar();
-  if (result && adaptiveExclusionBridge.isValidSidecarResult(result)) {
+  const result = outcome && outcome.result;
+  const accepted = !!(outcome && outcome.ok === true
+    && adaptiveExclusionMatchesPrediction(prediction, result)
+    && adaptiveExclusionMatchesPrediction(state && state.currentPrediction, result));
+  if (accepted) {
     if (state) state.adaptiveExclusion = result;
     if (state && state.currentPrediction) applyAdaptiveExclusionSidecar(state.currentPrediction, result);
     try { invalidatePanelStateCache(); } catch (_) {}
   }
-  sendJson(res, result ? 200 : 503, {
-    ok: !!(result && adaptiveExclusionBridge.isValidSidecarResult(result)),
+  sendJson(res, accepted ? 200 : 503, {
+    ok: accepted,
     sidecar: "adaptive-exclusion",
     readOnly: true,
-    result: result || null,
-    error: outcome && outcome.ok === false ? outcome.error : undefined
+    result: accepted ? result : null,
+    cached: false,
+    stale: !accepted,
+    error: accepted ? undefined : String(outcome && outcome.error || "stale-or-mismatched-target")
   });
 }
 
@@ -12947,6 +13426,7 @@ function ensureTipTargetPeriod(prediction) {
 }
 
 function ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history) {
+  const startedNs = process.hrtime.bigint();
   bindAlgorithmOrchestrators();
   const safeHistory = Array.isArray(history) ? history : [];
   // 封存前强制更稳与最新开奖期对齐，避免 tip 吃上期滤网
@@ -12954,6 +13434,7 @@ function ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history) {
   attachCachedStableMathFilter(prediction);
   ensureTipTargetPeriod(prediction);
   const modelPerformance = (state && state.modelPerformance) || {};
+  const stableReadyNs = process.hrtime.bigint();
   const l0 = algoOrchestrateL0.computeL0({
     history: safeHistory,
     modelPerformance,
@@ -12962,6 +13443,7 @@ function ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history) {
     getStableMathExcludeDigitSet
   });
   applyOrchestrateL0ToPrediction(prediction, l0);
+  const l0ReadyNs = process.hrtime.bigint();
   const l1 = algoOrchestrateL1.computeL1({
     history: safeHistory,
     prediction,
@@ -12969,6 +13451,7 @@ function ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history) {
     getState: () => state || {},
     recomputeThreeDuishuRecommendation
   });
+  const l1ReadyNs = process.hrtime.bigint();
   prediction.orchestrateMeta = prediction.orchestrateMeta && typeof prediction.orchestrateMeta === "object"
     ? prediction.orchestrateMeta
     : {};
@@ -12978,6 +13461,10 @@ function ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history) {
   prediction.orchestrateMeta.path = "orchestrate-l0-l1";
   if (prediction.orchestrateMeta.error) delete prediction.orchestrateMeta.error;
   addLog("orchestrate L0/L1 完成", {
+    elapsedMs: Number(l1ReadyNs - startedNs) / 1e6,
+    stableMathMs: Number(stableReadyNs - startedNs) / 1e6,
+    l0Ms: Number(l0ReadyNs - stableReadyNs) / 1e6,
+    l1Ms: Number(l1ReadyNs - l0ReadyNs) / 1e6,
     basePeriod: prediction.basePeriod || null,
     baseUid: prediction.baseUid || null,
     hasHewei: !!(prediction.hewei && prediction.independentHeweiKills),
@@ -12990,12 +13477,14 @@ function ensurePredictionFrameworkSnapshotsViaOrchestrate(prediction, history) {
 }
 
 async function ensurePredictionFrameworkSnapshotsViaOrchestrateAsync(prediction, history) {
+  const startedNs = process.hrtime.bigint();
   bindAlgorithmOrchestrators();
   const safeHistory = Array.isArray(history) ? history : [];
   ensureStableMathFilterCurrentForTip(safeHistory, "orchestrate-pre-l0");
   attachCachedStableMathFilter(prediction);
   ensureTipTargetPeriod(prediction);
   const modelPerformance = (state && state.modelPerformance) || {};
+  const stableReadyNs = process.hrtime.bigint();
   const l0 = await algoOrchestrateL0.computeL0Async({
     history: safeHistory,
     modelPerformance,
@@ -13004,6 +13493,7 @@ async function ensurePredictionFrameworkSnapshotsViaOrchestrateAsync(prediction,
     getStableMathExcludeDigitSet
   }, yieldEventLoop);
   applyOrchestrateL0ToPrediction(prediction, l0);
+  const l0ReadyNs = process.hrtime.bigint();
   const l1 = await algoOrchestrateL1.computeL1Async({
     history: safeHistory,
     prediction,
@@ -13011,6 +13501,7 @@ async function ensurePredictionFrameworkSnapshotsViaOrchestrateAsync(prediction,
     getState: () => state || {},
     recomputeThreeDuishuRecommendation
   }, yieldEventLoop);
+  const l1ReadyNs = process.hrtime.bigint();
   prediction.orchestrateMeta = prediction.orchestrateMeta && typeof prediction.orchestrateMeta === "object"
     ? prediction.orchestrateMeta
     : {};
@@ -13020,6 +13511,10 @@ async function ensurePredictionFrameworkSnapshotsViaOrchestrateAsync(prediction,
   prediction.orchestrateMeta.path = "orchestrate-l0-l1";
   if (prediction.orchestrateMeta.error) delete prediction.orchestrateMeta.error;
   addLog("orchestrate L0/L1 完成", {
+    elapsedMs: Number(l1ReadyNs - startedNs) / 1e6,
+    stableMathMs: Number(stableReadyNs - startedNs) / 1e6,
+    l0Ms: Number(l0ReadyNs - stableReadyNs) / 1e6,
+    l1Ms: Number(l1ReadyNs - l0ReadyNs) / 1e6,
     basePeriod: prediction.basePeriod || null,
     baseUid: prediction.baseUid || null,
     hasHewei: !!(prediction.hewei && prediction.independentHeweiKills),
@@ -13152,16 +13647,16 @@ function ensureTipStructurePerfect(options) {
     markAlgorithmProjectIssues(issues);
     const coreIssues = issues.filter(isCorePredictionIssue);
     if (!coreIssues.length) {
-      applyTipReadyState(prediction, latest, issues);
+      const ready = applyTipReadyState(prediction, latest, issues);
       if (opts.log !== false) {
-        addLog("核心预测门闩通过", {
+        addLog(ready ? "预测门闩全部通过" : "预测门闩未全部通过", {
           attempts,
           baseUid: prediction.baseUid,
           basePeriod: prediction.basePeriod,
           degradedProjectCount: issues.length
         });
       }
-      return { ok: true, attempts, issues };
+      return { ok: ready, attempts, issues };
     }
     if (!allowRegenerate || attempts >= maxAttempts) break;
     if (predictionBuildRunning || (syncRunning && opts.fromSync !== true && String(opts.trigger || "").indexOf("sync") < 0)) {
@@ -13184,7 +13679,7 @@ function ensureTipStructurePerfect(options) {
       tipReady: false
     });
   }
-  return { ok: coreIssues.length === 0, attempts, issues };
+  return { ok: state.tipReady === true, attempts, issues };
 }
 
 function generateBigDataPrediction(history) {
@@ -13839,6 +14334,7 @@ function settleOnePredictionAgainstTarget(prediction, targetRecord, reasonTag) {
 
 // 补结算：历史已进内存但预测仍 unevaluated（开机灌注竞态 / exists 跳过）时，按相邻期回填。
 function settleMissedPredictionEvaluations(options) {
+  if (!durableBootRecovery.isReady()) return { settled: 0, skipped: 0, appliedCounters: 0, reason: "boot-durable-pending" };
   const opts = options && typeof options === "object" ? options : {};
   const history = Array.isArray(state.history) ? state.history : [];
   if (!history.length) return { settled: 0, skipped: 0, appliedCounters: 0 };
@@ -13926,6 +14422,10 @@ function settleMissedPredictionEvaluations(options) {
 
 // RDS 灌注后对齐 tip：latestRecord / currentPrediction 与 history[0] 同步，并 ensure+seal
 function alignTipPredictionAfterHydrate(reason) {
+  if (drawIntegrationRunning) {
+    scheduleSharedHistoryHydrate(reason || "align-during-integration");
+    return { ok: false, skipped: true, deferred: true, reason: "prediction-integration-running" };
+  }
   const history = Array.isArray(state.history) ? state.history : [];
   if (!history.length) return { ok: false, reason: "empty-history" };
   const latest = history[0];
@@ -13940,10 +14440,11 @@ function alignTipPredictionAfterHydrate(reason) {
   const duishuBeforeAlign = collectDuishuCaptureIssues(currentPrediction);
   if (
     isPredictionCompatible(currentPrediction, latest)
-    && (state.tipReady === true || (currentPrediction && currentPrediction.tipStructurePerfect === true))
+    && state.tipReady === true && currentPrediction.tipReady === true
     && !tipStableMathFilterLagging(currentPrediction)
   ) {
     state.currentPrediction = currentPrediction;
+    attachAdaptiveExclusionAfterCommit(currentPrediction, history);
     const lightDuishuIssues = collectDuishuCaptureIssues(currentPrediction);
     if (lightDuishuIssues.length) {
       const repairActions = [];
@@ -13973,8 +14474,8 @@ function alignTipPredictionAfterHydrate(reason) {
       const existing = currentPrediction.fourPosExclude;
       const needUpgrade = !fourPosExcludeAlgo.snapshotIsComplete(existing)
         || String(existing && existing.version || "") !== String(fourPosExcludeAlgo.VERSION || "");
-      // 版本升级允许覆盖已封存的本算法快照（其它框架不动）
-      if (needUpgrade) {
+      // A new version applies to a future prediction; never rewrite sealed evidence.
+      if (needUpgrade && !predictionSnapshotsAreImmutable(currentPrediction) && !(existing && existing.sealed === true)) {
         const snap = fourPosExcludeAlgo.buildSnapshot(history);
         fourPosExcludeAlgo.sealSnapshot(snap, currentPrediction);
         currentPrediction.fourPosExclude = snap;
@@ -13993,7 +14494,7 @@ function alignTipPredictionAfterHydrate(reason) {
         }
         currentPrediction.recommendationMeta.fourPosExcludeSnapshotVersion = snap.version;
         attached = true;
-      } else if (existing && existing.sealed !== true) {
+      } else if (!needUpgrade && !predictionSnapshotsAreImmutable(currentPrediction) && existing && existing.sealed !== true) {
         fourPosExcludeAlgo.sealSnapshot(existing, currentPrediction);
         attached = true;
       }
@@ -14035,6 +14536,7 @@ function alignTipPredictionAfterHydrate(reason) {
   sealPredictionSnapshots(currentPrediction, latest);
   state.predictions = state.predictions.slice(0, MAX_PREDICTION_LOG);
   state.currentPrediction = currentPrediction;
+  attachAdaptiveExclusionAfterCommit(currentPrediction, history);
   const tipGate = ensureTipStructurePerfect({
     trigger: "hydrate-align-tip",
     fromSync: true,
@@ -14149,20 +14651,70 @@ function integrateNewDrawRecordEarly(record) {
   };
 }
 
+function mergeIntegrationResult(result, earlyResult) {
+  const early = earlyResult && typeof earlyResult === "object" ? earlyResult : {};
+  // Reuse only the build result. Each caller owns its already-applied draw
+  // and settlement flags; a joiner must not claim the leader's counter update.
+  return { ...result, didAddNewRecord: !!early.didAddNewRecord,
+    didEvaluate: !!early.didEvaluate,
+    didApplyCounters: !!early.didApplyCounters,
+    evaluatedPrediction: early.evaluatedPrediction || null };
+}
+
+function integrationSkipResult(latest, early) {
+  const liveLatest = state.history[0] || state.latestRecord || latest;
+  const reference = String(latest && (latest.period || latest.uid) || "");
+  const liveReference = String(liveLatest && (liveLatest.period || liveLatest.uid) || "");
+  const current = state.currentPrediction;
+  const currentReference = String(current && (current.basePeriod || current.baseUid) || "");
+  const superseded = !!(reference && (liveReference > reference || currentReference > reference));
+  const ready = !!(current && isPredictionCompatible(current, liveLatest)
+    && predictionSnapshotsAreImmutable(current) && state.tipReady === true && current.tipReady === true
+    && !tipStableMathFilterLagging(current));
+  if (!superseded && !(ready && currentReference === reference)) return null;
+  return mergeIntegrationResult({ currentPrediction: current || null, tipReady: ready,
+    skippedHeavy: true, reusedReady: ready && !superseded, superseded }, early);
+}
+
 async function finalizeDrawRecordIntegration(record, earlyResult) {
   const early = earlyResult && typeof earlyResult === "object" ? earlyResult : {};
   const latest = state.history[0] || record;
+  const key = String(latest && (latest.period || latest.uid) || "");
+  let task = drawIntegrationTasks.get(key);
+  if (!task) {
+    task = drawIntegrationTail.catch(() => {}).then(async () => {
+      drawIntegrationRunning = true;
+      predictionIntegrationEpoch += 1;
+      try { return await finalizeDrawRecordIntegrationOwned(record, early, latest); }
+      finally {
+        drawIntegrationRunning = false;
+        drainSharedHistoryHydrate();
+      }
+    });
+    drawIntegrationTail = task;
+    drawIntegrationTasks.set(key, task);
+    task.finally(() => { if (drawIntegrationTasks.get(key) === task) drawIntegrationTasks.delete(key); }).catch(() => {});
+  }
+  return mergeIntegrationResult(await task, early);
+}
+
+async function finalizeDrawRecordIntegrationOwned(record, earlyResult, expectedLatest) {
+  const early = earlyResult && typeof earlyResult === "object" ? earlyResult : {};
+  const latest = expectedLatest || state.history[0] || record;
+  const initialSkip = integrationSkipResult(latest, early);
+  if (initialSkip) return initialSkip;
   let currentPrediction = state.predictions.find((item) => item && item.baseUid === latest.uid && item.modelVersion === MODEL_VERSION);
   const tipAlreadyReady = !!(
     currentPrediction
     && isPredictionCompatible(currentPrediction, latest)
-    && (state.tipReady === true || currentPrediction.tipStructurePerfect === true)
+    && state.tipReady === true && currentPrediction.tipReady === true
     && !tipStableMathFilterLagging(currentPrediction)
   );
   // 开奖窗有多个 offset 同步：无新期且 tip 已就绪时跳过整包快照/门闩，避免反复打满事件循环导致面板假死。
   if (!early.didAddNewRecord && !early.didEvaluate && tipAlreadyReady) {
     state.latestRecord = latest;
     state.currentPrediction = currentPrediction;
+    attachAdaptiveExclusionAfterCommit(currentPrediction, state.history);
     return {
       currentPrediction: state.currentPrediction,
       didAddNewRecord: false,
@@ -14180,15 +14732,25 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
     resetAlgorithmProjectHealthForPrediction(currentPrediction);
   }
   await yieldEventLoop();
+  const afterYield = integrationSkipResult(latest, early);
+  if (afterYield) return afterYield;
 
   // 统一走 L0→L1 orchestrate（含四位/三对数）；避免先 seal 导致门闩跳过编排
-  await ensurePredictionFrameworkSnapshotsAsync(currentPrediction, state.history);
+  const buildHistory = state.history.slice();
+  await ensurePredictionFrameworkSnapshotsAsync(currentPrediction, buildHistory);
+  const afterOrchestrate = integrationSkipResult(latest, early);
+  if (afterOrchestrate) return afterOrchestrate;
   await yieldEventLoop();
+  const beforeCommit = integrationSkipResult(latest, early);
+  if (beforeCommit) return beforeCommit;
   sealPredictionSnapshots(currentPrediction, latest);
   state.predictions = state.predictions.slice(0, MAX_PREDICTION_LOG);
   state.latestRecord = latest;
   state.currentPrediction = currentPrediction;
+  attachAdaptiveExclusionAfterCommit(currentPrediction, state.history);
   await yieldEventLoop();
+  const afterCommitYield = integrationSkipResult(latest, early);
+  if (afterCommitYield && (afterCommitYield.superseded || state.currentPrediction !== currentPrediction)) return afterCommitYield;
 
   const tipGate = ensureTipStructurePerfect({
     trigger: "integrate-record",
@@ -14207,65 +14769,23 @@ async function finalizeDrawRecordIntegration(record, earlyResult) {
 }
 
 async function integrateRecordIntoBigData(record) {
+  if (!durableBootRecovery.isReady()) throw new Error("boot-durable-pending");
   const earlyResult = integrateNewDrawRecordEarly(record);
   return finalizeDrawRecordIntegration(record, earlyResult);
 }
 
 function buildSummary() {
+  if (!durableBootRecovery.isReady()) {
+    return Object.assign(buildHealthSummary({ lite: true }), {
+      currentPrediction: null, counters: {}, rates: {}, dailyStreakLedger: {},
+      history: [], predictions: [], logs: [],
+      threeDuishuRecommendation: { ok: false, code: "", shot: "", pairs: [], error: "boot-durable-pending" }
+    });
+  }
   refreshBackendDailyStreaksIfNeeded();
   const businessDay = currentBusinessDayKey();
-  const canRebuildDaily = memoryCanRebuildDailyCounters(state.predictions, businessDay);
-  const dailyPositionCounters = canRebuildDaily
-    ? summarizeDailyPositionCounters(state.predictions, businessDay)
-    : null;
-  const modelPerformance = calculateModelPerformance(state.predictions);
-  const c = normalizeCounters(state.counters);
-  if (dailyPositionCounters) {
-    ["positionTotal", "wan", "qian", "bai", "shi"].forEach((key) => {
-      if (!dailyPositionCounters[key]) return;
-      c[key] = Object.assign({}, c[key], dailyPositionCounters[key], {
-        label: (c[key] && c[key].label) || dailyPositionCounters[key].label || key
-      });
-    });
-  } else {
-    // 样本被掏空时不要沿用过期 dayScope，避免面板仍显示「今日」却是旧账/空账假 100%
-    ["positionTotal", "wan", "qian", "bai", "shi", "threeDuishu", "anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((key) => {
-      if (!c[key] || typeof c[key] !== "object") return;
-      if (c[key].dayScope && String(c[key].dayScope) !== String(businessDay)) {
-        if (String(c[key].truthSource || "").indexOf("daily") >= 0) {
-          c[key].truthSource = "official-counter-truth-eligible-only";
-        }
-        delete c[key].dayScope;
-      }
-    });
-  }
-  if (canRebuildDaily) {
-    const dailyThreeDuishuCounter = summarizeDailyThreeDuishuCounter(state.predictions, businessDay);
-    if (dailyThreeDuishuCounter) {
-      c.threeDuishu = Object.assign({}, c.threeDuishu, dailyThreeDuishuCounter, {
-        label: (c.threeDuishu && c.threeDuishu.label) || dailyThreeDuishuCounter.label || "三对数排除"
-      });
-    }
-    const dailyHeweiHitCounters = summarizeDailyHeweiHitCounters(state.predictions, businessDay);
-    ["anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((key) => {
-      if (!dailyHeweiHitCounters[key]) return;
-      c[key] = Object.assign({}, c[key], dailyHeweiHitCounters[key], {
-        label: (c[key] && c[key].label) || dailyHeweiHitCounters[key].label || key,
-        truthSource: "official-counter-truth-eligible-only-daily",
-        dayScope: businessDay,
-        dayResetHour: PENTA5_DAY_RESET_HOUR
-      });
-    });
-    Object.keys(modelPerformance).forEach((key) => {
-      if (!/^position\.(wan|qian|bai|shi)\.(main|backup|dual)$/.test(String(key)) && String(key) !== "threeDuishu.backup") return;
-      c[key] = Object.assign({}, modelPerformance[key], {
-        label: modelKeyLabel(key),
-        dayScope: businessDay,
-        dayResetHour: PENTA5_DAY_RESET_HOUR,
-        truthSource: "official-counter-truth-eligible-only-daily"
-      });
-    });
-  }
+  const scope = dailyDisplayScope();
+  const c = projectDailyDisplayCounters(state.predictions, businessDay);
   const memory = process.memoryUsage();
   const heapStats = v8.getHeapStatistics();
   const rates = {
@@ -14310,9 +14830,10 @@ function buildSummary() {
       note: "原始通过率含高基线，禁止解读为强预测力；请看相对基线超额"
     };
   });
-  const modelAudit = getModelAuditSummaryCached();
+  const modelAudit = projectDailyDisplayModelAudit(getModelAuditSummaryCached(), state.predictions);
   const stormMode = normalizeStormMode(state.stormMode);
-  const tipReady = state.tipReady === true || !!(state.currentPrediction && state.currentPrediction.tipStructurePerfect);
+  const tipReady = state.tipReady === true && modelAudit.structureReady === true
+    && modelAudit.truthReady === true && modelAudit.qualityReady === true && modelAudit.operationalReady === true;
   return {
     ok: !state.lastError,
     version: state.version,
@@ -14339,12 +14860,13 @@ function buildSummary() {
       : null,
     counters: c,
     counterCohort: c.cohort || null,
+    ...scope,
     positionDayScope: businessDay,
     positionDayResetHour: PENTA5_DAY_RESET_HOUR,
     legacyCounterCohorts: Array.isArray(c.legacyCohorts) ? c.legacyCohorts.slice(-5) : [],
     modelWatchdog: normalizeModelWatchdog(state.modelWatchdog),
     stormMode,
-    dailyStreakLedger: normalizeDailyStreakLedger(state.dailyStreakLedger),
+    dailyStreakLedger: projectDailyDisplayStreakLedger(state.predictions),
     dataReadMode: DATA_READ_MODE,
     sharedHistorySource: state.sharedHistorySource || null,
     sharedHistoryLatestPeriod: state.sharedHistoryLatestPeriod || null,
@@ -14521,7 +15043,7 @@ function buildModelAuditSummary() {
   const structureReady = coreIntegrityIssues.length === 0;
   const truthReady = structureReady && projectIntegrityIssues.length === 0;
   const qualityReady = truthReady && projectHealthSummary.degradedProjectCount === 0 && stabilityIssues.length === 0;
-  const operationalReady = qualityReady;
+  const operationalReady = qualityReady && durableBootRecovery.isReady() && !runtimePersistenceWriteFailure;
   const extraKills = current && (current.extraKills || (current.detail && current.detail.extraKills)) || {};
   const missingExtraKeys = REQUIRED_EXTRA_KILL_KEYS.filter((key) => extraModelIntegrityReason(key, extraKills[key]) !== "");
   const autoTop6Total = current && current.autoTop6 && Array.isArray(current.autoTop6.items)
@@ -14529,7 +15051,7 @@ function buildModelAuditSummary() {
     : 0;
   return {
     ok: operationalReady,
-    tipReady: structureReady,
+    tipReady: operationalReady,
     tipStructurePerfect: structureReady,
     structureReady,
     truthReady,
@@ -14614,6 +15136,12 @@ function invalidateModelAuditCache() {
 }
 
 function buildHealthSummary(options) {
+  const persistenceReady = durableBootRecovery.isReady() && !runtimePersistenceWriteFailure;
+  const bootRecovery = {
+    status: durableBootRecovery.isReady() ? "ready" : "waiting-for-durable-state",
+    attempts: Number.isSafeInteger(state && state.bootRecovery && state.bootRecovery.attempts)
+      ? Math.max(0, state.bootRecovery.attempts) : 0
+  };
   const opts = options && typeof options === "object" ? options : {};
   const lite = opts.lite === true;
   const memory = process.memoryUsage();
@@ -14621,7 +15149,9 @@ function buildHealthSummary(options) {
   const current = state && state.currentPrediction ? state.currentPrediction : {};
   const stormMode = normalizeStormMode(state && state.stormMode);
   const summary = {
-    ok: !state.lastError,
+    ok: persistenceReady && !state.lastError,
+    persistenceReady,
+    bootRecovery,
     version: state.version,
     modelVersion: MODEL_VERSION,
     latestPeriod: latest.period || latest.uid || "",
@@ -14642,11 +15172,11 @@ function buildHealthSummary(options) {
     rdsLag: state && state.rdsLag ? state.rdsLag : null,
     pendingOfficialDrawCount: Array.isArray(state && state.pendingOfficialDraws) ? state.pendingOfficialDraws.length : 0,
     stormMode,
-    tipReady: state && state.tipReady === true,
+    tipReady: persistenceReady && state && state.tipReady === true,
     structureReady: state && state.structureReady === true,
     truthReady: state && state.truthReady === true,
     qualityReady: state && state.qualityReady === true,
-    operationalReady: state && state.operationalReady === true,
+    operationalReady: persistenceReady && state && state.operationalReady === true,
     tipReadyIssueCount: Number(state && state.tipReadyIssueCount || 0),
     algorithmProjectIssueCount: Number(state && state.algorithmProjectIssueCount || 0),
     algorithmProjectDegradedCount: Number(state && state.algorithmProjectDegradedCount || 0),
@@ -15170,6 +15700,7 @@ function buildRobotStatePayload() {
     ok: !state.lastError,
     version: state.version,
     modelVersion: MODEL_VERSION,
+    ...dailyDisplayScope(),
     dataReadMode: DATA_READ_MODE,
     historyPersistedInRds: true,
     lastSync: state.lastSync || {},
@@ -15182,7 +15713,7 @@ function buildRobotStatePayload() {
     operationalReady: state.operationalReady === true,
     tipReadyIssueCount: Number(state.tipReadyIssueCount || 0),
     stormMode: normalizeStormMode(state.stormMode),
-    dailyStreakLedger: normalizeDailyStreakLedger(state.dailyStreakLedger),
+    dailyStreakLedger: projectDailyDisplayStreakLedger(state.predictions),
     modelWatchdog: normalizeModelWatchdog(state.modelWatchdog),
     backdeleteSnapshot: getLatestBackdeleteSnapshot(),
     history: Array.isArray(state.history) ? state.history.slice(0, historyLimit).map(slimHistoryRecord) : []
@@ -15191,6 +15722,7 @@ function buildRobotStatePayload() {
 
 function buildPanelStatePayload() {
   const summary = buildSummary();
+  if (!durableBootRecovery.isReady()) return summary;
   summary.latestRecord = slimHistoryRecord(state.latestRecord);
   summary.currentPrediction = slimPredictionForPanel(state.currentPrediction, true);
   const predictionLimit = Math.max(30, Math.min(PANEL_PREDICTION_LIMIT, PANEL_STATE_PREDICTION_LIMIT));
@@ -15212,6 +15744,7 @@ function panelStateKey() {
   const watchdog = state.modelWatchdog || {};
   const backdeleteSnapshot = getLatestBackdeleteSnapshot();
   return [
+    currentBusinessDayKey(),
     state.updatedAt || "",
     latest.uid || "",
     latest.period || "",
@@ -15892,6 +16425,7 @@ function scheduleDrawAlignedAutoSync(reason) {
 }
 
 async function syncNow(trigger) {
+  if (!durableBootRecovery.isReady()) return { ok: false, skipped: true, reason: "boot-durable-pending" };
   if (syncRunning) {
     return {
       ok: true,
@@ -15901,6 +16435,7 @@ async function syncNow(trigger) {
     };
   }
   syncRunning = true;
+  predictionIntegrationEpoch += 1;
   const requestUrl = buildFreshApiUrl(SOURCE_API_URL);
   addLog(trigger === "manual" ? "开始手动同步" : (trigger === "auto-draw" ? "开始开奖时刻对齐同步" : (trigger === "panel-auto" ? "开始面板自动同步" : "开始后台自动同步")), { requestUrl, timeout: REQUEST_TIMEOUT, trigger });
   try {
@@ -16081,6 +16616,7 @@ async function syncNow(trigger) {
     return { ok: false, error: startupTimeoutWithTip ? null : state.lastError, summary: buildHealthSummary({ lite: true }) };
   } finally {
     syncRunning = false;
+    drainSharedHistoryHydrate();
   }
 }
 
@@ -16094,16 +16630,33 @@ function makeBackup() {
 
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
-    let body = "";
+    const chunks = [];
+    let totalBytes = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      chunks.length = 0;
+      reject(error);
+    };
     req.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 5 * 1024 * 1024) {
-        reject(new Error("请求体过大"));
+      if (settled) return;
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += bytes.length;
+      if (totalBytes > 5 * 1024 * 1024) {
+        fail(new Error("请求体过大"));
         req.destroy();
+        return;
       }
+      chunks.push(bytes);
     });
-    req.on("end", () => resolve(body));
-    req.on("error", reject);
+    req.on("end", () => {
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks, totalBytes).toString("utf8"));
+    });
+    req.on("aborted", () => fail(new Error("请求已中止")));
+    req.on("error", fail);
   });
 }
 
@@ -16237,14 +16790,9 @@ function parseCookies(req) {
 }
 
 function panelSessionSecret() {
-  return [
-    "penta5-panel-session-v1",
-    PANEL_USER,
-    PANEL_PASSWORD,
-    PANEL_VIEWER_USER,
-    PANEL_VIEWER_PASSWORD,
-    STATE_FILE
-  ].join("|");
+  const value = process.env.PANEL_SESSION_SECRET || "";
+  if (value.length < 32) throw new Error("Session signing key is not configured");
+  return value;
 }
 
 function signPanelSession(role, issuedAt) {
@@ -16258,10 +16806,10 @@ function panelSessionCookieValue(role) {
   return `${safeRole}.${issuedAt}.${signPanelSession(safeRole, issuedAt)}`;
 }
 
-function panelSessionCookieHeader(role) {
+function panelSessionCookieHeader(role, req) {
   const value = encodeURIComponent(panelSessionCookieValue(role));
   const maxAge = Math.max(60, Math.floor(PANEL_SESSION_MAX_AGE_MS / 1000));
-  return `${PANEL_SESSION_COOKIE}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax`;
+  return `${PANEL_SESSION_COOKIE}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${webSecurity.isHttps(req || {headers:{},socket:{}}) ? "; Secure" : ""}`;
 }
 
 function clearPanelSessionCookieHeader() {
@@ -16269,7 +16817,7 @@ function clearPanelSessionCookieHeader() {
 }
 
 function authRoleFromPanelCookie(req) {
-  if (!isAuthEnabled()) return "admin";
+  if (!isAuthEnabled()) return "";
   const cookies = parseCookies(req);
   const raw = cookies[PANEL_SESSION_COOKIE];
   if (!raw) return "";
@@ -16288,14 +16836,12 @@ function authRoleFromPanelCookie(req) {
 function passwordOnlyLoginRole(password) {
   const pass = String(password || "");
   if (PANEL_VIEWER_PASSWORD !== "" && timingSafeEqualText(pass, PANEL_VIEWER_PASSWORD)) return "viewer";
-  if (PANEL_PASSWORD !== "" && timingSafeEqualText(pass, PANEL_PASSWORD)) return "admin";
+  if (PANEL_PASSWORD !== "" && timingSafeEqualText(pass, PANEL_PASSWORD)) return "viewer";
   return "";
 }
 
 function loginClientKey(req) {
-  const forwarded = String(req && req.headers && req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  const socketAddress = String(req && req.socket && req.socket.remoteAddress || "").trim();
-  return forwarded || socketAddress || "unknown";
+  return webSecurity.clientAddress(req);
 }
 
 function pruneLoginFailureBuckets(nowMs) {
@@ -16328,12 +16874,14 @@ function clearLoginFailures(req) {
 }
 
 function authRoleForRequest(req) {
-  if (!isAuthEnabled()) return "admin";
+  if (!isAuthEnabled()) return "";
   const credentials = basicAuthCredentials(req);
   if (credentials) {
+    if (loginRateLimited(req)) return "";
     if (PANEL_USER !== "" && PANEL_PASSWORD !== "" &&
       timingSafeEqualText(credentials.username, PANEL_USER) &&
       timingSafeEqualText(credentials.password, PANEL_PASSWORD)) {
+      clearLoginFailures(req);
       return "admin";
     }
     if (PANEL_VIEWER_USER !== "" && PANEL_VIEWER_PASSWORD !== "" &&
@@ -16345,6 +16893,7 @@ function authRoleForRequest(req) {
       return "viewer";
     }
   }
+  if (credentials) recordLoginFailure(req);
   return authRoleFromPanelCookie(req);
 }
 
@@ -16509,7 +17058,7 @@ function sendPasswordLoginHtml(req, res, message, nextPath) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>五路公交数据库</title>
+  <title>来财</title>
   <style>
     html,body{margin:0;min-height:100%;font-family:"Songti SC","STSong","Noto Serif SC","Microsoft YaHei",sans-serif;background:
       radial-gradient(900px 360px at 20% 0%,rgba(245,158,11,.18),transparent 55%),
@@ -16531,14 +17080,14 @@ function sendPasswordLoginHtml(req, res, message, nextPath) {
 </head>
 <body>
   <main class="box">
-    <h1><span class="mark">◆</span>五路公交数据库</h1>
+    <h1><span class="mark">◆</span>来财</h1>
     <div class="sub">五路数据 · 公交查询</div>
     ${errorHtml}
     <form id="loginForm" autocomplete="on">
       <label for="panelPassword">密码</label>
       <input id="panelPassword" name="password" type="password" autocomplete="current-password" autofocus required>
       <button id="loginBtn" type="submit">进入</button>
-      <div id="loginMsg" class="hint">五路公交数据库，请输入密码进入。</div>
+      <div id="loginMsg" class="hint">来财，请输入密码进入。</div>
     </form>
   </main>
   <script>
@@ -16581,6 +17130,11 @@ async function handlePasswordLogin(req, res) {
       return;
     }
     const raw = await readRequestBody(req);
+    // Async body reads can overlap; enforce the budget immediately before checking.
+    if (loginRateLimited(req)) {
+      sendJson(res, 429, { ok: false, error: "too many login attempts" });
+      return;
+    }
     let password = "";
     try {
       const parsed = JSON.parse(raw || "{}");
@@ -16595,10 +17149,10 @@ async function handlePasswordLogin(req, res) {
       sendJsonText(res, 401, safeJsonStringify({ ok: false, error: "bad password" }));
       return;
     }
-    clearLoginFailures(req);
+    // Viewer success must not reset the shared administrator failure budget.
     const text = safeJsonStringify({ ok: true, role });
     res.writeHead(200, commonJsonHeaders({
-      "Set-Cookie": panelSessionCookieHeader(role),
+      "Set-Cookie": panelSessionCookieHeader(role, req),
       "Content-Length": String(Buffer.byteLength(text, "utf8"))
     }));
     res.end(text);
@@ -16643,6 +17197,8 @@ function sendForbidden(res) {
   res.end(JSON.stringify({ ok: false, error: "Forbidden: admin permission required" }));
 }
 
+const handleAiControlRequest = createAiControlHandler({ root: __dirname, authRoleForRequest });
+
 async function handleRequest(req, res) {
   req.setTimeout(SERVER_REQUEST_TIMEOUT, () => {
     req.destroy();
@@ -16651,8 +17207,9 @@ async function handleRequest(req, res) {
     sendText(res, 204, "");
     return;
   }
-  const parsedUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const parsedUrl = new URL(req.url, "http://localhost");
   const pathname = parsedUrl.pathname;
+  if (await handleAiControlRequest(req, res)) return;
   if (req.method === "GET" && pathname === "/login") {
     sendPasswordLoginHtml(req, res, "");
     return;
@@ -16668,17 +17225,19 @@ async function handleRequest(req, res) {
   const authRole = authRoleForRequest(req);
   // /health 免鉴权：监督探针不能依赖面板登录，且必须极轻
   if (req.method === "GET" && pathname === "/health") {
-    const latest = state && state.latestRecord ? state.latestRecord : {};
-    sendJson(res, 200, {
-      ok: !state.lastError,
+    const summary = buildHealthSummary({ lite: true });
+    sendJson(res, summary.persistenceReady ? 200 : 503, {
+      ok: summary.ok,
       time: isoNow(),
       syncing: syncRunning,
       predictionBuildRunning,
-      tipReady: state && state.tipReady === true,
-      latestPeriod: latest.period || latest.uid || "",
+      tipReady: summary.tipReady,
+      persistenceReady: summary.persistenceReady,
+      bootRecovery: summary.bootRecovery,
+      latestPeriod: summary.latestPeriod,
       frameworkBackfillEnabled: FRAMEWORK_BACKFILL_ENABLED,
       frameworkSimEnabled: FRAMEWORK_SIM_ENABLED,
-      summary: buildHealthSummary({ lite: true })
+      summary
     });
     return;
   }
@@ -16689,6 +17248,7 @@ async function handleRequest(req, res) {
       pathname === "/jiu-jiqiren.zip" ||
       pathname === "/download/救机器人.zip")
   ) {
+    if (!authRole) { sendUnauthorized(res); return; }
     const zipPath = path.join(__dirname, "downloads", "jiu-jiqiren.zip");
     if (!fs.existsSync(zipPath)) {
       sendJson(res, 404, { ok: false, error: "package not found" });
@@ -16717,6 +17277,7 @@ async function handleRequest(req, res) {
       pathname === "/download/四定扔页-本机包.zip" ||
       pathname === "/四定扔页-本机包.zip")
   ) {
+    if (!authRole) { sendUnauthorized(res); return; }
     const zipPath = path.join(__dirname, "downloads", "four-throw-local.zip");
     if (!fs.existsSync(zipPath)) {
       sendJson(res, 404, { ok: false, error: "package not found" });
@@ -16770,17 +17331,19 @@ async function handleRequest(req, res) {
   try {
     if (req.method === "GET" && pathname === "/health") {
       // 上面已免鉴权返回；此处保留兼容，正常不会走到
-      const latest = state && state.latestRecord ? state.latestRecord : {};
-      sendJson(res, 200, {
-        ok: !state.lastError,
+      const summary = buildHealthSummary({ lite: true });
+      sendJson(res, summary.persistenceReady ? 200 : 503, {
+        ok: summary.ok,
         time: isoNow(),
         syncing: syncRunning,
         predictionBuildRunning,
-        tipReady: state && state.tipReady === true,
-        latestPeriod: latest.period || latest.uid || "",
+        tipReady: summary.tipReady,
+        persistenceReady: summary.persistenceReady,
+        bootRecovery: summary.bootRecovery,
+        latestPeriod: summary.latestPeriod,
         frameworkBackfillEnabled: FRAMEWORK_BACKFILL_ENABLED,
         frameworkSimEnabled: FRAMEWORK_SIM_ENABLED,
-        summary: buildHealthSummary({ lite: true })
+        summary
       });
       return;
     }
@@ -16885,9 +17448,9 @@ async function handleRequest(req, res) {
         let projectId = "";
         let stateFile = "";
         if (pathname.indexOf("/algorithm-project/") === 0) {
-          projectId = String(pathname.slice("/algorithm-project/".length) || "").replace(/[^a-zA-Z0-9._-]/g, "");
-          if (!projectId) {
-            sendJson(res, 400, { ok: false, error: "missing-project-id" });
+          projectId = String(pathname.slice("/algorithm-project/".length) || "");
+          if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(projectId)) {
+            sendJson(res, 400, { ok: false, error: "invalid-project-id" });
             return;
           }
           stateFile = path.join(DATA_DIR, "algorithm-projects", projectId, "state.json");
@@ -17077,8 +17640,9 @@ function startServer() {
 
 // CODEX_SERVER_PERCENT_0400_BEGIN
 const CODEX_PERCENT_FILE = path.join(DATA_DIR, "codex_percent_server.json");
-const CODEX_PERCENT_VERSION = "CODEX_SERVER_PERCENT_0410_RDS_LIVE";
-const CODEX_PERCENT_SOURCE = "rds-live-memory-v1";
+const CODEX_PERCENT_VERSION = "CODEX_SERVER_PERCENT_BIZ5_VERIFIED_V2";
+const CODEX_PERCENT_SOURCE = "rds-live-predraw-v2";
+const CODEX_PERCENT_EVIDENCE_VERSION = 2;
 const CODEX_PERCENT_HISTORY_LIMIT = 1000;
 const CODEX_PERCENT_POSITIONS = [
   { key: "qian", label: "千位", index: 0 },
@@ -17089,20 +17653,25 @@ const CODEX_PERCENT_POSITIONS = [
 const CODEX_DIGITS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 function codexPercentReadJson(file, fallback) {
-  try {
-    if (!fs.existsSync(file)) return fallback;
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (error) {
-    return fallback;
-  }
+  if (!fs.existsSync(file)) return fallback;
+  // Existing corrupt evidence must never be silently replaced by an empty store.
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid-codex-percent-store");
+  return parsed;
 }
 
 function codexPercentWriteJson(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = file + ".tmp";
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
-  } catch (error) {
-    console.error("[CodexPercent] write failed", error && error.message ? error.message : error);
+    fs.writeFileSync(temporary, JSON.stringify(data, null, 2), { encoding: "utf8", mode: 0o600 });
+    const fileFd = fs.openSync(temporary, "r");
+    try { fs.fsyncSync(fileFd); } finally { fs.closeSync(fileFd); }
+    fs.renameSync(temporary, file);
+    const directoryFd = fs.openSync(path.dirname(file), fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY || 0));
+    try { fs.fsyncSync(directoryFd); } finally { fs.closeSync(directoryFd); }
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
   }
 }
 
@@ -17126,7 +17695,7 @@ function codexPercentRecordFromObject(obj) {
   if (!period) return null;
   return {
     period: String(period),
-    openTime: String(obj.openTime || obj.time || obj.datetime || obj.text || obj.at || ""),
+    openTime: String(obj.opentime || obj.openTime || obj.open_time || obj.time || obj.datetime || obj.text || obj.at || ""),
     numbers,
   };
 }
@@ -17225,7 +17794,9 @@ function codexPercentBuildPrediction(records) {
       afterOpenTime: latest ? latest.openTime : "",
       exclusions,
       models,
-      savedAt: new Date().toISOString()
+      savedAt: new Date().toISOString(),
+      evidenceVersion: CODEX_PERCENT_EVIDENCE_VERSION,
+      evidenceSource: CODEX_PERCENT_SOURCE
     };
   }
   for (const pos of CODEX_PERCENT_POSITIONS) {
@@ -17292,17 +17863,43 @@ function codexPercentBuildPrediction(records) {
     exclusions,
     models,
     savedAt: new Date().toISOString(),
+    evidenceVersion: CODEX_PERCENT_EVIDENCE_VERSION,
+    evidenceSource: CODEX_PERCENT_SOURCE,
     note: "服务器端自动记录，最新开奖号不参与训练，关电脑不影响",
   };
 }
 
+function codexPercentProofTiming(prediction, record, now) {
+  if (!prediction || prediction.evidenceVersion !== CODEX_PERCENT_EVIDENCE_VERSION || prediction.evidenceSource !== CODEX_PERCENT_SOURCE) return false;
+  if (!record || !record.period || !Array.isArray(record.numbers) || record.numbers.length < 4) return false;
+  if (!record.numbers.slice(0, 4).every((digit) => /^\d$/.test(String(digit)))) return false;
+  const next = expectedNextPenta5Period(prediction.afterPeriod);
+  if (!next.ok || next.expectedPeriod !== String(record.period)) return false;
+  const reference = actualDrawTimestamp(prediction.afterOpenTime);
+  const saved = actualDrawTimestamp(prediction.savedAt);
+  const opened = actualDrawTimestamp(record.openTime);
+  const referenceSlot = parseLocalDateTimeValue(prediction.afterPeriod);
+  const target = parseLocalDateTimeValue(record.period);
+  const at = now instanceof Date ? now : new Date();
+  if (!reference || !saved || !opened || !referenceSlot || !target) return false;
+  const targetMinute = Math.floor(target.getTime() / 60000) * 60000;
+  // Require publication before the target slot starts, even when the source's
+  // actual draw timestamp arrives a few seconds after that slot.
+  return reference.getTime() <= saved.getTime() && saved.getTime() < targetMinute
+    && Math.floor(reference.getTime() / 60000) === Math.floor(referenceSlot.getTime() / 60000)
+    && Math.floor(opened.getTime() / 60000) * 60000 === targetMinute
+    && opened.getTime() <= at.getTime();
+}
+
 function codexPercentEvaluate(prediction, record) {
   if (!prediction || prediction.available !== true || !prediction.afterPeriod || !record || !record.period) return null;
+  if (!codexPercentProofTiming(prediction, record)) return null;
   const detail = {};
   let overallPass = true;
   for (const pos of CODEX_PERCENT_POSITIONS) {
-    const actual = record.numbers[pos.index] || "";
-    const excluded = prediction.exclusions && prediction.exclusions[pos.key] ? prediction.exclusions[pos.key].slice() : [];
+    const actual = String(record.numbers[pos.index] == null ? "" : record.numbers[pos.index]);
+    const excluded = prediction.exclusions && Array.isArray(prediction.exclusions[pos.key]) ? prediction.exclusions[pos.key].map(String) : [];
+    if (excluded.length !== 1 || !/^\d$/.test(excluded[0])) return null;
     const hit = excluded.includes(actual);
     detail[pos.key] = { label: pos.label, actual, excluded, pass: !hit, hit };
     if (hit) overallPass = false;
@@ -17312,6 +17909,10 @@ function codexPercentEvaluate(prediction, record) {
     modelAfterPeriod: String(prediction.afterPeriod || ""),
     resultPeriod: String(record.period || ""),
     resultOpenTime: record.openTime || "",
+    referenceOpenTime: prediction.afterOpenTime || "",
+    predictionSavedAt: prediction.savedAt,
+    evidenceVersion: CODEX_PERCENT_EVIDENCE_VERSION,
+    evidenceSource: CODEX_PERCENT_SOURCE,
     numbers: record.numbers.slice(0, 5),
     modelNumbers: record.numbers.slice(0, 4),
     ball5Display: record.numbers[4] === undefined ? null : record.numbers[4],
@@ -17322,8 +17923,40 @@ function codexPercentEvaluate(prediction, record) {
   };
 }
 
-function codexPercentStats(history, limit) {
-  const items = history.filter((item) => item && item.modelAfterPeriod && item.resultPeriod && typeof item.overallPass === "boolean").slice(0, limit);
+function codexPercentVerifiedToday(history, now) {
+  const at = now instanceof Date ? now : new Date();
+  const scope = dailyDisplayScope(at);
+  const startMs = Date.parse(scope.bizStart);
+  const rows = (Array.isArray(history) ? history : []).filter((item) => {
+    if (!item || typeof item.overallPass !== "boolean") return false;
+    const opened = actualDrawTimestamp(item.resultOpenTime);
+    if (!opened || opened.getTime() < startMs) return false;
+    if (!codexPercentProofTiming({
+      afterPeriod: item.modelAfterPeriod, afterOpenTime: item.referenceOpenTime,
+      savedAt: item.predictionSavedAt, evidenceVersion: item.evidenceVersion, evidenceSource: item.evidenceSource
+    }, { period: item.resultPeriod, openTime: item.resultOpenTime, numbers: item.numbers }, at)) return false;
+    let allPass = true;
+    for (const pos of CODEX_PERCENT_POSITIONS) {
+      const detail = item.detail && item.detail[pos.key];
+      if (!detail || !Array.isArray(detail.excluded) || detail.excluded.length !== 1 || !/^\d$/.test(String(detail.excluded[0]))) return false;
+      const actual = String(item.numbers[pos.index]);
+      const pass = actual !== String(detail.excluded[0]);
+      if (String(detail.actual) !== actual || detail.pass !== pass || detail.hit !== !pass) return false;
+      if (!pass) allPass = false;
+    }
+    return item.overallPass === allPass;
+  }).sort((a, b) => actualDrawTimestamp(b.resultOpenTime).getTime() - actualDrawTimestamp(a.resultOpenTime).getTime());
+  const seenTargets = new Set();
+  return rows.filter((item) => {
+    if (seenTargets.has(item.resultPeriod)) return false;
+    seenTargets.add(item.resultPeriod);
+    return true;
+  });
+}
+
+function codexPercentStats(history, limit, now) {
+  const verified = codexPercentVerifiedToday(history, now);
+  const items = Number.isFinite(Number(limit)) ? verified.slice(0, Math.max(0, Number(limit))) : verified;
   const total = items.length;
   const overallOk = items.filter((item) => item.overallPass).length;
   const positions = {};
@@ -17331,91 +17964,133 @@ function codexPercentStats(history, limit) {
     const ok = items.filter((item) => item.detail && item.detail[pos.key] && item.detail[pos.key].pass).length;
     positions[pos.key] = { ok, total, rate: total ? ok / total : null };
   }
-  return { total, overallOk, overallRate: total ? overallOk / total : null, positions, truthAvailable: total > 0 };
+  return Object.assign({ total, overallOk, overallRate: total ? overallOk / total : null, positions, truthAvailable: total > 0 }, dailyDisplayScope(now));
 }
 
 function codexPercentTick() {
-  // state.json intentionally omits history.  Read the live in-memory history
-  // hydrated from the shared RDS source; never serve a stale disk fallback.
-  const liveState = state && Array.isArray(state.history) && state.history.length
-    ? state
-    : null;
-  const records = codexPercentGetRecords(liveState);
+  if (!durableBootRecovery.isReady()) return { ok: false, reason: "boot-durable-pending" };
+  // Training keeps the real RDS history across days; display statistics alone
+  // reset at 05:00. Never manufacture pre-draw publication by historical replay.
+  const now = new Date();
+  const scope = dailyDisplayScope(now);
+  const liveState = state && Array.isArray(state.history) && state.history.length ? state : null;
+  // The official source may expose :12 results several seconds early. Until
+  // that actual timestamp, keep the old pending model and do not train/publish
+  // a successor against a reference draw that has not opened yet.
+  const records = codexPercentGetRecords(liveState).filter((record) => {
+    const opened = actualDrawTimestamp(record.openTime);
+    return opened && opened.getTime() <= now.getTime();
+  });
   if (!records.length) {
-    return {
-      ok: false,
-      version: CODEX_PERCENT_VERSION,
-      source: CODEX_PERCENT_SOURCE,
-      error: "shared-rds-history-not-ready",
-      history: []
-    };
+    return Object.assign({
+      ok: false, version: CODEX_PERCENT_VERSION, source: CODEX_PERCENT_SOURCE,
+      error: "shared-rds-history-not-ready", history: [], historyCount: 0,
+      statsToday: codexPercentStats([], undefined, now)
+    }, scope);
   }
   const latest = records[records.length - 1];
-  const store = codexPercentReadJson(CODEX_PERCENT_FILE, { version: CODEX_PERCENT_VERSION, history: [], pending: null });
-  if (store.source !== CODEX_PERCENT_SOURCE || store.version !== CODEX_PERCENT_VERSION) {
-    store.history = [];
-    store.pending = null;
-  }
+  const loaded = codexPercentReadJson(CODEX_PERCENT_FILE, { version: CODEX_PERCENT_VERSION, source: CODEX_PERCENT_SOURCE, history: [], pending: null });
+  if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) throw new Error("invalid-codex-percent-store");
+  const store = loaded;
   if (!Array.isArray(store.history)) store.history = [];
-
-  // CODEX_SERVER_PERCENT_BACKFILL_0401_BEGIN
-  if (store.history.length < CODEX_PERCENT_HISTORY_LIMIT && records.length >= 36) {
-    const startIndex = Math.max(31, records.length - CODEX_PERCENT_HISTORY_LIMIT);
-    const backfilled = [];
-    for (let i = startIndex; i < records.length; i += 1) {
-      const trainRecords = records.slice(0, i);
-      if (trainRecords.length < 31) continue;
-      const prediction = codexPercentBuildPrediction(trainRecords);
-      if (!prediction || prediction.available !== true) continue;
-      const evaluated = codexPercentEvaluate(prediction, records[i]);
-      if (!evaluated) continue;
-      backfilled.unshift(evaluated);
-    }
-    const mergedHistory = [];
-    const seenHistoryIds = new Set();
-    for (const item of backfilled.concat(store.history)) {
-      if (!item || !item.id || seenHistoryIds.has(item.id)) continue;
-      seenHistoryIds.add(item.id);
-      mergedHistory.push(item);
-    }
-    if (mergedHistory.length >= store.history.length) {
-      store.history = mergedHistory.slice(0, CODEX_PERCENT_HISTORY_LIMIT);
-    }
+  if (!Array.isArray(store.pendingQueue)) store.pendingQueue = [];
+  if (store.source !== CODEX_PERCENT_SOURCE || store.version !== CODEX_PERCENT_VERSION) {
+    // Keep every legacy result verbatim. Its missing pre-draw proof means it is
+    // excluded from verified stats, not retroactively promoted to evidence v2.
+    store.legacyMigrations = Array.isArray(store.legacyMigrations) ? store.legacyMigrations : [];
+    store.legacyMigrations.push({
+      version: store.version || "unknown", source: store.source || "unknown",
+      migratedAt: now.toISOString(), historyCount: store.history.length,
+      pending: store.pending || null, pendingQueue: store.pendingQueue
+    });
+    store.pending = null;
+    store.pendingQueue = [];
   }
-  // CODEX_SERVER_PERCENT_BACKFILL_0401_END
 
-  if (store.pending && store.pending.available === true && store.pending.afterPeriod && String(store.pending.afterPeriod) !== String(latest.period)) {
-    const evaluated = codexPercentEvaluate(store.pending, latest);
-    if (evaluated && !store.history.some((item) => item.id === evaluated.id)) {
+  const waiting = [];
+  const seenPending = new Set();
+  const pendingCandidates = store.pendingQueue.concat(store.pending ? [store.pending] : []);
+  for (const pending of pendingCandidates) {
+    if (!pending || pending.available !== true || !pending.afterPeriod) continue;
+    const key = String(pending.afterPeriod) + "|" + String(pending.savedAt || "");
+    if (seenPending.has(key)) continue;
+    seenPending.add(key);
+    const next = expectedNextPenta5Period(pending.afterPeriod);
+    const result = next.ok ? records.find((record) => String(record.period) === next.expectedPeriod) : null;
+    if (!result) {
+      if (String(pending.afterPeriod) !== String(latest.period)) waiting.push(pending);
+      continue;
+    }
+    const evaluated = codexPercentEvaluate(pending, result);
+    if (evaluated && !store.history.some((item) => item && item.evidenceVersion === CODEX_PERCENT_EVIDENCE_VERSION && item.resultPeriod === evaluated.resultPeriod)) {
       store.history.unshift(evaluated);
-      store.history = store.history.slice(0, CODEX_PERCENT_HISTORY_LIMIT);
+    }
+    if (!evaluated) {
+      store.unverifiedPending = Array.isArray(store.unverifiedPending) ? store.unverifiedPending : [];
+      if (!store.unverifiedPending.some((item) => item && item.key === key)) {
+        store.unverifiedPending.push({ key, reason: "unverifiable-predraw-evidence", prediction: pending });
+      }
     }
   }
-
-  if (!store.pending || String(store.pending.afterPeriod) !== String(latest.period)) {
+  // A temporarily missing exact target must not be lost when a newer reference
+  // arrives. It can settle later, independently of the current pending model.
+  store.pendingQueue = waiting;
+  if (!store.pending || String(store.pending.afterPeriod) !== String(latest.period) || store.pending.evidenceVersion !== CODEX_PERCENT_EVIDENCE_VERSION) {
     store.pending = codexPercentBuildPrediction(records);
   }
 
-  store.ok = true;
-  store.version = CODEX_PERCENT_VERSION;
-  store.source = CODEX_PERCENT_SOURCE;
-  store.updatedAt = new Date().toISOString();
-  store.latestRecord = latest;
-  store.latestPeriod = latest.period;
-  store.historyCount = store.history.length;
-  store.stats20 = codexPercentStats(store.history, 20);
-  store.stats50 = codexPercentStats(store.history, 50);
-  store.stats100 = codexPercentStats(store.history, 100);
-  store.stats200 = codexPercentStats(store.history, 200);
-  store.stats500 = codexPercentStats(store.history, 500);
-  store.stats1000 = codexPercentStats(store.history, 1000);
+  const today = codexPercentVerifiedToday(store.history, now);
+  Object.assign(store, scope, {
+    ok: true, version: CODEX_PERCENT_VERSION, source: CODEX_PERCENT_SOURCE,
+    updatedAt: now.toISOString(), latestRecord: latest, latestPeriod: latest.period,
+    historyCount: today.length, persistedHistoryCount: store.history.length,
+    statsToday: codexPercentStats(today, undefined, now)
+  });
+  for (const limit of [20, 50, 100, 200, 500, 1000]) {
+    store["stats" + limit] = codexPercentStats(today, limit, now);
+  }
   delete store.baseline;
   codexPercentWriteJson(CODEX_PERCENT_FILE, store);
-  return store;
+  // Archived evidence remains on disk; browser history is only this business day.
+  const payload = Object.assign({}, store, { history: today });
+  delete payload.legacyMigrations;
+  delete payload.unverifiedPending;
+  delete payload.pendingQueue;
+  return payload;
+}
+
+// Independent of browser requests. Recompute only when usable official history
+// or the 05:00 business day changes; retry failed persistence on the next tick.
+let codexPercentBackgroundKey = "";
+function codexPercentBackgroundTick() {
+  if (!durableBootRecovery.isReady()) return { ok: false, reason: "boot-durable-pending" };
+  const now = new Date();
+  const records = codexPercentGetRecords(state).filter((record) => {
+    const opened = actualDrawTimestamp(record.openTime);
+    return opened && opened.getTime() <= now.getTime();
+  });
+  const key = JSON.stringify([dailyDisplayScope(now).businessDay,
+    records.map((record) => [record.period, record.openTime, record.numbers])]);
+  if (key === codexPercentBackgroundKey) return { ok: true, skippedUnchanged: true };
+  const result = codexPercentTick();
+  if (result && result.ok === true) codexPercentBackgroundKey = key;
+  return result;
+}
+
+function codexPercentStateResponse() {
+  try {
+    return codexPercentTick();
+  } catch (error) {
+    console.error("[CodexPercent] refresh failed", String(error && error.code || "snapshot-unavailable"));
+    const payload = Object.assign({ ok: false, error: "codex-percent-store-unavailable", history: [], historyCount: 0 }, dailyDisplayScope());
+    payload.statsToday = codexPercentStats([]);
+    for (const limit of [20, 50, 100, 200, 500, 1000]) payload["stats" + limit] = codexPercentStats([], limit);
+    return payload;
+  }
 }
 
 function codexPercentSendJson(res, data) {
-  res.writeHead(200, {
+  res.writeHead(data && data.ok === false ? 503 : 200, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store"
   });
@@ -17424,7 +18099,7 @@ function codexPercentSendJson(res, data) {
 
 function codexPercentSendScript(res, data) {
   const json = JSON.stringify(data).replace(/<\/script/gi, "<\\/script");
-  res.writeHead(200, {
+  res.writeHead(data && data.ok === false ? 503 : 200, {
     "Content-Type": "application/javascript; charset=utf-8",
     "Cache-Control": "no-store"
   });
@@ -17433,6 +18108,8 @@ function codexPercentSendScript(res, data) {
 // CODEX_SERVER_PERCENT_0400_END
 
 const server = http.createServer((req, res) => {
+  try {
+  if (!webSecurity.guardRequest(req, res)) return;
   req.setTimeout(SERVER_REQUEST_TIMEOUT, () => {
     req.destroy();
   });
@@ -17451,10 +18128,10 @@ const server = http.createServer((req, res) => {
 
   // CODEX_SERVER_PERCENT_ROUTE_0400_BEGIN
   if (req.method === "GET" && requestPath === "/codex-percent-state") {
-    return codexPercentSendJson(res, codexPercentTick());
+    return codexPercentSendJson(res, codexPercentStateResponse());
   }
   if (req.method === "GET" && requestPath === "/codex-percent-state.js") {
-    return codexPercentSendScript(res, codexPercentTick());
+    return codexPercentSendScript(res, codexPercentStateResponse());
   }
   // CODEX_SERVER_PERCENT_ROUTE_0400_END
 
@@ -17462,7 +18139,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && requestPath === "/enhanced-state.js") {
     try {
       // 使用内存态（history 来自 RDS 灌注），禁止把磁盘 state.json 里的旧 history 副本推给浏览器
-      const payload = Object.assign({}, state || {}, { ok: true, historyPersistedInRds: true });
+      const payload = Object.assign({}, buildPanelStatePayload(), { history: Array.isArray(state.history) ? state.history.map(slimHistoryRecord) : [], historyPersistedInRds: true });
       const safeJson = JSON.stringify(payload).replace(/</g, "\\u003c");
       const js = `window.__PENTA5_LIVE_STATE__ = ${safeJson};\nif (typeof window.__PENTA5_APPLY_LIVE_STATE__ === "function") { window.__PENTA5_APPLY_LIVE_STATE__(window.__PENTA5_LIVE_STATE__); }\n`;
       res.writeHead(200, {
@@ -17481,7 +18158,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && requestPath === "/enhanced.html") {
     try {
       let html = fs.readFileSync(path.join(__dirname, "enhanced.html"), "utf8");
-      const payload = Object.assign({}, state || {}, { ok: true, historyPersistedInRds: true });
+      const payload = Object.assign({}, buildPanelStatePayload(), { history: Array.isArray(state.history) ? state.history.map(slimHistoryRecord) : [], historyPersistedInRds: true });
       const safeJson = JSON.stringify(payload).replace(/</g, "\\u003c");
       const bootScript = `<script id="penta5-bootstrap-state">
 window.__PENTA5_BOOTSTRAP_MODE__ = true;
@@ -17501,16 +18178,19 @@ window.__PENTA5_BOOTSTRAP_STATE__ = ${safeJson};
     return;
   }
 
-    handleRequest(req, res);
+    Promise.resolve(handleRequest(req, res)).catch(() => webSecurity.failRequest(res));
+  } catch (_) {
+    webSecurity.failRequest(res);
+  }
   });
 
 // CODEX_SERVER_PERCENT_TIMER_0400_BEGIN
 setTimeout(() => {
-  try { codexPercentTick(); } catch (error) { console.error("[CodexPercent] startup tick failed", error && error.message ? error.message : error); }
+  try { codexPercentBackgroundTick(); } catch (error) { console.error("[CodexPercent] startup tick failed", error && error.message ? error.message : error); }
 }, 120000);
 setInterval(() => {
-  try { codexPercentTick(); } catch (error) { console.error("[CodexPercent] interval tick failed", error && error.message ? error.message : error); }
-}, 10 * 60 * 1000);
+  try { codexPercentBackgroundTick(); } catch (error) { console.error("[CodexPercent] interval tick failed", error && error.message ? error.message : error); }
+}, 30 * 1000);
 // CODEX_SERVER_PERCENT_TIMER_0400_END
 
 server.requestTimeout = Math.max(SERVER_REQUEST_TIMEOUT, SYNC_REQUEST_TIMEOUT);
@@ -17553,11 +18233,12 @@ server.listen(PORT, BIND_HOST, () => {
         addLog("共享历史已从 RDS 灌注", { reason: "startup-blocking", ...result });
       }
       try {
-        let durable = await hydrateAlgoDurableFromRds(state);
-        if ((!durable || !durable.ok) && (ALGO_RDS_DURABLE || LOCAL_TIP_ONLY)) {
-          // /state 约 4~5MB，启动高峰易超时；失败后补一次，避免 counters 空账
-          await new Promise((r) => setTimeout(r, 3000));
-          durable = await hydrateAlgoDurableFromRds(state);
+        const durable = await durableBootRecovery.recover();
+        if (durable && durable.ok && (!result || !result.ok)) {
+          result = await hydrateSharedHistoryFromRds(state);
+        }
+        try { codexPercentTick(); } catch (error) {
+          console.error("[CodexPercent] recovered startup tick failed", error && error.message ? error.message : error);
         }
         if (durable && durable.ok) {
           addLog("算法资料已从 RDS 灌注", { reason: "startup-blocking", ...durable });

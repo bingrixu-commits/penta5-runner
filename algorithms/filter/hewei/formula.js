@@ -19,6 +19,7 @@ const {
 } = require("../../_shared/formula_kit");
 
 const HEWEI_BLOCK_WINDOW = Number(process.env.HEWEI_BLOCK_WINDOW || 120);
+const MODEL_RATE_WINDOW = Number(process.env.MODEL_RATE_WINDOW || 30);
 const HEWEI_BLOCK_SIZE = Number(process.env.HEWEI_BLOCK_SIZE || 20);
 const HEWEI_BLOCK_FLOOR = Number(process.env.HEWEI_BLOCK_FLOOR || 72);
 const HEWEI_UNIFIED_BLOCK_FLOOR = Number(process.env.HEWEI_UNIFIED_BLOCK_FLOOR || 60);
@@ -65,7 +66,9 @@ function stateShim() {
   };
 }
 
-// Provide `state` and `emptyStabilityBlock` for extracted bodies
+// Resolve extracted state access through the bound runtime instead of a host global.
+const state = stateShim();
+
 function emptyStabilityBlock(window, blockSize, floor) {
   return kitEmptyStabilityBlock(window, blockSize, floor);
 }

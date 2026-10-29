@@ -314,12 +314,8 @@ function candidateSuccessStatsMultiWindow(history, candidate, matcher, limits, h
     results[limit] = { total: 0, hit: 0, missStreak: 0, maxMissStreak: 0, rate: null, _leading: true, _currentRun: 0 };
   });
   rows.forEach((record, index) => {
-    let matched = false;
-    try {
-      matched = !!matcher(record, candidate);
-    } catch (err) {
-      matched = false;
-    }
+    // A matcher failure is not a successful avoidance; let the caller report it.
+    const matched = !!matcher(record, candidate);
     const ok = hitMode ? matched : !matched;
     lims.forEach((limit) => {
       if (index >= limit) return;
@@ -361,6 +357,85 @@ function threeDigitCooccurs(record, candidate) {
 
 function firstFourSum(record) {
   return firstFourNumbers(record).reduce((sum, n) => sum + Number(n || 0), 0);
+}
+
+// Keep the extracted structure matchers identical to the runner's first-four helpers.
+function normalizeNumberRange(value) {
+  const nums = String(value === undefined || value === null ? "" : value)
+    .match(/\d+/g);
+  if (!nums || nums.length < 2) return null;
+  const a = Number(nums[0]);
+  const b = Number(nums[1]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  const start = Math.max(0, Math.min(36, Math.min(a, b)));
+  const end = Math.max(0, Math.min(36, Math.max(a, b)));
+  return { start, end, code: `${start}-${end}` };
+}
+
+function firstFourSpan(record) {
+  const nums = firstFourNumbers(record).map((value) => Number(value));
+  if (nums.length < 4 || nums.some((value) => !Number.isFinite(value))) return null;
+  return Math.max(...nums) - Math.min(...nums);
+}
+
+function firstFourRepeatShape(record) {
+  const nums = firstFourNumbers(record);
+  if (nums.length < 4) return "";
+  const counts = {};
+  nums.forEach((digit) => { counts[String(digit)] = Number(counts[String(digit)] || 0) + 1; });
+  const values = Object.keys(counts).map((key) => counts[key]).sort((a, b) => b - a);
+  if (!values.length) return "";
+  if (values[0] >= 4) return "四重";
+  if (values[0] >= 3) return "三重";
+  const pairCount = values.filter((count) => count === 2).length;
+  if (pairCount >= 2) return "双重";
+  if (pairCount === 1) return "一对";
+  return "无重";
+}
+
+function firstFourHasRepeat(record) {
+  const shape = firstFourRepeatShape(record);
+  return !!shape && shape !== "无重";
+}
+
+function firstFourMaxConsecutiveRun(record) {
+  const nums = firstFourNumbers(record).map((value) => Number(value));
+  if (nums.length < 4 || nums.some((value) => !Number.isFinite(value))) return 0;
+  const sorted = Array.from(new Set(nums)).sort((a, b) => a - b);
+  let best = sorted.length ? 1 : 0;
+  let current = sorted.length ? 1 : 0;
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (sorted[index] === sorted[index - 1] + 1) current += 1;
+    else current = 1;
+    if (current > best) best = current;
+  }
+  return best;
+}
+
+function firstFourConsecutiveShape(record) {
+  const run = firstFourMaxConsecutiveRun(record);
+  if (run >= 4) return "四连";
+  if (run >= 3) return "三连";
+  if (run >= 2) return "二连";
+  return "无连";
+}
+
+function firstFourHasConsecutive(record) {
+  return firstFourMaxConsecutiveRun(record) >= 2;
+}
+
+function firstFourParityRatio(record) {
+  const nums = firstFourNumbers(record).map((value) => Number(value));
+  if (nums.length < 4 || nums.some((value) => !Number.isFinite(value))) return "";
+  const odd = nums.filter((value) => Math.abs(value) % 2 === 1).length;
+  return `${odd}单${4 - odd}双`;
+}
+
+function firstFourSizeRatio(record) {
+  const nums = firstFourNumbers(record).map((value) => Number(value));
+  if (nums.length < 4 || nums.some((value) => !Number.isFinite(value))) return "";
+  const big = nums.filter((value) => value >= 5).length;
+  return `${big}大${4 - big}小`;
 }
 
 function firstFourSumInRange(record, value) {
@@ -521,7 +596,7 @@ function calculateExtraAvoidKills(history, performance) {
     if (!size) return 0;
     const latest = records && records[0] ? records[0] : {};
     const periodTail = Number(String(latest.period || latest.uid || "0").replace(/\D/g, "").slice(-4) || 0);
-    const nums = Array.isArray(latest.numbers) ? latest.numbers : [];
+    const nums = Array.isArray(latest.numbers) ? latest.numbers.slice(0, 4) : [];
     const numberSeed = nums.reduce((sum, n, index) => sum + Number(n || 0) * (index + 3), 0);
     return Math.abs(periodTail + numberSeed) % size;
   }

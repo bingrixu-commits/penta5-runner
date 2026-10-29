@@ -11,7 +11,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { createPool } = require("./db");
+const { predictionId, parseStoredObject, predictionFromRow, mergePrediction, hasEvaluation } = require("./prediction_merge");
 
 function argValue(name, fallback) {
   const idx = process.argv.indexOf(name);
@@ -101,6 +101,74 @@ async function importDraws(conn, history) {
   }
   process.stdout.write("\n");
   return n;
+}
+
+// Publish recovery state only after its prediction row committed.
+// The partial-conflict path may succeed while preserving a different sealed row;
+// that must never replace the independently restored currentPrediction module.
+async function guardRecoveryCurrentState(conn, state) {
+  const current = state && state.currentPrediction;
+  const omitCurrent = (reason) => {
+    const clean = Object.assign({}, state);
+    delete clean.currentPrediction;
+    delete clean.tipReady;
+    // Project projections contain a copy of the unconfirmed current payload.
+    // An explicit empty object also disables importStates' disk fallback.
+    clean.algorithmProjectSnapshots = {};
+    delete clean.algorithmProjectHealth;
+    console.error("Recovery current state isolated: " + JSON.stringify({
+      prediction_id_sha256: sha256Text(String(current && current.id || "")), reason
+    }));
+    return clean;
+  };
+  let id;
+  try { id = predictionId(current && current.id); }
+  catch (_) { return omitCurrent("current-prediction-identity-invalid"); }
+  // SQL failures are global failures, never an isolatable data warning.
+  const [rows] = await conn.query(
+    `SELECT prediction_id, base_uid, base_period, evaluated, counter_applied, raw_json
+     FROM model_predictions WHERE prediction_id = ? LIMIT 2`, [id]);
+  if (rows.length !== 1 || String(rows[0].prediction_id) !== id) {
+    return omitCurrent("current-prediction-row-unconfirmed");
+  }
+  const {hasSealedEvidence} = require("./prediction_merge");
+  const {assertSealedMatch} = require("./verify_mirror_seals");
+  try {
+    const stored = predictionFromRow(rows[0]);
+    if (hasSealedEvidence(current) || hasSealedEvidence(stored)) {
+      const keys = ["fourPosExclude", "autoTop6", "recommend2", "killFramework", "fourDingFramework", "threeDuishu"];
+      const nonemptyText = (value) => typeof value === "string" && value.trim().length > 0;
+      const aggregateKeys = ["id", "baseUid", "basePeriod", "generatedAt", "snapshotsSealedAt", "snapshotsSealedBaseUid"];
+      const generatedMs = Date.parse(current.generatedAt);
+      const aggregateSealedMs = Date.parse(current.snapshotsSealedAt);
+      if (current.allSnapshotsSealed !== true || aggregateKeys.some(key => !nonemptyText(current[key]))
+          || current.snapshotsSealedBaseUid !== current.baseUid
+          || !Number.isFinite(generatedMs) || !Number.isFinite(aggregateSealedMs) || generatedMs > aggregateSealedMs
+          || keys.some(key => {
+            const snapshot = current[key];
+            if (!snapshot || snapshot.sealed !== true || snapshot.reconstructed === true
+                || !["sealHash", "sealedAt", "sealedBaseUid", "sealedBasePeriod", "predictionGeneratedAt"]
+                  .every(field => nonemptyText(snapshot[field]))) return true;
+            const sealedMs = Date.parse(snapshot.sealedAt);
+            return snapshot.sealedBaseUid !== current.baseUid || snapshot.sealedBasePeriod !== current.basePeriod
+              || snapshot.predictionGeneratedAt !== current.generatedAt
+              || !Number.isFinite(sealedMs) || generatedMs > sealedMs;
+          })) {
+        return omitCurrent("current-prediction-seal-unconfirmed");
+      }
+      // Equality with a newly inserted row alone does not prove completeness.
+      // The required metadata above follows the runner's original seal contract.
+      assertSealedMatch(current, stored);
+    } else {
+      // An unsealed checkpoint is useful for recovery but cannot be ready.
+      mergePrediction(stored, current); // Reject any stored/column identity conflict.
+      return Object.assign({}, state, {tipReady: false,
+        currentPrediction: Object.assign({}, current, {tipReady: false, operationalReady: false})});
+    }
+  } catch (_) {
+    return omitCurrent("current-prediction-seal-unconfirmed");
+  }
+  return state;
 }
 
 async function importStates(conn, state, options) {
@@ -213,26 +281,63 @@ async function importCounters(conn, counters, daily) {
   return n;
 }
 
-async function importPredictions(conn, predictions) {
+// Only pure identity/JSON/sealed-evidence validation is quarantinable.
+// SQL, transport, privilege, schema and transaction errors always propagate.
+class PredictionDataConflict extends Error {
+  constructor(reason, originalError) {
+    super("Prediction data conflict: " + reason);
+    this.name = "PredictionDataConflict";
+    this.code = "PENTA5_PREDICTION_DATA_CONFLICT";
+    this.reason = reason;
+    this.originalError = originalError;
+  }
+}
+
+function predictionDataStep(reason, operation) {
+  try { return operation(); }
+  catch (error) {
+    if (error instanceof PredictionDataConflict) throw error;
+    throw new PredictionDataConflict(reason, error);
+  }
+}
+
+async function importPredictionBatch(conn, incoming) {
   let predN = 0;
   let evalN = 0;
-  for (const batch of chunk(predictions, 100)) {
-    for (const prediction of batch) {
-      if (!prediction || !prediction.id) continue;
-      const predictionId = String(prediction.id).slice(0, 190);
+    if (!incoming.length) return {predN, evalN};
+    const ids = [...new Set(incoming.map((prediction) => predictionDataStep("incoming-identity-invalid", () => predictionId(prediction.id))))];
+    const placeholders = ids.map(() => "?").join(",");
+    await conn.beginTransaction();
+    try {
+      const [storedRows] = await conn.query(
+        `SELECT prediction_id, base_uid, base_period, evaluated, counter_applied, raw_json
+         FROM model_predictions WHERE prediction_id IN (${placeholders}) FOR UPDATE`, ids
+      );
+      const [evaluationRows] = await conn.query(
+        `SELECT prediction_id, raw_json FROM model_evaluations
+         WHERE prediction_id IN (${placeholders}) FOR UPDATE`, ids
+      );
+      for (const row of storedRows.concat(evaluationRows)) {
+        if (!ids.includes(String(row.prediction_id))) throw new PredictionDataConflict("database-collation-identity-conflict", new Error("Prediction identity conflict: database collation alias"));
+      }
+      const stored = new Map(storedRows.map((row) => [String(row.prediction_id), predictionDataStep("stored-prediction-invalid", () => predictionFromRow(row))]));
+      const evaluations = new Map(evaluationRows.map((row) => [String(row.prediction_id), predictionDataStep("stored-evaluation-invalid", () => parseStoredObject(row.raw_json, "evaluation"))]));
+    for (const input of incoming) {
+      const id = predictionDataStep("incoming-identity-invalid", () => predictionId(input.id));
+      const prediction = predictionDataStep("sealed-or-identity-conflict", () => mergePrediction(stored.get(id), input, evaluations.get(id)));
       const balls = pickBalls({
         numbers:
           (prediction.detail && prediction.detail.numbers) ||
           prediction.modelNumbers ||
           [],
       });
-      await conn.query(
+      try { await conn.query(
         `INSERT INTO model_predictions
           (prediction_id, base_uid, base_period, model_version, generated_at,
            model_ball1, model_ball2, model_ball3, model_ball4,
            ball5_display, excluded_from_model, evaluated, counter_applied, raw_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
+         ${stored.has(id) ? `ON DUPLICATE KEY UPDATE
            base_uid=VALUES(base_uid),
            base_period=VALUES(base_period),
            model_version=VALUES(model_version),
@@ -241,11 +346,11 @@ async function importPredictions(conn, predictions) {
            model_ball2=VALUES(model_ball2),
            model_ball3=VALUES(model_ball3),
            model_ball4=VALUES(model_ball4),
-           evaluated=VALUES(evaluated),
-           counter_applied=VALUES(counter_applied),
-           raw_json=VALUES(raw_json)`,
+           evaluated=GREATEST(COALESCE(evaluated, 0), VALUES(evaluated)),
+           counter_applied=GREATEST(COALESCE(counter_applied, 0), VALUES(counter_applied)),
+           raw_json=VALUES(raw_json)` : ""}`,
         [
-          predictionId,
+          id,
           prediction.baseUid || null,
           prediction.basePeriod || null,
           prediction.modelVersion || null,
@@ -259,10 +364,18 @@ async function importPredictions(conn, predictions) {
           JSON.stringify(prediction),
         ]
       );
+      } catch (writeError) {
+        if (writeError && writeError.code === "ER_DUP_ENTRY"
+            && /\buq_model_predictions_id\b/.test(String(writeError.sqlMessage || writeError.message || ""))) {
+          throw new PredictionDataConflict("database-unique-identity-conflict", writeError);
+        }
+        throw writeError;
+      }
+      stored.set(id, prediction);
       predN += 1;
 
       const evaluation = prediction.evaluation;
-      if (evaluation && typeof evaluation === "object") {
+      if (hasEvaluation(evaluation) && !hasEvaluation(evaluations.get(id))) {
         const actual = evaluation.actualNumbers || evaluation.numbers || [];
         const ab = [0, 1, 2, 3, 4].map((i) => {
           const x = Number(actual[i]);
@@ -275,18 +388,18 @@ async function importPredictions(conn, predictions) {
              ball5_display, excluded_from_model, position_total_success, raw_json)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
            ON DUPLICATE KEY UPDATE
-             target_uid=VALUES(target_uid),
-             target_period=VALUES(target_period),
-             evaluated_at=VALUES(evaluated_at),
-             actual_ball1=VALUES(actual_ball1),
-             actual_ball2=VALUES(actual_ball2),
-             actual_ball3=VALUES(actual_ball3),
-             actual_ball4=VALUES(actual_ball4),
-             ball5_display=VALUES(ball5_display),
-             position_total_success=VALUES(position_total_success),
-             raw_json=VALUES(raw_json)`,
+             target_uid=IF(JSON_LENGTH(raw_json)=0, VALUES(target_uid), target_uid),
+             target_period=IF(JSON_LENGTH(raw_json)=0, VALUES(target_period), target_period),
+             evaluated_at=IF(JSON_LENGTH(raw_json)=0, VALUES(evaluated_at), evaluated_at),
+             actual_ball1=IF(JSON_LENGTH(raw_json)=0, VALUES(actual_ball1), actual_ball1),
+             actual_ball2=IF(JSON_LENGTH(raw_json)=0, VALUES(actual_ball2), actual_ball2),
+             actual_ball3=IF(JSON_LENGTH(raw_json)=0, VALUES(actual_ball3), actual_ball3),
+             actual_ball4=IF(JSON_LENGTH(raw_json)=0, VALUES(actual_ball4), actual_ball4),
+             ball5_display=IF(JSON_LENGTH(raw_json)=0, VALUES(ball5_display), ball5_display),
+             position_total_success=IF(JSON_LENGTH(raw_json)=0, VALUES(position_total_success), position_total_success),
+             raw_json=IF(JSON_LENGTH(raw_json)=0, VALUES(raw_json), raw_json)`,
           [
-            predictionId,
+            id,
             evaluation.targetUid || evaluation.uid || null,
             evaluation.targetPeriod || evaluation.period || null,
             toMysqlDateTime(evaluation.evaluatedAt),
@@ -303,13 +416,52 @@ async function importPredictions(conn, predictions) {
             JSON.stringify(evaluation),
           ]
         );
+        evaluations.set(id, evaluation);
         evalN += 1;
+      }
+    }
+      await conn.commit();
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    }
+  return {predN, evalN};
+}
+
+async function importPredictions(conn, predictions, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const isolate = opts.isolatePredictionConflicts === true;
+  let predN = 0, evalN = 0;
+  const conflicts = [];
+  const commitCounts = counts => { predN += counts.predN; evalN += counts.evalN; };
+  const reportConflict = (input, error) => {
+    const item = {prediction_id_sha256: sha256Text(String(input && input.id || "")), reason: error.reason};
+    conflicts.push(item);
+    if (typeof opts.onConflict === "function") opts.onConflict(item);
+    else console.error("Prediction conflict isolated: " + JSON.stringify(item));
+  };
+  for (const batch of chunk(predictions, 100)) {
+    const incoming = batch.filter(prediction => prediction && prediction.id);
+    if (!incoming.length) continue;
+    try {
+      commitCounts(await importPredictionBatch(conn, incoming));
+    } catch (error) {
+      if (!(error instanceof PredictionDataConflict)) throw error;
+      if (!isolate) throw error.originalError || error;
+      // The failed batch was rolled back in full. Retry the same strict merge
+      // one row per transaction; never carry its rolled-back counters forward.
+      for (const input of incoming) {
+        try { commitCounts(await importPredictionBatch(conn, [input])); }
+        catch (singleError) {
+          if (!(singleError instanceof PredictionDataConflict)) throw singleError;
+          reportConflict(input, singleError);
+        }
       }
     }
     process.stdout.write("\rpredictions=" + predN + " evaluations=" + evalN);
   }
   process.stdout.write("\n");
-  return { predN, evalN };
+  return isolate ? {predN, evalN, conflicts} : {predN, evalN};
 }
 
 async function main() {
@@ -347,6 +499,7 @@ async function main() {
   const history = Array.isArray(state.history) ? state.history : [];
   const predictions = Array.isArray(state.predictions) ? state.predictions : [];
 
+  const { createPool } = require("./db");
   const pool = createPool();
   const conn = await pool.getConnection();
   try {
@@ -387,13 +540,17 @@ async function main() {
       }
       return path.join("/root", "penta5-runner", "data");
     })();
-    const states = await importStates(conn, state, { dataRoot });
+    const isolatePredictionConflicts = hasFlag("--isolate-prediction-conflicts");
+    // Both strict and isolated imports must commit canonical prediction
+    // evidence before publishing any recovery states or counters.
+    const preds = await importPredictions(conn, predictions, {isolatePredictionConflicts});
+    const recoveryState = await guardRecoveryCurrentState(conn, state);
+    const states = await importStates(conn, recoveryState, { dataRoot });
     const counters = await importCounters(
       conn,
       state.counters || {},
       state.dailyStreakLedger || {}
     );
-    const preds = await importPredictions(conn, predictions);
 
     const [[drawCount]] = await conn.query("SELECT COUNT(*) AS c FROM official_draws");
     const [[predCount]] = await conn.query("SELECT COUNT(*) AS c FROM model_predictions");
@@ -414,6 +571,7 @@ async function main() {
           importedCounters: counters,
           importedPredictions: preds.predN,
           importedEvaluations: preds.evalN,
+          isolatedPredictionConflicts: Array.isArray(preds.conflicts) ? preds.conflicts : [],
           dbDrawCount: Number(drawCount.c),
           dbPredictionCount: Number(predCount.c),
           dbEvaluationCount: Number(evalCount.c),
@@ -430,7 +588,11 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(String(e && e.message ? e.message : e));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(String(e && e.message ? e.message : e));
+    process.exit(1);
+  });
+}
+
+module.exports = { importPredictions };

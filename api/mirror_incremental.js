@@ -10,7 +10,9 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { spawnSync } = require("child_process");
+const { atomicReceipt } = require("./prediction_outbox");
 
 const LOCK_FILE = path.join("/tmp", "penta5-rds-mirror.lock");
 const MIRROR_BACKUP_DIR = path.join("/root", "penta5-runner", "data", "backups");
@@ -106,6 +108,18 @@ function main() {
       throw new Error("missing import_full_existing.js");
     }
     const args = ["--max-old-space-size=4096", importer];
+    const receiptPath = argValue("--receipt", "");
+    const receiptNonce = argValue("--receipt-nonce", "");
+    const expectedFreezeSha = argValue("--expected-freeze-sha", "");
+    const hasReceipt = !!(receiptPath || receiptNonce || expectedFreezeSha);
+    let confirmedFreezePath = "", beforeHash = "";
+    if (hasReceipt) {
+      if (hasFlag("--from-live") || !receiptPath || !/^[a-f0-9]{32,64}$/.test(receiptNonce)
+          || !/^[a-f0-9]{64}$/.test(expectedFreezeSha)) throw new Error("invalid-mirror-receipt-request");
+      confirmedFreezePath = path.resolve(argValue("--file", ""));
+      beforeHash = crypto.createHash("sha256").update(fs.readFileSync(confirmedFreezePath)).digest("hex");
+      if (beforeHash !== expectedFreezeSha) throw new Error("mirror-freeze-hash-mismatch-before-import");
+    }
     if (hasFlag("--from-live")) {
       args.push("--from-live");
       const freezeTo = argValue("--freeze-to", "");
@@ -124,6 +138,7 @@ function main() {
       if (!file) throw new Error("pass --from-live or --file PATH");
       args.push("--file", file);
     }
+    if (hasReceipt) args.push("--isolate-prediction-conflicts");
     console.log("mirror start " + new Date().toISOString());
     const result = spawnSync(process.execPath, args, {
       cwd: __dirname,
@@ -132,6 +147,42 @@ function main() {
     });
     if (result.status !== 0) {
       process.exit(result.status || 1);
+    }
+    if (hasReceipt) {
+      const verifier = path.join(__dirname, "verify_mirror_seals.js");
+      if (!fs.existsSync(verifier)) throw new Error("missing verify_mirror_seals.js");
+      const verified = spawnSync(process.execPath, [verifier, "--file", confirmedFreezePath,
+        "--expected-freeze-sha", beforeHash, "--partial-confirmation"], {
+          cwd: __dirname, env: process.env, stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 60000});
+      if (verified.status !== 0) {
+        const reason = verified.error && verified.error.code === "ETIMEDOUT" ? "timeout" : "verifier-failed";
+        console.error("mirror seal verification unconfirmed reason=" + reason + " status="
+          + (Number.isInteger(verified.status) ? verified.status : "unavailable"));
+        process.exit(verified.status || 1);
+      }
+      const afterHash = crypto.createHash("sha256").update(fs.readFileSync(confirmedFreezePath)).digest("hex");
+      if (afterHash !== beforeHash) throw new Error("mirror-freeze-hash-changed-during-import");
+      const frozen = JSON.parse(fs.readFileSync(confirmedFreezePath, "utf8"));
+      const confirmation = JSON.parse(String(verified.stdout || ""));
+      if (!confirmation || confirmation.ok !== true || !Array.isArray(confirmation.verified_outbox_entries)
+          || !Array.isArray(confirmation.conflicted_outbox_entries)
+          || confirmation.verified_outbox_count !== confirmation.verified_outbox_entries.length) throw new Error("invalid-partial-mirror-confirmation");
+      const expectedEntries = new Map(frozen.rdsMirrorOutbox.entries.map(entry => [entry.id, entry.sha256]));
+      const seen = new Set();
+      for (const entries of [confirmation.verified_outbox_entries, confirmation.conflicted_outbox_entries]) {
+        for (const entry of entries) {
+          if (!entry || seen.has(entry.id) || expectedEntries.get(entry.id) !== entry.sha256 || !expectedEntries.has(entry.id)) throw new Error("partial-mirror-confirmation-identity-conflict");
+          seen.add(entry.id);
+        }
+      }
+      if (seen.size !== expectedEntries.size) throw new Error("incomplete-partial-mirror-confirmation");
+      if (confirmation.conflicted_outbox_entries.length) console.error("mirror pending seal conflicts=" + confirmation.conflicted_outbox_entries.length);
+      atomicReceipt(receiptPath, {version: 2, ok: true, nonce: receiptNonce,
+        freeze_sha256: afterHash, freeze_path: confirmedFreezePath,
+        verified_outbox_count: confirmation.verified_outbox_count,
+        verified_outbox_entries: confirmation.verified_outbox_entries,
+        conflicted_outbox_entries: confirmation.conflicted_outbox_entries});
     }
     pruneMirrorBackups(MIRROR_BACKUP_KEEP);
     console.log("mirror done " + new Date().toISOString());

@@ -1,0 +1,20 @@
+[Unit]
+Description=Penta5 four-ding backdelete cache (:8790 localhost)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/penta5-four-backdelete
+Environment=FOUR_BACKDELETE_BIND=127.0.0.1
+Environment=FOUR_BACKDELETE_PORT=8790
+Environment=FOUR_BACKDELETE_DATA_DIR=/opt/penta5-four-backdelete/data
+ExecStart=/usr/bin/python3 /opt/penta5-four-backdelete/four_backdelete_gpu_server.py
+Restart=always
+RestartSec=2
+StandardOutput=append:/opt/penta5-four-backdelete/server.log
+StandardError=append:/opt/penta5-four-backdelete/server.log
+
+[Install]
+WantedBy=multi-user.target

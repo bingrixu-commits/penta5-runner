@@ -368,21 +368,20 @@ function streakFromHits(hits) {
 /** 期号 YYYYMMDDnnn（5分钟序）→ 业务日 YYYY-MM-DD（默认 05:00 切日） */
 function businessDayKeyFromPeriod(period) {
   const text = String(period || "").trim();
-  const m = text.match(/^(\d{4})(\d{2})(\d{2})(\d{3})$/);
-  if (!m) {
-    const loose = text.match(/(\d{4})[-\/]?(\d{2})[-\/]?(\d{2})/);
-    return loose ? (loose[1] + "-" + loose[2] + "-" + loose[3]) : "";
-  }
-  const seq = Number(m[4]);
-  let minutes = 12 * 60;
-  if (seq >= 1 && seq <= 288) minutes = (seq - 1) * 5;
-  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Math.floor(minutes / 60), minutes % 60, 0, 0);
-  if (!Number.isFinite(dt.getTime())) return m[1] + "-" + m[2] + "-" + m[3];
-  const shifted = new Date(dt.getTime() - DAY_RESET_HOUR * 60 * 60 * 1000);
-  const y = shifted.getFullYear();
-  const mo = String(shifted.getMonth() + 1).padStart(2, "0");
-  const d = String(shifted.getDate()).padStart(2, "0");
-  return y + "-" + mo + "-" + d;
+  const m = text.match(/^([0-9]{4})([0-9]{2})([0-9]{2})([0-9]{3})$/);
+  if (!m) return "";
+  const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]), seq = Number(m[4]);
+  if (seq < 1 || seq > 288) return "";
+  // Encode the Beijing wall-clock date in UTC arithmetic. The official first
+  // slot is 001=00:05; 060=05:00 and 288=the following midnight.
+  const dateMs = Date.UTC(year, month - 1, day);
+  const parsed = new Date(dateMs);
+  if (!Number.isFinite(dateMs) || parsed.getUTCFullYear() !== year
+      || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return "";
+  const shifted = new Date(dateMs + (seq * 5 - DAY_RESET_HOUR * 60) * 60 * 1000);
+  return String(shifted.getUTCFullYear()).padStart(4, "0") + "-"
+    + String(shifted.getUTCMonth() + 1).padStart(2, "0") + "-"
+    + String(shifted.getUTCDate()).padStart(2, "0");
 }
 
 /**

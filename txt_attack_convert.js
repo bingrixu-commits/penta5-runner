@@ -222,18 +222,21 @@ function txtApplyShortShotExclusions(raw,rule){
 function txtShotExcludeShapes(text){
   var out=[],match;
   // 五星5字形态：四定取后四位（丢掉万位），如「除大大大小大」→四定「大大小大」
-  var regex5=/除([大小单双]{5})(?![大小单双])/g;
+  var regex5=/除([大小单双]{5})(?![大小单双奇偶])/g;
   while((match=regex5.exec(text))){
     var four=String(match[1]||"").slice(1);
     if(four.length===4&&out.indexOf(four)<0)out.push(four);
   }
   // 四定形态必须恰好4字：除小大小小；禁止把「除小小大小小」误吃成「小小大小」
-  var regex4=/除([大小单双]{4})(?![大小单双])/g;
+  // Legacy AI cards may use 奇/偶. Normalize only a complete four-position
+  // shape command, so its copied TXT applies the same exclusion as settlement.
+  var regex4=/除([大小单双奇偶]{4})(?![大小单双奇偶])/g;
   while((match=regex4.exec(text))){
-    if(out.indexOf(match[1])<0)out.push(match[1]);
+    var shape=match[1].replace(/奇/g,"单").replace(/偶/g,"双");
+    if(out.indexOf(shape)<0)out.push(shape);
   }
   // 三定千百十形态3字（除大大小 / 除大大大）
-  var regex3=/除([大小单双]{3})(?![大小单双])/g;
+  var regex3=/除([大小单双]{3})(?![大小单双奇偶])/g;
   while((match=regex3.exec(text))){
     if(out.indexOf(match[1])<0)out.push(match[1]);
   }
@@ -666,6 +669,7 @@ function txtShotPassesRule(code,rule){
   if(!txtShotContains(rule.ge,d))return false;
   if(!txtShotContains(rule.qianBaiShiHewei,txtShotHewei(a,b,c)))return false;
   if(!txtShotContains(rule.qianBaiGeHewei||"0123456789".split(""),txtShotHewei(a,b,d)))return false;
+  if(!txtShotContains(rule.wanBaiShiHewei||"0123456789".split(""),txtShotHewei(a,c,d)))return false;
   if(!txtShotContains(rule.baiShiGeHewei,txtShotHewei(b,c,d)))return false;
   if(!txtShotContains(rule.qianBaiShiGeHewei,txtShotHewei(a,b,c,d)))return false;
   if(!txtShotAnyTwoHeweiHit(code,rule.twoHeweiHit,rule.twoHeweiScopeIndexes))return false;
@@ -726,6 +730,7 @@ function txtShotRuleSummary(rule){
     +" 个"+rule.ge.join("")
     +" 千百十合"+rule.qianBaiShiHewei.join("")
     +((rule.qianBaiGeHewei||[]).join("")&&rule.qianBaiGeHewei.join("")!=="0123456789"?" 千百个合"+rule.qianBaiGeHewei.join(""):"")
+    +((rule.wanBaiShiHewei||[]).join("")&&rule.wanBaiShiHewei.join("")!=="0123456789"?" 千十个合"+rule.wanBaiShiHewei.join(""):"")
     +" 百十个合"+rule.baiShiGeHewei.join("")
     +(rule.qianBaiShiGeHewei.join("")!=="0123456789"?" 千百十个合"+rule.qianBaiShiGeHewei.join(""):"")
     +(rule.twoHeweiHit.length?((Array.isArray(rule.twoHeweiScopeIndexes)&&rule.twoHeweiScopeIndexes.join(",")==="0,1,2")?" 千百十二数合":" 二数合")+rule.twoHeweiHit.join(""):"")

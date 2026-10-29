@@ -3,6 +3,26 @@
 set -euo pipefail
 
 ROOT="/root/penta5-runner"
+
+require_ai_calls() {
+  PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import sys
+from ai_call_control import AICallsDisabled, require_ai_enabled
+try:
+    require_ai_enabled(root=Path(sys.argv[1]))
+except AICallsDisabled:
+    print('[sync-roo-key] AI API paused; no provider probe was issued.')
+    raise SystemExit(75)
+PY
+}
+
+# Check before loading credentials. Missing control or code fails closed.
+if require_ai_calls; then :; else
+  code=$?
+  if [ "$code" -eq 75 ]; then exit 0; fi
+  exit "$code"
+fi
 ENV_FILE="${PENTA5_ENV_PATH:-$ROOT/.env}"
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -48,6 +68,12 @@ for (const file of files) {
 NODE
 
 # 验证 SiliconFlow（不打印 key）
+if require_ai_calls; then :; else
+  code=$?
+  unset SYNC_KEY KEY || true
+  if [ "$code" -eq 75 ]; then exit 0; fi
+  exit "$code"
+fi
 HTTP_CODE=$(curl -s -o /tmp/sf_test.json -w '%{http_code}' \
   --connect-timeout 15 --max-time 30 \
   -H "Authorization: Bearer $KEY" \
@@ -58,8 +84,7 @@ HTTP_CODE=$(curl -s -o /tmp/sf_test.json -w '%{http_code}' \
 echo "[sync-roo-key] siliconflow chat test http=$HTTP_CODE"
 if [ "$HTTP_CODE" != "200" ]; then
   echo "[sync-roo-key] 密钥可能无效或余额/权限问题，请检查 SiliconFlow 控制台"
-  head -c 200 /tmp/sf_test.json 2>/dev/null || true
-  echo
+  # Provider error bodies can contain sensitive content; only status is shown.
   unset SYNC_KEY KEY || true
   exit 1
 fi

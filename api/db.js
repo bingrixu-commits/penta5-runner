@@ -47,7 +47,7 @@ function required(name) {
 
 function createPool() {
   return mysql.createPool({
-    host: required("RDS_HOST"),
+    host: "127.0.0.1",
     port: Number(process.env.RDS_PORT || 3306),
     user: required("RDS_USER"),
     password: required("RDS_PASSWORD"),

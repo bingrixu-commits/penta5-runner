@@ -4,7 +4,8 @@
  * Single-draw upsert into official_draws (RDS primary write path).
  * Used by penta5_backend_runner syncNow so new periods hit RDS before local history hydrate.
  * Retains latest RDS_HISTORY_KEEP (default MAX_HISTORY/5000) draws and drops orphan preds/evals.
- * Pred/eval retention: latest RDS_PRED_HISTORY_KEEP draw periods + one row per base_period (MAX id).
+ * Pred/eval retention: latest RDS_PRED_HISTORY_KEEP draw periods, preserving
+ * every immutable prediction_id inside that window.
  */
 
 const { createPool } = require("./db");
@@ -59,7 +60,8 @@ function predHistoryKeepLimit() {
  * Also trim model_predictions / model_evaluations:
  *  - orphan periods not in draws
  *  - outside newest RDS_PRED_HISTORY_KEEP draw periods
- *  - duplicate preds per base_period (keep MAX(id) only)
+ *  - keep distinct prediction_ids for the same period: an insertion id cannot
+ *    determine which pre-draw sealed original must survive
  *  - evals whose prediction_id no longer exists
  * @param {number} [keep]
  * @returns {Promise<object>}
@@ -137,20 +139,9 @@ async function pruneOfficialDraws(keep) {
     );
     evaluationsDeleted += Number(evalWindow && evalWindow.affectedRows || 0);
 
-    // Dedupe: one prediction row per base_period (newest id)
-    const [predDedupe] = await conn.query(
-      `DELETE p FROM model_predictions p
-       LEFT JOIN (
-         SELECT base_period, MAX(id) AS mid
-         FROM model_predictions
-         WHERE base_period IS NOT NULL AND base_period <> ''
-         GROUP BY base_period
-       ) keep_row ON keep_row.mid = p.id
-       WHERE p.base_period IS NOT NULL
-         AND p.base_period <> ''
-         AND keep_row.mid IS NULL`
-    );
-    predictionsDeleted += Number(predDedupe && predDedupe.affectedRows || 0);
+    // A later mirror can reinsert a slim row with a larger database id.
+    // Never let it delete another prediction_id's signed original or settlement.
+    const predDedupeDeleted = 0;
 
     // Drop evals pointing at deleted prediction_ids
     const [evalDangling] = await conn.query(
@@ -173,7 +164,7 @@ async function pruneOfficialDraws(keep) {
       keep: limit,
       predKeep,
       predWindowDeleted: Number(predWindow && predWindow.affectedRows || 0),
-      predDedupeDeleted: Number(predDedupe && predDedupe.affectedRows || 0),
+      predDedupeDeleted,
       evalWindowDeleted: Number(evalWindow && evalWindow.affectedRows || 0),
       evalDanglingDeleted: Number(evalDangling && evalDangling.affectedRows || 0)
     };

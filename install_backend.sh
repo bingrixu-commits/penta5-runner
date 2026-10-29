@@ -88,9 +88,7 @@ PORT="$PORT" SOURCE_API_URL="$SOURCE_API_URL" \
     --time \
     --node-args="--max-old-space-size=${NODE_HEAP_MB}"
 
-echo "==> 启动 penta5-supervisor"
-pm2 delete penta5-supervisor >/dev/null 2>&1 || true
-pm2 start "$APP_DIR/ecosystem.supervisor.config.js"
+echo "==> penta5-supervisor 保持现状（含自动控制逻辑，需单独审核后手动启用）"
 
 echo "==> 启动 penta5-memory-monitor"
 pm2 delete penta5-memory-monitor >/dev/null 2>&1 || true

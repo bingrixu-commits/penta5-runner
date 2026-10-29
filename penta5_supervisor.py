@@ -57,6 +57,8 @@ APP_BY_PROBE = {
 STORM_MODE_FILE = Path(os.environ.get("PENTA5_STORM_MODE_FILE", str(ROOT / "data" / "storm_mode.json")))
 ALERT_WEBHOOK_URL = os.environ.get("PENTA5_ALERT_WEBHOOK_URL", "").strip()
 ALERT_LOG_FILE = Path(os.environ.get("PENTA5_ALERT_LOG", str(ROOT / "data" / "penta5_alerts.log")))
+ROBOT_CONTROL_ENABLED = os.environ.get("PENTA5_SUPERVISOR_CONTROL_ROBOTS", "0").strip() in {"1", "true", "yes", "on"}
+ALERT_WEBHOOK_ENABLED = os.environ.get("PENTA5_ALERT_WEBHOOK_ENABLED", "0").strip() in {"1", "true", "yes", "on"}
 STORM_RESUME_ROBOTS = os.environ.get("PENTA5_STORM_RESUME_ROBOTS", "0").strip() in {"1", "true", "yes", "on"}
 ROBOT_APPS = ["penta5-auto-robot-1", "penta5-auto-robot-2"]
 ROBOT_STATE_DIR = ROOT / "robot_runtime" / "robot_state"
@@ -519,7 +521,7 @@ def ensure_robot_health(state: Dict[str, Any], health_report: Dict[str, Any]) ->
         # A stopped robot may be intentionally paused by storm/tip policy. Only
         # restart a process that claims to be online yet is stale, and only
         # while the shared runner is itself ready.
-        if active and not ok and runner_ready:
+        if active and not ok and runner_ready and robot_resume_allowed(health_report, {}):
             restarted = restart_app(app, state, f"robot-health-fail:{reason}")
             report["restarts"].append({"app": app, "reason": reason, "ok": restarted})
             item["restartRequested"] = restarted
@@ -662,7 +664,7 @@ def send_alert(state: Dict[str, Any], event: str, detail: Dict[str, Any], env: O
     write_alert_log(event, detail)
     mark_action(state, cooldown_key)
     webhook = ALERT_WEBHOOK_URL or str((env or {}).get("PENTA5_ALERT_WEBHOOK_URL") or "").strip()
-    if not webhook:
+    if not webhook or not ALERT_WEBHOOK_ENABLED:
         return True
     text = f"[Penta5] {event} | " + " | ".join(f"{k}={detail.get(k)}" for k in list(detail.keys())[:8])
     # 兼容钉钉 / 企微 / 飞书自定义机器人的常见字段
@@ -692,37 +694,62 @@ def send_alert(state: Dict[str, Any], event: str, detail: Dict[str, Any], env: O
         return False
 
 
+def robot_resume_allowed(health_report: Dict[str, Any], state_payload: Dict[str, Any]) -> bool:
+    """Only explicit, fresh ready and non-storm reports allow automated starts."""
+    if not ROBOT_CONTROL_ENABLED:
+        return False
+    summary = health_report.get("summary") or {}
+    probe = (health_report.get("probes") or {}).get("runner") or {}
+    flags = [read_storm_flag_file(), health_report.get("stormMode") or {}, state_payload.get("stormMode") or {}]
+    ready = summary.get("tipReady")
+    if ready is None:
+        ready = state_payload.get("tipReady")
+    return ready is True and probe.get("ok") is True and not any(flag.get("active") for flag in flags) and not runner_pipeline_busy(health_report, state_payload).get("busy")
+
+
 def stop_robots(state: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    if not ROBOT_CONTROL_ENABLED:
+        return {"ok": False, "skipped": True, "reason": "robot-control-disabled"}
     if not cooldown_ok(state, "lastRobotStopAt", ROBOT_ACTION_COOLDOWN_SEC):
         return {"ok": False, "skipped": True, "reason": "cooldown"}
-    log(f"storm stop robots: {reason}")
+    status = pm2_status_map()
+    owned = set(state.get("robotsPausedBySupervisor") or [])
     results = []
     for app in ROBOT_APPS:
+        if status.get(app) != "online":
+            continue
         code, out, err = run_cmd(["pm2", "stop", app], timeout=60)
         results.append({"app": app, "ok": code == 0, "error": (err or out)[:200]})
-    run_cmd(["pm2", "save"], timeout=30)
-    mark_action(state, "lastRobotStopAt")
-    state["robotsPausedByStorm"] = True
+        if code == 0:
+            owned.add(app)
+    if results:
+        run_cmd(["pm2", "save"], timeout=30)
+        mark_action(state, "lastRobotStopAt")
+    state["robotsPausedBySupervisor"] = sorted(owned)
+    state["robotsPausedByStorm"] = bool(owned)
     return {"ok": all(item.get("ok") for item in results), "results": results, "reason": reason}
 
 
-def resume_robots(state: Dict[str, Any], reason: str) -> Dict[str, Any]:
-    if not STORM_RESUME_ROBOTS:
-        return {"ok": False, "skipped": True, "reason": "auto-resume-disabled"}
+def resume_robots(state: Dict[str, Any], reason: str, health_report: Optional[Dict[str, Any]] = None, state_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not STORM_RESUME_ROBOTS or not robot_resume_allowed(health_report or {}, state_payload or {}):
+        return {"ok": False, "skipped": True, "reason": "auto-resume-gated"}
+    owned = set(state.get("robotsPausedBySupervisor") or [])
     status = pm2_status_map()
-    stopped_robots = [app for app in ROBOT_APPS if status.get(app) != "online"]
-    if not stopped_robots and not state.get("robotsPausedByStorm"):
-        return {"ok": False, "skipped": True, "reason": "robots-already-online"}
+    targets = [app for app in ROBOT_APPS if app in owned and status.get(app) == "stopped"]
+    if not targets:
+        return {"ok": False, "skipped": True, "reason": "no-owned-paused-robots"}
     if not cooldown_ok(state, "lastRobotResumeAt", ROBOT_ACTION_COOLDOWN_SEC):
         return {"ok": False, "skipped": True, "reason": "cooldown"}
-    log(f"storm resume robots: {reason}")
     results = []
-    for app in ROBOT_APPS:
+    for app in targets:
         code, out, err = run_cmd(["pm2", "restart", app, "--update-env"], timeout=60)
         results.append({"app": app, "ok": code == 0, "error": (err or out)[:200]})
+        if code == 0:
+            owned.discard(app)
     run_cmd(["pm2", "save"], timeout=30)
     mark_action(state, "lastRobotResumeAt")
-    state["robotsPausedByStorm"] = False
+    state["robotsPausedBySupervisor"] = sorted(owned)
+    state["robotsPausedByStorm"] = bool(owned)
     return {"ok": all(item.get("ok") for item in results), "results": results, "reason": reason}
 
 
@@ -766,7 +793,7 @@ def handle_storm_mode(
             env,
         )
     elif (not active) and prev_active:
-        resume_result = resume_robots(state, str(storm.get("reason") or "storm-exit"))
+        resume_result = resume_robots(state, str(storm.get("reason") or "storm-exit"), health_report, state_payload)
         result["actions"].append({"type": "resume-robots", **resume_result})
         send_alert(
             state,
@@ -1326,7 +1353,7 @@ def handle_tip_ready(
             env,
         )
     elif tip_ready and (not prev):
-        resume_result = resume_robots(state, "tipReady=true")
+        resume_result = resume_robots(state, "tipReady=true", health_report, state_payload)
         result["actions"].append({"type": "resume-robots-tip", **resume_result})
         send_alert(state, "tip-ready", {"issueCount": 0}, env)
     elif not tip_ready:

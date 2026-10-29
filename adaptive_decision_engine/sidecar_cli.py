@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .engine import AdaptiveDecisionEngine
@@ -19,31 +20,60 @@ SIDECAR_VERSION = "v1-readonly"
 
 
 def _digit(value: Any) -> int | None:
-    text = str(value).strip() if value is not None else ""
-    if len(text) == 1 and text.isdigit():
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    text = str(value)
+    if len(text) == 1 and "0" <= text <= "9":
         return int(text)
     return None
 
 
+def _period(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError("period-type")
+    text = str(value)
+    if len(text) != 11 or any(c < "0" or c > "9" for c in text):
+        raise ValueError("period-format")
+    datetime.strptime(text[:8], "%Y%m%d")
+    if not 1 <= int(text[8:]) <= 288:
+        raise ValueError("period-sequence")
+    return text
+
+
+def _next_period(period: str) -> str:
+    sequence = int(period[8:])
+    if sequence < 288:
+        return f"{period[:8]}{sequence + 1:03d}"
+    day = datetime.strptime(period[:8], "%Y%m%d") + timedelta(days=1)
+    return f"{day:%Y%m%d}001"
+
+
 def parse_history(raw: list[Any], newest_first: bool) -> list[DrawRecord]:
     records: list[DrawRecord] = []
-    for row in raw:
+    seen: set[str] = set()
+    for index, row in enumerate(raw):
         if not isinstance(row, dict):
-            continue
-        nums = row.get("numbers") or []
+            raise ValueError(f"row-type:{index}")
+        nums = row.get("numbers")
+        if not isinstance(nums, list) or len(nums) < 4:
+            raise ValueError(f"numbers-shape:{index}")
         digits: list[int] = []
-        for item in list(nums)[:4]:
+        for item in nums[:4]:
             parsed = _digit(item)
             if parsed is None:
-                digits = []
-                break
+                raise ValueError(f"invalid-digit:{index}")
             digits.append(parsed)
-        if len(digits) != 4:
-            continue
-        period = str(row.get("period") or row.get("uid") or "")
+        period = _period(row.get("period") if row.get("period") is not None else row.get("uid"))
+        if period in seen:
+            raise ValueError(f"duplicate-period:{period}")
+        seen.add(period)
         records.append(DrawRecord(period=period, digits=tuple(digits)))
     if newest_first:
         records.reverse()
+    if any(previous.period >= current.period for previous, current in zip(records, records[1:])):
+        raise ValueError("history-not-chronological")
+    if any(_next_period(previous.period) != current.period for previous, current in zip(records, records[1:])):
+        raise ValueError("history-period-gap")
     return records
 
 
@@ -72,16 +102,28 @@ def overlay(decision: ExclusionDecision, live_kills: dict[str, Any]) -> dict[str
 
 
 def run_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    raw_history = payload.get("history") or []
+    def fail(error: str) -> dict[str, Any]:
+        return {"ok": False, "error": error, "sidecar": SIDECAR_NAME,
+                "readOnly": True, "appliesToTip": False}
+
+    raw_history = payload.get("history", [])
     if not isinstance(raw_history, list):
-        return {"ok": False, "error": "history-not-list", "sidecar": SIDECAR_NAME}
-    newest_first = bool(payload.get("newest_first", True))
-    records = parse_history(raw_history, newest_first)
-    window = int(payload.get("replay_window") or 80)
+        return fail("history-not-list")
+    newest_first = payload.get("newest_first", True)
+    if not isinstance(newest_first, bool):
+        return fail("newest-first-not-boolean")
+    try:
+        records = parse_history(raw_history, newest_first)
+        raw_window = payload.get("replay_window", 80)
+        if isinstance(raw_window, bool) or not isinstance(raw_window, (int, float)) or int(raw_window) != raw_window:
+            return fail("replay-window-not-integer")
+        window = int(raw_window)
+        target_period = _period(payload.get("targetPeriod"))
+    except (ValueError, TypeError, OverflowError) as exc:
+        return fail(f"invalid-input:{exc}")
     window = max(16, min(160, window))
     records = records[-window:]
     live_kills = payload.get("liveKills") if isinstance(payload.get("liveKills"), dict) else {}
-    target_period = str(payload.get("targetPeriod") or "")
     if len(records) < 12:
         return {
             "ok": False,
@@ -91,19 +133,21 @@ def run_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "appliesToTip": False,
             "liveKills": live_kills,
         }
+    if target_period != _next_period(records[-1].period):
+        return fail("target-not-next-period")
 
     cfg = EngineConfig()
     engine = AdaptiveDecisionEngine(cfg=cfg)
-    if len(records) >= 2:
-        engine.replay(records[:-1])
-        # 用截至上一期的状态，对最后一期再 decide（与线上「预测下一期」对齐时：
-        # 传入的 history 已含最新开奖，则对 targetPeriod 决策。
-    decision = engine.decide(records, next_period=target_period or f"{records[-1].period}+")
+    # Replay decides before each actual is observed, including the latest draw.
+    # The next decision must use router/risk state updated through that latest draw.
+    engine.replay(records)
+    decision = engine.decide(records, next_period=target_period)
     body = overlay(decision, live_kills)
     body["ok"] = True
     body["historyCount"] = len(records)
     body["basePeriod"] = records[-1].period
-    body["targetPeriod"] = target_period or body["decision"].get("period_hint")
+    body["targetPeriod"] = target_period
+    body["generatedAt"] = datetime.now(timezone.utc).isoformat()
     return body
 
 
@@ -113,9 +157,9 @@ def main(argv: list[str] | None = None) -> int:
         demo = {
             "newest_first": False,
             "replay_window": 24,
-            "targetPeriod": "TEST+1",
+            "targetPeriod": "20260101021",
             "history": [
-                {"period": f"T{i:03d}", "numbers": [(i + p) % 10 for p in range(4)]}
+                {"period": f"20260101{i+1:03d}", "numbers": [(i + p) % 10 for p in range(4)]}
                 for i in range(20)
             ],
             "liveKills": {"position": {"1": [1], "2": [2], "3": [3], "4": [4]}, "hewei": {}},

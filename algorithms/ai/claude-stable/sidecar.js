@@ -21,6 +21,7 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
+const crypto = require("crypto");
 
 const REPO_ROOT = path.join(__dirname, "..", "..", "..");
 
@@ -98,31 +99,78 @@ async function fetchHistoryRows(timeoutMs) {
 }
 
 function readJson(file, fallback) {
+  let raw;
   try {
-    if (!fs.existsSync(file)) return fallback;
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (_) {
-    return fallback;
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return fallback;
+    throw error;
   }
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch (_) {
+    throw new Error("sidecar-state-invalid-json");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("sidecar-state-invalid-root");
+  }
+  return value;
 }
 
 function writeJsonAtomic(file, payload) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const directory = path.dirname(file);
+  fs.mkdirSync(directory, { recursive: true });
   const tmp = file + "." + process.pid + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf8");
-  fs.renameSync(tmp, file);
+  let fd = null;
+  try {
+    fd = fs.openSync(tmp, "w", 0o600);
+    fs.writeFileSync(fd, JSON.stringify(payload, null, 2), "utf8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(tmp, file);
+    fd = fs.openSync(directory, "r");
+    fs.fsyncSync(fd);
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+    if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+  }
 }
 
 function firstFourDigits(numbers) {
   if (!Array.isArray(numbers) || numbers.length < 4) return null;
   const digits = numbers.slice(0, 4).map((v) => {
-    const n = Number(String(v).trim());
-    return Number.isInteger(n) && n >= 0 && n <= 9 ? n : null;
+    if (typeof v === "number") return Number.isInteger(v) && v >= 0 && v <= 9 ? v : null;
+    return typeof v === "string" && /^[0-9]$/.test(v) ? Number(v) : null;
   });
   return digits.every((d) => d !== null) ? digits : null;
 }
 
-let own = readJson(OWN_STATE, null) || {
+function readOwnState() {
+  const state = readJson(OWN_STATE, null);
+  if (state === null) return null; // A genuinely missing first-run file only.
+  const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const counters = (value) => object(value) &&
+    Number.isSafeInteger(value.total) && value.total >= 0 &&
+    Number.isSafeInteger(value.hit) && value.hit >= 0 && value.hit <= value.total;
+  if (!Array.isArray(state.pending) || !Array.isArray(state.records) ||
+      !counters(state.aggregate) || !object(state.itemAggregate) ||
+      (state.missed != null && !Array.isArray(state.missed)) ||
+      !Object.values(state.itemAggregate).every(counters)) {
+    throw new Error("sidecar-state-invalid-schema");
+  }
+  // These tracks were added after the original ledger. Missing legacy tracks
+  // keep their existing initialization below; a present counter is never reset.
+  for (const key of ["poolStats", "taskStats", "anyTwoStats"]) {
+    if (state[key] != null && !counters(state[key])) {
+      throw new Error("sidecar-state-invalid-counters:" + key);
+    }
+  }
+  return state;
+}
+
+let own = readOwnState() || {
   version: "claude-stable-sidecar-v2",
   createdAt: isoNow(),
   updatedAt: "",
@@ -165,6 +213,61 @@ function updateAggregate() {
     const margin = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n);
     agg.lower = Number((((centre - margin) / denom) * 100).toFixed(2));
   }
+}
+
+// Retain the original judgment inputs; these hashes are local evidence, not an
+// independent timestamp authority. Never synthesize evidence for legacy rows.
+function predictionSource(entry) {
+  const pickItem = (item) => Object.fromEntries(
+    ["kind", "key", "code", "mode", "positions"]
+      .filter((key) => Object.prototype.hasOwnProperty.call(item || {}, key))
+      .map((key) => [key, item[key]])
+  );
+  return {
+    basePeriod: entry.basePeriod,
+    targetPeriod: entry.targetPeriod,
+    generatedAt: entry.generatedAt,
+    snapshot: entry.snapshot ? {
+      basePeriod: entry.snapshot.basePeriod,
+      generatedAt: entry.snapshot.generatedAt,
+      items: (entry.snapshot.items || []).map(pickItem)
+    } : null,
+    pool: entry.pool ? { codes: entry.pool.codes, positions: entry.pool.positions } : null,
+    task4: entry.task4 ? { trio: entry.task4.trio, items: (entry.task4.items || []).map(pickItem) } : null,
+    formalAnyTwo: entry.formalAnyTwo ? pickItem(entry.formalAnyTwo) : null
+  };
+}
+
+function sourceDigest(entry) {
+  return crypto.createHash("sha256").update(JSON.stringify(predictionSource(entry))).digest("hex");
+}
+
+function targetSlot(period) {
+  const match = /^(\d{4})(\d{2})(\d{2})(\d{3})$/.exec(String(period || ""));
+  if (!match) return NaN;
+  const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]), index = Number(match[4]);
+  const midnight = Date.UTC(year, month - 1, day);
+  if (index < 1 || index > 288 || new Date(midnight).toISOString().slice(0, 10) !== `${match[1]}-${match[2]}-${match[3]}`) return NaN;
+  return midnight - 8 * 3600000 + index * 300000;
+}
+
+function sourceEvidenceClass(entry) {
+  const proof = entry.sourceEvidence;
+  if (!proof) return entry.generatedAt ? "legacy-pending-timestamp-only" : "unproven";
+  const generated = Date.parse(entry.generatedAt), sealed = Date.parse(proof.sealedAt);
+  if (proof.version === "sidecar-source-retention-v1" && proof.sourceSha256 === sourceDigest(entry)
+      && Number.isFinite(generated) && generated <= sealed && sealed < targetSlot(entry.targetPeriod)) {
+    return "local-before-slot-retained";
+  }
+  return "unproven";
+}
+
+function deferSettlement(entry, reason) {
+  // Keep the complete prediction across retries/restarts; never substitute a draw.
+  entry.settlementStatus = reason;
+  entry.settlementLastAttemptAt = isoNow();
+  entry.settlementAttempts = Math.min(2147483647, (Number(entry.settlementAttempts) || 0) + 1);
+  return entry;
 }
 
 /** 用实际开奖记录结算一条挂起快照。 */
@@ -247,6 +350,11 @@ function recordOutcome(entry, actualRecord) {
     basePeriod: entry.basePeriod,
     targetPeriod: String(entry.targetPeriod || ""),
     actualNumbers: numbers.slice(0, 5),
+    generatedAt: entry.generatedAt || null,
+    sourcePrediction: predictionSource(entry),
+    sourceEvidence: entry.sourceEvidence || null,
+    evidenceClassification: sourceEvidenceClass(entry),
+    independentExternalTimestamp: false,
     evaluatedAt: isoNow(),
     success,
     passed: judged.filter((r) => r.outcome === true).length,
@@ -278,8 +386,63 @@ function recordOutcome(entry, actualRecord) {
 
 /**
  * 结算所有已到期的挂起快照。目标期==最新期用 latest 直接结算；
- * 目标期更早（漏评）则从历史接口找回；找不到的挪进 missed 审计列表。
+ * 目标期更早（漏评）则从历史接口找回；暂时找不到则保留原预测并重试。
  */
+
+// A maximum of one near-window request plus one recovery page per tick. The
+// overlap tolerates new draws shifting OFFSET while this cursor is persisted.
+async function fetchSettlementRows(targets) {
+  const recovery = own.settlementRecovery || {};
+  const priorOffset = Number.isSafeInteger(recovery.nextOffset) && recovery.nextOffset >= 40
+    ? recovery.nextOffset : 40;
+  const readRows = (payload) => {
+    const rows = Array.isArray(payload) ? payload : payload && (payload.history || payload.rows);
+    if (!Array.isArray(rows)) throw new Error("invalid-settlement-history");
+    return rows;
+  };
+  const urlAt = (limit, offset) => {
+    const url = new URL(SETTLE_HISTORY_URL);
+    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("offset", String(offset));
+    return url.toString();
+  };
+  const hasActual = (rows, target) => rows.some((row) => row && String(row.period || "") === target && firstFourDigits(row.numbers));
+  let rows = [];
+  try {
+    rows = readRows(await httpGetJson(urlAt(60, 0), 10000));
+  } catch (_) {
+    log("settle near-window history unavailable");
+  }
+  const unresolved = targets.filter((target) => !hasActual(rows, target));
+  if (!unresolved.length) {
+    own.settlementRecovery = { version: "bounded-history-v1", nextOffset: 40, lastResult: "resolved-near-window" };
+    return rows;
+  }
+  try {
+    const page = readRows(await httpGetJson(urlAt(200, priorOffset), 10000));
+    rows = rows.concat(page);
+    const oldestTarget = unresolved.slice().sort()[0];
+    const periods = page.map((row) => row && String(row.period || ""))
+      .filter((period) => Number.isFinite(targetSlot(period))).sort();
+    const resolved = unresolved.every((target) => hasActual(rows, target));
+    const exhausted = page.length < 200 || (periods.length && periods[0] < oldestTarget);
+    own.settlementRecovery = {
+      version: "bounded-history-v1",
+      nextOffset: resolved || exhausted ? 40 : priorOffset + 180,
+      lastPageOffset: priorOffset,
+      lastAttemptAt: isoNow(),
+      lastResult: resolved ? "resolved-recovery-page" : exhausted ? "end-of-window-unresolved" : "continue-next-tick"
+    };
+  } catch (_) {
+    own.settlementRecovery = {
+      version: "bounded-history-v1", nextOffset: priorOffset,
+      lastPageOffset: priorOffset, lastAttemptAt: isoNow(), lastResult: "page-unavailable"
+    };
+    log("settle recovery page unavailable; cursor retained");
+  }
+  return rows;
+}
+
 async function settlePending(latest) {
   if (!own.pending.length) return;
   const latestPeriod = String(latest.period || "");
@@ -295,20 +458,20 @@ async function settlePending(latest) {
       actual = latest;
     } else {
       if (historyRows === null) {
-        try {
-          const payload = await httpGetJson(SETTLE_HISTORY_URL, 10000);
-          historyRows = Array.isArray(payload) ? payload : (payload.history || payload.rows || []);
-        } catch (err) {
-          log("settle history fetch failed: " + err.message);
-          historyRows = [];
-        }
+        const overdueTargets = own.pending.map((pending) => String(pending.targetPeriod || ""))
+          .filter((period) => period && period < latestPeriod);
+        historyRows = await fetchSettlementRows(overdueTargets);
       }
       actual = historyRows.find((r) => String(r.period || "") === target) || null;
     }
     if (!actual) {
-      log("target " + target + " passed but draw not found; moved to missed");
-      own.missed.unshift({ basePeriod: entry.basePeriod, targetPeriod: target, generatedAt: entry.generatedAt, missedAt: isoNow() });
-      own.missed = own.missed.slice(0, 50);
+      log("target " + target + " passed but draw unavailable; original prediction retained for retry");
+      still.push(deferSettlement(entry, "awaiting-draw-data"));
+      changed = true;
+      continue;
+    }
+    if (!firstFourDigits(actual.numbers)) {
+      still.push(deferSettlement(entry, "invalid-draw-data"));
       changed = true;
       continue;
     }
@@ -324,6 +487,7 @@ async function settlePending(latest) {
       };
     }
     if (recordOutcome(entry, actual)) changed = true;
+    else { still.push(deferSettlement(entry, "unsettled-invalid-input")); changed = true; }
   }
   own.pending = still;
   if (lastSettledHold && !own.pending.length) {
@@ -444,7 +608,7 @@ async function computeForCurrentPrediction(latestPeriod) {
   } catch (err) {
     log("task/anyTwo build failed: " + err.message);
   }
-  own.pending.push({
+  const entry = {
     basePeriod,
     targetPeriod,
     generatedAt: isoNow(),
@@ -452,7 +616,14 @@ async function computeForCurrentPrediction(latestPeriod) {
     pool: null,
     task4,
     formalAnyTwo
-  });
+  };
+  entry.sourceEvidence = {
+    version: "sidecar-source-retention-v1",
+    sealedAt: isoNow(),
+    sourceSha256: sourceDigest(entry),
+    independentExternalTimestamp: false
+  };
+  own.pending.push(entry);
   // 新四项已就绪，清掉空窗占位
   if (own.displayHold) own.displayHold = null;
   saveOwn();
@@ -503,7 +674,7 @@ async function tick() {
         if (waited > 0) await sleep(step);
         mainNeedsRetry = true;
         await computeForCurrentPrediction(lastSeenPeriod);
-        if (own.pending.length) break;
+        if (own.pending.some((entry) => String(entry.basePeriod) === period && String(entry.targetPeriod) > period)) break;
       }
     } else if (own.pending.some((p) => String(p.targetPeriod || "") <= period)) {
       // 轮询间隙的补结算（重启找回等场景）
@@ -513,7 +684,6 @@ async function tick() {
     } else {
       await computeForCurrentPrediction(lastSeenPeriod);
     }
-    await backfillFormalAnyTwoOnPending();
   } catch (err) {
     log("tick error: " + (err && err.stack || err));
   } finally {
@@ -521,27 +691,7 @@ async function tick() {
   }
 }
 
-/** 已挂起但缺正式二数合的快照就地补齐（方案 B 上线后的一期过渡）。 */
-async function backfillFormalAnyTwoOnPending() {
-  const need = (own.pending || []).filter((p) => p && !p.formalAnyTwo);
-  if (!need.length) return;
-  const historyRows = await fetchHistoryRows(25000);
-  if (!historyRows.length) return;
-  let changed = false;
-  for (const entry of need) {
-    try {
-      const trio = (entry.task4 && entry.task4.trio) || [0, 1, 2];
-      const built = engine.buildFormalAnyTwo(historyRows, trio, entry.targetPeriod || entry.basePeriod);
-      if (!built) continue;
-      entry.formalAnyTwo = built;
-      changed = true;
-      log("backfilled formalAnyTwo for target=" + entry.targetPeriod + " code=" + built.code);
-    } catch (err) {
-      log("anyTwo backfill failed: " + err.message);
-    }
-  }
-  if (changed) saveOwn();
-}
+// Prediction fields are generated exactly once; never backfill a sealed or overdue source.
 
 function renderPage() {
   const agg = own.aggregate || {};
@@ -675,6 +825,7 @@ tr.ok .badge{color:#68d391}tr.bad .badge{color:#fc8181}
 @media(max-width:800px){.grid{grid-template-columns:1fr}}
 </style></head><body>
 <h1>Claude稳杀 <span style="color:#fbbf24">只投票 · 定位杀+合尾</span></h1>
+<div class="sub">本地来源证据只从本次修复后的新预测开始保留，不是独立时间戳证明。旧记录缺少原预测证据；旧漏评 ${esc((own.missed || []).length)} 期缺少完整原预测，无法补造核验。</div>
 <div class="sub">【新模型·与原Claude分开】每30秒刷新 · 更新于 ${esc(own.updatedAt || "-")} · 仅定位杀+合尾 · 更高门槛</div>
 <div class="stats">
 <div class="stat task"><b>${ts.total ? esc(ts.hit) + "/" + esc(ts.total) : "-"}</b><span>四项任务过关 / 已验证</span></div>
@@ -802,7 +953,7 @@ function startWebServer() {
     res.end(renderPage());
   });
   server.on("error", (err) => log("web server error: " + err.message));
-  server.listen(WEB_PORT, "0.0.0.0", () => log("web ui listening on :" + WEB_PORT));
+  server.listen(WEB_PORT, "127.0.0.1", () => log("web ui listening on :" + WEB_PORT));
 }
 
 async function main() {

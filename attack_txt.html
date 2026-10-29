@@ -128,8 +128,8 @@
 
       <div class="status" id="status">粘贴攻击语后点「四定生成并回删」。</div>
       <div class="verify" id="statsBox" style="margin-bottom:10px;border-color:#0ea5e9;background:rgba(14,165,233,.12);color:#bae6fd;">
-        <div style="font-size:12px;font-weight:900;letter-spacing:.04em;margin-bottom:6px;color:#7dd3fc;">跨期统计器</div>
-        <div id="statsStatus">生成并回删后开始累计；开奖后点「刷新开奖核对」会记账（今日最高连中/连败、命中率）。</div>
+        <div style="font-size:12px;font-weight:900;letter-spacing:.04em;margin-bottom:6px;color:#7dd3fc;">今日统计器 · 北京时间05:00清零</div>
+        <div id="statsStatus">本周期暂无已验证统计；待核验粘码与历史档案保留。</div>
       </div>
       <div class="verify" id="verifyBox">
         <div class="row">
@@ -168,7 +168,7 @@
               <label for="throwUrl1" style="margin:0 0 6px;">网址</label>
               <input id="throwUrl1" type="url" placeholder="转发目标网址" autocomplete="off" style="width:100%;border:1px solid #475569;border-radius:10px;background:#0b1220;color:var(--ink);padding:10px 12px;font-size:13px;font-weight:700;">
             </div>
-            <button type="button" class="secondary" id="btnThrowUrlSave">保存金额+网址到服务</button>
+            <button type="button" class="secondary" id="btnThrowUrlSave" disabled>保存金额+网址到服务</button>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
             <div>
@@ -180,15 +180,15 @@
               <input id="throwPageTo" type="number" min="1" step="1" value="" placeholder="回删后自动填" style="width:100%;border:1px solid #475569;border-radius:10px;background:#0b1220;color:var(--ink);padding:10px 12px;font-size:15px;font-weight:800;">
             </div>
           </div>
-          <button type="button" class="orange" id="btnThrowBatchStart">服务端分批真发</button>
+          <button type="button" class="orange" id="btnThrowBatchStart" disabled>服务端分批真发</button>
           <button type="button" class="orange" id="btnThrowBatchContinue" disabled style="background:#c2410c;">继续发失败页</button>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-            <button type="button" class="green" id="btnThrowBatchNext">刷新任务状态</button>
+            <button type="button" class="green" id="btnThrowBatchNext" disabled>刷新任务状态</button>
             <button type="button" class="secondary" id="btnThrowBatchStop" disabled>停止</button>
           </div>
           <button type="button" class="secondary" id="btnThrowBatchReset" style="background:#0f172a;border-color:#0f172a;color:#fff;">复位转发</button>
         </div>
-        <div class="hint" id="throwBatchHint" style="margin-top:8px;">回删出页后：填金额与网址 → 保存 → 点「服务端分批真发」。最多 350 组/页。某页出错立刻退出并显示；再点「继续发失败页」补发。间隔 1.0 秒/页。</div>
+        <div class="hint" id="throwBatchHint" style="margin-top:8px;">转发服务未启用；本地转换、复制和下载仍可使用。失败页重发暂不可用。</div>
         <div id="throwAlertPages" style="display:none;margin-top:6px;color:#fdba74;font-weight:900;font-size:14px;border:1px solid #ea580c;border-radius:8px;padding:8px;background:#431407;"></div>
         <div id="throwFailPages" style="display:none;margin-top:6px;color:#fecaca;font-weight:900;font-size:14px;"></div>
       </div>
@@ -201,6 +201,8 @@
   <script src="/txt_attack_convert.js?v=20260803-four-verify-ui-v1"></script>
   <script>
 (function(){
+  // The current server does not expose a forwarding endpoint.
+  var FOUR_THROW_SERVICE_ENABLED=false;
   var PAGE_SIZE_DEFAULT=250;
   var FOUR_BACKDELETE_PAGE_SIZE=350;
   var FOUR_BACKDELETE_HISTORY_MIN=100;
@@ -289,7 +291,13 @@
     if(throwAmountInput&&cfg.amount!=null)throwAmountInput.value=String(cfg.amount||"");
     if(throwUrl1)throwUrl1.value=String(urls["1"]||"");
   }
+  function throwServiceAvailable(){
+    if(FOUR_THROW_SERVICE_ENABLED)return true;
+    setThrowStatus("转发服务未启用；本地转换、复制和下载仍可使用。","err");
+    return false;
+  }
   function loadThrowUrls(){
+    if(!FOUR_THROW_SERVICE_ENABLED)return Promise.resolve(null);
     return fetch("/four-throw-config",{credentials:"same-origin",cache:"no-store"}).then(function(res){
       if(!res.ok)throw new Error("HTTP "+res.status);
       return res.json();
@@ -319,6 +327,7 @@
     });
   }
   function saveThrowUrls(){
+    if(!throwServiceAvailable())return;
     var cfg=readThrowConfig();
     if(cfg.amount&&!/^\d+(\.\d+)?$/.test(cfg.amount)){
       setThrowStatus("金额只能是数字，例如 0.5。","err");
@@ -397,9 +406,7 @@
       if(next.length)FOUR_HISTORY_PRESETS=next.sort(function(a,b){return a-b;});
     }
     if(cfg.historyLimit!=null)saveFourHistoryLimit(cfg.historyLimit,{skipServer:true});
-    if(cfg.rates&&cfg.rates.ok&&cfg.rates.byLimit){
-      window.__penta5FourServerRates=cfg.rates;
-    }
+    window.__penta5FourServerRates=fourRatesBusinessDay(cfg.rates)===fourBusinessDay()?cfg.rates:null;
     window.__penta5FourBackdeleteServerConfig=cfg;
     renderFourStats();
   }
@@ -746,13 +753,47 @@
     var value=parseInt(bitmap.slice(byteIndex*2,byteIndex*2+2),16)||0;
     return (value&(1<<(n%8)))!==0;
   }
+  // Business dates are always Beijing 05:00, independent of the browser timezone.
+  function fourBusinessDay(now){
+    var ms=now==null?Date.now():Number(now);
+    return Number.isFinite(ms)?new Date(ms+3*3600000).toISOString().slice(0,10):"";
+  }
   function fourDayKey(value){
     var text=String(value==null?"":value).trim();
-    var m=text.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
-    if(m)return m[1]+"-"+String(m[2]).padStart(2,"0")+"-"+String(m[3]).padStart(2,"0");
-    m=text.match(/^(\d{4})(\d{2})(\d{2})/);
-    if(m)return m[1]+"-"+m[2]+"-"+m[3];
-    return "";
+    var m=text.match(/^(\d{4})(\d{2})(\d{2})(\d{3})$/);
+    if(m){
+      var seq=Number(m[4]),dateMs=Date.UTC(Number(m[1]),Number(m[2])-1,Number(m[3]));
+      if(seq<1||seq>288||new Date(dateMs).toISOString().slice(0,10)!==m[1]+"-"+m[2]+"-"+m[3])return "";
+      return fourBusinessDay(dateMs-8*3600000+seq*5*60000);
+    }
+    // Bare dates carry no draw time, so cannot establish the 05:00 accounting day.
+    if(!/[T ]\d{2}:\d{2}/.test(text))return "";
+    var stamp=text.replace(/\//g,"-").replace(" ","T");
+    if(!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(stamp))stamp+="+08:00";
+    return fourBusinessDay(Date.parse(stamp));
+  }
+  function fourRatesBusinessDay(rates){
+    if(!rates||rates.ok!==true||!rates.byLimit||Number(rates.dayResetHour)!==5)return "";
+    if(rates.timezone&&rates.timezone!=="Asia/Shanghai"&&rates.timezone!=="+08:00")return "";
+    var fields=[rates.dayScope,rates.businessDay,rates.biz_date,rates.businessDate].filter(function(x){return x!=null&&x!=="";});
+    if(!fields.length||!fields.every(function(x){return /^\d{4}-\d{2}-\d{2}$/.test(String(x))&&String(x)===String(fields[0]);}))return "";
+    return String(fields[0]);
+  }
+  function fourCurrentServerRates(){
+    var rates=window.__penta5FourServerRates;
+    if(fourRatesBusinessDay(rates)!==fourBusinessDay()){
+      window.__penta5FourServerRates=null;
+      return null;
+    }
+    return rates;
+  }
+  var fourStatsDisplayedDay="";
+  function checkFourStatsDay(){
+    var day=fourBusinessDay();
+    if(fourStatsDisplayedDay!==day){
+      fourCurrentServerRates();
+      renderFourStats();
+    }
   }
   function loadFourStats(){
     try{
@@ -883,24 +924,27 @@
   function renderFourStats(latest){
     var el=document.getElementById("statsStatus");
     if(!el)return;
+    var day=fourBusinessDay();
+    fourStatsDisplayedDay=day;
+    el.setAttribute("data-stats-business-date",day);
     var sticky=loadFourSticky();
     var hist=sticky&&sticky.historyLimit!=null?sticky.historyLimit:getFourHistoryLimit();
-    var serverRates=window.__penta5FourServerRates&&window.__penta5FourServerRates.byLimit
-      ?window.__penta5FourServerRates.byLimit
-      :null;
+    var rates=fourCurrentServerRates();
+    var serverRates=rates?rates.byLimit:null;
     var cards=FOUR_HISTORY_PRESETS.map(function(limit){
       var row=serverRates?(serverRates[limit]||serverRates[String(limit)]):null;
+      var total=row&&row.total,hit=row&&row.hit;
+      var valid=row&&Number.isSafeInteger(total)&&total>0&&Number.isSafeInteger(hit)&&hit>=0&&hit<=total;
       var on=getFourHistoryLimit()===limit;
-      var pct=row&&row.total?(escHtml(row.rate)+"%"):"--%";
-      return '<button type="button" data-four-history-preset="'+escHtml(limit)+'" title="'+(row&&row.total?(row.hit+"/"+row.total+" · 服务端"):"等待服务端")+'" style="border:1px solid '+(on?"#38bdf8":"#334155")+';border-radius:999px;padding:7px 12px;background:'+(on?"rgba(14,165,233,.25)":"#0b1220")+';color:'+(on?"#e0f2fe":"#cbd5e1")+';font-weight:900;cursor:pointer;font-size:13px;">'
+      var pct=valid?((hit*100/total).toFixed(2)+"% 本期日账"):"暂无今日已验证数据";
+      return '<button type="button" data-four-history-preset="'+escHtml(limit)+'" title="'+(valid?(hit+"/"+total+" · 北京时间05:00起已验证实绩"):"等待本周期开奖后核验")+'" style="border:1px solid '+(on?"#38bdf8":"#334155")+';border-radius:999px;padding:7px 12px;background:'+(on?"rgba(14,165,233,.25)":"#0b1220")+';color:'+(on?"#e0f2fe":"#cbd5e1")+';font-weight:900;cursor:pointer;font-size:13px;max-width:100%;white-space:normal;overflow-wrap:anywhere;">'
         +'回删'+escHtml(limit)+' <b style="font-size:15px;">'+pct+'</b>'
         +'</button>';
     }).join("");
-    el.innerHTML="四档命中率（服务端同步）｜当前回删 <b>"+escHtml(hist)+"</b>"
-      +(window.__penta5FourServerRates&&window.__penta5FourServerRates.latestPeriod
-        ?("｜基准期 <b>"+escHtml(window.__penta5FourServerRates.latestPeriod)+"</b>")
-        :"")
+    el.innerHTML="今日四档命中率｜业务日 <b>"+escHtml(day)+"</b>（北京时间05:00起）｜当前回删 <b>"+escHtml(hist)+"</b>"
+      +(rates&&rates.latestPeriod?("｜基准期 <b>"+escHtml(rates.latestPeriod)+"</b>"):"")
       +(sticky&&Array.isArray(sticky.codes)&&sticky.codes.length?("｜粘码剩 <b>"+escHtml(sticky.left!=null?sticky.left:sticky.codes.length)+"</b> 组"):"")
+      +(!rates?'<div style="margin-top:6px">北京时间05:00已清零，等待服务端提供本周期已验证统计。待核验粘码与历史档案保留。</div>':"")
       +'<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">'+cards+'</div>';
   }
   function fetchLatestDraw(){
@@ -1154,7 +1198,7 @@
       var pages=syncThrowPageRange(stickyResult,true);
       setStatus("已从本地粘码恢复回删剩码 "+stickyResult.count+" 组（开奖核对/累计保留）。共 "+pages+" 页，到页已自动填。可直接服务端分批真发。","ok");
     }else{
-      setStatus("粘贴四定攻击语后点「四定生成并回删」（回删期数可填 100–5000，RDS 真扫，剩多少就是多少，禁止截断造假）。回删完按页复制；上方有跨期统计器 + 开奖核对。");
+      setStatus("粘贴四定攻击语后点「四定生成并回删」（回删期数可填 100–5000，RDS 真扫，剩多少就是多少，禁止截断造假）。回删完按页复制；上方有今日统计器 · 北京时间05:00清零 + 开奖核对。");
     }
     refreshFourVerify();
     startFourVerifyPolling();
@@ -1426,16 +1470,16 @@
   function syncThrowBatchButtons(){
     var busy=!!throwBatch.active;
     var hasFail=Array.isArray(throwBatch.lastFailedPages)&&throwBatch.lastFailedPages.length>0;
-    if(btnThrowBatchStart)btnThrowBatchStart.disabled=busy;
-    if(btnThrowBatchContinue)btnThrowBatchContinue.disabled=busy||!hasFail;
-    if(btnThrowBatchNext)btnThrowBatchNext.disabled=false;
-    if(btnThrowBatchStop)btnThrowBatchStop.disabled=!busy;
+    if(btnThrowBatchStart)btnThrowBatchStart.disabled=!FOUR_THROW_SERVICE_ENABLED||busy;
+    if(btnThrowBatchContinue)btnThrowBatchContinue.disabled=true;
+    if(btnThrowBatchNext)btnThrowBatchNext.disabled=!FOUR_THROW_SERVICE_ENABLED;
+    if(btnThrowBatchStop)btnThrowBatchStop.disabled=!FOUR_THROW_SERVICE_ENABLED||!busy;
     if(btnThrowBatchReset)btnThrowBatchReset.disabled=false;
-    if(throwAmountInput)throwAmountInput.disabled=busy;
-    if(throwPageFrom)throwPageFrom.disabled=busy;
-    if(throwPageTo)throwPageTo.disabled=busy;
-    if(throwUrl1)throwUrl1.disabled=busy;
-    if(btnThrowUrlSave)btnThrowUrlSave.disabled=busy;
+    if(throwAmountInput)throwAmountInput.disabled=!FOUR_THROW_SERVICE_ENABLED||busy;
+    if(throwPageFrom)throwPageFrom.disabled=!FOUR_THROW_SERVICE_ENABLED||busy;
+    if(throwPageTo)throwPageTo.disabled=!FOUR_THROW_SERVICE_ENABLED||busy;
+    if(throwUrl1)throwUrl1.disabled=!FOUR_THROW_SERVICE_ENABLED||busy;
+    if(btnThrowUrlSave)btnThrowUrlSave.disabled=!FOUR_THROW_SERVICE_ENABLED||busy;
   }
   function stopThrowPoll(){
     if(throwBatch.pollTimer){
@@ -1498,6 +1542,7 @@
     return plan;
   }
   function pollThrowStatus(){
+    if(!throwServiceAvailable())return;
     var q=throwBatch.jobId?("?jobId="+encodeURIComponent(throwBatch.jobId)):"";
     fetch("/four-throw-status"+q,{credentials:"same-origin",cache:"no-store"}).then(function(res){return res.json();}).then(function(j){
       if(!j||j.ok===false){
@@ -1527,6 +1572,7 @@
     });
   }
   function startThrowBatch(){
+    if(!throwServiceAvailable())return;
     try{
       if(throwBatch.active){setThrowStatus("分批扔进行中，先点停止。","err");return;}
       var cfg=readThrowConfig();
@@ -1582,58 +1628,10 @@
     pollThrowStatus();
   }
   function continueThrowFailedPages(){
-    try{
-      if(throwBatch.active){setThrowStatus("分批扔进行中，先点停止。","err");return;}
-      var failed=throwBatch.lastFailedPages||[];
-      if(!failed.length){
-        setThrowStatus("没有失败页可继续发。先跑一轮「服务端分批真发」。","err");
-        return;
-      }
-      var cfg=readThrowConfig();
-      var amount=cfg.amount;
-      if(!amount)throw new Error("请先输入金额（服务不脑补金额）。");
-      if(!/^\d+(\.\d+)?$/.test(amount))throw new Error("金额只能是数字，例如 1 或 0.2。");
-      var minP=Math.min.apply(null, failed);
-      var maxP=Math.max.apply(null, failed);
-      var full=buildThrowPagePlan(minP, maxP);
-      var want={};
-      for(var i=0;i<failed.length;i++)want[String(failed[i])]=true;
-      var plan=full.filter(function(p){return want[String(p.index)];});
-      if(!plan.length)throw new Error("失败页已不在当前回删结果里，请重新回删后再发。");
-      var slot=String(cfg.active||"1");
-      var url=String((cfg.urls&&cfg.urls[slot])||"").trim();
-      if(!url)throw new Error("网址为空：先填网址并保存。");
-      throwBatch.active=true;
-      syncThrowBatchButtons();
-      setThrowStatus("继续发失败页：第 "+plan.map(function(p){return p.index;}).join("、")+" 页…");
-      fetch("/four-throw-send",{
-        method:"POST",
-        credentials:"same-origin",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          slot:slot,
-          amount:amount,
-          pageFrom:plan[0].index,
-          pageTo:plan[plan.length-1].index,
-          pages:plan,
-          config:cfg
-        })
-      }).then(function(res){return res.json().then(function(j){return {res:res,j:j};});}).then(function(pack){
-        if(!pack.res.ok||!pack.j||pack.j.ok===false)throw new Error((pack.j&&pack.j.error)||("HTTP "+pack.res.status));
-        throwBatch.jobId=String(pack.j.jobId||"");
-        throwBatch.lastFailedPages=[];
-        setThrowStatus("已接单继续发 job="+throwBatch.jobId+"，只发上次失败页…","ok");
-        stopThrowPoll();
-        throwBatch.pollTimer=setInterval(pollThrowStatus,2000);
-        pollThrowStatus();
-      }).catch(function(err){
-        stopThrowBatch("继续发提交失败："+String(err&&err.message||err),"err");
-      });
-    }catch(err){
-      stopThrowBatch(String(err&&err.message||err),"err");
-    }
+    setThrowStatus("失败页重发暂不可用，请先核对原任务结果；本地转换、复制和下载仍可使用。","err");
   }
   function requestThrowStop(){
+    if(!throwServiceAvailable())return;
     var body={jobId:throwBatch.jobId||""};
     fetch("/four-throw-stop",{
       method:"POST",
@@ -2010,6 +2008,10 @@
   if(btnRestoreFourSticky)btnRestoreFourSticky.addEventListener("click",restoreFourStickyUi);
   if(btnCopyPage)btnCopyPage.addEventListener("click",doCopyPage);
   syncFourHistoryLimitInput();
+  renderFourStats();
+  setInterval(checkFourStatsDay,1000);
+  window.addEventListener("pageshow",checkFourStatsDay);
+  document.addEventListener("visibilitychange",checkFourStatsDay);
   loadFourBackdeleteConfigServer(false);
   if(btnRefreshVerify)btnRefreshVerify.addEventListener("click",function(){
     if(verifyStatusEl)verifyStatusEl.textContent="开奖核对：刷新中…";
@@ -2028,7 +2030,7 @@
   if(btnThrowBatchNext)btnThrowBatchNext.addEventListener("click",continueThrowBatch);
   if(btnThrowBatchStop)btnThrowBatchStop.addEventListener("click",requestThrowStop);
   if(btnThrowBatchReset)btnThrowBatchReset.addEventListener("click",function(){
-    resetThrowBatchUi("转发按键已复位：已解除等待/禁用，可重新分批真发。","ok");
+    resetThrowBatchUi("转发面板已复位；转发服务未启用，本地转换、复制和下载仍可使用。","ok");
   });
   if(btnThrowUrlSave)btnThrowUrlSave.addEventListener("click",saveThrowUrls);
   syncThrowBatchButtons();

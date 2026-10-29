@@ -67,3 +67,10 @@ penta5-l1-真实性核验.tar.gz
 .DS_Store
 /000
 /200
+
+# ---- 2026-10-30 整改:含密钥的脚本与运行时临时文件 ----
+app_secrets.py
+set_new_key.py
+scripts/rotate_deepseek_key.py
+*.lock
+tmp*
