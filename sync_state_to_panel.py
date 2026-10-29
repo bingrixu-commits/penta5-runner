@@ -5,6 +5,15 @@ from zoneinfo import ZoneInfo
 import subprocess
 import time
 import fcntl
+import signal
+
+# logrotate 每小时执行 pm2 reloadLogs,pm2 会对每个托管进程发 SIGUSR2。
+# Python 默认动作是终止,会导致本进程被杀、正在跑的 run_stats.py 子进程
+# 被连带 SIGKILL(历史上每小时一次,累计 3688 次重启)。此处忽略该信号。
+for _signal_name in ('SIGUSR2',):
+    _signal = getattr(signal, _signal_name, None)
+    if _signal is not None:
+        signal.signal(_signal, lambda *arguments: None)
 
 STATE_PATH = Path('/root/penta5-runner/data/state.json')
 # 2026-10-30: 完整刷新在 10-28 已达 148s,贴近旧上限 150s 后持续超时;
