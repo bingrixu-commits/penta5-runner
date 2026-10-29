@@ -3,4 +3,4 @@
 # URL 读 four_throw_urls.json（三个格式，默认留空）
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
-exec python3 "$DIR/four_throw_robot.py" "$@"
+exec python3 "$DIR/lib/four_throw_robot.py" "$@"

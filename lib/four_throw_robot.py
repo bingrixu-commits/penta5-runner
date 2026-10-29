@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_URLS = ROOT / "four_throw_urls.json"
 PAGE_SIZE = 350
 
