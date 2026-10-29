@@ -9,7 +9,9 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 import fcntl
+import hashlib
 import json
+import os
 
 from ai_verified_stats import atomic_json, next_period, publication_evidence_error
 from selected_six_contract import (BASE_METRIC_KEYS, METRIC_KEYS, REVISION as RULE_REVISION,
@@ -309,6 +311,54 @@ def refresh_selected_stats(snapshot=None, root=ROOT):
     now = _current(snapshot['now'])
     path = root / 'data/selected_six_hit_stats.json'
     path.parent.mkdir(parents=True, exist_ok=True)
+    # --- 2026-10-30 performance: reuse the previous summary while no input changed.
+    # Rationale: one refresh re-reads a 279MB seal ledger plus a 142MB hit ledger
+    # and revalidates every historical proof, costing minutes per cycle and
+    # starving the 600s pipeline budget. Disable with PENTA5_SELECTED_STATS_CACHE=0.
+    stamp_path = root / 'data/selected_six_refresh.stamp.json'
+    inputs = {}
+    for name, target_path in (('seals', root / 'data/selected_six_seals.json'),
+                              ('ledger', path)):
+        try:
+            info = target_path.stat()
+            inputs[name] = [info.st_mtime_ns, info.st_size]
+        except OSError:
+            inputs[name] = None
+    try:
+        inputs['records'] = hashlib.sha256(
+            json.dumps(snapshot.get('records'), sort_keys=True, default=str).encode('utf-8')).hexdigest()
+    except (TypeError, ValueError):
+        inputs['records'] = None
+    try:
+        inputs['conflicting'] = hashlib.sha256(
+            json.dumps(snapshot.get('conflicting_periods', ()), sort_keys=True, default=str).encode('utf-8')).hexdigest()
+    except (TypeError, ValueError):
+        inputs['conflicting'] = None
+    try:
+        code_mtime = Path(__file__).stat().st_mtime_ns
+    except OSError:
+        code_mtime = None
+    stamp = {'inputs': inputs, 'rule_revision': RULE_REVISION, 'code_mtime': code_mtime,
+             'biz_date': business_start(now).strftime('%Y-%m-%d')}
+    if os.environ.get('PENTA5_SELECTED_STATS_CACHE', '1') != '0':
+        try:
+            cached_stamp = json.loads(stamp_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            cached_stamp = None
+        if cached_stamp == stamp:
+            try:
+                cached_summary = json.loads(
+                    (root / 'data/selected_six_stats.json').read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                cached_summary = None
+            if (isinstance(cached_summary, dict)
+                    and cached_summary.get('stats_error') is not True
+                    and cached_summary.get('biz_date') == stamp['biz_date']
+                    and cached_summary.get('pending_count') == 0):
+                cumulative = cached_summary.get('cumulative')
+                if isinstance(cumulative, dict):
+                    cumulative['as_of'] = now.isoformat()
+                return cached_summary
     with Path(str(path) + '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
@@ -332,6 +382,10 @@ def refresh_selected_stats(snapshot=None, root=ROOT):
         if ledger != previous:
             atomic_json(path, ledger)
         atomic_json(root / 'data/selected_six_stats.json', summary)
+        try:
+            atomic_json(stamp_path, stamp)
+        except (OSError, ValueError):
+            pass
         return summary
 
 
