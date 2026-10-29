@@ -11,6 +11,7 @@ module.exports = {
       interpreter: "node",
       node_args: "--max-old-space-size=2048",
       time: true,
+      max_memory_restart: "1800M",
       autorestart: true,
       max_restarts: 20,
       env: {
