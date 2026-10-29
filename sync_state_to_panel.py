@@ -7,7 +7,9 @@ import time
 import fcntl
 
 STATE_PATH = Path('/root/penta5-runner/data/state.json')
-REFRESH_TIMEOUT_SECONDS = 150
+# 2026-10-30: 完整刷新在 10-28 已达 148s,贴近旧上限 150s 后持续超时;
+# 数据体量(seals 90MB / selected_six 279MB)只增不减,放宽到 600s。
+REFRESH_TIMEOUT_SECONDS = 600
 
 
 def refresh_log(status, started, *, returncode=None):
