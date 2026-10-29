@@ -17,7 +17,7 @@ _POSITIONS = ('q', 'b', 's', 'g')
 _TAILS = ('all', 'qbs', 'qbg', 'qsg', 'bsg')
 _CURRENT_REVISIONS = {
     'selected': 'selected-seven-v6-three-positions',
-    'six': 'selected-six-independent-v3-minimax-reverse',
+    'six': 'selected-six-independent-v4-minimax-forms',
 }
 
 
@@ -64,7 +64,7 @@ _UNIVERSE = _universe()
 
 
 @lru_cache(maxsize=128)
-def _build_cached(model, revision, positions, tails, he2_keep, he3_keep):
+def _build_cached(model, revision, positions, tails, he2_keep, he3_keep, patterns=()):
     # Parameters are already validated and normalized once by the exact formal
     # contract. Keeping reason outside the key makes an editorial change inert.
     he2_mask = sum(1 << int(value) for value in he2_keep)
@@ -86,6 +86,9 @@ def _build_cached(model, revision, positions, tails, he2_keep, he3_keep):
             continue
         if any(tail_values[index] == kill for index, kill in tails):
             continue
+        if patterns and (''.join('双' if digit % 2 == 0 else '单' for digit in digits) in patterns
+                         or ''.join('大' if digit >= 5 else '小' for digit in digits) in patterns):
+            continue
         if pair_mask & he2_mask and triple_mask & he3_mask:
             mask[code] = 1
     mask = bytes(mask)
@@ -103,16 +106,18 @@ def build_coverage(model, response, revision):
             or not isinstance(revision, str) or revision != _CURRENT_REVISIONS[model]):
         raise ValueError('unsupported-framework-coverage-model-or-revision')
     normalized = _CONTRACTS[model].validate_response(response, revision=revision)
+    patterns = ()
     if model == 'six' and revision == _CURRENT_REVISIONS['six']:
-        positions = tuple((_POSITIONS.index(key), six_contract.reverse_keep_digits(kill))
+        positions = tuple((_POSITIONS.index(key), kill)
                           for key, kill in normalized['selected_positions'].items())
+        patterns = (normalized['reverse_parity'], normalized['reverse_size'])
     else:
         positions = tuple((_POSITIONS.index(key), kill)
                           for key, kill in normalized['selected_positions'].items())
     tails = tuple((_TAILS.index(key), kill)
                   for key, kill in normalized['selected_tails'].items())
     return _build_cached(model, revision, positions, tails,
-                         normalized['he2_keep'], normalized['he3_keep'])
+                         normalized['he2_keep'], normalized['he3_keep'], patterns)
 
 
 def analyze_coverage(model, response, revision):

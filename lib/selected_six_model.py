@@ -30,12 +30,16 @@ OPERATION_RESERVE_SECONDS = 90
 PUBLICATION_RESERVE_SECONDS = 10
 PRO_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?pro(?:-[0-9]{4})?')
 RETRY_INSTRUCTION = (
-    '上次响应未通过校验。只返回完整JSON对象，恰好含selected_positions、selected_tails、he2_keep、he3_keep、reason。'
+    '上次响应未通过校验。只返回完整JSON对象，恰好含selected_positions、selected_tails、he2_keep、'
+    'he3_keep、reverse_parity、reverse_size、reason。'
     'selected_positions从q/b/s/g恰好选两个不同键，每个值为一个0至9整数；'
     'selected_tails从all/qbs/qbg/qsg/bsg恰好选两个不同键，每个值为一个0至9整数。'
     'he2_keep恰好4个不重复ASCII数字且仅从02468选择；he3_keep恰好5个不重复ASCII数字，'
     '且必须2奇3偶或3奇2偶（5奇0偶、4奇1偶、1奇4偶、0奇5偶均不合格）。'
-    '没有extra_exclusion第七项；reason为简短字符串。禁止布尔、小数、默认补位、重复键、额外字段和分析过程。')
+    'reverse_parity为恰好4个单/双字符、reverse_size为恰好4个大/小字符；'
+    '两个已选定位对应字符必须等于排除码形态的反面（百排9→百位=双/小；个排6→个位=单/小），'
+    '其余位置在给定形态分数表中按同一五段词典序取最小，且目标期实际形态不等于它才算命中。'
+    'reason为简短字符串。禁止布尔、小数、默认补位、重复键、额外字段和分析过程。')
 
 # Only application-owned codes may reach operator status/logs. A regex alone
 # would accept arbitrary provider text such as a key-shaped lowercase string.
@@ -62,6 +66,7 @@ _DIAGNOSTIC_CODES = frozenset((
     'unpublished-selected-six-state', 'invalid-selected-six-ledger',
     'invalid-selected-six-index',
     'unknown-selected-six-revision', 'invalid-selected-six-he3-parity',
+    'invalid-selected-six-reverse-form', 'invalid-selected-six-reverse-constraint',
     'selected-six-platform-close-passed', 'selected-six-insufficient-close-budget',
     'selected-six-insufficient-operation-budget', 'selected-six-operation-window-passed',
     'invalid-selected-six-request-transport',

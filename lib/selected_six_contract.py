@@ -14,10 +14,12 @@ from stat50_compare import validate_history
 from strategy_features import build_strategy, SIX_STRATEGY, LEGACY_SIX_STRATEGY
 
 LEGACY_REVISION = 'selected-six-independent-v1'
-PREVIOUS_REVISION = 'selected-six-independent-v2-minimax'
-REVISION = 'selected-six-independent-v3-minimax-reverse'
+V2_REVISION = 'selected-six-independent-v2-minimax'
+V3_REVISION = 'selected-six-independent-v3-minimax-reverse'
+PREVIOUS_REVISION = V3_REVISION
+REVISION = 'selected-six-independent-v4-minimax-forms'
 LEDGER_REVISION = LEGACY_REVISION
-SUPPORTED_REVISIONS = frozenset((LEGACY_REVISION, PREVIOUS_REVISION, REVISION))
+SUPPORTED_REVISIONS = frozenset((LEGACY_REVISION, V2_REVISION, V3_REVISION, REVISION))
 MODEL = 'deepseek-v4-pro'
 MARKER = 'SELECTED_SIX_INDEPENDENT'
 POSITION_KEYS = ('q', 'b', 's', 'g')
@@ -34,6 +36,7 @@ REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大�
 METRIC_KEYS = BASE_METRIC_KEYS + REVERSE_METRIC_KEYS
 POSITION_SHORT_LABELS = {'q': '千', 'b': '百', 's': '十', 'g': '个'}
 RESPONSE_KEYS = frozenset(('selected_positions', 'selected_tails', 'he2_keep', 'he3_keep', 'reason'))
+FORM_RESPONSE_KEYS = RESPONSE_KEYS | frozenset(('reverse_parity', 'reverse_size'))
 
 
 def he3_count(revision=REVISION):
@@ -44,7 +47,7 @@ def he3_count(revision=REVISION):
 
 def item_count(revision=REVISION):
     he3_count(revision)
-    return 8 if revision == REVISION else 6
+    return 8 if revision in (V3_REVISION, REVISION) else 6
 
 
 def _selected(values, allowed, label):
@@ -76,8 +79,8 @@ def reverse_attributes(digit):
 
 def reverse_form(response, *, revision=REVISION):
     """Return display labels for the two derived reverse forms of a response."""
-    if revision != REVISION:
-        raise ValueError('selected-six-reverse-form-requires-current-revision')
+    if revision != V3_REVISION:
+        raise ValueError('selected-six-reverse-form-requires-previous-revision')
     response = validate_response(response, revision=revision)
     parity, size = [], []
     for key in POSITION_KEYS:
@@ -96,9 +99,42 @@ def reverse_keep_digits(digit):
     return ''.join(value for value in '1234567890' if value in parity and value in size)
 
 
+def pattern_of(digits, kind):
+    """Return the four-position form string of actual first-four balls."""
+    if (not isinstance(digits, (list, tuple)) or len(digits) != 4
+            or any(type(digit) is not int or not 0 <= digit <= 9 for digit in digits)):
+        raise ValueError('invalid-selected-six-actual-first-four')
+    if kind == 'parity':
+        return ''.join('双' if digit % 2 == 0 else '单' for digit in digits)
+    if kind == 'size':
+        return ''.join('大' if digit >= 5 else '小' for digit in digits)
+    raise ValueError('invalid-selected-six-pattern-kind')
+
+
+def _pattern(value, kind):
+    palette = '单双' if kind == 'parity' else '大小'
+    if (not isinstance(value, str) or len(value) != 4
+            or any(char not in palette for char in value)):
+        raise ValueError('invalid-selected-six-reverse-form')
+    return value
+
+
+def reverse_form_legal(response):
+    """True when both chosen forms mirror the selected positions' kill digits."""
+    for index, key in enumerate(POSITION_KEYS):
+        if key in response['selected_positions']:
+            parity_label, size_label = reverse_attributes(response['selected_positions'][key])
+            if response['reverse_parity'][index] != parity_label:
+                return False
+            if response['reverse_size'][index] != size_label:
+                return False
+    return True
+
+
 def validate_response(payload, *, revision=REVISION):
     he3_count(revision)
-    if not isinstance(payload, dict) or set(payload) != RESPONSE_KEYS:
+    fields = FORM_RESPONSE_KEYS if revision == REVISION else RESPONSE_KEYS
+    if not isinstance(payload, dict) or set(payload) != fields:
         raise ValueError('invalid-selected-six-response-fields')
     reason = payload['reason']
     if not isinstance(reason, str) or len(reason) > 200:
@@ -108,14 +144,20 @@ def validate_response(payload, *, revision=REVISION):
     except UnicodeEncodeError:
         raise ValueError('invalid-selected-six-reason') from None
     he3_keep = _keep(payload['he3_keep'], 5, '0123456789')
-    if revision == REVISION and not 2 <= sum(int(digit) % 2 for digit in he3_keep) <= 3:
-        # The current rule forbids all-odd/all-even and 4:1 counts; the balanced
+    if revision in (V3_REVISION, REVISION) and not 2 <= sum(int(digit) % 2 for digit in he3_keep) <= 3:
+        # The current rules forbid all-odd/all-even and 4:1 counts; the balanced
         # candidate domain is compared by the same five-block minimax method.
         raise ValueError('invalid-selected-six-he3-parity')
-    return {'selected_positions': _selected(payload['selected_positions'], POSITION_KEYS, 'positions'),
-            'selected_tails': _selected(payload['selected_tails'], TAIL_POSITIONS, 'tails'),
-            'he2_keep': _keep(payload['he2_keep'], 4, '02468'),
-            'he3_keep': he3_keep, 'reason': reason}
+    response = {'selected_positions': _selected(payload['selected_positions'], POSITION_KEYS, 'positions'),
+                'selected_tails': _selected(payload['selected_tails'], TAIL_POSITIONS, 'tails'),
+                'he2_keep': _keep(payload['he2_keep'], 4, '02468'),
+                'he3_keep': he3_keep, 'reason': reason}
+    if revision == REVISION:
+        response['reverse_parity'] = _pattern(payload['reverse_parity'], 'parity')
+        response['reverse_size'] = _pattern(payload['reverse_size'], 'size')
+        if not reverse_form_legal(response):
+            raise ValueError('invalid-selected-six-reverse-constraint')
+    return response
 
 
 def merged_exclusions(response, *, revision=REVISION):
@@ -136,7 +178,7 @@ def outcomes(response, digits, *, revision=REVISION):
         actual = {sum(digits[index] for index in indexes) % 10
                   for indexes in combinations(range(4), count)}
         result[field] = bool(actual.intersection(int(digit) for digit in response[field]))
-    if revision == REVISION:
+    if revision == V3_REVISION:
         parity, size = True, True
         for key, kill in response['selected_positions'].items():
             digit = digits[POSITION_KEYS.index(key)]
@@ -144,6 +186,10 @@ def outcomes(response, digits, *, revision=REVISION):
             size = size and (digit >= 5) == (kill < 5)
         result['reverse_parity'] = parity
         result['reverse_size'] = size
+    elif revision == REVISION:
+        # Exclusion semantics: the sealed four-position form is expected NOT to appear.
+        result['reverse_parity'] = pattern_of(digits, 'parity') != response['reverse_parity']
+        result['reverse_size'] = pattern_of(digits, 'size') != response['reverse_size']
     return result
 
 
@@ -189,7 +235,7 @@ def _isolated_input_doc(reference, history, moment):
         '两个selected字典均恰好两个键，值必须为0至9整数，不能为布尔值、小数、数组或字符串。'
         '保留集为规定长度的不重复ASCII数字字符串，保留前导0；不得默认补位或新增字段。'
         'reason用60字以内简短中文说明本次最差段、方差、总量依据，不输出分析过程。')
-    return {'version': 1, 'revision': PREVIOUS_REVISION, 'reference_period': reference,
+    return {'version': 1, 'revision': V2_REVISION, 'reference_period': reference,
             'target_period': target, 'history': deepcopy(history), 'strategy': strategy, 'prompt': prompt}
 
 
@@ -235,6 +281,60 @@ def _reverse_input_doc(reference, history, moment):
         '两个selected字典均恰好两个键，值必须为0至9整数，不能为布尔值、小数、数组或字符串。'
         '保留集为规定长度的不重复ASCII数字字符串，保留前导0；不得默认补位或新增字段。'
         'reason用60字以内简短中文说明本次最差段、方差、总量依据，不输出分析过程。')
+    return {'version': 1, 'revision': V3_REVISION, 'reference_period': reference,
+            'target_period': target, 'history': deepcopy(history), 'strategy': strategy, 'prompt': prompt}
+
+
+def _forms_input_doc(reference, history, moment):
+    """Build the v4 fixed-minimax request; the two forms are now AI choices."""
+    strategy = build_strategy(history, reference, SIX_STRATEGY, now=moment)
+    history = validate_history(history, reference, moment)
+    target = next_period(reference)
+    codes = ', '.join(''.join(map(str, row['numbers'])) for row in history)
+    prompt = (
+        f'独立八项形态排除框架；最新已开奖参考期{reference}，仅预测下一目标期{target}。\n'
+        + codes + '\n'
+        '以上恰好50期连续真实开奖，按旧到新排列，最后一条为参考期；每条仅含前四球，'
+        '依次为千位q、百位b、十位s、个位g，0及前导0有效，第五球不参与。'
+        '只使用此窗口及本任务分段特征，不读取其他模型候选。'
+        '物理位置、合尾类型、排除数字、保留集与两个形态均由你自主决定；允许独立得出相同数字，禁止为异号强行换码。\n'
+        '【唯一决策方法：固定五段minimax】\n'
+        '把50期按旧到新固定划为五个连续区块，每块10期，不改边界或放大最新段。'
+        '所有定位、合尾排除候选、所有合法保留集和所有合法四位形态均有按正式核验定义计算的区块失败统计。'
+        '严格按固定优先级比较候选：先最小化五段中最大单段失败次数；最差段相同时，'
+        '再最小化五段失败次数方差；方差仍相同时，再最小化五段失败总量。'
+        '按这个最差段、方差、总量的词典序自主选择八项；不能用全窗总量优先覆盖最差段目标，'
+        '不能按近期加权、相邻转移或跨项目重叠替换本方法。'
+        '程序只描述完整候选的五段表现，不指定物理选择或最终号码。'
+        '样本内稳定性不能证明下一期有概率优势，也不能编造战绩或保证未来命中。\n'
+        '【八项任务及正式核验】\n'
+        '1、2：selected_positions从q/b/s/g中自主选恰好两个不同位置，各排除一个0至9整数。'
+        '目标期该位置实际数字不等于排除码时该项成功。两个位置可排相同数字，未选位置不补位。\n'
+        '3、4：selected_tails从all/qbs/qbg/qsg/bsg中自主选恰好两种不同合尾，各排除一个0至9整数。'
+        'all=(千+百+十+个)%10，qbs=(千+百+十)%10，qbg=(千+百+个)%10，'
+        'qsg=(千+十+个)%10，bsg=(百+十+个)%10；目标期实际对应合尾不等于排除码时该项成功。\n'
+        '5：he2_keep从02468中恰好保留4个不同ASCII数字。计算目标前四球任意两个位置的六种组合，'
+        '分别求和后取%10；任意一种合尾落入保留集即算此项命中，不要求全部落入。\n'
+        '6：he3_keep从0123456789中恰好保留5个不同ASCII数字，且必须2奇3偶或3奇2偶'
+        '（5奇0偶、4奇1偶、1奇4偶、0奇5偶均不合格）。计算目标前四球任意三个位置的四种组合，'
+        '分别求和后取%10；任意一种合尾落入保留集即算此项命中，不要求全部落入。\n'
+        '7：reverse_parity为按千百十个顺序的四位单双形态，字符只能取单或双。'
+        '两个已选定位对应的字符必须等于该定位排除码的单双反面（例：百排除9为单，百位字符必须是双；'
+        '个排除6为双，个位字符必须是单）；其余位置自主选择。'
+        '目标期实际四位单双形态不等于该形态时该项成功，即反向排除该形态。\n'
+        '8：reverse_size为按千百十个顺序的四位大小形态，字符只能取大或小。'
+        '两个已选定位对应的字符必须等于该定位排除码的大小反面（例：百排除9为大，百位字符必须是小）；'
+        '其余位置自主选择。目标期实际四位大小形态不等于该形态时该项成功，即反向排除该形态。\n'
+        '第7、8项同样按五段minimax比较：候选形态的失败次数等于该完整形态在对应10期区块中出现的次数；'
+        '先最大单段失败、再方差、最后总量，在满足定位字符约束的合法形态中取词典序最小。'
+        '整组八项必须同时通过才算整组命中。\n'
+        '【本任务完整独立分段策略】\n' + _canonical(strategy) + '\n'
+        '最终仅输出完整严格JSON对象，恰好selected_positions、selected_tails、he2_keep、he3_keep、'
+        'reverse_parity、reverse_size、reason七个字段。'
+        'reverse_parity与reverse_size各为恰好4个字符的字符串；两个selected字典均恰好两个键，'
+        '值必须为0至9整数，不能为布尔值、小数、数组或字符串。'
+        '保留集为规定长度的不重复ASCII数字字符串，保留前导0；不得默认补位或新增字段。'
+        'reason用60字以内简短中文说明本次最差段、方差、总量依据，不输出分析过程。')
     return {'version': 1, 'revision': REVISION, 'reference_period': reference,
             'target_period': target, 'history': deepcopy(history), 'strategy': strategy, 'prompt': prompt}
 
@@ -251,8 +351,10 @@ def build_input_doc(reference, history, *, revision=REVISION):
     if moment is None or moment.tzinfo is None or moment.utcoffset() is None:
         raise ValueError('selected-six-opening-time-must-be-aware')
     if revision == REVISION:
+        return _forms_input_doc(reference, history, moment)
+    if revision == V3_REVISION:
         return _reverse_input_doc(reference, history, moment)
-    if revision == PREVIOUS_REVISION:
+    if revision == V2_REVISION:
         return _isolated_input_doc(reference, history, moment)
     # Reject booleans, stringified digits and other ambiguous first-four inputs
     # before the shared history normalizer may coerce their representation.

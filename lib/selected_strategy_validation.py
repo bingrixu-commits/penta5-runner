@@ -8,15 +8,17 @@ Historical contracts and publication reconstruction do not call this module.
 from copy import deepcopy
 from datetime import datetime
 from hashlib import sha256
-from itertools import combinations
+from itertools import combinations, product
 import json
 
 from ai_strategy_validation import StrategyValidationError, validation_report
 from selected_framework_contract import (REVISION as SEVEN_REVISION,
                                           SUPPORTED_REVISIONS as SEVEN_REVISIONS)
 from selected_six_contract import (REVISION as SIX_REVISION,
-                                    PREVIOUS_REVISION as SIX_PREVIOUS_REVISION,
-                                    SUPPORTED_REVISIONS as SIX_REVISIONS)
+                                    V2_REVISION as SIX_V2_REVISION,
+                                    V3_REVISION as SIX_V3_REVISION,
+                                    SUPPORTED_REVISIONS as SIX_REVISIONS,
+                                    reverse_attributes)
 from stat50_compare import validate_history
 
 VERSION = 'strategy-response-v1'
@@ -60,24 +62,46 @@ def _failure_maps(history):
             keep, digits = ''.join(values), {int(value) for value in values}
             result[(field, None)][keep] = sum(1 << i for i, tails in enumerate(actual)
                                              if not tails.intersection(digits))
+    for field, palette in (('reverse_parity', '单双'), ('reverse_size', '大小')):
+        actual = []
+        for row in draws:
+            if field == 'reverse_parity':
+                actual.append(''.join('双' if number % 2 == 0 else '单' for number in row))
+            else:
+                actual.append(''.join('大' if number >= 5 else '小' for number in row))
+        result[(field, None)] = {
+            ''.join(form): sum(1 << i for i, value in enumerate(actual) if value == ''.join(form))
+            for form in product(palette, repeat=4)}
     return result
 
 
 def _items(response):
-    return ([(field, key, digit) for field in ('selected_positions', 'selected_tails')
-             for key, digit in response[field].items()]
-            + [(field, None, response[field]) for field in ('he2_keep', 'he3_keep')])
+    items = ([(field, key, digit) for field in ('selected_positions', 'selected_tails')
+              for key, digit in response[field].items()]
+             + [(field, None, response[field]) for field in ('he2_keep', 'he3_keep')])
+    for field in ('reverse_parity', 'reverse_size'):
+        if field in response:
+            items.append((field, None, response[field]))
+    return items
 
 
 def _options(item, response, masks, revision=None):
     field, key, _ = item
     if key is None:
         values = list(masks[(field, None)])
-        if field == 'he3_keep' and revision == SIX_REVISION:
-            # v3 compares only balanced 2:3 keep sets; older revisions keep the
-            # complete legal domain byte-for-byte.
+        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_REVISION):
+            # v3/v4 compare only balanced 2:3 keep sets; older revisions keep
+            # the complete legal domain byte-for-byte.
             values = [value for value in values
                       if 2 <= sum(int(digit) % 2 for digit in value) <= 3]
+        elif field in ('reverse_parity', 'reverse_size') and revision == SIX_REVISION:
+            # v4 forms must mirror the selected positions' kill digits; only the
+            # other positions are free, so compare inside this constrained set.
+            column = 0 if field == 'reverse_parity' else 1
+            for position, kill in response['selected_positions'].items():
+                expected = reverse_attributes(kill)[column]
+                index = POSITION_KEYS.index(position)
+                values = [value for value in values if value[index] == expected]
         return [(field, None, value) for value in values]
     keys = POSITION_KEYS if field == 'selected_positions' else tuple(TAIL_POSITIONS)
     occupied = set(response[field]) - {key}
@@ -159,10 +183,10 @@ def selected_validator(input_doc, base_validator, *, kind, revision):
                          else (SIX_REVISIONS, SIX_REVISION))
     if revision not in supported:
         raise ValueError('strategy-response-invalid-selected-revision')
-    # Six-item v2/v3 seals carry the fast-transport option context, so their
-    # saved minimax context must be revalidated under its own rule version
-    # (v3 restricts the balanced he3 domain).  Seven-item behavior is unchanged.
-    strict_six = kind == 'six' and revision in (SIX_PREVIOUS_REVISION, SIX_REVISION)
+    # Six-item v2/v3/v4 seals carry the fast-transport option context, so their
+    # saved minimax context must be revalidated under its own rule version.
+    # Seven-item behavior is unchanged.
+    strict_six = kind == 'six' and revision in (SIX_V2_REVISION, SIX_V3_REVISION, SIX_REVISION)
     if revision != active and not strict_six:
         return base_validator
     frozen = deepcopy(input_doc)
