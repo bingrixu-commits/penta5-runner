@@ -42,3 +42,10 @@
   ```
   schtasks /Create /SC WEEKLY /D MON /ST 06:30 /TN "DSH-EvidenceOffsite" /TR "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\文档\deepseek-harness\default-workspace\ops\fetch-evidence-offsite.ps1\"" /F
   ```
+- **selected_six 写放大重构（未完成，勿误认已上线）**：2026-10-30 已完成
+  baseline（冷冻快照冷算 146–153s/轮，seals 309MB + hit_stats 157MB 全量重写）并写出
+  一个默认关闭的 append-only 分片存储原型（见
+  `/root/archive/wip-20261030/selected_six_store.wip.py`：base.json + seals.jsonl +
+  attempts.jsonl，`PENTA5_SIX_SHARDED=1` 才启用）。该原型**未接线、未做逐字节等价
+  证明**（实施窗口内 teammate 中止），因此没有进仓库、生产完全走旧路径。后续切换需：
+  影子双写→等价比对→更新 evidence/REQUIRED_DATA 与 manifest→单期切换→回滚点。
