@@ -396,6 +396,14 @@ def refresh_selected_stats(snapshot=None, root=ROOT):
         if ledger != previous:
             atomic_json(path, ledger)
         atomic_json(root / 'data/selected_six_stats.json', summary)
+        # Re-stat the ledger AFTER the possible rewrite: the stat captured on
+        # entry is stale the moment this run appends a settlement, which would
+        # make the next cycle miss forever.
+        try:
+            info = path.stat()
+            stamp['inputs']['ledger'] = [info.st_mtime_ns, info.st_size]
+        except OSError:
+            pass
         try:
             atomic_json(stamp_path, stamp)
         except (OSError, ValueError):

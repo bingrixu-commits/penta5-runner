@@ -326,6 +326,14 @@ def refresh_pro_stats(snapshot=None, root=ROOT):
         else:
             atomic_json(path, ledger)
         atomic_json(root / 'data/pro_position_stats.json', summary)
+        # Re-stat the ledger AFTER the possible rewrite: the stat captured on
+        # entry is stale the moment this run appends a settlement, which would
+        # make the next cycle miss forever.
+        try:
+            info = path.stat()
+            stamp['inputs']['ledger'] = [info.st_mtime_ns, info.st_size]
+        except OSError:
+            pass
         try:
             atomic_json(stamp_path, stamp)
         except (OSError, ValueError):
