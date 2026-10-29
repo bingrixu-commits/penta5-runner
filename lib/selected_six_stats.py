@@ -324,11 +324,25 @@ def refresh_selected_stats(snapshot=None, root=ROOT):
             inputs[name] = [info.st_mtime_ns, info.st_size]
         except OSError:
             inputs[name] = None
+    # A new draw period cannot rewrite a settled ledger, so bound the hash at the
+    # previous run's latest settled period: otherwise every new draw invalidated
+    # the cache once per period and the stage recomputed forever.
     try:
-        inputs['records'] = hashlib.sha256(
-            json.dumps(snapshot.get('records'), sort_keys=True, default=str).encode('utf-8')).hexdigest()
+        boundary = None
+        try:
+            previous_summary = json.loads((root / "data/selected_six_stats.json").read_text(encoding="utf-8"))
+            if isinstance(previous_summary, dict):
+                boundary = previous_summary.get("latest_settled_period")
+        except (OSError, ValueError):
+            boundary = None
+        rows = snapshot.get("records") or ()
+        if boundary:
+            rows = [row for row in rows
+                    if isinstance(row, dict) and str(row.get("period") or "") <= str(boundary)]
+        inputs["records"] = hashlib.sha256(
+            json.dumps(rows, sort_keys=True, default=str).encode("utf-8")).hexdigest()
     except (TypeError, ValueError):
-        inputs['records'] = None
+        inputs["records"] = None
     try:
         inputs['conflicting'] = hashlib.sha256(
             json.dumps(snapshot.get('conflicting_periods', ()), sort_keys=True, default=str).encode('utf-8')).hexdigest()

@@ -256,11 +256,25 @@ def refresh_pro_stats(snapshot=None, root=ROOT):
     # state.json is rewritten every few seconds by prediction/counter updates,
     # so its mtime would defeat this cache. Only the settled draw records that
     # pro4 actually reads are relevant; hash just those (800 rows, ~74KB).
+    # A new draw period cannot rewrite a settled ledger, so bound the hash at the
+    # previous run's latest settled period: otherwise every new draw invalidated
+    # the cache once per period and the stage recomputed forever.
     try:
-        inputs['records'] = hashlib.sha256(
-            json.dumps(snapshot.get('records'), sort_keys=True, default=str).encode('utf-8')).hexdigest()
+        boundary = None
+        try:
+            previous_summary = json.loads((root / "data/pro_position_stats.json").read_text(encoding="utf-8"))
+            if isinstance(previous_summary, dict):
+                boundary = previous_summary.get("latest_settled_period")
+        except (OSError, ValueError):
+            boundary = None
+        rows = snapshot.get("records") or ()
+        if boundary:
+            rows = [row for row in rows
+                    if isinstance(row, dict) and str(row.get("period") or "") <= str(boundary)]
+        inputs["records"] = hashlib.sha256(
+            json.dumps(rows, sort_keys=True, default=str).encode("utf-8")).hexdigest()
     except (TypeError, ValueError):
-        inputs['records'] = None
+        inputs["records"] = None
     try:
         inputs['conflicting'] = hashlib.sha256(
             json.dumps(snapshot.get('conflicting_periods', ()), sort_keys=True, default=str).encode('utf-8')).hexdigest()
