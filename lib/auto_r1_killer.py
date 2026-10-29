@@ -157,6 +157,13 @@ def enforce_stable_kill(kill_digits, draws_list):
 
 # -*- coding: utf-8 -*-
 import datetime, json, os, re, sys, time, urllib.request
+try:
+    KILLER_MODEL = get_secret('PENTA5_DEEPSEEK_MODEL')
+except RuntimeError:
+    KILLER_MODEL = 'deepseek-flash'
+KILLER_MODEL_LABEL = {'deepseek-flash': 'DeepSeek-V4.1-Flash',
+                      'deepseek-v4-flash': 'DeepSeek-V4-Flash',
+                      'deepseek-v4-pro': 'DeepSeek-V4-Pro'}.get(KILLER_MODEL, KILLER_MODEL)
 
 _job_lock = open('/root/penta5-runner/data/auto_r1_killer.py.lock', 'a')
 try:
@@ -324,7 +331,7 @@ try:
         API_KEY = os.getenv("DEEPSEEK_API_KEY") or get_secret("PENTA5_KILLER_API_KEY")
         r, response_generated_at = request_killer_response(prompt, period,
             post=guarded_post, api_key=API_KEY,
-            model=os.getenv('PENTA5_DEEPSEEK_MODEL', 'deepseek-flash'),
+            model=KILLER_MODEL,
             load_snapshot=checked_source_snapshot, clock=beijing_now,
             sleep=time.sleep, monotonic=time.monotonic, log=record_killer_response_metadata,
             operation_window=operation_window, validator=response_validator,
@@ -386,7 +393,7 @@ rate_he_h3 = fmt_rate(policy_hits.get("he_h3", 0), policy_totals.get("he_h3", 0)
 rate_p1 = fmt_rate(policy_hits.get("pat1", 0), policy_totals.get("pat1", 0))
 rate_p2 = fmt_rate(policy_hits.get("pat2", 0), policy_totals.get("pat2", 0))
 
-print("\n--- DeepSeek-V4.1-Flash 真实推导结果 ---")
+print("\n--- " + KILLER_MODEL_LABEL + " 真实推导结果 ---")
 print(f"• 杀码: 第1位≠{k1_str}, 第2位≠{k2_str}, 第3位≠{k3_str}, 第4位≠{k4_str}")
 print("Verified settled samples:", stats.get("verified_totals", {}))
 print(f"• 推荐合杀码: 全位 #{he_all}, 前三 #{he_q3}, 后三 #{he_h3}")
@@ -410,7 +417,7 @@ card = f"""<!-- R1_KILLER_START -->
 <div style="margin: 20px auto; max-width: 1000px; padding: 14px 20px; background: #ffffff; border: 2px solid #1677ff; border-radius: 8px; font-family: sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
         <span style="font-size: 16px; font-weight: bold; color: #1677ff;">
-            🤖DeepSeek-V4.1-Flash 智能深度排除 (最新参考期号: {period})
+            🤖{KILLER_MODEL_LABEL} 智能深度排除 (最新参考期号: {period})
         </span>
         <span style="font-size: 12px; color: #888;">AI 计算时间: {response_generated_at.strftime("%H:%M:%S")}（北京时间）</span>
     </div>

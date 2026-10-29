@@ -36,6 +36,10 @@ from scipy.stats import chisquare
 # ==================== DeepSeek 杀码框架与攻击语 (量化高稳优化版) ====================
 
 import datetime, json, os, re, sys, time
+try:
+    FRAMEWORK_MODEL = get_secret('PENTA5_DEEPSEEK_MODEL')
+except RuntimeError:
+    FRAMEWORK_MODEL = 'deepseek-flash'
 from collections import Counter
 
 
@@ -208,7 +212,7 @@ with reserve_request('framework', period, post=requests.post,
         API_KEY = API_KEY[3:]
     r, response_generated_at = request_framework_response(prompt, period,
         post=guarded_post, api_key=API_KEY,
-        model=os.getenv('PENTA5_DEEPSEEK_MODEL', 'deepseek-flash'),
+        model=FRAMEWORK_MODEL,
         load_snapshot=checked_source_snapshot, clock=beijing_now, safe_error=safe_error,
         sleep=time.sleep, monotonic=time.monotonic, log=record_framework_response_metadata,
         operation_window=operation_window, validator=response_validator,
