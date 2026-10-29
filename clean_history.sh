@@ -45,4 +45,13 @@ for name in auto_r1.log auto_match5.log auto_r1_framework.log memory.log; do
   archive_once "$WORK_DIR/$name" "$ARCHIVE_DIR/${name}_$TODAY.gz" "$MAX_ARCHIVE_BYTES"
 done
 
+# Abandoned atomic-write temp files: a killed full-ledger rewrite (selected_six
+# seals ~304MB + hit stats ~155MB) leaves 10-150MB data/tmp* debris. Prune only
+# files older than 2h that no live process still holds open.
+while IFS= read -r -d '' candidate; do
+  if ! lsof -- "$candidate" >/dev/null 2>&1; then
+    rm -f -- "$candidate"
+  fi
+done < <(find "$WORK_DIR/data" -maxdepth 1 -type f \( -name 'tmp*' -o -name '*.tmp' \) -mmin +120 -print0 2>/dev/null || true)
+
 printf '[%s] Daily snapshot/log archive complete; source data and audit logs retained.\n' "$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')"

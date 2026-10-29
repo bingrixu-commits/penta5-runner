@@ -30,6 +30,9 @@ BASELINE = 0.90
 TARGET_RATE = 0.92          # 想证明的"真实水平"
 MIN_SAMPLE = 200            # 低于此样本不给结论
 RECENT_DAYS = 5
+# selected_positions 的键随 revision 变化(恰好两个位置),必须按契约映射到
+# 四位里的下标,不能固定只统计千/十。
+POSITION_INDEX = {'q': 0, 'b': 1, 's': 2, 'g': 3}
 
 
 def _cdf(z):
@@ -83,11 +86,11 @@ def main():
         record = per_revision.setdefault(revision, {'bets': 0, 'hits': 0,
                                                     'days': set(), 'periods': [],
                                                     'daily': {}})
-        for key, index in (('q', 0), ('s', 2)):
-            value = positions.get(key)
-            if not isinstance(value, int):
+        for key, kill in positions.items():
+            index = POSITION_INDEX.get(key)
+            if index is None or not isinstance(kill, int):
                 continue
-            hit = numbers[index] != value
+            hit = numbers[index] != kill
             record['bets'] += 1
             record['hits'] += 1 if hit else 0
             biz = entry.get('biz_date')
@@ -155,7 +158,8 @@ def main():
     print("  近几日:", ", ".join(f"{d['biz']} {d['rate']:.1%}({d['bets']}注)" for d in recent))
     print("\n各版本(只作参考,不可混算):")
     for rev, item in sorted(report['all_revisions'].items(), key=lambda kv: -kv[1]['bets']):
-        print(f"  {rev:<44}{item['bets']:>6} 注  {item['rate']:.2%}  {item['days']} 天")
+        rate = '  n/a' if item['rate'] is None else f"{item['rate']:.2%}"
+        print(f"  {rev:<44}{item['bets']:>6} 注  {rate}  {item['days']} 天")
     print(f"\nreport -> {OUT_PATH}", flush=True)
     return 0
 
