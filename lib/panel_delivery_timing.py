@@ -27,14 +27,12 @@ MODELS = {
     'he3_refine': ('HE3_REFINE', None, 'he3-refine-active'),
     'cold': ('COLD_FRAMEWORK', 'cold-framework-attack', 'cold-framework-data'),
     'cold_fixed': ('COLD_FIXED_FRAMEWORK', 'cold-fixed-framework-attack', 'cold-fixed-framework-data'),
-    'cold50': ('COLD50_FRAMEWORK', 'cold50-framework-attack', 'cold50-framework-data'),
 }
 COLD_FAMILIES = {
     'cold': ('cold-framework', {'cold-framework-v1-30-pos3-tail3': 3,
                               'cold-framework-v2-30-pos3-tail2': 2,
                               'cold-framework-v3-30-pos3-tail2-he2x4-he3x5': 2}),
     'cold_fixed': ('cold-fixed-framework', {'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5': 2}),
-    'cold50': ('cold50-framework', {'cold50-framework-v3-50-pos3-tail2-he2x4-he3x5': 2}),
 }
 FIXED_COLD_SPECS = {
     'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5': (frozenset(('q','b','s')),frozenset(('all','qbs'))),
@@ -96,12 +94,6 @@ def _cold_public_identity(prediction, revision, model='cold'):
     if (not isinstance(reference,str) or not parse_period(reference) or parse_period(reference)[0]!=reference
             or target!=next_period(reference)):
         return None
-    if model in ('cold50',):
-        first,last=prediction.get('first_period'),prediction.get('last_period')
-        if (type(prediction.get('sample_count')) is not int or prediction['sample_count']!=50
-                or not isinstance(first,str) or not parse_period(first) or parse_period(first)[0]!=first
-                or last!=reference or period_slot(last)-period_slot(first)!=timedelta(minutes=245)):
-            return None
     try:
         sealed,published,deadline=(_at(prediction.get(key)) for key in ('sealed_at','published_at','deadline'))
     except (ValueError,TypeError,OverflowError):
@@ -129,8 +121,7 @@ def _cold_public_identity(prediction, revision, model='cold'):
     if revision in ('cold-framework-v3-30-pos3-tail2-he2x4-he3x5',
                     'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5',
                     'cold50-fixed-framework-v1-50-fixed-qbs-all-qbs-he2x4-he3x5',
-                    'cold50-fixed-framework-v2-50-fixed-qbg-qbg-bsg-he2x4-he3x5',
-                    'cold50-framework-v3-50-pos3-tail2-he2x4-he3x5'):
+                    'cold50-fixed-framework-v2-50-fixed-qbg-qbg-bsg-he2x4-he3x5'):
         for key,label,count,allowed in (('he2_keep','二数合',4,'02468'),('he3_keep','三数合',5,'0123456789')):
             value=prediction.get(key)
             if not isinstance(value,str) or len(value)!=count or len(set(value))!=count or not set(value)<=set(allowed):
