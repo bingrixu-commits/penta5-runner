@@ -1,14 +1,18 @@
-"""位置冷码报告常驻进程:数据变化时重算,平时几乎不耗资源。
+"""位置冷码报告常驻进程:每次开奖后重新计算一次。
 
-以 stats_draw_history.json 的 (mtime_ns, size) 作为变化信号。
+开奖规律(实测):每 5 分钟一期,开奖时刻固定在每 5 分钟的 :12 秒。
 
-为什么不用 state.json:冷码只依赖开奖记录,而 state.json 会被预测/计数器
-频繁改写(出现过每 10 秒变一次),拿它当信号会导致大量无意义重算。
-stats_draw_history.json 只在开奖记录变化时更新,是语义上正确的触发源。
+触发判据:开奖数据的最新期号 + 记录条数。不用 mtime/size —— 实测开奖前后
+该文件会被连续重写数次,用 mtime 会连算 4 遍;而"最新期号变了"才真正意味着
+有新一期可以参与统计。
 
-单次生成约 0.4 秒,平时仅每 10 秒 stat 一次;另有 300 秒心跳兜底。
+另设两条兜底:
+  - 周期对齐:每跨过一个 5 分钟槽位且已过 :18 时再算一次(防落盘异常)。
+  - 600 秒心跳。
+单次计算约 0.35 秒。
 """
 from pathlib import Path
+import json
 import sys
 import time
 
@@ -16,42 +20,70 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import position_cold_report as report  # noqa: E402
+import kill_three_pick  # noqa: E402
 
 WATCH = Path('/root/penta5-runner/data/stats_draw_history.json')
-POLL_SECONDS = 10
-HEARTBEAT_SECONDS = 300
+SLOT_SECONDS = 300
+SLOT_DELAY = 18
+POLL_SECONDS = 5
+HEARTBEAT_SECONDS = 600
 
 
 def signature():
+    """返回 (最新期号, 记录数);读取失败返回 None。"""
     try:
-        info = WATCH.stat()
-        return (info.st_mtime_ns, info.st_size)
-    except OSError:
+        document = json.loads(WATCH.read_text(encoding='utf-8'))
+        records = document.get('records') or []
+        if not records:
+            return None
+        return (str(records[-1].get('period')), len(records))
+    except (OSError, ValueError):
         return None
 
 
 def main():
     from datetime import datetime
     last_signature = None
+    last_slot = None
     last_run = 0.0
-    print('position-cold daemon started', flush=True)
+    print(f'position-cold daemon started (周期 {SLOT_SECONDS}s, 判据=最新期号+条数)',
+          flush=True)
     while True:
         try:
+            now = time.time()
+            slot = int(now // SLOT_SECONDS)
+            slot_due = (slot != last_slot) and (now >= slot * SLOT_SECONDS + SLOT_DELAY)
             current = signature()
-            now = time.monotonic()
-            if current is None:
-                time.sleep(POLL_SECONDS)
-                continue
-            if current != last_signature or (now - last_run) >= HEARTBEAT_SECONDS:
+            change_due = current is not None and current != last_signature
+            beat_due = (time.monotonic() - last_run) >= HEARTBEAT_SECONDS
+
+            if slot_due or change_due or beat_due:
+                reason = []
+                if change_due:
+                    reason.append(f'new-period={current[0]}')
+                if slot_due:
+                    reason.append('slot')
+                if beat_due:
+                    reason.append('heartbeat')
                 started = time.monotonic()
                 code = report.main()
+                kill_code = None
+                try:
+                    import contextlib
+                    import io
+                    buffer = io.StringIO()
+                    with contextlib.redirect_stdout(buffer):
+                        kill_code = kill_three_pick.main()
+                except Exception as error:
+                    print(f'kill-three failed: {type(error).__name__}: {error}', flush=True)
                 elapsed = time.monotonic() - started
-                last_signature = current
+                last_signature = signature()
+                last_slot = slot
                 last_run = time.monotonic()
                 stamp = datetime.now().astimezone().strftime('%H:%M:%S')
-                print(f'{stamp} regenerated rc={code} elapsed={elapsed:.2f}s '
-                      f'sig={current[0]}/{current[1]}', flush=True)
-        except Exception as error:  # 单次失败不能终止常驻进程
+                print(f'{stamp} regenerated rc={code} kill3={kill_code} elapsed={elapsed:.2f}s '
+                      f'trigger={"+".join(reason)}', flush=True)
+        except Exception as error:
             print(f'regenerate failed: {type(error).__name__}: {error}', flush=True)
         time.sleep(POLL_SECONDS)
 
