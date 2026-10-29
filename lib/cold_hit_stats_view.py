@@ -1,4 +1,4 @@
-"""冷码 Top3 战绩面板区块。
+"""冷码杀号战绩面板区块:命中 = 冷码未在该位置开出。
 
 设计要点:
 - 自包含 <section> + 内联 <style>,不依赖面板已有 CSS 类。
@@ -79,12 +79,12 @@ def _card(block):
         f'<div class="ch-card">'
         f'<div class="ch-title">窗口 {window} 期 · 共 {block.get("samples", "-")} 期样本</div>'
         f'<div class="ch-main"><span class="ch-rate">{_pct(top3.get("rate"))}</span>'
-        f'<span class="ch-vs">Top3 命中率 · 理论 {_pct(top3.get("baseline"))}</span></div>'
+        f'<span class="ch-vs">杀 3 码命中率 · 理论 {_pct(top3.get("baseline"))}</span></div>'
         f'<div class="ch-streak">最多连中 <b class="ch-win">{top3.get("max_win_streak", "-")}</b> 手 · '
         f'最多连败 <b class="ch-loss">{top3.get("max_loss_streak", "-")}</b> 手</div>'
-        f'<table><thead><tr><th>注数</th><th>命中率</th><th>理论</th><th>连中</th><th>连败</th></tr>'
+        f'<table><thead><tr><th>杀号数</th><th>命中率</th><th>理论</th><th>连中</th><th>连败</th></tr>'
         f'</thead><tbody>{"".join(rows)}</tbody></table>'
-        + (f'<table style="margin-top:8px"><thead><tr><th>位置</th><th>Top3命中</th>'
+        + (f'<table style="margin-top:8px"><thead><tr><th>位置</th><th>杀3码命中</th>'
            f'<th>连中</th><th>连败</th></tr></thead><tbody>{"".join(position_rows)}</tbody></table>'
            if position_rows else '')
         + '</div>')
@@ -93,24 +93,25 @@ def _card(block):
 def render_block(report=None):
     report = report if report is not None else _load()
     if not report:
-        return (f'{START}<section id="cold-hit-stats"><h3>冷码 Top3 战绩</h3>'
+        return (f'{START}<section id="cold-hit-stats"><h3>冷码杀号战绩</h3>'
                 f'<div class="ch-meta">统计尚未生成</div></section>{END}')
 
     cards = [_card(block) for block in (report.get('windows') or ())]
     cards = [c for c in cards if c]
     if not cards:
-        return (f'{START}<section id="cold-hit-stats"><h3>冷码 Top3 战绩</h3>'
+        return (f'{START}<section id="cold-hit-stats"><h3>冷码杀号战绩</h3>'
                 f'<div class="ch-meta">统计内容为空</div></section>{END}')
 
     return (
         f'{START}<section id="cold-hit-stats" data-as-of="{report.get("as_of_period", "")}">'
         f'<style>{STYLE}</style>'
-        f'<h3>冷码 Top3 战绩</h3>'
-        f'<div class="ch-meta">按系统冷码口径取每位置前 3 码为一注,'
+        f'<h3>冷码杀号战绩</h3>'
+        f'<div class="ch-meta">按系统冷码口径取每位置前 N 个冷码作杀号,'
         f'数据截至 {report.get("as_of_period", "")} · 计算于 {report.get("generated_at", "")}</div>'
         f'<div class="ch-grid">{"".join(cards)}</div>'
-        f'<div class="ch-foot">理论命中率为 Top1=10% / Top2=20% / Top3=30%(10 选 N)。'
-        f'连败指连续未命中的最长手数。</div>'
+        f'<div class="ch-foot">命中 = 该位置实际开奖号<b>不在</b>冷码集合内(杀号成功)。'
+        f'理论命中率 = (10-N)/10,即杀1码 90% / 杀2码 80% / 杀3码 70%。'
+        f'连败 = 连续未命中(即冷码真的开出)的最长手数。</div>'
         f'</section>{END}')
 
 

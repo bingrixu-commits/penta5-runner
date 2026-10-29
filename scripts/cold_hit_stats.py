@@ -2,7 +2,8 @@
 
 口径与面板一致(系统 cold_observation 实现):
   对最近 window 期的各位置样本,按 (出现次数升序, 当前遗漏降序) 排序,
-  取前 N 个号码作为一注;若下一期该位置实际开奖号码落在其中,记为命中。
+  取前 N 个号码作为【杀号】;若下一期该位置实际开奖号码【不在】其中,
+  记为命中(杀号成功)。理论命中率 = (10-N)/10。
 
 统计维度:
   - 分位置:各位置的命中率与连中/连败
@@ -64,7 +65,7 @@ def evaluate(rows, window):
             order = ranking([str(r['numbers'][pos_index]) for r in trailing])
             real = str(actual[pos_index])
             for top in TOPS:
-                hit = real in order[:top]
+                hit = real not in order[:top]
                 per_position[key][top].append(hit)
                 sequenced[top].append(hit)
 
@@ -77,7 +78,7 @@ def evaluate(rows, window):
         report['tops'][str(top)] = {
             'bets': len(seq), 'hits': hits,
             'rate': round(hits / len(seq), 6) if seq else None,
-            'baseline': round(top / 10, 4),
+            'baseline': round((10 - top) / 10, 4),
             'max_win_streak': best_win, 'max_loss_streak': best_loss,
         }
     for key in POSITION_KEYS:
@@ -105,7 +106,7 @@ def main():
         return 1
 
     result = {'generated_at': __import__('datetime').datetime.now(TZ).isoformat(),
-              'revision': 'cold-hit-stats-v1',
+              'revision': 'cold-hit-stats-v2-kill',
               'records': len(rows),
               'as_of_period': rows[-1]['period'],
               'windows': [evaluate(rows, window) for window in WINDOWS]}
@@ -116,7 +117,7 @@ def main():
 
     for block in result['windows']:
         print(f"\n=== 窗口 {block['window']} 期 | 样本 {block['samples']} 期 ===")
-        print(f"{'注数':<6}{'总投注':>7}{'命中':>7}{'命中率':>9}{'理论':>8}"
+        print(f"{'杀号数':<6}{'总投注':>7}{'命中':>7}{'命中率':>9}{'理论':>8}"
               f"{'最多连中':>9}{'最多连败':>9}")
         for top in ('1', '2', '3'):
             d = block['tops'][top]
