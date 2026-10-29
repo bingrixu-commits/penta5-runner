@@ -25,13 +25,20 @@ ROOT = Path('/root/penta5-runner')
 OUT_JSON = ROOT / 'data/position_cold_report.json'
 OUT_TEXT = ROOT / 'data/position_cold_report.txt'
 WINDOWS = (30, 20)
+# 30 期取第 2 冷:面板上方「冷码观察 · 近30期每项第1名」已经给了第 1 冷,
+# 这里再给第 1 冷属于重复;20 期上方没有,仍取第 1 冷。
+RANK_BY_WINDOW = {30: 2, 20: 1}
 LABELS = {'q': '千位', 'b': '百位', 's': '十位', 'g': '个位'}
 
 
-def cold_pick(items):
-    """系统口径的第一冷:次数升序,其次遗漏降序(稳定排序保留号码升序)。"""
+def cold_pick(items, rank=1):
+    """系统口径的冷码排序:次数升序,其次遗漏降序(稳定排序保留号码升序)。
+
+    rank=1 为第 1 冷,rank=2 为第 2 冷。
+    """
     ranked = sorted(items, key=lambda it: (it['count'], -it['omission']))
-    return ranked[0]
+    index = max(0, min(rank - 1, len(ranked) - 1))
+    return ranked[index]
 
 
 def build(rows, window):
@@ -46,9 +53,11 @@ def build(rows, window):
                   'omission': it['current_omission'],
                   'last_seen_period': it['last_seen_period']}
                  for it in _group(DIGITS, samples, periods)['items']]
-        chosen = cold_pick(items)
+        rank = RANK_BY_WINDOW.get(window, 1)
+        chosen = cold_pick(items, rank)
         positions[key] = {
             'label': LABELS[key],
+            'rank': rank,
             'cold': chosen['value'],
             'count': chosen['count'],
             'omission': chosen['omission'],
@@ -57,6 +66,7 @@ def build(rows, window):
         }
         picks.append(f"{LABELS[key]} {chosen['value']}(遗漏{chosen['omission']})")
     return {'window': window,
+            'rank': RANK_BY_WINDOW.get(window, 1),
             'periods': {'first': periods[0], 'last': periods[-1]},
             'positions': positions,
             'line': '  '.join(picks)}
@@ -69,7 +79,9 @@ def render(report):
         "",
     ]
     for block in report['windows']:
-        lines.append(f"最近 {block['window']} 期 ({block['periods']['first']}~{block['periods']['last']})")
+        rank = block.get('rank', 1)
+        lines.append(f"最近 {block['window']} 期 · 第{rank}冷 "
+                     f"({block['periods']['first']}~{block['periods']['last']})")
         lines.append(f"  {block['line']}")
         lines.append("")
     lines.append("口径:窗口内出现次数最少者最冷;次数相同则遗漏更长者更冷(与系统 cold 字段一致)。")
@@ -89,7 +101,7 @@ def main():
 
     report = {
         'generated_at': datetime.now(TZ).isoformat(),
-        'revision': 'position-cold-report-v2-single',
+        'revision': 'position-cold-report-v3-rank2',
         'records': len(rows),
         'as_of_period': rows[-1]['period'],
         'conflicts_excluded': len(conflicts),

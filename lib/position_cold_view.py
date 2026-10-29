@@ -67,8 +67,9 @@ def render_block(report=None):
             continue
         periods = block.get('periods') or {}
         span = f'{periods.get("first", "")}~{periods.get("last", "")}'
+        rank = block.get('rank', 1)
         cards.append(
-            f'<div class="pc-card"><div class="pc-title">最近 {window} 期 · {span}</div>'
+            f'<div class="pc-card"><div class="pc-title">最近 {window} 期 · 第{rank}冷 · {span}</div>'
             + ''.join(rows) + '</div>')
 
     if not cards:
