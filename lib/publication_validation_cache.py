@@ -24,9 +24,9 @@ from stats_history import TZ, parse_period
 DOMAIN='penta5-published-validation-v1'
 MAX_TICKETS=4096
 MAX_BYTES=8*1024*1024
-_MODELS={'selected7':'selected_framework_model','selected6':'selected_six_model','pro4':'pro_position_model'}
+_MODELS={'selected7':'selected_framework_model','selected6':'selected_six_model'}
 _DEPENDENCIES=(
-    'publication_validation_cache.py','pro_position_model.py','pro_position_view.py',
+    'publication_validation_cache.py',
     'selected_framework_model.py','selected_framework_contract.py','selected_framework_view.py',
     'selected_six_model.py','selected_six_contract.py','selected_six_view.py',
     'selected_request_options.py','selected_six_request_options.py','selected_strategy_validation.py',
@@ -76,8 +76,35 @@ def _at(value):
     return value.astimezone(TZ)
 
 
+def _dependency_path(code_root,name):
+    """Resolve a dependency from the code root, then from the project root.
+
+    After the lib/ migration most modules live in lib/, but a few entries
+    (for example scripts/run_ai_ready_job.py) still live at the project root.
+    Resolving only against the code root raised FileNotFoundError, which
+    silently disabled the whole validation cache.
+    """
+    for base in (code_root,code_root.parent):
+        path=base/name
+        try:
+            path.stat()
+            return path
+        except OSError:
+            continue
+    return None
+
+
+def _dependency_paths(code_root):
+    result=[]
+    for name in _DEPENDENCIES:
+        path=_dependency_path(code_root,name)
+        if path is not None:
+            result.append(path)
+    return result
+
+
 def _signature(code_root):
-    paths=[code_root/name for name in _DEPENDENCIES]
+    paths=_dependency_paths(code_root)
     paths.append(Path(__file__).resolve())
     result=[]
     for path in paths:
@@ -141,7 +168,8 @@ class ProofValidationCache:
             baseline=_ROOT_BASELINES.setdefault(str(self.code_root),before)
             if baseline!=before or (self.code_root==_DEFAULT_CODE_ROOT and before!=_IMPORT_SIGNATURE):
                 raise ValueError('cache-source-changed')
-            files={name:sha256((self.code_root/name).read_bytes()).hexdigest() for name in _DEPENDENCIES}
+            files={str(path.relative_to(self.code_root.parent)):sha256(path.read_bytes()).hexdigest()
+                   for path in _dependency_paths(self.code_root)}
             files['loaded-cache-implementation']=sha256(Path(__file__).read_bytes()).hexdigest()
             self.fingerprint=sha256(_packed({'domain':DOMAIN,'files':files})).hexdigest()
             self._files=before

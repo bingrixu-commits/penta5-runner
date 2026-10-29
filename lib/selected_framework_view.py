@@ -27,8 +27,7 @@ STATS_START, STATS_END = '<!-- ' + STATS_MARKER + '_START -->', '<!-- ' + STATS_
 ATTACK_MARKER = 'SELECTED_FRAMEWORK_ATTACK'
 ATTACK_START, ATTACK_END = '<!-- ' + ATTACK_MARKER + '_START -->', '<!-- ' + ATTACK_MARKER + '_END -->'
 PROTECTED = ('R1_FRAMEWORK', 'R1_KILLER', 'R1_PRO_COMPARE', 'STAT50_PREDICTION',
-             'HE3_REFINE', 'R1_FRAMEWORK_STATS', 'R1_KILLER_STATS',
-             'PRO_POSITION_STATS', 'MODEL_COMPARE_STATS', 'STAT50_COMPARE_STATS',
+             'HE3_REFINE', 'R1_FRAMEWORK_STATS', 'R1_KILLER_STATS', 'MODEL_COMPARE_STATS', 'STAT50_COMPARE_STATS',
              'STAT50_POSITION_STATS', 'HE3_REFINE_STATS', 'PENTA5_STATS_PANEL')
 STYLE = ('width:calc(100% - 24px);max-width:1050px;margin:16px auto;padding:18px;'
          'box-sizing:border-box;min-width:0;overflow-wrap:anywhere;border:2px solid #6366f1;'

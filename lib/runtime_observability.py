@@ -29,7 +29,6 @@ DURATION_KEYS = ('source_to_input', 'input_to_request', 'request_to_response',
 MODELS = {
     'killer': ('Flash 杀码', 'r1_stats.json', 'ai_job_status.json', 'ai_job_killer.log', 'R1_KILLER'),
     'framework': ('Flash 框架', 'r1_framework_seals.json', 'ai_job_status.json', 'ai_job_framework.log', 'R1_FRAMEWORK'),
-    'pro4': ('Pro 四定位', 'pro_position_seals.json', 'pro_position_status.json', 'pro_compare_cron.log', 'R1_PRO_COMPARE'),
     'selected6': ('Pro 六项', 'selected_six_seals.json', 'selected_six_status.json', 'selected_six_cron.log', 'SELECTED_SIX_INDEPENDENT'),
     'he3_refine': ('三合五尾', 'he3_refine_seals.json', 'he3_refine_status.json', 'he3_refine_cron.log', 'HE3_REFINE'),
     'cold': ('Pro 冷码框架', None, 'cold_framework_status.json', 'cold_framework_cron.log', 'COLD_FRAMEWORK'),

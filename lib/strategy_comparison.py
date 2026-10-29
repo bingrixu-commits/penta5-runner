@@ -25,7 +25,7 @@ STRATEGIES=dict(zip(MODELS,(KILLER_STRATEGY,FRAMEWORK_STRATEGY,PRO4_STRATEGY,SEL
 LEGACY_STRATEGIES=dict(zip(MODELS,(LEGACY_KILLER_STRATEGY,LEGACY_FRAMEWORK_STRATEGY,LEGACY_PRO4_STRATEGY,LEGACY_SELECTED_STRATEGY,LEGACY_SIX_STRATEGY)))
 SUPPORTED_STRATEGIES={model:frozenset((STRATEGIES[model],LEGACY_STRATEGIES[model])) for model in MODELS}
 SUPPORTED_STRATEGIES['selected']=SUPPORTED_STRATEGIES['selected']|{ISOLATED_SELECTED_STRATEGY}
-FILES={'killer':'r1_stats.json','framework':'r1_framework_seals.json','pro4':'pro_position_seals.json','selected':'selected_framework_seals.json','six':'selected_six_seals.json'}
+FILES={'killer':'r1_stats.json','framework':'r1_framework_seals.json','selected':'selected_framework_seals.json','six':'selected_six_seals.json'}
 POSITIONS=('q','b','s','g');POSITION_LABELS=('千位','百位','十位','个位')
 START='<!-- STRATEGY_BOARD_DERIVED_START -->';END='<!-- STRATEGY_BOARD_DERIVED_END -->'
 

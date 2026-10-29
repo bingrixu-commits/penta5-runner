@@ -24,7 +24,6 @@ MODELS = {
     'framework': ('R1_FRAMEWORK', 'r1_framework_attack_text', None),
     'selected7': ('SELECTED_FRAMEWORK', 'selected6-attack-text', 'selected6-attack-data'),
     'selected6': ('SELECTED_SIX_INDEPENDENT', 'six-independent-attack-text', 'six-independent-attack-data'),
-    'pro4': ('R1_PRO_COMPARE', None, 'pro4-active'),
     'he3_refine': ('HE3_REFINE', None, 'he3-refine-active'),
     'cold': ('COLD_FRAMEWORK', 'cold-framework-attack', 'cold-framework-data'),
     'cold_fixed': ('COLD_FIXED_FRAMEWORK', 'cold-fixed-framework-attack', 'cold-fixed-framework-data'),

@@ -19,7 +19,7 @@ from stats_history import (TZ, beijing_now, load_snapshot, parse_period,
                            period_slot, valid_draw_record)
 
 WAIT_SECONDS = 55.0
-KINDS = ('framework', 'killer', 'pro')
+KINDS = ('framework', 'killer')
 
 
 class ReadyJobRejected(ValueError):
@@ -123,10 +123,9 @@ def run_ready_job(kind, *, root=ROOT, loader=load_snapshot, clock=beijing_now,
         state = _source_state(snapshot, expected, checked_at)
         if state == 'ready':
             require_ai_enabled(root=root,clock=clock)
-            script = 'run_pro_compare.py' if kind == 'pro' else 'run_ai_job.py'
+            script = 'run_ai_job.py'
             argv = [sys.executable, '-u', str(Path(root) / 'scripts' / script)]
-            if kind != 'pro':
-                argv.append(kind)
+            argv.append(kind)
             execv(sys.executable, argv)
             return expected  # Injected test execs return; a real exec never does.
         remaining = WAIT_SECONDS - (checked_timer - started)

@@ -31,9 +31,9 @@ SAFE_CONFIG = {'LOCAL_STATE_MODE', 'ALGO_DURABLE_STORE', 'DATA_READ_MODE',
 JSON_DIRS = ('ai_model_inputs', 'stat50_position_verified')
 REQUIRED_DATA = frozenset('data/' + name for name in (
     'ai_api_control.json', 'ai_api_control_audit.jsonl', 'state.json', 'stats_draw_history.json',
-    'r1_stats.json', 'r1_framework_seals.json', 'pro_position_seals.json',
+    'r1_stats.json', 'r1_framework_seals.json',
     'selected_framework_seals.json', 'selected_six_seals.json', 'he3_refine_seals.json',
-    'cold_framework_ledger.json', 'r1_framework_hit_stats.json', 'pro_position_hit_stats.json',
+    'cold_framework_ledger.json', 'r1_framework_hit_stats.json',
     'selected_framework_hit_stats.json', 'selected_six_hit_stats.json', 'he3_refine_hit_stats.json',
     'framework_pnl_v2_ledger.json', 'framework_pnl_v2_summary.json'))
 LEGACY_DATA = frozenset(('data/framework_pnl_ledger.json', 'data/framework_pnl_summary.json'))
