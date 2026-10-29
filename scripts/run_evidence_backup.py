@@ -74,10 +74,14 @@ def run(root, destination, source_manifest=None, *, creator=create_bundle, verif
         if shutil.disk_usage(destination).free < 2 * MAX_TOTAL + 1024 ** 3:
             raise ValueError('backup-disk-space-low')
         started, began = clock(), monotonic()
-        with _budget(240):
+        # 2026-10-30: the bundle grew to ~1.4GB raw / 242MB gz. The 240s wall
+        # budget was measured at 226s on 10-29 and is now hit during the
+        # isolated-restore verification, leaving a valid archive without a
+        # receipt. Give the same bounded work 480s (cron timeout is 480s too).
+        with _budget(480):
             source_manifest = source_manifest or newest_source_manifest(root)
             for attempt in range(1, 4):
-                if monotonic() - began >= 235:
+                if monotonic() - began >= 470:
                     raise TimeoutError('backup-wall-budget-exhausted')
                 archive = destination / ('evidence-' + started.strftime('%Y%m%d-%H%M%S')
                                          + '-' + uuid4().hex[:8] + '.tar.gz')
@@ -100,7 +104,7 @@ def run(root, destination, source_manifest=None, *, creator=create_bundle, verif
                     # Credentials/schema/integrity failures require inspection.
                     if str(error) not in ('evidence-changed-during-backup', 'sources-changed-during-backup') or attempt == 3:
                         raise
-                    if monotonic() - began > 225:
+                    if monotonic() - began > 455:
                         raise TimeoutError('backup-wall-budget-exhausted')
                     sleep(3)
     raise ValueError('backup-attempts-exhausted')
