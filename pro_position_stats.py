@@ -1,5 +1,6 @@
 """Verified per-position Pro exclusions; never changes a published prediction."""
 from copy import deepcopy
+from fastcopy import json_copy
 from datetime import datetime
 from pathlib import Path
 import fcntl
@@ -30,7 +31,7 @@ def _publication(seal, reference, now, root):
     checked = cached_publication('pro4', seal, reference, now, published=True, root=root)
     if checked.get('ref_period') != reference:
         raise ValueError('invalid-pro-four-reference')
-    return deepcopy(checked)
+    return json_copy(checked)
 
 
 def _verified_entry(proof, record, now):
@@ -45,7 +46,7 @@ def _verified_entry(proof, record, now):
     digits = actual['numbers']
     outcomes = {key: digits[index] != proof['response'][key][0] for index, key in enumerate(KEYS)}
     return {'ref_period': proof['ref_period'], 'target_period': proof['target_period'],
-            'publication': deepcopy(proof), 'actual': actual,
+            'publication': json_copy(proof), 'actual': actual,
             'biz_date': business_start(parse_time(actual['opentime'])).strftime('%Y-%m-%d'),
             'outcomes': outcomes}
 
@@ -214,6 +215,21 @@ def _read(path):
     return result
 
 
+def _content_unchanged(new, old):
+    """Compare ledgers ignoring updated_at, which changes every cycle.
+
+    Writing the 54MB ledger every 25s rewrote identical bytes ~190GB/day.
+    """
+    if not isinstance(old, dict) or set(new) != set(old):
+        return False
+    for key in new:
+        if key == 'updated_at':
+            continue
+        if new[key] != old[key]:
+            return False
+    return True
+
+
 def refresh_pro_stats(snapshot=None, root=ROOT):
     root = Path(root)
     snapshot = snapshot if snapshot is not None else load_snapshot(
@@ -224,17 +240,25 @@ def refresh_pro_stats(snapshot=None, root=ROOT):
     with Path(str(path) + '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            previous = _read(path)
-            ledger = refresh_stats(_read(root / 'data/pro_position_seals.json'), snapshot['records'],
-                                   now, previous, root=root,
-                                   conflicting_periods=snapshot.get('conflicting_periods', ()))
-            summary = make_summary(ledger, now, root=root)
+            # The ledger re-validates every historical proof on each refresh; without
+            # this cache session that is thousands of full validations per cycle.
+            # The cache is code-signature guarded, so a source change disables it.
+            from publication_validation_cache import session as validation_session
+            with validation_session(root):
+                previous = _read(path)
+                ledger = refresh_stats(_read(root / 'data/pro_position_seals.json'), snapshot['records'],
+                                       now, previous, root=root,
+                                       conflicting_periods=snapshot.get('conflicting_periods', ()))
+                summary = make_summary(ledger, now, root=root)
         except (ValueError, TypeError, KeyError, OSError, OverflowError):
             # Preserve the last genuine ledger; do not reset a broken proof to zero.
             return {'biz_date': business_start(now).strftime('%Y-%m-%d'), 'metrics': {}, 'overall': {},
                     'latest_settled_period': None, 'pending_count': 0,
                     'overdue_count': 0, 'conflict_count': 0, 'stats_error': True}
-        if ledger != previous:
+        if _content_unchanged(ledger, previous):
+            # Keep byte-identical output: no 54MB rewrite, no updated_at churn.
+            ledger['updated_at'] = previous.get('updated_at', ledger['updated_at'])
+        else:
             atomic_json(path, ledger)
         atomic_json(root / 'data/pro_position_stats.json', summary)
         return summary

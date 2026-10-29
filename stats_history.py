@@ -1,5 +1,6 @@
 """Validated draw history for daily and rolling statistics (Beijing time)."""
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import json
@@ -12,11 +13,10 @@ STATE_PATH = Path('/root/penta5-runner/data/state.json')
 CACHE_PATH = Path('/root/penta5-runner/data/stats_draw_history.json')
 
 
-def parse_period(value):
-    """Official YYYYMMDD001..288 identity; reject coercions and Unicode digits."""
-    if isinstance(value, bool) or not isinstance(value, (str, int)):
-        return None
-    text = str(value).strip()
+@lru_cache(maxsize=65536)
+def _parse_period_text(text):
+    """Cached body: input is already a stripped str, so caching cannot change
+    behaviour for non-str/int callers (the public wrapper still guards those)."""
     if not re.fullmatch(r'[0-9]{11}', text):
         return None
     try:
@@ -25,6 +25,13 @@ def parse_period(value):
         return None
     index = int(text[8:])
     return (text, day, index) if 1 <= index <= 288 else None
+
+
+def parse_period(value):
+    """Official YYYYMMDD001..288 identity; reject coercions and Unicode digits."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    return _parse_period_text(str(value).strip())
 
 
 def period_slot(value):

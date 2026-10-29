@@ -1,5 +1,6 @@
 """Prospective Pro single exclusions for four positions; independent evidence."""
 from copy import deepcopy
+from fastcopy import json_copy
 from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -97,7 +98,7 @@ def _input_doc(reference, history, *, revision=REVISION):
         '各位置允许选择相同数字。不得输出合尾、形态、双排、默认补位或其他字段。'
     )
     result = {'version': 1, 'revision': revision, 'reference_period': reference,
-              'target_period': next_period(reference), 'history': deepcopy(history), 'prompt': prompt}
+              'target_period': next_period(reference), 'history': json_copy(history), 'prompt': prompt}
     if revision == FEATURES_REVISION:
         # Feature values depend only on the already sealed 50 draws. Using the
         # last actual opening time keeps saved input reconstruction independent
@@ -150,7 +151,7 @@ def _input_doc(reference, history, *, revision=REVISION):
 
 
 def _body(seal):
-    return {key: deepcopy(seal.get(key)) for key in
+    return {key: json_copy(seal.get(key)) for key in
             ('revision', 'ref_period', 'history', 'history_sha256',
              'input_doc', 'input_sha256', 'response', 'model_metadata')}
 
