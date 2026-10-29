@@ -28,7 +28,6 @@ MODELS = {
     'cold': ('COLD_FRAMEWORK', 'cold-framework-attack', 'cold-framework-data'),
     'cold_fixed': ('COLD_FIXED_FRAMEWORK', 'cold-fixed-framework-attack', 'cold-fixed-framework-data'),
     'cold50': ('COLD50_FRAMEWORK', 'cold50-framework-attack', 'cold50-framework-data'),
-    'cold50_fixed': ('COLD50_FIXED_FRAMEWORK', 'cold50-fixed-framework-attack', 'cold50-fixed-framework-data'),
 }
 COLD_FAMILIES = {
     'cold': ('cold-framework', {'cold-framework-v1-30-pos3-tail3': 3,
@@ -36,13 +35,9 @@ COLD_FAMILIES = {
                               'cold-framework-v3-30-pos3-tail2-he2x4-he3x5': 2}),
     'cold_fixed': ('cold-fixed-framework', {'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5': 2}),
     'cold50': ('cold50-framework', {'cold50-framework-v3-50-pos3-tail2-he2x4-he3x5': 2}),
-    'cold50_fixed': ('cold50-fixed-framework', {'cold50-fixed-framework-v1-50-fixed-qbs-all-qbs-he2x4-he3x5': 2,
-                                             'cold50-fixed-framework-v2-50-fixed-qbg-qbg-bsg-he2x4-he3x5': 2}),
 }
 FIXED_COLD_SPECS = {
     'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5': (frozenset(('q','b','s')),frozenset(('all','qbs'))),
-    'cold50-fixed-framework-v1-50-fixed-qbs-all-qbs-he2x4-he3x5': (frozenset(('q','b','s')),frozenset(('all','qbs'))),
-    'cold50-fixed-framework-v2-50-fixed-qbg-qbg-bsg-he2x4-he3x5': (frozenset(('q','b','g')),frozenset(('qbg','bsg'))),
 }
 FIELDS = ('model','reference_period','target_period','source_card_sha256','attack_sha256','scope')
 MAX_EVENTS = 4096
@@ -101,7 +96,7 @@ def _cold_public_identity(prediction, revision, model='cold'):
     if (not isinstance(reference,str) or not parse_period(reference) or parse_period(reference)[0]!=reference
             or target!=next_period(reference)):
         return None
-    if model in ('cold50','cold50_fixed'):
+    if model in ('cold50',):
         first,last=prediction.get('first_period'),prediction.get('last_period')
         if (type(prediction.get('sample_count')) is not int or prediction['sample_count']!=50
                 or not isinstance(first,str) or not parse_period(first) or parse_period(first)[0]!=first
@@ -123,7 +118,7 @@ def _cold_public_identity(prediction, revision, model='cold'):
         if (not isinstance(values,dict) or len(values)!=count or not set(values)<=set(allowed)
                 or any(type(value) is not int or not 0<=value<=9 for value in values.values())):
             return None
-    if model in ('cold_fixed','cold50_fixed') and (frozenset(positions),frozenset(tails))!=FIXED_COLD_SPECS[revision]:
+    if model in ('cold_fixed',) and (frozenset(positions),frozenset(tails))!=FIXED_COLD_SPECS[revision]:
         return None
     digits='1234567890'
     remaining=lambda value: ''.join(digit for digit in digits if digit!=str(value))

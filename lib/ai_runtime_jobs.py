@@ -9,7 +9,6 @@ _ENTRYPOINTS=frozenset(('scripts/run_ai_ready_job.py','scripts/run_ai_job.py',
     'scripts/run_selected_six.py','scripts/run_cold_framework.py','cold_framework_model.py',
     'scripts/run_cold50_framework.py','cold50_framework_model.py',
     'scripts/run_cold_fixed_framework.py','cold_fixed_framework_model.py',
-    'scripts/run_cold50_fixed_framework.py','cold50_fixed_framework_model.py',
     'selected_framework_model.py','selected_six_model.py',
     'auto_r1_killer.py','auto_r1_framework.py'))
 _NAMES=frozenset(Path(name).name for name in _ENTRYPOINTS)
