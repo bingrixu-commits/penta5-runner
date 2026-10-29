@@ -31,7 +31,13 @@ module.exports = {
         QUALIFIED_PICKS_MAX_SHOW_STREAK: "0",
         QUALIFIED_PICKS_MAX_ENTRY_CONSECUTIVE: "0",
         QUALIFIED_PICKS_FAIL_COOLDOWN: "6",
-        QUALIFIED_PICKS_ENTRY_LOOKBACK: "12"
+        QUALIFIED_PICKS_ENTRY_LOOKBACK: "12",
+        // 2026-10-30: cuopt 远端不可用时把单次 HTTP 等待 3000→800ms；
+        // 服务恢复后仍会正常调用。PM2 运行时值由 --update-env 同步。
+        PENTA5_CUOPT_URL: "http://8.138.155.17:8788",
+        PENTA5_CUOPT_LOCAL: "0",
+        PENTA5_AUTOTOP6_MILP: "cuopt",
+        PENTA5_CUOPT_TIMEOUT_MS: "800"
       }
     }
   ]

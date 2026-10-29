@@ -32,9 +32,9 @@ JSON_DIRS = ('ai_model_inputs', 'stat50_position_verified')
 REQUIRED_DATA = frozenset('data/' + name for name in (
     'ai_api_control.json', 'ai_api_control_audit.jsonl', 'state.json', 'stats_draw_history.json',
     'r1_stats.json', 'r1_framework_seals.json',
-    'selected_framework_seals.json', 'selected_six_seals.json', 'he3_refine_seals.json',
+    'selected_six_seals.json', 'he3_refine_seals.json',
     'cold_framework_ledger.json', 'r1_framework_hit_stats.json',
-    'selected_framework_hit_stats.json', 'selected_six_hit_stats.json', 'he3_refine_hit_stats.json'))
+    'selected_six_hit_stats.json', 'he3_refine_hit_stats.json'))
 LEGACY_DATA = frozenset()
 RDS_TABLES = ('official_draws', 'model_predictions', 'model_evaluations',
               'model_counters', 'model_states', 'system_snapshots')

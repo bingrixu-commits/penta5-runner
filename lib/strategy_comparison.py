@@ -256,7 +256,13 @@ def build_comparison(snapshot,*,root=ROOT,ledgers=None,delivery=None):
               'published_count':0,'on_time_count':0,'late_count':0,'pending_count':0,'unverified_count':0,'rejected_count':0,'old_policy_count':0,'source_error':False,'latest':None}
         publications[model]={};closed_series[model]=[];positions={key:[] for key in POSITIONS}
         try:
-            source=ledgers[model] if ledgers is not None else _read(Path(root)/'data'/FILES[model])
+            if model=='selected':
+                # 2026-10-30: legacy 'selected' 账本已退役并归档(see /root/archive/),
+                # 面板 DISPLAY_MODELS 本来就不展示它; 这里保留空索引以维持 summary
+                # 形状, 避免每次刷新再读 65MB+29MB 死数据。
+                source={'prediction_seals':{}}
+            else:
+                source=ledgers[model] if ledgers is not None else _read(Path(root)/'data'/FILES[model])
             seals=source.get('prediction_seals',{})
             if not isinstance(seals,dict):raise ValueError('invalid-strategy-index')
             for reference,seal in sorted(seals.items()):
