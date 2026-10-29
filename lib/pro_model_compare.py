@@ -104,14 +104,45 @@ def validate_shared_input(encoded, reference, snapshot, now, flash_seal=None):
     if history != expected_history:
         raise ValueError('original-input-history-changed')
     marker = '\n\n【后台结构化参考与本模型真实已封存战绩】\n'
-    if audit.get('context_applied') is True:
-        if marker not in prompt:
-            raise ValueError('missing-original-context-boundary')
-        base_prompt = prompt.split(marker, 1)[0]
+    policy = audit.get('request_policy')
+    if policy is not None:
+        # 2026-10-22 the framework switched to the independent request policy:
+        # the saved prompt is rendered by render_independent_request() and no
+        # longer contains the legacy context boundary block. Verify the new
+        # format byte-for-byte instead of rejecting it as a missing boundary.
+        from ai_model_context import (REQUEST_POLICY, REQUEST_DEFINITION_VERSION,
+                                      render_independent_request)
+        records = {}
+        for raw in snapshot.get('records', ()):
+            record = valid_draw_record(raw.get('period'), raw.get('numbers'), raw.get('opentime'), now)
+            if record:
+                records[record['period']] = record
+        try:
+            rows = [records[period] for period, _ in recent]
+        except KeyError as error:
+            raise ValueError('missing-independent-request-history') from error
+        body = audit.get('body')
+        if (policy != REQUEST_POLICY
+                or type(audit.get('request_definition_version')) is not int
+                or audit.get('request_definition_version') != REQUEST_DEFINITION_VERSION
+                or audit.get('context_applied') is not True
+                or not isinstance(body, dict)
+                or body.get('as_of') != payload.get('observed_at')
+                or body.get('reference_period') != reference
+                or body.get('target_period') != target
+                or prompt != render_independent_request(body, rows, 'framework')):
+            raise ValueError('invalid-independent-request-archive')
+        if not isinstance(audit.get('base_prompt_sha256'), str) or not HASH.fullmatch(audit['base_prompt_sha256']):
+            raise ValueError('invalid-original-base-prompt-hash')
     else:
-        base_prompt = prompt
-    if audit.get('base_prompt_sha256') != sha256(base_prompt.encode('utf-8')).hexdigest():
-        raise ValueError('invalid-original-base-prompt-hash')
+        if audit.get('context_applied') is True:
+            if marker not in prompt:
+                raise ValueError('missing-original-context-boundary')
+            base_prompt = prompt.split(marker, 1)[0]
+        else:
+            base_prompt = prompt
+        if audit.get('base_prompt_sha256') != sha256(base_prompt.encode('utf-8')).hexdigest():
+            raise ValueError('invalid-original-base-prompt-hash')
     result = deepcopy(audit)
     result.update(input_archive=f'ai_model_inputs/framework-{reference}.json',
                   input_archive_sha256=sha256(encoded).hexdigest())
