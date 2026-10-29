@@ -1,0 +1,19 @@
+[Unit]
+Description=Penta5 position cold-code report refresher
+Documentation=file:///root/penta5-runner/scripts/position_cold_report.py
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/penta5-runner
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -u /root/penta5-runner/scripts/position_cold_daemon.py
+Restart=always
+RestartSec=5
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
