@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import position_cold_report as report  # noqa: E402
 import kill_three_pick  # noqa: E402
 import model_significance  # noqa: E402
+import real_hitrate_report  # noqa: E402
 
 WATCH = Path('/root/penta5-runner/data/stats_draw_history.json')
 SLOT_SECONDS = 300
@@ -86,12 +87,21 @@ def main():
                         signi_code = model_significance.main()
                 except Exception as error:
                     print(f'significance failed: {type(error).__name__}: {error}', flush=True)
+                realhit_code = None
+                try:
+                    import contextlib as _ctx2
+                    import io as _io2
+                    _buf2 = _io2.StringIO()
+                    with _ctx2.redirect_stdout(_buf2):
+                        realhit_code = real_hitrate_report.main()
+                except Exception as error:
+                    print(f'real-hitrate failed: {type(error).__name__}: {error}', flush=True)
                 elapsed = time.monotonic() - started
                 last_signature = signature()
                 last_slot = slot
                 last_run = time.monotonic()
                 stamp = datetime.now().astimezone().strftime('%H:%M:%S')
-                print(f'{stamp} regenerated rc={code} kill3={kill_code} signi={signi_code} elapsed={elapsed:.2f}s '
+                print(f'{stamp} regenerated rc={code} kill3={kill_code} signi={signi_code} realhit={realhit_code} elapsed={elapsed:.2f}s '
                       f'trigger={"+".join(reason)}', flush=True)
         except Exception as error:
             print(f'regenerate failed: {type(error).__name__}: {error}', flush=True)
