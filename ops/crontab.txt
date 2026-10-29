@@ -1,0 +1,25 @@
+0 3 * * * find /root/penta5-runner/data/backups -maxdepth 1 -type f \( -name 'state_????????.json.gz' -o -name 'state_????????.json' \) -mtime +3 -delete
+0 5 * * * flock -n /var/lock/penta5-84b79f2f.lock bash -c '/bin/bash /root/penta5-runner/clean_history.sh >/dev/null 2>&1'
+0 5 * * * flock -n /var/lock/penta5-b196b01f.lock bash -c 'python3 /root/penta5-runner/reset_daily.py >> /root/reset.log 2>&1'
+*/30 * * * * flock -n /var/lock/penta5-03c2b9e5.lock bash -c '/bin/bash /root/penta5-runner/guard_daily.sh >/dev/null 2>&1'
+*/5 * * * * flock -n /var/lock/penta5-killer.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_ai_ready_job.py killer >> auto_r1_killer.log 2>&1'
+*/5 * * * * flock -n /var/lock/penta5-framework.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_ai_ready_job.py framework >> auto_r1_framework.log 2>&1'
+# Prospective same-input Flash / Pro comparison
+# Fixed 50-draw statistical candidates; no model API calls
+1,6,11,16,21,26,31,36,41,46,51,56 * * * * flock -n /var/lock/penta5-stat50.lock bash -c 'sleep 20 && cd /root/penta5-runner && timeout 45 python3 -u scripts/run_stat50_compare.py >> data/stat50_compare_cron.log 2>&1'
+# Independent six-to-five extra reference; original AI contracts unchanged
+*/5 * * * * flock -n /var/lock/penta5-he3.lock bash -c 'sleep 40 && cd /root/penta5-runner && timeout --kill-after=5s 255 python3 -u scripts/run_he3_refine.py >> data/he3_refine_cron.log 2>&1'
+# Independent Pro selected-six prospective framework
+*/5 * * * * flock -n /var/lock/penta5-six.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 295 python3 -u scripts/run_selected_six.py >> data/selected_six_cron.log 2>&1'
+*/5 * * * * flock -n /var/lock/penta5-cold.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 225 python3 -u scripts/run_cold_framework.py >> data/cold_framework_cron.log 2>&1'
+* * * * * flock -n /var/lock/penta5-obs.lock bash -c 'sleep 45 && cd /root/penta5-runner && timeout --kill-after=3s 50 python3 -u scripts/run_runtime_observability.py >> data/runtime_observability_cron.log 2>&1'
+9 5 * * * flock -n /var/lock/penta5-evidence.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 480 python3 -u scripts/run_evidence_backup.py >> data/evidence_backup_cron.log 2>&1'
+17 * * * * /usr/sbin/logrotate -s /var/lib/logrotate/status /etc/logrotate.d/penta5 >> /root/penta5-runner/data/log_rotation.log 2>&1
+*/5 * * * * flock -n /var/lock/penta5-coldfixed.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 225 python3 -u scripts/run_cold_fixed_framework.py >> data/cold_fixed_framework_cron.log 2>&1'
+0 6 * * * find /root/evidence-archives -maxdepth 1 -name "evidence-*.tar.gz" -mtime +7 -delete 2>/dev/null
+*/15 * * * * flock -n /var/lock/penta5-cuopt-health.lock bash -c 'cd /root/penta5-runner && python3 scripts/check_cuopt_health.py >> data/cuopt_health_cron.log 2>&1'
+55 4 * * * flock -n /var/lock/penta5-manifest.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 180 python3 -u scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift >> data/source_manifest_refresh.log 2>&1'
+*/10 * * * * flock -n /var/lock/penta5-health.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 120 python3 -u scripts/ops_health_check.py --root /root/penta5-runner >> data/ops_health_cron.log 2>&1'
+10 */6 * * * flock -n /var/lock/penta5-coldbacktest.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 300 python3 -u scripts/cold_backtest.py >> data/cold_backtest_cron.log 2>&1'
+40 */6 * * * flock -n /var/lock/penta5-settled-report.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 300 python3 -u scripts/strategy_settled_report.py >> data/strategy_settled_cron.log 2>&1'
+25 * * * * flock -n /var/lock/penta5-model-daily.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 300 python3 -u scripts/model_daily_report.py >> data/model_daily_cron.log 2>&1'
