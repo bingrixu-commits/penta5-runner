@@ -1,4 +1,4 @@
-"""位置冷码报告常驻进程:每次开奖后重新计算一次。
+"""冷码类指标常驻进程:位置冷码报告、冷码回测、三码建议、模型显著性与真实命中率,每次开奖后重算一次。
 
 开奖规律(实测):每 5 分钟一期,开奖时刻固定在每 5 分钟的 :12 秒。
 
@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import position_cold_report as report  # noqa: E402
 import kill_three_pick  # noqa: E402
 import model_significance  # noqa: E402
+import cold_hit_stats  # noqa: E402
 import real_hitrate_report  # noqa: E402
 
 WATCH = Path('/root/penta5-runner/data/stats_draw_history.json')
@@ -96,12 +97,21 @@ def main():
                         realhit_code = real_hitrate_report.main()
                 except Exception as error:
                     print(f'real-hitrate failed: {type(error).__name__}: {error}', flush=True)
+                cold_code = None
+                try:
+                    import contextlib as _ctx4
+                    import io as _io4
+                    _buf4 = _io4.StringIO()
+                    with _ctx4.redirect_stdout(_buf4):
+                        cold_code = cold_hit_stats.main()
+                except Exception as error:
+                    print(f'cold-hit-stats failed: {type(error).__name__}: {error}', flush=True)
                 elapsed = time.monotonic() - started
                 last_signature = signature()
                 last_slot = slot
                 last_run = time.monotonic()
                 stamp = datetime.now().astimezone().strftime('%H:%M:%S')
-                print(f'{stamp} regenerated rc={code} kill3={kill_code} signi={signi_code} realhit={realhit_code} elapsed={elapsed:.2f}s '
+                print(f'{stamp} regenerated rc={code} kill3={kill_code} signi={signi_code} realhit={realhit_code} cold={cold_code} elapsed={elapsed:.2f}s '
                       f'trigger={"+".join(reason)}', flush=True)
         except Exception as error:
             print(f'regenerate failed: {type(error).__name__}: {error}', flush=True)
