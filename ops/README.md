@@ -163,3 +163,9 @@
   文本与「复制攻击语」按钮（含 clipboard 回退）；`lib/attack_editor_view.py` 把
   `kill3-attack-text` 注册进全局攻击语编辑框并把版本升到 `all-attack-editor-v5-kill3-tail`，
   编辑/复制行为与八项攻击语一致。
+
+- **2026-10-30 11:25 修复「必须手动刷新数字才跳」**：面板 live refresh 只合并
+  `panel_live_refresh.py` 里 `names` 名单登记的标记区块，`KILL_THREE`（AI 三位置+一合尾）
+  与 `COLD_HIT_STATS`/`POSITION_COLD`/`MODEL_SIGNI`/`REAL_HIT` 此前未登记，导致这些周期块
+  只有整页刷新才更新。已把 5 个标记加入 names，版本升到 `quiet-panel-v16-live-sections`；
+  刷新脚本变化后浏览器需要手动刷新一次以装载新脚本，之后每 8 秒自动合并最新封存/统计。
