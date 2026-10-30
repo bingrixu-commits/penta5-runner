@@ -87,7 +87,8 @@ def render_block(report=None):
         f' · 目标:证明真实水平达 {_pct(report.get("target_rate"))}</div>'
         f'<div class="ms-days">近几日:{day_text or "-"}</div>'
         f'<div class="ms-foot">换版本即重置计数,旧版本样本不并入统计(避免多重比较)。'
-        f'单日命中率波动约 ±3pp,不足以判断模型优劣,以整体显著性为准。</div>'
+        f'单日命中率波动约 ±3pp,不足以判断模型优劣,以整体显著性为准。'
+        f'命中口径:只用前 4 球(千/百/十/个),第 5 球不参与。</div>'
         f'</section>{END}')
 
 

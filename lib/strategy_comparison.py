@@ -462,6 +462,7 @@ def render_board(summary):
         '<details style="margin-top:8px;font-size:12px;"><summary>如何理解这些模型</summary>'
         '<div>各自整组项目数不同，不能按整组百分比直接排名；共同定位只在同目标、同输入及同位置的配对样本内比较。只有已发布并真实开奖的样本才计命中，零样本不显示百分比。</div>'
         '<div>六项优先检查最差分段；条件转移使用固定均匀先验，条件样本不足会明确标注。近期加权与总体频次各按固定目标判断，不共享当前号码。统计基准Markov的稀疏回退只属于该基准，不代表正式转移模型。</div>'
+        '<div>所有对照只使用各策略封存的前 4 球(千/百/十/个)，第 5 球不参与；位置按 千/百/十/个 对齐。</div>'
         '<div>方法不同不保证号码不同或提高预测效果；策略上线前的历史成绩单独保留。</div></details>'
         '<div style="font-size:12px;color:#64748b;">统计核验：'+escape(summary['updated_at'].replace('T',' '))+'</div></section>\n'+END)
 

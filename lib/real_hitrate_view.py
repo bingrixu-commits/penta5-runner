@@ -96,7 +96,7 @@ def render_block(report=None):
         + f'<div class="rh-foot">交叉验证:{check_text}'
         f'{"(全部一致)" if mismatch_total == 0 else "(存在不一致,需排查)"}</div>'
         f'<div class="rh-foot">置信区间跨过 90% 且 p 值大于 0.05 时,'
-        f'表示该模型与随机杀号无法区分。</div>'
+        f'表示该模型与随机杀号无法区分。</div>核算只使用前 4 球(千/百/十/个),第 5 球不参与。</div>'
         f'</section>{END}')
 
 

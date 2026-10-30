@@ -83,6 +83,7 @@ def render_block(report=None):
         f'<div class="pc-meta">数据截至 {as_of} · 生成于 {generated}</div>'
         f'<div class="pc-grid">{"".join(cards)}</div>'
         f'<div class="pc-foot">口径:窗口内出现次数最少者最冷,次数相同则遗漏更长者更冷。'
+        f'核算只使用前 4 球(千、百、十、个),第 5 球不参与;位置按 千/百/十/个 对齐。'
         f'仅作观察,不构成预测。</div>'
         f'</section>{END}')
 

@@ -330,7 +330,8 @@ def render(summary):
             '<div class="rt-note">手动停止不计失败；—表示暂无可核验证据。按时率只衡量发布时效，不是号码命中率。'
             '尚未关盘期次不进按时率分母；“开奖”时间不代表抓取到达时间。'
             '封存时间、服务端提交观测和本浏览器本次收到分别记录；观测不等于精确首次就绪，本机时间不参与正式样本。'
-            '统计日按北京时间05:00起；详情可左右滚动。</div></div></details>'
+            '统计日按北京时间05:00起；详情可左右滚动。'
+            '号码口径与全站一致：只用前4球(千/百/十/个)，第5球不参与。</div></div></details>'
             '<script type="application/json" id="runtime-observability-data">'+_delivery_json(models)+'</script>'
             + SCRIPT + '</section>\n' + END)
 

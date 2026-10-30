@@ -48,10 +48,10 @@ def get_history_and_issue():
                     if isinstance(ev, dict):
                         nums = ev.get("actualFirstFourDigits") or ev.get("actualNumbers")
                         if nums and len(nums) >= 4:
-                            history.append("".join(str(x) for x in nums[-4:]))
+                            history.append("".join(str(x) for x in nums[:4]))
                 latest = d.get("latestRecord", {})
                 if latest.get("numbers") and len(latest["numbers"]) >= 4:
-                    history.append("".join(str(x) for x in latest["numbers"][-4:]))
+                    history.append("".join(str(x) for x in latest["numbers"][:4]))
                 current_issue = str(latest.get("issue") or latest.get("period") or "")
         except Exception as e:
             print("读取数据错误:", e)
