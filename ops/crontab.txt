@@ -9,6 +9,7 @@
 */5 * * * * flock -w 30 /var/lock/penta5-he3.lock bash -c 'sleep 40 && cd /root/penta5-runner && timeout --kill-after=5s 255 python3 -u scripts/run_he3_refine.py >> data/he3_refine_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-framework.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_ai_ready_job.py framework >> auto_r1_framework.log 2>&1'
 * * * * * flock -n /var/lock/penta5-balance-guard.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 45 python3 -u scripts/ai_balance_guard.py >> data/ai_balance_guard.log 2>&1'
+* * * * * flock -n /var/lock/penta5-model-usage.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 55 python3 -u scripts/run_model_usage.py >> data/model_usage_cron.log 2>&1'
 # Prospective same-input Flash / Pro comparison
 # Fixed 50-draw statistical candidates; no model API calls
 1,6,11,16,21,26,31,36,41,46,51,56 * * * * flock -n /var/lock/penta5-stat50.lock bash -c 'sleep 20 && cd /root/penta5-runner && timeout 45 python3 -u scripts/run_stat50_compare.py >> data/stat50_compare_cron.log 2>&1'

@@ -25,6 +25,7 @@ Collects a fixed set of probes into one JSON report plus a human table:
   evidence_size      evidence archive + runtime observability directory sizes
   deepseek_balance   DeepSeek key total_balance (>=8 CNY ok, 3-8 warn, <3 fail)
   provider_402       recent provider HTTP 402 in the AI job logs (<30 min -> warn)
+  model_usage        derived token/cache/latency/402 summary (stale > 30 min -> warn)
 
 Writes (atomic) data/ops_health.json, data/ops_health_state.json and appends
 data/ops_alerts.log only for *transitions* (a check newly entering warn/fail,
@@ -997,6 +998,53 @@ def check_provider_402(ctx):
                   {'recent': 0, 'events': len(events), 'skipped': len(skipped)})
 
 
+MODEL_USAGE_STALE_SECONDS = 30 * 60
+
+
+def check_model_usage(ctx):
+    """Derived model usage summary (data/model_usage/summary.json); read-only."""
+    path = ctx['root'] / 'data' / 'model_usage' / 'summary.json'
+    payload, error = _load_json(path)
+    if not isinstance(payload, dict) or not isinstance(payload.get('today'), dict):
+        return _entry('model_usage', WARN,
+                      'model usage summary unusable (%s)' % (error or 'invalid shape'),
+                      {'state': 'missing'})
+    now = ctx['now']
+    updated = _parse_time(payload.get('updated_at'))
+    age = (now - updated).total_seconds() if updated is not None else None
+    if age is None or age > MODEL_USAGE_STALE_SECONDS:
+        return _entry('model_usage', WARN,
+                      'model usage collector stale: %s' % _age_text(age),
+                      {'updated_at': payload.get('updated_at')})
+    today = payload['today']
+    tokens = today.get('tokens') if isinstance(today.get('tokens'), dict) else {}
+    errors = today.get('errors') if isinstance(today.get('errors'), dict) else {}
+    latency = today.get('latency') if isinstance(today.get('latency'), dict) else {}
+    balance = payload.get('balance') if isinstance(payload.get('balance'), dict) else {}
+    health = payload.get('health') if isinstance(payload.get('health'), dict) else {}
+    reasons = health.get('reasons') if isinstance(health.get('reasons'), list) else []
+    status = {'ok': OK, 'warn': WARN, 'fail': FAIL}.get(str(health.get('status')), OK)
+    cache_rate = tokens.get('cache_rate')
+    p95 = latency.get('p95')
+    balance_value = balance.get('balance')
+    detail = ('calls=%s ok=%s fail=%s 402=%s retries=%s cache=%s p95=%s balance=%s age=%s'
+              % (today.get('attempts'), today.get('responses'), today.get('error_total'),
+                 errors.get('payment', 0), today.get('retries'),
+                 '%.1f%%' % (cache_rate * 100) if isinstance(cache_rate, (int, float)) else '-',
+                 '%.1fs' % p95 if isinstance(p95, (int, float)) else '-',
+                 '%.2f' % balance_value if isinstance(balance_value, (int, float)) else '-',
+                 _age_text(age)))
+    if reasons:
+        detail += '; ' + '; '.join(str(item) for item in reasons[:3])
+    return _entry('model_usage', status, detail,
+                  {'attempts': today.get('attempts'), 'responses': today.get('responses'),
+                   'errors': today.get('error_total'),
+                   'payment': errors.get('payment', 0),
+                   'tokens': tokens, 'latency': latency,
+                   'balance': balance, 'updated_at': payload.get('updated_at'),
+                   'health': health})
+
+
 def check_hitrate_cumulative(ctx):
     """累计命中率报告新鲜度: cron 每 15 分钟生成; >30 分钟 warn, >90 分钟 fail, 缺失 fail。"""
     path = ctx['root'] / 'data' / HITRATE_CUMULATIVE_JSON
@@ -1045,6 +1093,7 @@ CHECK_FUNCS = (
     check_deepseek_balance,
     check_provider_402,
     check_hitrate_cumulative,
+    check_model_usage,
 )
 FALLBACK_NAMES = {
     'check_latest_draw': ('latest_draw',),
@@ -1065,6 +1114,7 @@ FALLBACK_NAMES = {
     'check_deepseek_balance': ('deepseek_balance',),
     'check_provider_402': ('provider_402',),
     'check_hitrate_cumulative': ('hitrate_cumulative',),
+    'check_model_usage': ('model_usage',),
 }
 
 
