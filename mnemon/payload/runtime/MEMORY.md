@@ -18,4 +18,14 @@ penta5-runner he3 统计缓存：lib/he3_refine_stats.py 2026-10-30 加入 data/
 §
 penta5-runner 2026-10-30 模型决策：framework 已回退 deepseek-flash（.env PENTA5_MODEL_FRAMEWORK=deepseek-flash，ref 093 起 AI_RESPONSE_META 已确认 flash）；v4-pro 试运行样本仅 30 次=93.3%（flash 全史 3080=90.29%，差异不显著）且 completion tokens 约 2 倍、耗时 32-39s。scripts/model_daily_report.py 新增 framework_by_model 字段（从 r1_framework_seals 的 model_metadata.requested_model 拆分统计）。
 §
-penta5-runner：退役数据 selected_framework_* 与 pro_compare_* 已于 2026-10-30 归档到 /root/archive/retired-20261030/（gzip 共 12MB，原始 93MB）；evidence_backup 的 REQUIRED_DATA 已移除两项、strategy_comparison 不再读取 legacy 'selected' 账本（该行本就不在 DISPLAY_MODELS 展示）。找回方法=gunzip 回 data/ 并回退 commit 0c86888。cuopt 远端 8.138.155.17:8788 不可达期间 pm2 PENTA5_CUOPT_TIMEOUT_MS 已 3000→800（ecosystem.runner.config.js 已持久化 + pm2 save）；对方恢复后可改回 3000 并 restart --update-env。
+penta5-runner：退役数据 selected_framework_* 与 pro_compare_* 已于 2026-10-30 归档到 /root/archive/retired-20261030/（gzip 共 12MB，原始 93MB）；evidence_backup 的 REQUIRED_DATA 已移除两项、strategy_comparison 不再读取 legacy 'selected' 账本。找回方法=gunzip 回 data/ 并回退 commit 0c86888。cuopt：用户确认没有 8.138.155.17（阿里云广州）这台服务器、也决定不再买/租服务器，已把 pm2+ecosystem 的 PENTA5_CUOPT_URL 置空（commit 8fb0c23），auto-top6 直接 JS 穷举回退，ops_health 把 cuopt-url-unset 判为「已停用 OK」；不要建议重新部署 GPU。
+§
+penta5-runner 的 cold_framework/cold_fixed 框架硬编码 MODEL='deepseek-v4-pro'（用 PENTA5_FRAMEWORK_API_KEY，与 selected_six 的 pro 调用共用同一 DeepSeek 账户）；2026-10-30 07:55 该账户余额瞬时不足返回 HTTP 402(provider-payment-required)，08:00 下一轮恢复正常发布。余额可用 GET https://api.deepseek.com/user/balance 查询（当时 total_balance 4.69 CNY，granted 0）。余额耗尽会同时打挂 pro 任务；要么及时充值，要么把冷码框架/selected_six 的模型改为 flash（cold 需把 MODEL 常量改成可读环境变量的形式）。
+§
+penta5-runner 2026-10-30 AI 任务最终状态：6 个 AI 任务全部启用——framework/killer(flash)、he3_refine(v4-pro)、selected_six/cold_framework/cold_fixed_framework(v4-pro)。中间曾按用户要求暂停后恢复（commit 53a93f8 恢复三任务、8561435/9eff4f4 是 he3 pro 改造）；data/ai_api_paused.json 已删除。注意：08:59-09:10 账户余额归零导致所有 AI 任务 402，期号 107-110 缺口不可回补；09:12 充值后无需任何操作自动恢复（ref 111 六任务全部发布）。已知待优化：cold_fixed 每期要 3 次尝试才过（前两次 strategy-response-cold-he3-parity 校验拒绝，token 约 3 倍）。余额消耗约 3.5-4 元/小时（全开时），需保持充值。
+§
+penta5-runner 2026-10-30 08:48 合尾(he3_refine)按用户要求改用 deepseek-v4-pro（合尾重要，要用好模型）：lib/he3_refine.py 的 MODEL 已支持 PENTA5_MODEL_HE3(默认 flash)；同时修了两处只支持 flash 的问题——(1) _validate_saved 的 returned_model 白名单原来写死 flash，改为按模型族(flash/pro)一致校验（历史 flash 封存仍合法、跨族降级仍拒）；(2) he3 cron 的 flock -n 在 run_stats 短暂占用 /var/lock/penta5-he3.lock 时会静默跳过整期，改为 flock -w 30。已验证 ref=105/106 用 v4-pro 发布成功。pro 合尾单次约 690 prompt+3.6k completion tokens、~0.05-0.07 元/次；当时账户余额仅 1.13 元，需充值或降频/回退 flash。
+§
+a'a'z
+§
+penta5-runner 的 AI 三位置杀码（kill3-tail）：v3 起同一位置杀码/放弃位置最多连用 3 期，满后下一期不得再用（连续计数跨弃位不清零）；v4（2026-10-30 23:20 上线）起面板仍显示 3 个位置杀码卡，但只有 2 个计入整组与攻击语，第 3 个由 AI 用 display_only 标明「仅展示」，整组改为 5 项（2 位置+合尾+2 形态），位置杀码按 2 注/期；反向形态始终按 3 个被杀位置（含仅展示位）取反、弃位字符自选（v4.1 起提示词写死、面板显示「形态取反」推导行）；旧 3 位置口径封存/结算不改写、面板注明不计入（55 期/31 中）。实现=lib/kill3_tail.py + lib/kill_three_view.py + scripts/run_kill3_tail.py，封存 position_restriction/display_only/counted，rule_version kill3-tail-v4；commits 3c3ce70/20aef20/465ef33/a6d8613/f3c58a1/5394b1a。冷码排序无预测优势：3000 注回测冷码#1 89.87% vs 随机 90.40%。
