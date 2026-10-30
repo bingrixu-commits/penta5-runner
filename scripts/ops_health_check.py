@@ -103,6 +103,10 @@ PROVIDER_402_AT_RE = re.compile(r'"at"\s*:\s*"([^"]+)"')
 PROVIDER_402_WINDOW_SECONDS = 30 * 60
 PROVIDER_402_TAIL_LINES = 4000
 PROVIDER_402_TAIL_BYTES = 8 * 1024 * 1024
+HITRATE_CUMULATIVE_JSON = 'framework_hitrate_cumulative.json'
+HITRATE_CUMULATIVE_WARN_SECONDS = 30 * 60
+HITRATE_CUMULATIVE_FAIL_SECONDS = 90 * 60
+HITRATE_CUMULATIVE_MIN_ROWS = 7
 
 
 def _one_line(text):
@@ -993,6 +997,35 @@ def check_provider_402(ctx):
                   {'recent': 0, 'events': len(events), 'skipped': len(skipped)})
 
 
+def check_hitrate_cumulative(ctx):
+    """累计命中率报告新鲜度: cron 每 15 分钟生成; >30 分钟 warn, >90 分钟 fail, 缺失 fail。"""
+    path = ctx['root'] / 'data' / HITRATE_CUMULATIVE_JSON
+    document, error = _load_json(path)
+    if document is None:
+        return _entry('hitrate_cumulative', FAIL, '累计命中率报告不可用: %s' % error)
+    rows = document.get('rows') if isinstance(document, dict) else None
+    generated = _parse_time(document.get('generated_at')) if isinstance(document, dict) else None
+    if generated is None:
+        return _entry('hitrate_cumulative', WARN, '累计命中率报告缺少 generated_at')
+    age = max(0.0, (ctx['now'] - generated).total_seconds())
+    if age <= HITRATE_CUMULATIVE_WARN_SECONDS:
+        status = OK
+    elif age <= HITRATE_CUMULATIVE_FAIL_SECONDS:
+        status = WARN
+    else:
+        status = FAIL
+    rows_count = len(rows) if isinstance(rows, list) else 0
+    detail = ('generated_at=%s age=%s rows=%d as_of=%s'
+              % (generated.isoformat(timespec='seconds'), _age_text(age), rows_count,
+                 (document.get('as_of_period') or '-')))
+    if rows_count < HITRATE_CUMULATIVE_MIN_ROWS:
+        status = _max_status(status, WARN)
+        detail += ' (rows<%d)' % HITRATE_CUMULATIVE_MIN_ROWS
+    return _entry('hitrate_cumulative', status, detail,
+                  {'age_seconds': int(age), 'rows': rows_count,
+                   'as_of_period': document.get('as_of_period')})
+
+
 CHECK_FUNCS = (
     check_latest_draw,
     check_ai_jobs,
@@ -1011,6 +1044,7 @@ CHECK_FUNCS = (
     check_evidence_size,
     check_deepseek_balance,
     check_provider_402,
+    check_hitrate_cumulative,
 )
 FALLBACK_NAMES = {
     'check_latest_draw': ('latest_draw',),
@@ -1030,6 +1064,7 @@ FALLBACK_NAMES = {
     'check_evidence_size': ('evidence_size',),
     'check_deepseek_balance': ('deepseek_balance',),
     'check_provider_402': ('provider_402',),
+    'check_hitrate_cumulative': ('hitrate_cumulative',),
 }
 
 
