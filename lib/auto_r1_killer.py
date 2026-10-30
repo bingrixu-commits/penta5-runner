@@ -93,67 +93,7 @@ def evaluate_market_condition(draws_list, r1_stats_path="/root/penta5-runner/dat
 # ========================================================================
 
 
-# ==================== 终极防波动防护层 (数学硬约束) ====================
-def calculate_defense_whitelist(draws_list):
-    """
-    基于近50期真实数据计算禁止排除白名单:
-    1. 锁定上期重码与邻码
-    2. 锁定近10期连出>=2次的高热码
-    3. 锁定近50期遗漏排名前2位的极限回补冷码
-    """
-    if not draws_list or len(draws_list) < 10:
-        return {}
-    
-    pos_whitelist = {0: set(), 1: set(), 2: set(), 3: set()}
-    last_draw = [int(x) for x in draws_list[-1]]
-    
-    for pos in range(4):
-        # 1. 上期重码与邻码保护
-        last_d = last_draw[pos]
-        pos_whitelist[pos].add(last_d)
-        pos_whitelist[pos].add((last_d - 1) % 10)
-        pos_whitelist[pos].add((last_d + 1) % 10)
-        
-        # 2. 近10期高热码保护
-        recent_10 = [int(d[pos]) for d in draws_list[-10:]]
-        freq_10 = {}
-        for d in recent_10:
-            freq_10[d] = freq_10.get(d, 0) + 1
-        for num, cnt in freq_10.items():
-            if cnt >= 2:
-                pos_whitelist[pos].add(num)
-                
-        # 3. 极限遗漏回补保护
-        omissions = {d: 0 for d in range(10)}
-        for d in range(10):
-            om = 0
-            for row in reversed(draws_list):
-                if int(row[pos]) == d:
-                    break
-                om += 1
-            omissions[d] = om
-        sorted_om = sorted(omissions.items(), key=lambda x: x[1], reverse=True)
-        pos_whitelist[pos].add(sorted_om[0][0])
-        pos_whitelist[pos].add(sorted_om[1][0])
-        
-    return pos_whitelist
-
-def enforce_stable_kill(kill_digits, draws_list):
-    """如果AI选择排除受保护号码，强行修正为最稳温码"""
-    whitelist = calculate_defense_whitelist(draws_list)
-    safe_kills = []
-    for pos, kill_d in enumerate(kill_digits):
-        pos_safe = whitelist.get(pos, set())
-        if kill_d in pos_safe:
-            # 选出不在此位置保护池中的稳定温码替换
-            for candidate in range(10):
-                if candidate not in pos_safe:
-                    safe_kills.append(candidate)
-                    break
-        else:
-            safe_kills.append(kill_d)
-    return safe_kills
-# ====================================================================
+# 2026-10-31: 原「终极防波动防护层」calculate_defense_whitelist / enforce_stable_kill 从未被调用（死代码），已删除；git 历史可还原。
 
 # -*- coding: utf-8 -*-
 import datetime, json, os, re, sys, time, urllib.request
@@ -272,7 +212,7 @@ cold_size = sorted(all_size, key=lambda x: (s_omission[x], -s_count[x]), reverse
 cold_parity_stat = ", ".join([f"{p}(遗漏{p_omission[p]}期/出{p_count[p]}次)" for p in cold_parity[:4]])
 cold_size_stat = ", ".join([f"{s}(遗漏{s_omission[s]}期/出{s_count[s]}欢)" for s in cold_size[:4]])
 
-# 3. 将真实走势喂给 DeepSeek-V4.1-Flash 进行深度推理
+# 3. 将真实走势喂给模型进行深度推理（legacy prompt：实际发送内容由 prepare_model_request / independent-strategy-v2 覆盖，勿单独修改）
 prompt = f"""以下是真实的最近开奖历史前四位走势数据（按时间先后排序，最新已开奖期号:{period}）：
 {', '.join(recent_50)}
 
