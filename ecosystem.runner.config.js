@@ -32,12 +32,13 @@ module.exports = {
         QUALIFIED_PICKS_MAX_ENTRY_CONSECUTIVE: "0",
         QUALIFIED_PICKS_FAIL_COOLDOWN: "6",
         QUALIFIED_PICKS_ENTRY_LOOKBACK: "12",
-        // 2026-10-30: cuopt 远端不可用时把单次 HTTP 等待 3000→800ms；
-        // 服务恢复后仍会正常调用。PM2 运行时值由 --update-env 同步。
-        PENTA5_CUOPT_URL: "http://8.138.155.17:8788",
+        // 2026-10-30: 确认 8.138.155.17:8788 的 cuopt 服务器已不存在(用户无广州
+        // 服务器)，URL 留空 => auto-top6 立即走 JS 穷举回退(与之前的失败回退
+        // 结果一致)，不再每次白等 2×3s。以后恢复该服务：填回 URL 并 restart。
+        PENTA5_CUOPT_URL: "",
         PENTA5_CUOPT_LOCAL: "0",
         PENTA5_AUTOTOP6_MILP: "cuopt",
-        PENTA5_CUOPT_TIMEOUT_MS: "800"
+        PENTA5_CUOPT_TIMEOUT_MS: "3000"
       }
     }
   ]

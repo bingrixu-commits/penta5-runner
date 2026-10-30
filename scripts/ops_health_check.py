@@ -657,6 +657,11 @@ def check_cuopt(ctx):
     except (IndexError, ValueError):
         return _entry('cuopt', WARN, 'last CUOPT_HEALTH line is not valid JSON')
     healthy = payload.get('ok') is True
+    # 2026-10-30: cuopt 服务器确认不存在, URL 已置空; 这不是故障而是已停用的
+    # 外部依赖(auto-top6 立即走 JS 穷举回退), 保持 OK 以免每 10 分钟误报。
+    if payload.get('error') == 'cuopt-url-unset':
+        return _entry('cuopt', OK, 'disabled: cuopt endpoint unset (JS fallback active)',
+                      {'disabled': True, 'checked_at': payload.get('checked_at')})
     status = OK if healthy else WARN
     detail = ('ok=%s checked_at=%s error=%s local_python_fallback=%s'
               % (payload.get('ok'), payload.get('checked_at'), payload.get('error'),
