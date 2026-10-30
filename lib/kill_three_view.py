@@ -169,7 +169,7 @@ def render_block():
         for key, digit in (position_limit.get('blocked_digits') or {}).items():
             position_parts.append(
                 f'{kill3_tail.POSITION_LABELS.get(key, key)}已连杀 {digit} 满 '
-                f'{kill3_tail.MAX_CONSECUTIVE_PERIODS} 期 → 本期不得再用')
+                f'{kill3_tail.MAX_CONSECUTIVE_PERIODS} 期（含中间弃位）→ 本期不得再用')
         blocked_drop = position_limit.get('blocked_drop')
         if blocked_drop:
             position_parts.append(
@@ -253,7 +253,8 @@ def _foot_html():
             '由 DeepSeek 决定：从千/百/十/个中选 3 个位置各排除 1 码、放弃 1 个位置，'
             '从 5 种合尾中选 1 种排除 1 个和尾数字（每期与上一期不同，从上期未用的四种中选），'
             '并给出两项四位反向形态。<br>'
-            '同一位置杀码最多连用 3 期、同一放弃位置最多连用 3 期，满后下一期必须更换。<br>'
+            '同一位置杀码最多连用 3 期（中间放弃该位不清零）、同一放弃位置最多连用 3 期，'
+            '满后下一期必须更换。<br>'
             '命中 = 该位置实际开奖号<b>不在</b>杀码上（杀号成功）；合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态（被杀的 3 个位置取杀码形态反面）。<br>'
             '3 个位置 + 1 个合尾 + 2 项反向形态共 6 项同时命中才算整组命中；'

@@ -12,7 +12,8 @@
 - 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
 - 整组命中 = 3 个位置 + 1 个合尾 + 2 项反向形态同时命中（共 6 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
-- 同一位置杀码最多连用 3 期、同一放弃位置最多连用 3 期，满后下一期必须更换；
+- 同一位置杀码最多连用 3 期（中间放弃该位置不清零）、同一放弃位置最多连用 3 期，
+  满后下一期必须更换；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -64,7 +65,7 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill3-tail-v2'
+RULE_VERSION = 'kill3-tail-v3'
 MAX_CONSECUTIVE_PERIODS = 3
 
 RETRY_INSTRUCTION = (
@@ -378,6 +379,7 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
             forced.append(f'放弃位置不得继续放弃 {POSITION_LABELS.get(blocked_drop, blocked_drop)}')
         limit_lines.append('本期强制更换：' + '；'.join(forced) + '。')
     limit_lines.append(f'（同一位置杀码最多连用 {MAX_CONSECUTIVE_PERIODS} 期，'
+                       '中间放弃该位置不清零；'
                        f'同一放弃位置最多连用 {MAX_CONSECUTIVE_PERIODS} 期，满后下一期必须更换）')
     position_limit_text = '\n'.join(limit_lines)
     prompt = (
@@ -440,15 +442,21 @@ def validate_tail_choice(prediction, blocked_tail_key=None):
 
 
 def _trailing_digit_streaks(seals):
-    """Each position's trailing same-kill-digit streak, latest seal first."""
+    """Same-kill-digit streak per position; seals abandoning the position are skipped.
+
+    A gap must not reset the counter, otherwise the AI can dodge the three-period
+    limit by abandoning the position for one period and reusing the same digit.
+    """
     streaks = {}
     for key, _label, _index in POSITIONS:
         digit = None
         count = 0
         for seal in reversed(seals):
             positions = seal.get('positions') if isinstance(seal, dict) else None
-            if not isinstance(positions, dict) or key not in positions:
+            if not isinstance(positions, dict):
                 break
+            if key not in positions:
+                continue
             value = str(positions.get(key))
             if digit is None:
                 digit, count = value, 1
