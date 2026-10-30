@@ -12,6 +12,7 @@
 - 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
 - 整组命中 = 3 个位置 + 1 个合尾 + 2 项反向形态同时命中（共 6 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
+- 同一位置杀码最多连用 3 期、同一放弃位置最多连用 3 期，满后下一期必须更换；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -63,6 +64,9 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
+RULE_VERSION = 'kill3-tail-v2'
+MAX_CONSECUTIVE_PERIODS = 3
+
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
     'positions 恰好 3 个键，键名只能从 q/b/s/g 中选择；每个值为 0 至 9 的整数；'
@@ -70,6 +74,7 @@ RETRY_INSTRUCTION = (
     'reverse_parity 为四个单/双字符，reverse_size 为四个大/小字符，'
     '被杀位置必须取杀码形态的反面（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
     '放弃位置的字符自选；合尾不得与上一期相同（若因合尾限制被拒，请改选其余四种之一）；'
+    '被限制的位置不得继续使用该位置连用满3期的杀码，被限制的放弃位置必须换；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
 
@@ -324,7 +329,8 @@ def _cold_line(ranks, limit=3):
                      for number, count, omission in ranks[:limit])
 
 
-def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tail_label=None):
+def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tail_label=None,
+                 position_limit=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
@@ -352,6 +358,28 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
                        '必须从其余四种合尾中选。')
     else:
         restriction = '本期无合尾限制。'
+    limit = position_limit if isinstance(position_limit, dict) else {}
+    limit_lines = []
+    previous_positions = limit.get('previous_positions') or {}
+    previous_dropped = limit.get('previous_dropped')
+    previous_ref = limit.get('previous_ref_period') or reference
+    if previous_positions or previous_dropped:
+        picked = '、'.join(f'{POSITION_LABELS[key]}杀{previous_positions[key]}'
+                          for key, _label, _index in POSITIONS if key in previous_positions)
+        dropped_label = POSITION_LABELS.get(previous_dropped, previous_dropped) or '-'
+        limit_lines.append(f'上一封存（{previous_ref}）：{picked}，放弃{dropped_label}。')
+    blocked_digits = limit.get('blocked_digits') or {}
+    blocked_drop = limit.get('blocked_drop')
+    if blocked_digits or blocked_drop:
+        forced = []
+        for key, digit in blocked_digits.items():
+            forced.append(f'{POSITION_LABELS.get(key, key)}不得再杀 {digit}')
+        if blocked_drop:
+            forced.append(f'放弃位置不得继续放弃 {POSITION_LABELS.get(blocked_drop, blocked_drop)}')
+        limit_lines.append('本期强制更换：' + '；'.join(forced) + '。')
+    limit_lines.append(f'（同一位置杀码最多连用 {MAX_CONSECUTIVE_PERIODS} 期，'
+                       f'同一放弃位置最多连用 {MAX_CONSECUTIVE_PERIODS} 期，满后下一期必须更换）')
+    position_limit_text = '\n'.join(limit_lines)
     prompt = (
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
@@ -362,6 +390,7 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         '按该尾候选码近50期真实杀号命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(tail_lines) + '\n\n'
         '【合尾选择限制】\n' + restriction + '\n\n'
+        '【位置与弃位使用限制】\n' + position_limit_text + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；\n'
         '2. 从上述 5 种合尾中挑 1 种（本期不得与上一期相同），排除 1 个和尾数字（0-9）；\n'
@@ -383,7 +412,7 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         '两个形态字符串都必须是 4 个字符。'
     )
     audit = {
-        'version': 'kill3-tail-prompt-v2',
+        'version': 'kill3-tail-prompt-v3',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -394,6 +423,7 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
                             for key, label, kill, _count, _omission, hit50, hit30 in tail_rows],
         'blocked_tail': blocked_tail_key,
         'previous_tail_label': previous_tail_label,
+        'position_limit': limit,
     }
     return prompt, audit
 
@@ -406,6 +436,90 @@ def validate_tail_choice(prediction, blocked_tail_key=None):
     if chosen == blocked_tail_key:
         label = TAILS[blocked_tail_key]['label']
         raise ValueError(f'本期合尾不得与上一期相同（上一期为{label}），请从其余四种合尾中选')
+    return prediction
+
+
+def _trailing_digit_streaks(seals):
+    """Each position's trailing same-kill-digit streak, latest seal first."""
+    streaks = {}
+    for key, _label, _index in POSITIONS:
+        digit = None
+        count = 0
+        for seal in reversed(seals):
+            positions = seal.get('positions') if isinstance(seal, dict) else None
+            if not isinstance(positions, dict) or key not in positions:
+                break
+            value = str(positions.get(key))
+            if digit is None:
+                digit, count = value, 1
+            elif value == digit:
+                count += 1
+            else:
+                break
+        streaks[key] = (digit, count)
+    return streaks
+
+
+def _trailing_drop_streak(seals):
+    """Trailing consecutive seals that abandoned the same position."""
+    drop = None
+    count = 0
+    for seal in reversed(seals):
+        if not isinstance(seal, dict):
+            break
+        value = seal.get('dropped')
+        if value is None:
+            break
+        value = str(value)
+        if drop is None:
+            drop, count = value, 1
+        elif value == drop:
+            count += 1
+        else:
+            break
+    return drop, count
+
+
+def position_restrictions(seals):
+    """Consecutive-use limits for position kills and the abandoned position."""
+    seals = [item for item in (seals or []) if isinstance(item, dict)]
+    digit_streaks = _trailing_digit_streaks(seals)
+    drop, drop_count = _trailing_drop_streak(seals)
+    previous = seals[-1] if seals else {}
+    blocked_digits = {}
+    for key, (digit, count) in digit_streaks.items():
+        if digit is not None and count >= MAX_CONSECUTIVE_PERIODS:
+            blocked_digits[key] = digit
+    return {
+        'max_consecutive': MAX_CONSECUTIVE_PERIODS,
+        'previous_ref_period': previous.get('ref_period'),
+        'previous_target_period': previous.get('target_period'),
+        'previous_positions': dict(previous.get('positions') or {}),
+        'previous_dropped': previous.get('dropped'),
+        'digit_streaks': {key: {'digit': digit, 'periods': count}
+                          for key, (digit, count) in digit_streaks.items() if digit is not None},
+        'dropped_streak': ({'dropped': drop, 'periods': drop_count}
+                           if drop is not None else None),
+        'blocked_digits': blocked_digits,
+        'blocked_drop': (drop if (drop is not None and drop_count >= MAX_CONSECUTIVE_PERIODS)
+                        else None),
+    }
+
+
+def validate_position_choice(prediction, position_limit=None):
+    """Reject over-limit kill codes or a repeatedly abandoned position."""
+    if not isinstance(position_limit, dict):
+        return prediction
+    limit = position_limit.get('max_consecutive') or MAX_CONSECUTIVE_PERIODS
+    positions = prediction.get('positions') or {}
+    for key, digit in (position_limit.get('blocked_digits') or {}).items():
+        if key in positions and str(positions[key]) == str(digit):
+            label = POSITION_LABELS.get(key, key)
+            raise ValueError(f'{label}已连续{limit}期使用杀码{digit}，本期必须换码')
+    blocked_drop = position_limit.get('blocked_drop')
+    if blocked_drop and prediction.get('dropped') == blocked_drop:
+        label = POSITION_LABELS.get(blocked_drop, blocked_drop)
+        raise ValueError(f'放弃位置已连续{limit}期放弃{label}，本期必须换放弃位置')
     return prediction
 
 
@@ -569,7 +683,7 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
                 generated_at, response_meta, extra=None):
     seal = {
         'version': 1,
-        'rule_version': 'kill3-tail-v1',
+        'rule_version': RULE_VERSION,
         'ref_period': str(reference),
         'target_period': str(target),
         'reference_open_time': reference_open_time,

@@ -164,6 +164,21 @@ def render_block():
             restrict_html = (
                 f'<div class="k3-drop">合尾限制：上一期是'
                 f'{escape(str(restriction.get("previous_tail_label")))}，本期从其余四种合尾中选</div>')
+        position_limit = seal.get('position_restriction') or {}
+        position_parts = []
+        for key, digit in (position_limit.get('blocked_digits') or {}).items():
+            position_parts.append(
+                f'{kill3_tail.POSITION_LABELS.get(key, key)}已连杀 {digit} 满 '
+                f'{kill3_tail.MAX_CONSECUTIVE_PERIODS} 期 → 本期必须换码')
+        blocked_drop = position_limit.get('blocked_drop')
+        if blocked_drop:
+            position_parts.append(
+                f'放弃位置已连弃 {kill3_tail.POSITION_LABELS.get(blocked_drop, blocked_drop)} 满 '
+                f'{kill3_tail.MAX_CONSECUTIVE_PERIODS} 期 → 本期必须换放弃位置')
+        position_html = ''
+        if position_parts:
+            position_html = ('<div class="k3-drop">位置限制：'
+                             + escape('；'.join(position_parts)) + '</div>')
         model = seal.get('model_label') or kill3_tail.model_label()
         meta = (f'参考期 {escape(str(seal.get("ref_period", "")))} ｜ '
                 f'目标期 {escape(str(seal.get("target_period", "")))} ｜ '
@@ -182,7 +197,7 @@ def render_block():
                 f'<div class="k3-meta">{meta}</div>'
                 f'<div class="k3-grid">{"".join(cards)}</div>'
                 f'<div class="k3-drop">放弃位置：{escape(str(dropped))}（AI 只杀 3 个位置）</div>'
-                f'{restrict_html}'
+                f'{restrict_html}{position_html}'
                 f'<div class="k3-reason">理由：{reason}</div>'
                 f'{_stats_html(stats)}'
                 f'<div class="k3-verify">{verify}</div>'
@@ -238,6 +253,7 @@ def _foot_html():
             '由 DeepSeek 决定：从千/百/十/个中选 3 个位置各排除 1 码、放弃 1 个位置，'
             '从 5 种合尾中选 1 种排除 1 个和尾数字（每期与上一期不同，从上期未用的四种中选），'
             '并给出两项四位反向形态。<br>'
+            '同一位置杀码最多连用 3 期、同一放弃位置最多连用 3 期，满后下一期必须更换。<br>'
             '命中 = 该位置实际开奖号<b>不在</b>杀码上（杀号成功）；合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态（被杀的 3 个位置取杀码形态反面）。<br>'
             '3 个位置 + 1 个合尾 + 2 项反向形态共 6 项同时命中才算整组命中；'
