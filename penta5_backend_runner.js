@@ -17058,7 +17058,7 @@ function sendPasswordLoginHtml(req, res, message, nextPath) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>来财</title>
+  <title>扭转乾坤泰山常在</title>
   <style>
     html,body{margin:0;min-height:100%;font-family:"Songti SC","STSong","Noto Serif SC","Microsoft YaHei",sans-serif;background:
       radial-gradient(900px 360px at 20% 0%,rgba(245,158,11,.18),transparent 55%),
@@ -17080,14 +17080,14 @@ function sendPasswordLoginHtml(req, res, message, nextPath) {
 </head>
 <body>
   <main class="box">
-    <h1><span class="mark">◆</span>来财</h1>
-    <div class="sub">五路数据 · 公交查询</div>
+    <h1><span class="mark">◆</span>扭转乾坤泰山常在</h1>
+    <div class="sub">公交查询</div>
     ${errorHtml}
     <form id="loginForm" autocomplete="on">
       <label for="panelPassword">密码</label>
       <input id="panelPassword" name="password" type="password" autocomplete="current-password" autofocus required>
       <button id="loginBtn" type="submit">进入</button>
-      <div id="loginMsg" class="hint">来财，请输入密码进入。</div>
+      <div id="loginMsg" class="hint">扭转乾坤泰山常在，请输入密码进入。</div>
     </form>
   </main>
   <script>
