@@ -4,10 +4,10 @@ import re
 
 SCRIPT_ID = 'penta5-attack-editor-control'
 SCRIPT = r'''<script id="penta5-attack-editor-control">
-/* all-attack-editor-v4-cold50-fixed */
+/* all-attack-editor-v5-kill3-tail */
 (function(){
 'use strict';
-const version='all-attack-editor-v4-cold50-fixed',previous=window.__PENTA5_ATTACK_EDITOR__;
+const version='all-attack-editor-v5-kill3-tail',previous=window.__PENTA5_ATTACK_EDITOR__;
 if(previous&&previous.version===version){previous.check();return;}
 if(previous&&typeof previous.destroy==='function')previous.destroy();
 const definitions=[
@@ -15,6 +15,7 @@ const definitions=[
  {id:'r1_killer_attack_text',copy:'r1_killer_copy_btn',label:'深度排除攻击语',kind:'killer'},
  {id:'selected6-attack-text',copy:'selected6-attack-copy',label:'三定位七项框架攻击语',data:'selected6-attack-data'},
  {id:'six-independent-attack-text',copy:'six-independent-attack-copy',label:'八项独立框架攻击语',data:'six-independent-attack-data'},
+ {id:'kill3-attack-text',copy:'kill3-attack-copy',label:'AI三位置+一合尾攻击语',data:'kill3-attack-data'},
  {id:'cold-framework-attack',copy:'cold-framework-copy',label:'冷码框架攻击语',data:'cold-framework-data'},
  {id:'cold50-framework-attack',copy:'cold50-framework-copy',label:'50期冷码框架攻击语',data:'cold50-framework-data'},
  {id:'cold-fixed-framework-attack',copy:'cold-fixed-framework-copy',label:'固定30期冷码框架攻击语',data:'cold-fixed-framework-data'},

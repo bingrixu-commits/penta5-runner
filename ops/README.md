@@ -155,3 +155,11 @@
   停用旧 `kill_three_pick` 调用；cron 新增 `penta5-kill3t`（flock + sleep 25，不占用既有任务窗口）；
   证据备份 JSON_DIRS 增加 `kill3_tail`；ops_health 新增 `kill3_tail` 检查（最新期无封存超 7 分钟即 FAIL）。
   旧规则版 `data/kill_three_pick.json` 保留为历史证据，不再参与面板与统计。
+
+- **2026-10-30 11:15 AI 三位置+一合尾区块新增攻击语（与八项独立框架同格式）**：
+  `lib/kill3_tail.py` 新增 `build_attack()`：按八项格式输出
+  「千/百/十/个 位置保留码（被杀位置=去掉杀码，未选位置=1234567890）＋四定＋合尾保留码
+  ＋除<四位单双形态>除<四位大小形态>」；`lib/kill_three_view.py` 在区块内渲染只读攻击语
+  文本与「复制攻击语」按钮（含 clipboard 回退）；`lib/attack_editor_view.py` 把
+  `kill3-attack-text` 注册进全局攻击语编辑框并把版本升到 `all-attack-editor-v5-kill3-tail`，
+  编辑/复制行为与八项攻击语一致。

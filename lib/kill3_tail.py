@@ -184,6 +184,46 @@ def pattern_of(digits, kind):
     raise ValueError('unknown pattern kind')
 
 
+ATTACK_ORDER = '1234567890'
+ATTACK_POSITION_LABELS = {'q': '千', 'b': '百', 's': '十', 'g': '个'}
+ATTACK_TAIL_LABELS = {'tail_all': '千百十个合', 'tail_qbs': '千百十合',
+                      'tail_qbg': '千百个合', 'tail_qsg': '千十个合',
+                      'tail_bsg': '百十个合'}
+
+
+def build_attack(seal):
+    """与八项独立框架同格式的攻击语。
+
+    位置保留码（被杀位置为去掉杀码的 9 码，未选位置保留 10 码）→ 四定 →
+    合尾保留码（去掉排除码）→ 除<四位单双形态>除<四位大小形态>。
+    """
+    if not isinstance(seal, dict):
+        raise ValueError('attack requires a sealed prediction')
+    order = ATTACK_ORDER
+
+    def remaining(value):
+        text = str(value).strip()
+        if len(text) != 1 or text not in order:
+            raise ValueError('attack kill digit must be 0..9')
+        return ''.join(char for char in order if char != text)
+
+    positions = seal.get('positions') or {}
+    parts = []
+    for key, label in (('q', '千'), ('b', '百'), ('s', '十'), ('g', '个')):
+        parts.append(ATTACK_POSITION_LABELS[key] +
+                     (remaining(positions[key]) if key in positions else order))
+    parts.append('四定')
+    tail = seal.get('tail') or {}
+    tail_label = ATTACK_TAIL_LABELS.get(tail.get('key'))
+    if tail_label:
+        parts.append(tail_label + remaining(tail.get('kill')))
+    text = ''.join(parts)
+    parity, size = seal.get('reverse_parity'), seal.get('reverse_size')
+    if parity and size:
+        text += '除' + str(parity) + '除' + str(size)
+    return text
+
+
 def _position_key(value):
     text = str(value).strip().lower()
     mapping = {'q': 'q', 'b': 'b', 's': 's', 'g': 'g',

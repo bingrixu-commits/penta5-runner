@@ -18,6 +18,7 @@
 """
 from datetime import datetime
 from html import escape
+import json
 
 import kill3_tail
 
@@ -43,6 +44,8 @@ STYLE = """
 #kill-three-ai .k3-stats{display:flex;flex-wrap:wrap;gap:18px;font-size:13px;color:#334155;border-top:1px dashed #c7d2fe;padding-top:8px}
 #kill-three-ai .k3-stats b{font-size:16px;color:#1e3a8a}
 #kill-three-ai .k3-verify{margin-top:6px;font-size:13px;color:#334155}
+#kill-three-ai .k3-attack{margin-top:8px;border-top:1px dashed #c7d2fe;padding-top:8px}
+#kill-three-ai .k3-attack-title{font-size:13px;font-weight:600;color:#3730a3}
 #kill-three-ai .k3-foot{margin-top:8px;font-size:12px;color:#94a3b8}
 #kill-three-ai .k3-empty{padding:6px 2px;font-size:14px;color:#475569}
 """
@@ -176,9 +179,44 @@ def render_block():
                 f'<div class="k3-reason">理由：{reason}</div>'
                 f'{_stats_html(stats)}'
                 f'<div class="k3-verify">{verify}</div>'
+                f'{_attack_html(seal)}'
                 f'{_foot_html()}</section>{END}')
     except Exception:
         return ''
+
+
+def _attack_html(seal):
+    """与八项独立框架同格式的攻击语 + 复制按钮（可被全局攻击语编辑框接管）。"""
+    if not isinstance(seal, dict) or not seal.get('published_at'):
+        return ''
+    try:
+        text = kill3_tail.build_attack(seal)
+    except Exception:
+        return ''
+    payload = json.dumps({'version': 1,
+                          'reference_period': seal.get('ref_period'),
+                          'target_period': seal.get('target_period'),
+                          'published_at': seal.get('published_at'),
+                          'attack': text},
+                         ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+    for old, new in (('&', '\\u0026'), ('<', '\\u003c'), ('>', '\\u003e')):
+        payload = payload.replace(old, new)
+    return ('<div class="k3-attack">'
+            '<div class="k3-attack-title">攻击语（复制到平台，与八项同格式）</div>'
+            '<textarea id="kill3-attack-text" readonly rows="3" aria-label="AI 三位置+一合尾攻击语" '
+            'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
+            'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
+            + escape(text) + '</textarea>'
+            '<button id="kill3-attack-copy" type="button" onclick="copyKill3Attack()" '
+            'style="padding:7px 15px;border:0;border-radius:7px;background:#4f46e5;color:#fff;cursor:pointer;">'
+            '复制攻击语</button>'
+            '<span id="kill3-copy-status" role="status" style="margin-left:8px;font-size:12px;"></span></div>'
+            '<script id="kill3-attack-data" type="application/json">' + payload + '</script>'
+            '<script>function copyKill3Attack(){var b=document.getElementById("kill3-attack-text");if(!b)return;'
+            'var t=b.value||b.textContent||"";var s=document.getElementById("kill3-copy-status");'
+            'function done(ok){if(s){s.textContent=ok?"已复制":"复制失败，请手动选择";s.style.color=ok?"#15803d":"#b91c1c";}}'
+            'if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(function(){done(true);},function(){done(false);});}'
+            'else{b.select();var ok=false;try{ok=document.execCommand("copy");}catch(e){}done(ok);}}</script>')
 
 
 def _foot_html():
