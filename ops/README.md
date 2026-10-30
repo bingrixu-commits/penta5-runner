@@ -30,9 +30,8 @@
 - **framework 按模型统计**：`scripts/model_daily_report.py` 输出
   `framework_by_model`（依 `r1_framework_seals.json` 的
   `model_metadata.requested_model` 拆分 flash / v4-pro 的今日/近3日/全期命中率）。
-- **cuopt**：远端 `http://8.138.155.17:8788` 不可达期间，pm2 运行时
-  `PENTA5_CUOPT_TIMEOUT_MS=800`（原 3000）；服务恢复后仍会自动调用，改回即
-  `PENTA5_CUOPT_TIMEOUT_MS=3000 pm2 restart penta5-runner --update-env && pm2 save`。
+- **cuopt（已停用，见文末）**：远端 `http://8.138.155.17:8788` 的机器不属于本账号，
+  2026-10-30 已把 `PENTA5_CUOPT_URL` 置空，auto-top6 走 JS 穷举回退；无需再配超时。
 - **证据异地副本（本机 Windows）**：`ops/fetch-evidence-offsite.ps1`（在本机 DSH
   workspace 的 ops/ 下）用现有 aliyun 私钥 scp 最新 verified 归档到
   `..\evidence-offsite\`，校验 sha256、保留最近 4 份、上传 marker 到服务器
