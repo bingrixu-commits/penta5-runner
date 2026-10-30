@@ -289,10 +289,8 @@ KILLER_OUTPUT_DEFINITION = (
     '只输出严格JSON对象，必填字段为k1、k2、k3、k4、he_all、he_q3、he_h3、exclude_patterns、reason。\n'
     'k1/k2/k3/k4各为数组，数组恰好一个0至9整数。'
     'he_all/he_q3/he_h3各为一个0至9整数；所有数字均不得为布尔值或小数。\n'
-    'exclude_patterns为恰好两个不同字符串的数组，每个字符串恰好四个单双字符或恰好四个大小字符。\n'
-    '自检：k1-k4与he_all/he_q3/he_h3必须取对应smoothed_descriptive_share最小的合法状态（同分任取）；'
-    '两个形态必须是各自类别内按排除数量最小的不同形态。不满足会被本地校验拒绝并重答。\n'
-    'reason为40字以内的历史依据和不确定性说明。最终回答不输出分析过程。\n'
+    'exclude_patterns为恰好两个不同字符串的数组，每个字符串恰好四个单双字符或恰好四个大小字符。'
+    'reason为40字以内的历史依据和不确定性说明。最终回答不输出分析过程。'
 )
 
 FRAMEWORK_TASK_DEFINITION = (
@@ -314,11 +312,8 @@ FRAMEWORK_OUTPUT_DEFINITION = (
     'he2_keep恰好保留4个不重复ASCII数字且只能从02468中选；'
     'he3_keep恰好保留6个不重复ASCII数字且只能从0123456789中选。'
     '这两个字段输出字符串并保留前导0，也允许包含完全相同数字的JSON数组；禁止补位、重复或默认凑数。\n'
-    'pos_kills为对象，q/b/s/g四个数组全部必填，每个数组恰好2个不同的0至9整数。\n'
-    '自检：q_kill1、b_kill1、he_q3_kill、he_h3_kill、pattern_ds、pattern_dx必须取对应counts最小的合法状态；'
-    'pos_kills每位置取counts最小的2个不同数字；he2_keep、he3_keep必须取keep_coverage覆盖期数最大的合法集合；同分任取。'
-    '不满足会被本地校验拒绝并重答。\n'
-    'reason为40字以内的历史依据和不确定性说明。最终回答不输出分析过程。\n'
+    'pos_kills为对象，q/b/s/g四个数组全部必填，每个数组恰好2个不同的0至9整数。'
+    'reason为40字以内的历史依据和不确定性说明。最终回答不输出分析过程。'
 )
 
 
