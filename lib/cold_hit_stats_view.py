@@ -40,25 +40,33 @@ STYLE = """
 
 
 def _three_position_line():
-    """冷码杀号战绩块顶部显示「本期取哪三个位置」——数据来自三位置杀码建议。"""
+    """冷码杀号战绩块顶部显示「本期 AI 三位置+一合尾建议」——数据来自 kill3_tail。"""
     try:
-        report = json.loads(KILL_THREE_PATH.read_text(encoding='utf-8'))
-        rec = report.get('recommendation') or {}
-        positions = rec.get('positions') or []
-        if not positions:
+        import kill3_tail
+        data = kill3_tail.current_summary()
+        seal = data.get('seal')
+        if not isinstance(seal, dict):
             return ''
+        positions = seal.get('positions') or {}
         picks = ' · '.join(
-            '<b>%s 杀%s</b>' % (item.get('label', ''), item.get('kill', '-'))
-            for item in positions)
-        skipped = '、'.join(item.get('label', '') for item in rec.get('skipped') or ())
-        tail = ('（放弃:%s）' % skipped) if skipped else ''
+            '<b>%s 杀%s</b>' % (kill3_tail.POSITION_LABELS.get(key, key), value)
+            for key, _label, _index in kill3_tail.POSITIONS if key in positions)
+        if not picks:
+            return ''
+        tail = seal.get('tail') or {}
+        tail_text = (' · <b>%s合尾 杀%s</b>' % (tail.get('label', ''), tail.get('kill', '-'))
+                     if tail else '')
+        patterns = ''
+        if seal.get('reverse_parity') and seal.get('reverse_size'):
+            patterns = ' · 两反向形态'
+        dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), '')
+        dropped_text = ('（放弃:%s）' % dropped) if dropped else ''
         return ('<div class="ch-pick" style="margin:6px 0 10px;font-size:13px;color:#334155;">'
-                '本期三位置建议：' + picks + tail +
+                '本期 AI 三位置+一合尾建议：' + picks + tail_text + patterns + dropped_text +
                 '<span style="font-size:12px;color:#64748b;margin-left:6px;">'
-                '（详见下方「三位置杀码建议」）</span></div>')
-    except (OSError, ValueError):
+                '（详见下方「AI 三位置+一合尾建议」）</span></div>')
+    except Exception:
         return ''
-
 
 def _load():
     try:

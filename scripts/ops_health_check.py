@@ -347,6 +347,43 @@ def check_ai_jobs(ctx):
     return entries
 
 
+def check_kill3(ctx):
+    """AI 三位置+一合尾：最新已开奖期应有开奖前封存；超时未封存/未发布即告警。"""
+    latest = ctx.get('latest')
+    if not isinstance(latest, dict) or not latest.get('ref'):
+        return _entry('kill3_tail', WARN, 'latest draw unknown')
+    path = ctx['root'] / 'data' / 'kill3_tail' / 'seals.json'
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        return _entry('kill3_tail', FAIL, 'missing/unreadable seals.json: %s' % exc)
+    records = payload.get('records') if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        return _entry('kill3_tail', FAIL, 'seals.json has no records list')
+    seal = next((item for item in reversed(records) if isinstance(item, dict)), None)
+    ref = str(latest.get('ref') or '')
+    opened = _parse_time(latest.get('opentime'))
+    age = None if opened is None else ctx['now'].timestamp() - opened.timestamp()
+    seal_ref = str(seal.get('ref_period') or '') if isinstance(seal, dict) else ''
+    if seal_ref == ref:
+        state = str(seal.get('publication_state') or 'unknown')
+        published = seal.get('published_at')
+        if state == 'published' and published:
+            return _entry('kill3_tail', OK,
+                          'ref=%s published_at=%s' % (ref, published), {'ref': ref})
+        return _entry('kill3_tail', WARN,
+                      'ref=%s state=%s (not published)' % (ref, state), {'ref': ref})
+    # 当前期尚未封存：开奖后 7 分钟内算正常窗口，超时仍未封存视为任务掉链。
+    if isinstance(age, (int, float)) and age <= 420:
+        return _entry('kill3_tail', OK,
+                      'waiting: latest=%s seal_ref=%s age=%ss'
+                      % (ref, seal_ref or '-', round(age)), {'ref': ref})
+    age_text = _age_text(age) if isinstance(age, (int, float)) else 'unknown'
+    return _entry('kill3_tail', FAIL,
+                  'missing seal for latest=%s seal_ref=%s age=%s'
+                  % (ref, seal_ref or '-', age_text), {'ref': ref})
+
+
 def check_stat50(ctx):
     latest = ctx.get('latest')
     payload, error = _load_json(ctx['root'] / 'data' / 'stat50_compare_seals.json')
@@ -784,6 +821,7 @@ def check_crontab(ctx):
 CHECK_FUNCS = (
     check_latest_draw,
     check_ai_jobs,
+    check_kill3,
     check_stat50,
     check_reference_statuses,
     check_panel,
@@ -800,6 +838,7 @@ CHECK_FUNCS = (
 FALLBACK_NAMES = {
     'check_latest_draw': ('latest_draw',),
     'check_ai_jobs': ('job:framework', 'job:killer'),
+    'check_kill3': ('kill3_tail',),
     'check_stat50': ('stat50_seal',),
     'check_reference_statuses': tuple(name for name, _ in REFERENCE_STATUS_FILES),
     'check_panel': ('panel_html',),

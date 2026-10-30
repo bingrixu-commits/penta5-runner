@@ -20,7 +20,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import position_cold_report as report  # noqa: E402
-import kill_three_pick  # noqa: E402
 import model_significance  # noqa: E402
 import cold_hit_stats  # noqa: E402
 import real_hitrate_report  # noqa: E402
@@ -70,15 +69,6 @@ def main():
                     reason.append('heartbeat')
                 started = time.monotonic()
                 code = report.main()
-                kill_code = None
-                try:
-                    import contextlib
-                    import io
-                    buffer = io.StringIO()
-                    with contextlib.redirect_stdout(buffer):
-                        kill_code = kill_three_pick.main()
-                except Exception as error:
-                    print(f'kill-three failed: {type(error).__name__}: {error}', flush=True)
                 signi_code = None
                 try:
                     import contextlib as _ctx
@@ -111,7 +101,7 @@ def main():
                 last_slot = slot
                 last_run = time.monotonic()
                 stamp = datetime.now().astimezone().strftime('%H:%M:%S')
-                print(f'{stamp} regenerated rc={code} kill3={kill_code} signi={signi_code} realhit={realhit_code} cold={cold_code} elapsed={elapsed:.2f}s '
+                print(f'{stamp} regenerated rc={code} signi={signi_code} realhit={realhit_code} cold={cold_code} elapsed={elapsed:.2f}s '
                       f'trigger={"+".join(reason)}', flush=True)
         except Exception as error:
             print(f'regenerate failed: {type(error).__name__}: {error}', flush=True)

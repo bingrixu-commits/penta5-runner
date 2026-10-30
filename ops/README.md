@@ -142,3 +142,16 @@
   结束时再最终写一次面板。实测：建议块 draw+~65s 可见(关盘前 ~165s)，整轮
   draw+183s 完成(关盘前 ~47s)。/root/run_stats.py 备份在
   /root/archive/run_stats.py.bak-20261030-early-panel。
+
+- **2026-10-30 11:00 AI 三位置杀码 + 一合尾 + 两反向形态（替换规则版三位置杀码）**：
+  用户要求把「选 3 个位置各杀 1 码」从固定冷码规则改为由 DeepSeek 决定，并追加
+  「五个合尾（千百十个/千百十/千百个/千十个/百十个）里选 1 个排除 1 个和尾数字」与
+  与八项独立框架同口径的两项四位反向形态（单双/大小；被杀位置取杀码形态反面，放弃位置自选）。
+  新增 `lib/kill3_tail.py`（提示词/严格校验/封存/结算/今日战绩）、`scripts/run_kill3_tail.py`
+  （每 5 分钟开奖后等待数据就绪→结算→发布窗口内请求→封存→写面板）与 `data/kill3_tail/`；
+  `lib/kill_three_view.py` 改为读取 AI 封存并展示 6 项（3 位置 + 1 合尾 + 2 反向形态），
+  整组命中 = 6 项全中，只统计开奖前发布、开奖后核验的记录；
+  `lib/cold_hit_stats_view.py` 顶部摘要行改读新 AI 数据；`scripts/position_cold_daemon.py`
+  停用旧 `kill_three_pick` 调用；cron 新增 `penta5-kill3t`（flock + sleep 25，不占用既有任务窗口）；
+  证据备份 JSON_DIRS 增加 `kill3_tail`；ops_health 新增 `kill3_tail` 检查（最新期无封存超 7 分钟即 FAIL）。
+  旧规则版 `data/kill_three_pick.json` 保留为历史证据，不再参与面板与统计。

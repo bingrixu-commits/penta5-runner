@@ -1,117 +1,206 @@
-"""三位置杀码建议面板区块。
+"""AI 三位置杀码 + 一合尾建议面板区块（替代原规则版三位置杀码）。
 
-数据源 data/kill_three_pick.json(由 scripts/kill_three_pick.py 每期重算)。
-命中口径:该位置实际开奖号 != 杀码(即杀号成功)。
+数据源 data/kill3_tail/{seals,settlements}.json，由 scripts/run_kill3_tail.py 每期生成。
 
-设计要点:
-- 自包含 <section> + 内联 <style>,不依赖面板已有 CSS 类。
-- 用 <!-- KILL_THREE_START/END --> 标记原地替换;标记缺失时插到
-  <!-- COLD_HIT_STATS_END --> 之后。
-- 任何异常都原样返回 html,绝不影响整页刷新。
+命中口径（写死，面板脚注同步展示）：
+- 位置命中 = 该位置实际开奖号 != 杀码；
+- 合尾命中 = 该合尾实际和值个位 != 排除码；
+- 反向形态命中 = 目标期实际四位单双/大小形态 != 封存形态（反向排除项）；
+- 整组命中 = 3 个位置 + 1 个合尾 + 2 项反向形态同时命中（共 6 项）；
+- 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
+- 只使用前 4 球（千/百/十/个），第 5 球不参与。
+
+设计要点：
+- 自包含 <section id="kill-three-ai"> + 内联样式，不依赖面板已有 CSS 类；
+- 用 <!-- KILL_THREE_START/END --> 标记原地替换（沿用旧标记，run_stats 收尾链路无需改）；
+- 标记缺失时插入到 <!-- COLD_HIT_STATS_END --> 之后；
+- 任何异常原样返回 html，绝不影响整页刷新。
 """
-from pathlib import Path
-import json
+from datetime import datetime
+from html import escape
 
-ROOT = Path('/root/penta5-runner')
-REPORT_PATH = ROOT / 'data/kill_three_pick.json'
-MARKER = 'KILL_THREE'
-START = f'<!-- {MARKER}_START -->'
-END = f'<!-- {MARKER}_END -->'
+import kill3_tail
+
+START = '<!-- KILL_THREE_START -->'
+END = '<!-- KILL_THREE_END -->'
 
 STYLE = """
-#kill-three{box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;padding:14px;border:1px solid #fca5a5;border-radius:12px;background:#fef7f7;color:#334155;font:14px/1.6 sans-serif;min-width:0;overflow-wrap:anywhere}
-#kill-three *{box-sizing:border-box}
-#kill-three h3{font-size:18px;color:#991b1b;margin:0 0 4px}
-#kill-three .kt-meta{font-size:13px;color:#64748b;margin-bottom:10px}
-#kill-three .kt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:10px;min-width:0;margin-bottom:10px}
-#kill-three .kt-pick{border:1px solid #fecaca;border-radius:8px;background:#fff;padding:10px 12px;text-align:center;min-width:0}
-#kill-three .kt-pos{font-size:13px;color:#475569}
-#kill-three .kt-kill{font-size:32px;font-weight:700;color:#b91c1c;line-height:1.2}
-#kill-three .kt-sub{font-size:12px;color:#64748b}
-#kill-three .kt-skip{font-size:13px;color:#94a3b8;margin-bottom:10px}
-#kill-three .kt-stats{display:flex;flex-wrap:wrap;gap:18px;font-size:13px;color:#334155;border-top:1px dashed #fecaca;padding-top:8px}
-#kill-three .kt-stats b{font-size:16px;color:#991b1b}
-#kill-three .kt-foot{margin-top:8px;font-size:12px;color:#94a3b8}
+#kill-three-ai{box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;padding:14px;border:1px solid #c7d2fe;border-radius:12px;background:#f8faff;color:#334155;font:14px/1.6 sans-serif;min-width:0;overflow-wrap:anywhere}
+#kill-three-ai *{box-sizing:border-box}
+#kill-three-ai h3{font-size:18px;color:#1e3a8a;margin:0 0 4px}
+#kill-three-ai .k3-meta{font-size:13px;color:#64748b;margin-bottom:10px}
+#kill-three-ai .k3-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:10px;min-width:0;margin-bottom:10px}
+#kill-three-ai .k3-card{border:1px solid #c7d2fe;border-radius:8px;background:#fff;padding:10px 12px;text-align:center;min-width:0}
+#kill-three-ai .k3-card.k3-tail{border-color:#fecaca;background:#fff7f7}
+#kill-three-ai .k3-card.k3-pattern{border-color:#ddd6fe;background:#faf8ff}
+#kill-three-ai .k3-pos{font-size:13px;color:#475569}
+#kill-three-ai .k3-kill{font-size:32px;font-weight:700;color:#1d4ed8;line-height:1.2}
+#kill-three-ai .k3-form{font-size:22px;font-weight:700;color:#7c3aed;letter-spacing:2px;line-height:1.35}
+#kill-three-ai .k3-card.k3-tail .k3-kill{color:#b91c1c}
+#kill-three-ai .k3-sub{font-size:12px;color:#64748b}
+#kill-three-ai .k3-drop{font-size:13px;color:#94a3b8;margin-bottom:6px}
+#kill-three-ai .k3-reason{font-size:13px;color:#475569;margin-bottom:8px}
+#kill-three-ai .k3-stats{display:flex;flex-wrap:wrap;gap:18px;font-size:13px;color:#334155;border-top:1px dashed #c7d2fe;padding-top:8px}
+#kill-three-ai .k3-stats b{font-size:16px;color:#1e3a8a}
+#kill-three-ai .k3-verify{margin-top:6px;font-size:13px;color:#334155}
+#kill-three-ai .k3-foot{margin-top:8px;font-size:12px;color:#94a3b8}
+#kill-three-ai .k3-empty{padding:6px 2px;font-size:14px;color:#475569}
 """
-
-
-def _load():
-    try:
-        return json.loads(REPORT_PATH.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        return None
-
-
-def _current_streak_html(backtest):
-    """当前进行中的连中/连败（回测序列末尾仍在延续的一段）。"""
-    win = backtest.get('current_win_streak')
-    loss = backtest.get('current_loss_streak')
-    if isinstance(win, int) and win > 0:
-        return ('<span>当前 <b style="color:#15803d">连中 ' + str(win) + ' 手</b>'
-                '<span style="font-size:12px;color:#64748b"> (进行中)</span></span>')
-    if isinstance(loss, int) and loss > 0:
-        return ('<span>当前 <b style="color:#b91c1c">连败 ' + str(loss) + ' 手</b>'
-                '<span style="font-size:12px;color:#64748b"> (进行中)</span></span>')
-    return '<span>当前连中/连败 <b>-</b></span>'
 
 
 def _pct(value):
     return f'{value * 100:.2f}%' if isinstance(value, (int, float)) else '-'
 
 
-def render_block(report=None):
-    report = report if report is not None else _load()
-    if not report or not report.get('recommendation'):
-        return (f'{START}<section id="kill-three"><h3>三位置杀码建议</h3>'
-                f'<div class="kt-meta">建议尚未生成</div></section>{END}')
+def _clock(value):
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return '-'
+    return moment.strftime('%H:%M:%S')
 
-    rec = report['recommendation']
-    backtest = report.get('backtest') or {}
-    picks = []
-    for item in rec.get('positions') or ():
-        picks.append(
-            f'<div class="kt-pick"><div class="kt-pos">{item.get("label", "")}</div>'
-            f'<div class="kt-kill">{item.get("kill")}</div>'
-            f'<div class="kt-sub">遗漏 {item.get("omission", "-")} 期 · '
-            f'近测 {_pct(item.get("recent_rate"))}</div></div>')
-    if not picks:
-        return (f'{START}<section id="kill-three"><h3>三位置杀码建议</h3>'
-                f'<div class="kt-meta">建议内容为空</div></section>{END}')
 
-    skipped = '、'.join(item.get('label', '') for item in rec.get('skipped') or ())
-    skip_line = f'<div class="kt-skip">本期放弃:{skipped}</div>' if skipped else ''
+def _stats_html(stats):
+    total = stats.get('total') or 0
+    pending = stats.get('pending') or 0
+    late = stats.get('late') or 0
+    if total:
+        patterns = stats.get('patterns') or {}
+        parity = patterns.get('reverse_parity') or {}
+        size = patterns.get('reverse_size') or {}
+        join = ' · '.join([
+            f'整组命中率（6 项全中） <b>{_pct(stats.get("group_rate"))}</b>'
+            f'（{stats.get("group_hits")}/{total} 期）',
+            f'位置杀码 <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
+            f'（{stats.get("positions", {}).get("hits")}/{stats.get("positions", {}).get("bets")} 注）',
+            f'合尾杀码 <b>{_pct(stats.get("tail", {}).get("rate"))}</b>'
+            f'（{stats.get("tail", {}).get("hits")}/{stats.get("tail", {}).get("bets")} 期）',
+            f'单双反向 <b>{_pct(parity.get("rate"))}</b>（{parity.get("hits")}/{total} 期）',
+            f'大小反向 <b>{_pct(size.get("rate"))}</b>（{size.get("hits")}/{total} 期）',
+            f'待核验 <b>{pending}</b> 期',
+        ])
+    else:
+        join = (f'今日暂无已核验样本 · 待核验 <b>{pending}</b> 期 · '
+                f'最早一期开奖后核验（北京时间 05:00 清零）')
+    if late:
+        join += f' · 未计入（发布晚于开奖）{late} 期'
+    win, loss = stats.get('current_win_streak') or 0, stats.get('current_loss_streak') or 0
+    if win:
+        join += f' · 当前 <b style="color:#15803d">连中 {win} 期</b>'
+    elif loss:
+        join += f' · 当前 <b style="color:#b91c1c">连败 {loss} 期</b>'
+    return f'<div class="k3-stats"><span>{join}</span></div>'
 
-    return (
-        f'{START}<section id="kill-three" data-as-of="{report.get("as_of_period", "")}">'
-        f'<style>{STYLE}</style>'
-        f'<h3>三位置杀码建议</h3>'
-        f'<div class="kt-meta">数据截至 {report.get("as_of_period", "")} · '
-        f'窗口 {report.get("window", "-")} 期 · 回看 {report.get("lookback", "-")} 期 · '
-        f'计算于 {report.get("generated_at", "")}</div>'
-        f'<div class="kt-grid">{"".join(picks)}</div>'
-        f'{skip_line}'
-        f'<div class="kt-stats">'
-        f'<span>该规则组合命中率 <b>{_pct(backtest.get("combined_rate"))}</b>'
-        f'<span style="font-size:12px;color:#64748b"> (理论乘积 {_pct(backtest.get("expected_product"))})</span></span>'
-        f'<span>最多连中 <b>{backtest.get("max_win_streak", "-")}</b> 手</span>'
-        f'<span>最多连败 <b>{backtest.get("max_loss_streak", "-")}</b> 手</span>'
-        f'{_current_streak_html(backtest)}'
-        f'<span>回测期数 <b>{backtest.get("periods", "-")}</b></span>'
-        f'</div>'
-        f'<div class="kt-foot">命中 = 该位置实际开奖号<b>不在</b>杀码上(杀号成功)。'
-        f'规则:每位置杀第 1 冷码,按近回看期各位置命中率取前 3 个位置。'
-        f'3 个位置各自约 90%,组合约 73%。<br>'
-        f'核算只使用前 4 球(千、百、十、个),第 5 球不参与;'
-        f'位置按 千/百/十/个 对齐展示;当前连中/连败按已结算期连续计算。</div>'
-        f'</section>{END}')
+
+def _settlement_line(settlement):
+    if not isinstance(settlement, dict):
+        return '已发布，等待目标期开奖核验。'
+    positions = settlement.get('positions') or {}
+    hit_positions = sum(1 for item in positions.values() if item.get('hit') is True)
+    tail = settlement.get('tail') or {}
+    tail_hit = tail.get('hit') is True
+    tail_label = tail.get('label') or ''
+    group = settlement.get('group_hit') is True
+    actual = settlement.get('actual') or []
+    parts = ['目标期已开奖：' + ''.join(str(value) for value in actual),
+             f'位置 {hit_positions}/{len(positions)} 命中',
+             f'{tail_label}合尾 {"命中" if tail_hit else "未中"}（实际 {tail.get("actual", "-")}）']
+    patterns = settlement.get('patterns') or {}
+    for field, label in (('reverse_parity', '单双形态'), ('reverse_size', '大小形态')):
+        entry = patterns.get(field) or {}
+        if entry:
+            parts.append(f'{label}{"命中" if entry.get("hit") else "未中"}（实际 {entry.get("actual", "-")}）')
+    if settlement.get('verified') is not True:
+        parts.append('发布晚于开奖，未计入统计')
+    else:
+        parts.append('整组 ' + ('<b style="color:#15803d">命中</b>' if group else '<b style="color:#b91c1c">未中</b>'))
+    return '；'.join(parts) + '。'
+
+
+def render_block():
+    try:
+        data = kill3_tail.current_summary()
+        stats = data['stats']
+        seal = data['seal']
+        if not isinstance(seal, dict):
+            body = '<div class="k3-empty">本期 AI 建议尚未发布（等待开奖后计算，或本轮调用失败）。</div>'
+            previous = data.get('previous')
+            if isinstance(previous, dict):
+                body += (f'<div class="k3-meta">最近一次：参考期 {escape(str(previous.get("ref_period", "")))}'
+                         f' · 目标期 {escape(str(previous.get("target_period", "")))}</div>')
+            return (f'{START}<section id="kill-three-ai"><style>{STYLE}</style>'
+                    f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}'
+                    f'{_foot_html()}</section>{END}')
+        positions = seal.get('positions') or {}
+        cards = []
+        for key, label, _index in kill3_tail.POSITIONS:
+            if key not in positions:
+                continue
+            cards.append(
+                f'<div class="k3-card"><div class="k3-pos">{label}</div>'
+                f'<div class="k3-kill">{escape(str(positions.get(key, "-")))}</div>'
+                f'<div class="k3-sub">排除 1 码</div></div>')
+        tail = seal.get('tail') or {}
+        if tail:
+            cards.append(
+                f'<div class="k3-card k3-tail"><div class="k3-pos">{escape(str(tail.get("label", "")))}合尾</div>'
+                f'<div class="k3-kill">{escape(str(tail.get("kill", "-")))}</div>'
+                f'<div class="k3-sub">排除 1 个和尾</div></div>')
+        for field, label in (('reverse_parity', '单双反向形态'), ('reverse_size', '大小反向形态')):
+            form = seal.get(field)
+            if isinstance(form, str) and len(form) == 4:
+                cards.append(
+                    f'<div class="k3-card k3-pattern"><div class="k3-pos">{label}</div>'
+                    f'<div class="k3-form">{escape(form)}</div>'
+                    f'<div class="k3-sub">排除该四位形态</div></div>')
+        dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
+        reason = escape(str(seal.get('reason') or '')) or '（无）'
+        model = seal.get('model_label') or kill3_tail.model_label()
+        meta = (f'参考期 {escape(str(seal.get("ref_period", "")))} ｜ '
+                f'目标期 {escape(str(seal.get("target_period", "")))} ｜ '
+                f'AI 计算 {_clock(seal.get("generated_at"))}（北京时间） ｜ {escape(str(model))}')
+        settlement = data.get('settlement')
+        state = seal.get('publication_state')
+        if isinstance(settlement, dict):
+            verify = _settlement_line(settlement)
+        elif state == 'published':
+            verify = '已发布（' + _clock(seal.get('published_at')) + '），等待目标期开奖核验。'
+        else:
+            verify = '已封存，等待发布确认。'
+        return (f'{START}<section id="kill-three-ai" data-as-of="{escape(str(seal.get("ref_period", "")))}">'
+                f'<style>{STYLE}</style>'
+                f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>'
+                f'<div class="k3-meta">{meta}</div>'
+                f'<div class="k3-grid">{"".join(cards)}</div>'
+                f'<div class="k3-drop">放弃位置：{escape(str(dropped))}（AI 只杀 3 个位置）</div>'
+                f'<div class="k3-reason">理由：{reason}</div>'
+                f'{_stats_html(stats)}'
+                f'<div class="k3-verify">{verify}</div>'
+                f'{_foot_html()}</section>{END}')
+    except Exception:
+        return ''
+
+
+def _foot_html():
+    return ('<div class="k3-foot">'
+            '由 DeepSeek 决定：从千/百/十/个中选 3 个位置各排除 1 码、放弃 1 个位置，'
+            '从 5 种合尾中选 1 种排除 1 个和尾数字，并给出两项四位反向形态。<br>'
+            '命中 = 该位置实际开奖号<b>不在</b>杀码上（杀号成功）；合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
+            '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态（被杀的 3 个位置取杀码形态反面）。<br>'
+            '3 个位置 + 1 个合尾 + 2 项反向形态共 6 项同时命中才算整组命中；'
+            '只统计开奖前发布、开奖后核验的记录；北京时间 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与；'
+            '平台提前 70 秒关盘。'
+            '</div>')
 
 
 def apply_kill_three_block(content, report=None):
-    """原地替换/插入三位置杀码块;任何异常原样返回。"""
+    """原地替换/插入 AI 三位置+一合尾区块；任何异常原样返回 content。"""
     try:
         if not isinstance(content, str) or not content:
             return content
-        fragment = render_block(report)
+        fragment = render_block()
+        if not fragment:
+            return content
         start = content.find(START)
         end = content.find(END)
         if start != -1 and end != -1 and end > start:
@@ -127,3 +216,4 @@ def apply_kill_three_block(content, report=None):
         return content + fragment
     except Exception:
         return content
+
