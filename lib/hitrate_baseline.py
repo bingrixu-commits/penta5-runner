@@ -36,6 +36,7 @@ RULE_BASELINE = {
     ('cold_framework', 'cold-framework-v3-30-pos3-tail2-he2x4-he3x5'): (7, 0.5427),
     ('cold_fixed_framework', 'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5'): (7, 0.5436),
     ('he3_refine', 'he3-refine-v2-balanced'): (1, 0.9375),
+    ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
     ('kill3_tail', 'kill3-tail-v4'): (5, 0.6191),
     ('kill3_tail', 'kill3-tail-v5-panel-context'): (5, 0.6191),
 }

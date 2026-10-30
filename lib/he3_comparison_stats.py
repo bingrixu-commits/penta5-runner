@@ -10,7 +10,7 @@ from stats_history import (business_start, parse_period, parse_time, period_slot
                            valid_draw_record, validate_conflicting_periods)
 
 REVISION = 'he3-paired-v1'
-VERSIONS = ('he3-refine-v1', 'he3-refine-v2-balanced')
+VERSIONS = ('he3-refine-v1', 'he3-refine-v2-balanced', 'he3-refine-v3-panel-context')
 
 
 def previous_period(period):

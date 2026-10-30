@@ -423,7 +423,7 @@ def _paired_window(raw, maximum, anchor):
     if not n and (first is not None or last is not None):
         raise ValueError('Empty paired window cannot have a range')
     versions = raw.get('versions')
-    allowed = ('he3-refine-v1', 'he3-refine-v2-balanced')
+    allowed = ('he3-refine-v1', 'he3-refine-v2-balanced', 'he3-refine-v3-panel-context')
     if not isinstance(versions, dict) or set(versions) - set(allowed):
         raise ValueError('Invalid paired versions')
     versions = {key: _count(versions.get(key, 0)) for key in allowed}
@@ -485,7 +485,8 @@ def _paired_window_html(window, title, daily=False):
     if window['planned_count'] and not window['latest_verified']:
         content += '<div style="font-size:12px;color:#64748b;">最新期未核验，连续段中断。</div>'
     content += ('<div style="font-size:12px;color:#64748b;">样本版本：旧规则 ' + str(window['versions']['he3-refine-v1'])
-                + '期 ｜ 奇偶约束规则 ' + str(window['versions']['he3-refine-v2-balanced']) + '期</div></div>')
+                + '期 ｜ 奇偶约束规则 ' + str(window['versions']['he3-refine-v2-balanced'])
+                + '期 ｜ 面板上下文规则 ' + str(window['versions']['he3-refine-v3-panel-context']) + '期</div></div>')
     return content
 
 

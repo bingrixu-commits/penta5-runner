@@ -23,11 +23,14 @@ from scripts.run_ai_ready_job import expected_reference
 from ai_http_observability import emit_http_phase
 from stat50_compare import _archive, history_from_snapshot, validate_history
 from stats_history import beijing_now, load_snapshot, parse_time, period_slot
+import panel_context
 
 ROOT = Path('/root/penta5-runner')
 MARKER = 'HE3_REFINE'
 LEGACY_REVISION = 'he3-refine-v1'
-REVISION = 'he3-refine-v2-balanced'
+V2_REVISION = 'he3-refine-v2-balanced'
+REVISION = 'he3-refine-v3-panel-context'
+REVISIONS = (LEGACY_REVISION, V2_REVISION, REVISION)
 def _resolve_model():
     # 2026-10-30: 合尾重要，允许按任务指定模型(PENTA5_MODEL_HE3)；
     # 未配置时保持原来的 flash，行为不变。
@@ -183,8 +186,8 @@ def _wait_parent(root, reference, loader, clock, monotonic, sleep, operation_win
         sleep(min(1.0, remaining))
 
 
-def _request_input(reference, source, *, revision=REVISION):
-    if revision not in (LEGACY_REVISION, REVISION):
+def _request_input(reference, source, *, revision=REVISION, panel_snapshot=None):
+    if revision not in REVISIONS:
         raise ValueError('invalid-refinement-revision')
     codes = [''.join(map(str, row['numbers'])) for row in source['history']]
     counts = {d: 0 for d in source['original_he3_keep']}
@@ -209,7 +212,7 @@ def _request_input(reference, source, *, revision=REVISION):
             'source_parent_sha256': source['parent_seal_sha256'],
             'source_input_sha256': source['archive_sha256'], 'history_codes': codes,
             'original_he3_keep': source['original_he3_keep'], 'prompt': prompt}
-    if revision == REVISION:
+    if revision in (V2_REVISION, REVISION):
         options = parity_options(source['original_he3_keep'])
         document['parity_policy'] = {'version': 'balanced-five-v1', **options}
         target = ('剩余5码必须为2奇3偶或3奇2偶，两种结构同等可选。' if options['balanced_possible'] else
@@ -222,6 +225,14 @@ def _request_input(reference, source, *, revision=REVISION):
             '不要输出集合外数字，不得更改原六码；奇偶配比是用户约束，不代表命中率已提高。'
             '仍只返回包含he3_drop和reason的完整JSON。'
         )
+    if revision == REVISION:
+        if panel_snapshot is None:
+            from panel_context import build as _build_panel
+            panel_snapshot = _build_panel(reference, next_period(reference))
+        from panel_context import prompt_text as _panel_prompt_text
+        panel_json, panel_sha = _panel_prompt_text(panel_snapshot)
+        document['prompt'] += ('\n\n【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带 reference/target；仅供自主决策参考，不是未来概率保证）】\n' + panel_json + '\n')
+        document['panel_context'] = panel_snapshot
     return document
 
 
@@ -248,7 +259,7 @@ def _body(seal):
 
 def _validate_saved(seal, reference, now, *, root, published=True, parent_seals=None):
     from he3_refine_view import card_fragment
-    if (not isinstance(seal, dict) or seal.get('revision') not in (LEGACY_REVISION, REVISION)
+    if (not isinstance(seal, dict) or seal.get('revision') not in REVISIONS
             or seal.get('ref_period') != reference or seal.get('target_period') != next_period(reference)
             or seal.get('seal_sha256') != _digest(_body(seal))):
         raise ValueError('invalid-refinement-seal')
@@ -268,12 +279,13 @@ def _validate_saved(seal, reference, now, *, root, published=True, parent_seals=
     response = seal.get('response')
     if (not isinstance(response, dict) or response != validate_selection(seal['original_he3_keep'],
             {key: response.get(key) for key in ('he3_drop', 'reason')},
-            balanced=seal['revision'] == REVISION)):
+            balanced=seal['revision'] in (V2_REVISION, REVISION))):
         raise ValueError('refinement-selection-changed')
     source = {'history': history, 'original_he3_keep': seal['original_he3_keep'],
               'parent_seal_sha256': seal['parent_seal_sha256'],
               'archive_sha256': seal['model_context_audit']['input_archive_sha256']}
-    original_input = _request_input(reference, source, revision=seal['revision'])
+    original_input = _request_input(reference, source, revision=seal['revision'],
+                                    panel_snapshot=(seal.get('refinement_input') or {}).get('panel_context'))
     if (seal.get('refinement_input') != original_input
             or seal.get('refinement_input_sha256') != _digest(original_input)):
         raise ValueError('refinement-input-changed')
@@ -385,7 +397,8 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
             raise PublicationRejected('refinement-already-attempted')
         _status(root, 'waiting', reference, clock)
         source, snapshot = _wait_parent(root, reference, loader, clock, monotonic, sleep, operation_window)
-        input_doc = _request_input(reference, source)
+        panel_snapshot = panel_context.build(reference, next_period(reference))
+        input_doc = _request_input(reference, source, panel_snapshot=panel_snapshot)
         request_budget = operation_window.request_budget(minimum=25)
         deadline = RequestDeadline(reference, clock, monotonic, budget_seconds=request_budget,
                                    cutoff_at=operation_window.request_cutoff)
