@@ -12,7 +12,7 @@ import re
 from ai_verified_stats import next_period
 from stats_history import (TZ, beijing_now, business_start, load_snapshot,
                            parse_period, period_slot)
-from selected_six_contract import (MARKER, MODEL, REVISION, V2_REVISION, V3_REVISION,
+from selected_six_contract import (MARKER, MODEL, REVISION, V2_REVISION, V3_REVISION, V4_REVISION, FORM_REVISIONS,
     SUPPORTED_REVISIONS, POSITION_KEYS, POSITION_LABELS, TAIL_POSITIONS, TAIL_LABELS,
     METRIC_KEYS, REVERSE_LABELS, reverse_form, validate_response)
 
@@ -62,7 +62,7 @@ def _numbers(response, *, revision=REVISION):
                'he2_keep': response['he2_keep'], 'he3_keep': response['he3_keep']}
     if revision == V3_REVISION:
         numbers.update(reverse_form(response, revision=revision))
-    elif revision == REVISION:
+    elif revision in FORM_REVISIONS:
         numbers.update({'reverse_parity': response['reverse_parity'],
                         'reverse_size': response['reverse_size']})
     return numbers
@@ -120,9 +120,9 @@ def _v3_card_fragment(reference, response, generated, target, deadline):
             '只用最新连续50期前4球；未选位置保留全部数字。封存后号码不变，历史号码保留核对。</div></details></section>\n' + END)
 
 
-def _forms_card_fragment(reference, response, generated, target, deadline):
+def _forms_card_fragment(reference, response, generated, target, deadline, *, revision=REVISION):
     rows = []
-    for index, (key, number) in enumerate(_numbers(response, revision=REVISION).items(), 1):
+    for index, (key, number) in enumerate(_numbers(response, revision=revision).items(), 1):
         keep = key in ('he2_keep', 'he3_keep')
         reverse = key in REVERSE_LABELS
         color = '#2563eb' if keep else ('#16a34a' if reverse else '#dc2626')
@@ -132,7 +132,7 @@ def _forms_card_fragment(reference, response, generated, target, deadline):
                     '<div data-six-independent-rate-key="' + key + '" data-penta5-live-derived="1" style="font-size:12px;color:#475569;min-height:1.7em;">今日战绩等待核验</div></div>')
     return (START + '\n<section id="six-independent-card" data-six-independent-reference="' + reference
             + '" data-six-independent-target="' + target + '" data-six-independent-deadline="' + deadline.isoformat()
-            + '" data-six-independent-revision="' + REVISION + '" style="' + STYLE + '">'
+            + '" data-six-independent-revision="' + revision + '" style="' + STYLE + '">'
             '<h3 style="margin:0 0 5px;color:#0e7490;font-size:20px;">DeepSeek Pro · 八项独立框架</h3>'
             '<div style="font-size:12px;color:#64748b;">独立请求、独立封存、独立统计；六项自选 + 两项四位形态排除（除）。</div>'
             '<div style="font-size:12px;color:#64748b;">参考期：' + reference + ' ｜ 目标期：' + target
@@ -156,8 +156,8 @@ def card_fragment(reference, response, generated_at, *, revision=REVISION):
     target, deadline = next_period(reference), period_slot(next_period(reference))
     if not period_slot(reference) <= generated < deadline:
         raise ValueError('independent-six-generation-outside-window')
-    if revision == REVISION:
-        return _forms_card_fragment(reference, response, generated, target, deadline)
+    if revision in FORM_REVISIONS:
+        return _forms_card_fragment(reference, response, generated, target, deadline, revision=revision)
     if revision == V3_REVISION:
         return _v3_card_fragment(reference, response, generated, target, deadline)
     return _previous_card_fragment(reference, response, generated, target, deadline, revision)

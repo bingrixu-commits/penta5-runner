@@ -16,10 +16,13 @@ from strategy_features import build_strategy, SIX_STRATEGY, LEGACY_SIX_STRATEGY
 LEGACY_REVISION = 'selected-six-independent-v1'
 V2_REVISION = 'selected-six-independent-v2-minimax'
 V3_REVISION = 'selected-six-independent-v3-minimax-reverse'
-PREVIOUS_REVISION = V3_REVISION
-REVISION = 'selected-six-independent-v4-minimax-forms'
+V4_REVISION = 'selected-six-independent-v4-minimax-forms'
+V6_REVISION = 'selected-six-independent-v6-panel-context'
+PREVIOUS_REVISION = V4_REVISION
+REVISION = V6_REVISION
 LEDGER_REVISION = LEGACY_REVISION
-SUPPORTED_REVISIONS = frozenset((LEGACY_REVISION, V2_REVISION, V3_REVISION, REVISION))
+SUPPORTED_REVISIONS = frozenset((LEGACY_REVISION, V2_REVISION, V3_REVISION, V4_REVISION, V6_REVISION))
+FORM_REVISIONS = frozenset((V4_REVISION, V6_REVISION))
 def _resolve_model():
     for name in ('PENTA5_MODEL_SIX', 'PENTA5_DEEPSEEK_MODEL'):
         try:
@@ -59,7 +62,7 @@ def he3_count(revision=REVISION):
 
 def item_count(revision=REVISION):
     he3_count(revision)
-    return 8 if revision in (V3_REVISION, REVISION) else 6
+    return 8 if revision in (V3_REVISION, V4_REVISION, V6_REVISION) else 6
 
 
 def _selected(values, allowed, label):
@@ -145,7 +148,7 @@ def reverse_form_legal(response):
 
 def validate_response(payload, *, revision=REVISION):
     he3_count(revision)
-    fields = FORM_RESPONSE_KEYS if revision == REVISION else RESPONSE_KEYS
+    fields = FORM_RESPONSE_KEYS if revision in FORM_REVISIONS else RESPONSE_KEYS
     if not isinstance(payload, dict) or set(payload) != fields:
         raise ValueError('invalid-selected-six-response-fields')
     reason = payload['reason']
@@ -156,7 +159,7 @@ def validate_response(payload, *, revision=REVISION):
     except UnicodeEncodeError:
         raise ValueError('invalid-selected-six-reason') from None
     he3_keep = _keep(payload['he3_keep'], 5, '0123456789')
-    if revision in (V3_REVISION, REVISION) and not 2 <= sum(int(digit) % 2 for digit in he3_keep) <= 3:
+    if revision in (V3_REVISION, V4_REVISION, V6_REVISION) and not 2 <= sum(int(digit) % 2 for digit in he3_keep) <= 3:
         # The current rules forbid all-odd/all-even and 4:1 counts; the balanced
         # candidate domain is compared by the same five-block minimax method.
         raise ValueError('invalid-selected-six-he3-parity')
@@ -164,7 +167,7 @@ def validate_response(payload, *, revision=REVISION):
                 'selected_tails': _selected(payload['selected_tails'], TAIL_POSITIONS, 'tails'),
                 'he2_keep': _keep(payload['he2_keep'], 4, '02468'),
                 'he3_keep': he3_keep, 'reason': reason}
-    if revision == REVISION:
+    if revision in FORM_REVISIONS:
         response['reverse_parity'] = _pattern(payload['reverse_parity'], 'parity')
         response['reverse_size'] = _pattern(payload['reverse_size'], 'size')
         if not reverse_form_legal(response):
@@ -198,7 +201,7 @@ def outcomes(response, digits, *, revision=REVISION):
             size = size and (digit >= 5) == (kill < 5)
         result['reverse_parity'] = parity
         result['reverse_size'] = size
-    elif revision == REVISION:
+    elif revision in FORM_REVISIONS:
         # Exclusion semantics: the sealed four-position form is expected NOT to appear.
         result['reverse_parity'] = pattern_of(digits, 'parity') != response['reverse_parity']
         result['reverse_size'] = pattern_of(digits, 'size') != response['reverse_size']
@@ -297,7 +300,7 @@ def _reverse_input_doc(reference, history, moment):
             'target_period': target, 'history': deepcopy(history), 'strategy': strategy, 'prompt': prompt}
 
 
-def _forms_input_doc(reference, history, moment):
+def _forms_input_doc(reference, history, moment, *, revision=V4_REVISION, panel_snapshot=None):
     """Build the v4 fixed-minimax request; the two forms are now AI choices."""
     strategy = build_strategy(history, reference, SIX_STRATEGY, now=moment)
     history = validate_history(history, reference, moment)
@@ -347,11 +350,23 @@ def _forms_input_doc(reference, history, moment):
         '值必须为0至9整数，不能为布尔值、小数、数组或字符串。'
         '保留集为规定长度的不重复ASCII数字字符串，保留前导0；不得默认补位或新增字段。'
         'reason用60字以内简短中文说明本次最差段、方差、总量依据，不输出分析过程。')
-    return {'version': 1, 'revision': REVISION, 'reference_period': reference,
+    panel_context = None
+    if revision == V6_REVISION:
+        if panel_snapshot is None:
+            from panel_context import build as _build_panel
+            panel_snapshot = _build_panel(reference, target)
+        from panel_context import prompt_text as _panel_prompt_text
+        panel_json, panel_sha = _panel_prompt_text(panel_snapshot)
+        prompt += ('\n\n【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带 reference/target；仅供自主决策参考，不是未来概率保证）】\n' + panel_json + '\n')
+        panel_context = panel_snapshot
+    document = {'version': 1, 'revision': revision, 'reference_period': reference,
             'target_period': target, 'history': deepcopy(history), 'strategy': strategy, 'prompt': prompt}
+    if panel_context is not None:
+        document['panel_context'] = panel_context
+    return document
 
 
-def build_input_doc(reference, history, *, revision=REVISION):
+def build_input_doc(reference, history, *, revision=REVISION, panel_snapshot=None):
     he3_count(revision)
     if not isinstance(history, list) or len(history) != 50 or not isinstance(history[-1], dict):
         raise ValueError('selected-six-history-must-have-exactly-50-draws')
@@ -362,8 +377,9 @@ def build_input_doc(reference, history, *, revision=REVISION):
         moment = None
     if moment is None or moment.tzinfo is None or moment.utcoffset() is None:
         raise ValueError('selected-six-opening-time-must-be-aware')
-    if revision == REVISION:
-        return _forms_input_doc(reference, history, moment)
+    if revision in FORM_REVISIONS:
+        return _forms_input_doc(reference, history, moment, revision=revision,
+                                panel_snapshot=panel_snapshot)
     if revision == V3_REVISION:
         return _reverse_input_doc(reference, history, moment)
     if revision == V2_REVISION:

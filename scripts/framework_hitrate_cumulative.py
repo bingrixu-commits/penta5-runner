@@ -32,6 +32,7 @@ RULE_BASELINE = {
     ('killer', 'conditional-transition-v2'): (9, 0.4162),
     ('framework', 'marginal-frequency-v2'): (8, 0.5559),
     ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
+    ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),
     ('cold_framework', 'cold-framework-v3-30-pos3-tail2-he2x4-he3x5'): (7, 0.5427),
     ('cold_fixed_framework', 'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5'): (7, 0.5436),
     ('he3_refine', 'he3-refine-v2-balanced'): (1, 0.9375),

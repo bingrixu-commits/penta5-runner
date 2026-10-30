@@ -17,7 +17,7 @@ _POSITIONS = ('q', 'b', 's', 'g')
 _TAILS = ('all', 'qbs', 'qbg', 'qsg', 'bsg')
 _CURRENT_REVISIONS = {
     'selected': 'selected-seven-v6-three-positions',
-    'six': 'selected-six-independent-v4-minimax-forms',
+    'six': six_contract.REVISION,
 }
 
 

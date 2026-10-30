@@ -178,7 +178,7 @@ def _frozen(input_doc, *, rebuild):
         raise ValueError('selected-six-request-options-invalid-input')
     revision = frozen['revision']
     if rebuild:
-        original = build_input_doc(frozen['reference_period'], frozen['history'], revision=revision)
+        original = build_input_doc(frozen['reference_period'], frozen['history'], revision=revision, panel_snapshot=frozen.get('panel_context'))
         if _canonical(frozen) != _canonical(original):
             raise ValueError('selected-six-request-options-invalid-input')
     validator = selected_validator(frozen, validate_response, kind='six', revision=revision)
@@ -194,6 +194,7 @@ def _base_context(frozen, candidates, pairs):
             'validation_scope': SCOPE,
             'instruction': (INSTRUCTION_FORMS if frozen['revision'] == REVISION else
                             INSTRUCTION_REVERSE if frozen['revision'] == V3_REVISION else INSTRUCTION),
+            'panel_context': frozen.get('panel_context'),
             'candidates': candidates, 'position_pairs': pairs['selected_positions'],
             'tail_pairs': pairs['selected_tails']}
 

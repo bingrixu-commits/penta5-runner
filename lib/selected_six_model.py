@@ -231,7 +231,8 @@ def validate_publication(seal, reference, now, *, published=True):
             or seal.get('reference_open_time') != history[-1]['opentime']):
         raise ValueError('invalid-selected-six-history')
     revision = seal['revision']
-    original_input = _input_doc(reference, history, revision=revision)
+    original_input = _input_doc(reference, history, revision=revision,
+                               panel_snapshot=(seal.get('input_doc') or {}).get('panel_context'))
     saved_input = seal.get('input_doc')
     if (not isinstance(saved_input, dict) or _digest(saved_input) != _digest(original_input)
             or seal.get('input_sha256') != _digest(saved_input)):
