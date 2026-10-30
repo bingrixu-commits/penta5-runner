@@ -184,3 +184,12 @@
   已把 REAL_HIT 移出名单（其余 KILL_THREE/COLD_HIT_STATS/POSITION_COLD/MODEL_SIGNI 保留），
   版本升到 `quiet-panel-v17-live-sections`；用 jsdom 复跑 apply()：无异常、KILL_THREE 区块
   随新封存更新（23 个 plan），标记配对全部通过。REAL_HIT 区块自身的未闭合 DIV 留待后续修正。
+
+- **2026-10-30 12:22 完善 live refresh：REAL_HIT 修好并重入名单，25 个周期块全覆盖**：
+  `real_hitrate_view.render_block()` 末尾多了一个 `</div>`，解析后提前闭合外层 `div.container`，
+  使 REAL_HIT 的 START 落在 container 内、END 落在 body，`ranges()` 抛 unbalanced-marker。
+  已删除多余闭合标签、把口径说明包进 `rh-foot`；REAL_HIT 与 STRATEGY_BOARD_DERIVED 重新加入
+  `names`，版本升 `quiet-panel-v18-live-sections`。现在面板上 25 个动态标记块全部登记且配对
+  通过（含 KILL_THREE/COLD_HIT_STATS/POSITION_COLD/MODEL_SIGNI/REAL_HIT/STRATEGY_BOARD_DERIVED）。
+  jsdom 实测：29 个 name 配对 BAD=0；apply() 对 KILL_THREE 产出 25 个 plan、对 REAL_HIT
+  （89.91%→88.88%）正常合并，无异常、无「数据更新暂未完成」提示。
