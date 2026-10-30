@@ -201,22 +201,29 @@ def _attack_html(seal):
                          ensure_ascii=False, allow_nan=False, separators=(',', ':'))
     for old, new in (('&', '\\u0026'), ('<', '\\u003c'), ('>', '\\u003e')):
         payload = payload.replace(old, new)
+    copy_action = (
+        "var b=document.getElementById('kill3-attack-text');if(!b)return;"
+        "var t=b.value||b.textContent||'';"
+        "var s=document.getElementById('kill3-copy-status');"
+        "var done=function(ok){if(s){s.textContent=ok?'已复制':'复制失败，请手动选择';"
+        "s.style.color=ok?'#15803d':'#b91c1c';}};"
+        "var fb=function(){var a=document.createElement('textarea');a.value=t;"
+        "a.setAttribute('readonly','');a.style.cssText='position:fixed;left:-9999px;top:0;opacity:0;';"
+        "document.body.appendChild(a);a.select();var ok=false;"
+        "try{ok=document.execCommand('copy')===true;}catch(e){}a.remove();done(ok);};"
+        "if(navigator.clipboard&&navigator.clipboard.writeText){"
+        "navigator.clipboard.writeText(t).then(function(){done(true);},fb);}else{fb();}")
     return ('<div class="k3-attack">'
             '<div class="k3-attack-title">攻击语（复制到平台，与八项同格式）</div>'
             '<textarea id="kill3-attack-text" readonly rows="3" aria-label="AI 三位置+一合尾攻击语" '
             'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
             'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
             + escape(text) + '</textarea>'
-            '<button id="kill3-attack-copy" type="button" onclick="copyKill3Attack()" '
+            '<button id="kill3-attack-copy" type="button" onclick="' + copy_action + '" '
             'style="padding:7px 15px;border:0;border-radius:7px;background:#4f46e5;color:#fff;cursor:pointer;">'
             '复制攻击语</button>'
             '<span id="kill3-copy-status" role="status" style="margin-left:8px;font-size:12px;"></span></div>'
-            '<script id="kill3-attack-data" type="application/json">' + payload + '</script>'
-            '<script>function copyKill3Attack(){var b=document.getElementById("kill3-attack-text");if(!b)return;'
-            'var t=b.value||b.textContent||"";var s=document.getElementById("kill3-copy-status");'
-            'function done(ok){if(s){s.textContent=ok?"已复制":"复制失败，请手动选择";s.style.color=ok?"#15803d":"#b91c1c";}}'
-            'if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(function(){done(true);},function(){done(false);});}'
-            'else{b.select();var ok=false;try{ok=document.execCommand("copy");}catch(e){}done(ok);}}</script>')
+            '<script id="kill3-attack-data" type="application/json">' + payload + '</script>')
 
 
 def _foot_html():
