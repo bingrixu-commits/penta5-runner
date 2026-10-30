@@ -32,6 +32,22 @@ def main(argv=None):
                             summary.get('delta_pp', 0), n, summary.get('live_n', 0)))
         else:
             lines.append('<div>%s：等待首期核验…</div>' % label)
+    try:
+        promotion = json.loads((root / 'data/joint_form_promotion.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        promotion = {}
+    if isinstance(promotion, dict) and isinstance(promotion.get('status'), str):
+        gate = promotion.get('gate') or {}
+        parts = []
+        models = promotion.get('models') or {}
+        for model in ('framework', 'killer'):
+            live = (models.get(model) or {}).get('live') or {}
+            parts.append('%s %d/%d Δ%+.2fpp' % (model, live.get('n', 0),
+                         gate.get('burn_in_periods', 72), live.get('delta_pp', 0.0)))
+        target = gate.get('strong_periods', 288)
+        lines.append('<div>实盘门禁：%d/%d 期（%s）｜ %s；强验证目标 %d 期</div>'
+                     % (promotion.get('live_periods', 0), gate.get('burn_in_periods', 72),
+                        promotion.get('status'), ' ｜ '.join(parts), target))
     lines.extend(['<div style="font-size:12px;color:#64748b;">规则：AI 杀码/合尾/保留集不变，'
                   '仅按 10^4 开奖组合精确选择两个排除形态，使整组同时失手概率最低；'
                   '旧封存与现网主卡不受影响。</div>', '</div>', END])
