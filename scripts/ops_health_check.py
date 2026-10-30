@@ -97,7 +97,10 @@ PROVIDER_402_LOGS = (
     'ai_job_framework.log',
     'ai_job_killer.log',
     'cold_framework_cron.log',
+    'cold_fixed_framework_cron.log',
     'selected_six_cron.log',
+    'he3_refine_cron.log',
+    'kill3_tail_cron.log',
 )
 PROVIDER_402_PATTERN = re.compile(r'"status"\s*:\s*402(?!\d)|HTTP\s+402(?!\d)')
 PROVIDER_402_AT_RE = re.compile(r'"at"\s*:\s*"([^"]+)"')
@@ -1074,6 +1077,37 @@ def check_hitrate_cumulative(ctx):
                    'as_of_period': document.get('as_of_period')})
 
 
+AI_CONTROL_JSON = 'ai_api_control.json'
+AI_GUARD_JSON = 'ai_balance_guard.json'
+AI_GUARD_STALE_SECONDS = 10 * 60
+
+
+def check_ai_control(ctx):
+    """AI 总闸与余额守护心跳: 关闭或心跳停更 -> warn；用于发现漏期前的静默停止。"""
+    control, error = _load_json(ctx['root'] / 'data' / AI_CONTROL_JSON)
+    guard, guard_error = _load_json(ctx['root'] / 'data' / AI_GUARD_JSON)
+    enabled = control.get('enabled') if isinstance(control, dict) else None
+    auto_paused = guard.get('auto_paused') if isinstance(guard, dict) else None
+    balance = guard.get('last_balance') if isinstance(guard, dict) else None
+    checked = _parse_time(guard.get('last_checked_at')) if isinstance(guard, dict) else None
+    age = (ctx['now'] - checked).total_seconds() if checked is not None else None
+    if enabled is False:
+        detail = 'AI 总闸已关闭 generation=%s' % (control.get('generation'),)
+        if auto_paused:
+            detail += '；余额守护自动暂停 balance=%s' % (balance,)
+        return _entry('ai_control', WARN, detail,
+                      {'enabled': False, 'auto_paused': bool(auto_paused), 'balance': balance})
+    if enabled is not True:
+        return _entry('ai_control', WARN, 'AI 总闸状态不可读: %s' % (error or 'missing-enabled'))
+    if age is None or age > AI_GUARD_STALE_SECONDS:
+        return _entry('ai_control', WARN, '余额守护心跳停更: %s' % _age_text(age),
+                      {'age_seconds': None if age is None else int(age)})
+    return _entry('ai_control', OK,
+                  'AI 总闸开启 generation=%s；余额守护 age=%s balance=%s'
+                  % (control.get('generation'), _age_text(age), balance),
+                  {'enabled': True, 'age_seconds': int(age), 'balance': balance})
+
+
 CHECK_FUNCS = (
     check_latest_draw,
     check_ai_jobs,
@@ -1093,6 +1127,7 @@ CHECK_FUNCS = (
     check_deepseek_balance,
     check_provider_402,
     check_hitrate_cumulative,
+    check_ai_control,
     check_model_usage,
 )
 FALLBACK_NAMES = {
@@ -1114,6 +1149,7 @@ FALLBACK_NAMES = {
     'check_deepseek_balance': ('deepseek_balance',),
     'check_provider_402': ('provider_402',),
     'check_hitrate_cumulative': ('hitrate_cumulative',),
+    'check_ai_control': ('ai_control',),
     'check_model_usage': ('model_usage',),
 }
 
