@@ -42,6 +42,11 @@ def ranking(samples):
 
 
 def streaks(outcomes):
+    """返回 (best_win, best_loss, current_win, current_loss)。
+
+    2026-10-30: 面板新增「当前连中/连败」——回测序列末尾仍在延续的一段，
+    让用户看到当下状态（max 只是历史极值）。
+    """
     best_win = best_loss = cur_win = cur_loss = 0
     for ok in outcomes:
         if ok:
@@ -52,7 +57,7 @@ def streaks(outcomes):
             cur_win = 0
         best_win = max(best_win, cur_win)
         best_loss = max(best_loss, cur_loss)
-    return best_win, best_loss
+    return best_win, best_loss, cur_win, cur_loss
 
 
 def evaluate(rows, window):
@@ -74,22 +79,24 @@ def evaluate(rows, window):
     for top in TOPS:
         seq = sequenced[top]
         hits = sum(1 for x in seq if x)
-        best_win, best_loss = streaks(seq)
+        best_win, best_loss, cur_win, cur_loss = streaks(seq)
         report['tops'][str(top)] = {
             'bets': len(seq), 'hits': hits,
             'rate': round(hits / len(seq), 6) if seq else None,
             'baseline': round((10 - top) / 10, 4),
             'max_win_streak': best_win, 'max_loss_streak': best_loss,
+            'current_win_streak': cur_win, 'current_loss_streak': cur_loss,
         }
     for key in POSITION_KEYS:
         entry = {}
         for top in TOPS:
             seq = per_position[key][top]
             hits = sum(1 for x in seq if x)
-            best_win, best_loss = streaks(seq)
+            best_win, best_loss, cur_win, cur_loss = streaks(seq)
             entry[str(top)] = {'bets': len(seq), 'hits': hits,
                                'rate': round(hits / len(seq), 6) if seq else None,
-                               'max_win_streak': best_win, 'max_loss_streak': best_loss}
+                               'max_win_streak': best_win, 'max_loss_streak': best_loss,
+                               'current_win_streak': cur_win, 'current_loss_streak': cur_loss}
         report['positions'][key] = {'label': LABELS[key], **entry}
 
     # --- 契约字段:hit_rate / buy_hit_rate / n / per_position ---

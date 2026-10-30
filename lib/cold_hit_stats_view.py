@@ -45,6 +45,28 @@ def _load():
         return None
 
 
+def _current_cell(item):
+    """表格里的「当前」列：连中 N / 连败 N。"""
+    win = item.get('current_win_streak')
+    loss = item.get('current_loss_streak')
+    if isinstance(win, int) and win > 0:
+        return f'<b style="color:#15803d">连中 {win}</b>'
+    if isinstance(loss, int) and loss > 0:
+        return f'<b style="color:#b91c1c">连败 {loss}</b>'
+    return '-'
+
+
+def _current_chip(item):
+    """卡片头部「当前」状态（进行中的连中/连败）。"""
+    win = item.get('current_win_streak')
+    loss = item.get('current_loss_streak')
+    if isinstance(win, int) and win > 0:
+        return f'当前 <b style="color:#15803d">连中 {win} 手</b> (进行中)'
+    if isinstance(loss, int) and loss > 0:
+        return f'当前 <b style="color:#b91c1c">连败 {loss} 手</b> (进行中)'
+    return '当前 <b>-</b>'
+
+
 def _pct(value):
     return f'{value * 100:.2f}%' if isinstance(value, (int, float)) else '-'
 
@@ -62,7 +84,8 @@ def _card(block):
             f'<tr><td>{label}</td><td>{_pct(item.get("rate"))}</td>'
             f'<td>{_pct(item.get("baseline"))}</td>'
             f'<td>{item.get("max_win_streak", "-")}</td>'
-            f'<td>{item.get("max_loss_streak", "-")}</td></tr>')
+            f'<td>{item.get("max_loss_streak", "-")}</td>'
+            f'<td>{_current_cell(item)}</td></tr>')
 
     position_rows = []
     for key in ('q', 'b', 's', 'g'):
@@ -73,7 +96,8 @@ def _card(block):
         position_rows.append(
             f'<tr><td>{entry.get("label", key)}</td><td>{_pct(item.get("rate"))}</td>'
             f'<td>{item.get("max_win_streak", "-")}</td>'
-            f'<td>{item.get("max_loss_streak", "-")}</td></tr>')
+            f'<td>{item.get("max_loss_streak", "-")}</td>'
+            f'<td>{_current_cell(item)}</td></tr>')
 
     return (
         f'<div class="ch-card">'
@@ -81,11 +105,12 @@ def _card(block):
         f'<div class="ch-main"><span class="ch-rate">{_pct(top3.get("rate"))}</span>'
         f'<span class="ch-vs">杀 3 码命中率 · 理论 {_pct(top3.get("baseline"))}</span></div>'
         f'<div class="ch-streak">最多连中 <b class="ch-win">{top3.get("max_win_streak", "-")}</b> 手 · '
-        f'最多连败 <b class="ch-loss">{top3.get("max_loss_streak", "-")}</b> 手</div>'
-        f'<table><thead><tr><th>杀号数</th><th>命中率</th><th>理论</th><th>连中</th><th>连败</th></tr>'
+        f'最多连败 <b class="ch-loss">{top3.get("max_loss_streak", "-")}</b> 手 · '
+        f'{_current_chip(top3)}</div>'
+        f'<table><thead><tr><th>杀号数</th><th>命中率</th><th>理论</th><th>最多连中</th><th>最多连败</th><th>当前</th></tr>'
         f'</thead><tbody>{"".join(rows)}</tbody></table>'
         + (f'<table style="margin-top:8px"><thead><tr><th>位置</th><th>杀3码命中</th>'
-           f'<th>连中</th><th>连败</th></tr></thead><tbody>{"".join(position_rows)}</tbody></table>'
+           f'<th>最多连中</th><th>最多连败</th><th>当前</th></tr></thead><tbody>{"".join(position_rows)}</tbody></table>'
            if position_rows else '')
         + '</div>')
 

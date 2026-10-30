@@ -103,3 +103,8 @@
   backtest 加 current_win_streak/current_loss_streak；lib/kill_three_view.py 增加
   「当前 连中 N 手（进行中）」绿色 /「连败」红色展示。position-cold 是 systemd
   守护(penta5-position-cold.service)调用 kill_three_pick.main()，已重启加载新代码。
+- **2026-10-30 09:56「当前连中/连败」继续铺到冷码杀号战绩**：其他区块（framework/八项/
+  cold/he3/kill_three）已有当前连续段，只剩 cold_hit_stats 只有历史极值。已改
+  scripts/cold_hit_stats.py（streaks 返回 current）与 lib/cold_hit_stats_view.py
+  （卡片头加「当前 连中/连败(进行中)」、两张表加「当前」列），重启
+  penta5-position-cold.service 加载新脚本，面板即时更新。
