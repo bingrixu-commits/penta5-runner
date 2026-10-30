@@ -174,6 +174,7 @@ def main(argv=None):
     parser.add_argument('--root', default=str(ROOT))
     parser.add_argument('--balance-url', default=BALANCE_URL)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args(argv)
 
     root = Path(args.root)
@@ -242,7 +243,11 @@ def main(argv=None):
     if not args.dry_run:
         save_state(state_path(root), state)
 
-    print(json.dumps(result, ensure_ascii=False), flush=True)
+    notable = (args.verbose or args.dry_run or result['action'] != 'none'
+               or bool(result['action_error']) or bool(result['balance_error'])
+               or bool(state.get('auto_paused')))
+    if notable:
+        print(json.dumps(result, ensure_ascii=False), flush=True)
     return 0
 
 
