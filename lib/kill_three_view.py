@@ -126,6 +126,27 @@ def _settlement_line(settlement):
     return '；'.join(parts) + '。'
 
 
+def _form_derivation(seal):
+    """Show how the two reverse forms were derived from the three killed digits."""
+    positions = seal.get('positions') or {}
+    if not isinstance(positions, dict):
+        return ''
+    parts = []
+    for key, label, _index in kill3_tail.POSITIONS:
+        if key not in positions:
+            continue
+        try:
+            parity, size = kill3_tail.reverse_attributes(int(positions[key]))
+        except (TypeError, ValueError):
+            return ''
+        parts.append(f'{label}{positions[key]}→{parity}/{size}')
+    if not parts:
+        return ''
+    dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
+    return ('形态取反（按 3 个被杀位置，含仅展示位）：' + ' · '.join(parts)
+            + f'；弃位{dropped}字符自选')
+
+
 def render_block():
     try:
         data = kill3_tail.current_summary()
@@ -167,6 +188,9 @@ def render_block():
                     f'<div class="k3-sub">排除该四位形态</div></div>')
         dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
         reason = escape(str(seal.get('reason') or '')) or '（无）'
+        derivation = _form_derivation(seal)
+        derive_html = (f'<div class="k3-drop">{escape(derivation)}</div>'
+                       if derivation else '')
         restriction = seal.get('tail_restriction') or {}
         restrict_html = ''
         if restriction.get('previous_tail_label'):
@@ -207,7 +231,7 @@ def render_block():
                 f'<div class="k3-grid">{"".join(cards)}</div>'
                 f'<div class="k3-drop">放弃位置：{escape(str(dropped))}'
                 f'（AI 选 3 个位置，其中 2 个计入整组、1 个仅展示）</div>'
-                f'{restrict_html}{position_html}'
+                f'{restrict_html}{position_html}{derive_html}'
                 f'<div class="k3-reason">理由：{reason}</div>'
                 f'{_stats_html(stats)}'
                 f'<div class="k3-verify">{verify}</div>'
@@ -267,7 +291,8 @@ def _foot_html():
             '满后下一期必须更换。<br>'
             '命中 = 该位置实际开奖号<b>不在</b>杀码上（只统计 2 个计入位置）；'
             '合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
-            '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态（被杀的 3 个位置取杀码形态反面）。<br>'
+            '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态'
+            '（3 个被杀位置都取杀码形态反面，含仅展示位置；弃位字符自选）。<br>'
             '2 个计入位置 + 1 个合尾 + 2 项反向形态共 5 项同时命中才算整组命中；'
             '旧 3 位置口径（6 项）的封存记录保留但不计入本统计；'
             '只统计开奖前发布、开奖后核验的记录；北京时间 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与；'
