@@ -37,6 +37,13 @@ HE3_PARITY_POLICY = 'he3-five-odd2or3-v1'
 METRIC_KEYS = BASE_METRIC_KEYS + KEEP_KEYS
 INDEX_NAME = 'cold_framework_ledger.json'
 PRO_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?pro(?:-[0-9]{4})?')
+FLASH_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?flash(?:-[0-9]{4})?')
+
+def _model_family(value):
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r'deepseek-(?:v4(?:\.1)?-)?(flash|pro)(?:-[0-9]{4})?', value)
+    return match.group(1) if match else None
 
 
 def _api_enabled(root):
@@ -245,9 +252,9 @@ def _metadata(metadata, context, now, required=False):
                        'completed_at', 'input_sha256', 'finish_reason'}
     if (not required_fields.issubset(metadata)
             or not set(metadata).issubset(required_fields | {'request_id', 'reason', 'reference_period', 'selection_policy'})
-            or metadata['requested_model'] != 'deepseek-v4-pro'
+            or _model_family(metadata['requested_model']) is None
             or not isinstance(metadata['returned_model'], str)
-            or PRO_FAMILY.fullmatch(metadata['returned_model']) is None
+            or _model_family(metadata['returned_model']) != _model_family(metadata['requested_model'])
             or metadata['finish_reason'] != 'stop'
             or metadata.get('selection_policy', HE3_PARITY_POLICY) != HE3_PARITY_POLICY
             or metadata.get('reference_period', context['reference_period']) != context['reference_period']

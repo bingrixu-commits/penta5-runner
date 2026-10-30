@@ -22,7 +22,19 @@ from stats_history import TZ, beijing_now, business_start, load_snapshot, period
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL = 'deepseek-v4-pro'
+def _resolve_model():
+    for name in ('PENTA5_MODEL_COLD', 'PENTA5_DEEPSEEK_MODEL'):
+        try:
+            from app_secrets import get_secret
+            value = get_secret(name)
+        except RuntimeError:
+            continue
+        if value:
+            return value
+    return 'deepseek-v4-pro'
+
+
+MODEL = _resolve_model()
 REASONING_EFFORT = 'low'
 THINKING_ENABLED = False
 MAX_RESPONSE_TOKENS = 2048
@@ -31,6 +43,8 @@ REQUEST_TRANSPORT = {'version': 'cold-pro-fast-2048-balanced-he3-v3', 'model': M
                      'selection_policy': core.HE3_PARITY_POLICY}
 REQUEST_BUDGET_SECONDS = 120.0
 PRO_FAMILY = core.PRO_FAMILY
+FLASH_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?flash(?:-[0-9]{4})?')
+MODEL_FAMILY = PRO_FAMILY if PRO_FAMILY.fullmatch(MODEL) else FLASH_FAMILY
 # A briefly enabled fixed rule may have already paid for a reference. Its
 # original attempt remains a no-replay tombstone, never a dynamic prediction.
 RETIRED_FIXED_REVISION = 'cold-framework-v4-30-fixed-qbs-all-qbs-he2x4-he3x5'
@@ -315,7 +329,7 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
             accepted = received_metadata.get(accepted_attempts[-1], {}) if accepted_attempts else {}
             if (accepted.get('requested_model') != MODEL or accepted.get('finish_reason') != 'stop'
                     or not isinstance(accepted.get('returned_model'), str)
-                    or not PRO_FAMILY.fullmatch(accepted['returned_model'])):
+                    or not MODEL_FAMILY.fullmatch(accepted['returned_model'])):
                 raise PublicationRejected('cold-model-returned-model-not-pro')
             response = validate_selection(response)
             completed_at = _now(generated_at)

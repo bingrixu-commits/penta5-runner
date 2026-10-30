@@ -30,6 +30,13 @@ PLATFORM_CLOSE_SECONDS = 70
 OPERATION_RESERVE_SECONDS = 90
 PUBLICATION_RESERVE_SECONDS = 10
 PRO_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?pro(?:-[0-9]{4})?')
+FLASH_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?flash(?:-[0-9]{4})?')
+
+def _model_family(value):
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r'deepseek-(?:v4(?:\.1)?-)?(flash|pro)(?:-[0-9]{4})?', value)
+    return match.group(1) if match else None
 RETRY_INSTRUCTION = (
     '上次响应未通过校验。首选直接照抄 options 中任一项的 response 字段（只可改 reason），'
     '不要重造数字。只返回完整JSON对象，恰好含selected_positions、selected_tails、he2_keep、'
@@ -190,12 +197,14 @@ def _body(seal):
 
 
 def _valid_metadata(metadata, reference):
+    requested = metadata.get('requested_model') if isinstance(metadata, dict) else None
+    returned = metadata.get('returned_model') if isinstance(metadata, dict) else None
+    requested_family = _model_family(requested)
     return (isinstance(metadata, dict) and metadata.get('ref') == reference
-            and metadata.get('requested_model') == MODEL
+            and requested_family is not None
             and type(metadata.get('attempt')) is int and 1 <= metadata['attempt'] <= 3
             and metadata.get('finish_reason') == 'stop'
-            and isinstance(metadata.get('returned_model'), str)
-            and PRO_FAMILY.fullmatch(metadata['returned_model']) is not None)
+            and _model_family(returned) == requested_family)
 
 
 def validate_publication(seal, reference, now, *, published=True):

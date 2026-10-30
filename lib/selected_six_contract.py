@@ -20,7 +20,19 @@ PREVIOUS_REVISION = V3_REVISION
 REVISION = 'selected-six-independent-v4-minimax-forms'
 LEDGER_REVISION = LEGACY_REVISION
 SUPPORTED_REVISIONS = frozenset((LEGACY_REVISION, V2_REVISION, V3_REVISION, REVISION))
-MODEL = 'deepseek-v4-pro'
+def _resolve_model():
+    for name in ('PENTA5_MODEL_SIX', 'PENTA5_DEEPSEEK_MODEL'):
+        try:
+            from app_secrets import get_secret
+            value = get_secret(name)
+        except RuntimeError:
+            continue
+        if value:
+            return value
+    return 'deepseek-v4-pro'
+
+
+MODEL = _resolve_model()
 MARKER = 'SELECTED_SIX_INDEPENDENT'
 POSITION_KEYS = ('q', 'b', 's', 'g')
 POSITION_LABELS = {'q': '千位', 'b': '百位', 's': '十位', 'g': '个位'}

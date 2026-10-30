@@ -87,11 +87,18 @@ def _period_at(at):
 def _history(reference,actuals):
     end=period_slot(reference)
     return [actuals[_period_at(end-timedelta(minutes=5*offset))] for offset in range(49,-1,-1)]
+def _model_family(value):
+    if not isinstance(value,str):
+        return None
+    match=re.fullmatch(r'deepseek-(?:v4(?:\.1)?-)?(flash|pro)(?:-[0-9]{4})?',value)
+    return match.group(1) if match else None
+
 def _metadata(seal,reference,model):
-    value=seal.get('model_metadata');family='flash' if model in ('killer','framework') else 'pro'
-    pattern=re.compile(r'deepseek-(?:v4(?:\.1)?-)?'+family+r'(?:-[0-9]{4})?')
+    value=seal.get('model_metadata')
+    requested=value.get('requested_model') if isinstance(value,dict) else None
+    returned=value.get('returned_model') if isinstance(value,dict) else None
     if (not isinstance(value,dict) or value.get('ref')!=reference or value.get('finish_reason')!='stop'
-            or not all(isinstance(value.get(key),str) and pattern.fullmatch(value[key]) for key in ('requested_model','returned_model'))):
+            or _model_family(requested) is None or _model_family(returned)!=_model_family(requested)):
         raise ValueError('unverified-strategy-model')
     return value
 
@@ -401,7 +408,7 @@ def render_version_comparison(value,identity='strategy-version-comparison'):
     pieces=[]
     # Retired-model cohorts remain valid archived data, but are no longer an
     # active comparison on either this board or the runtime appendix.
-    for key,label in (('flash','Flash 两策略'),):
+    for key,label in (('flash','杀码两策略'),):
         cohort=value['cohorts'].get(key)
         if not isinstance(cohort,dict):continue
         groups=cohort.get('groups',[])
@@ -427,7 +434,7 @@ def render_version_comparison(value,identity='strategy-version-comparison'):
             '<summary>共同目标 · 同版本表现（描述统计）</summary>'+''.join(pieces)+
             '<div style="color:#64748b;">仅纳入严格事前封存、真实开奖、同50期输入及关盘前已观测到匹配原攻击语就绪的共同位置。'
             '没有就绪记录的历史样本不补造时间；card-only不算可操作攻击语。版本组合分开列示，样本少不据此选赢家，'
-            '不按不同项目数的整组率排名。当前显示Flash两策略共同样本；HE3和冷码任务另行核验。候选范围只含至少一套已发现封存的目标，并非全日应出次数。</div></details>')
+            '不按不同项目数的整组率排名。当前显示杀码两策略共同样本（按版本向量分组）；HE3和冷码任务另行核验。候选范围只含至少一套已发现封存的目标，并非全日应出次数。</div></details>')
 
 
 def _valid_version_comparison(value):

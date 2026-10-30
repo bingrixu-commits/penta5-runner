@@ -22,7 +22,19 @@ from stats_history import TZ, beijing_now, business_start, load_snapshot, period
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL = 'deepseek-v4-pro'
+def _resolve_model():
+    for name in ('PENTA5_MODEL_COLD_FIXED', 'PENTA5_DEEPSEEK_MODEL'):
+        try:
+            from app_secrets import get_secret
+            value = get_secret(name)
+        except RuntimeError:
+            continue
+        if value:
+            return value
+    return 'deepseek-v4-pro'
+
+
+MODEL = _resolve_model()
 REASONING_EFFORT = 'low'
 THINKING_ENABLED = False
 MAX_RESPONSE_TOKENS = 2048
@@ -33,6 +45,8 @@ REQUEST_TRANSPORT = {'version': 'cold-fixed-pro-fast-2048-qbs-all-qbs-v1', 'mode
                      'fixed_tails': list(core.FIXED_TAIL_KEYS)}
 REQUEST_BUDGET_SECONDS = 120.0
 PRO_FAMILY = core.PRO_FAMILY
+FLASH_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?flash(?:-[0-9]{4})?')
+MODEL_FAMILY = PRO_FAMILY if PRO_FAMILY.fullmatch(MODEL) else FLASH_FAMILY
 RETRY_INSTRUCTION = ('只返回完整JSON，恰好he2_keep、he3_keep、reason三个字段：'
                      'he2_keep为从ASCII数字02468中自主选4个不同数字组成的字符串；'
                      'he3_keep为从ASCII数字0123456789中自主选5个不同数字组成的字符串，必须2单3双或3单2双，禁止全单、全双及1比4或4比1；单数13579、双数02468，0是双数。请从输入he3_allowed_keeps中自主重选一项；reason为简短理由。'
@@ -306,7 +320,7 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
             accepted = received_metadata.get(accepted_attempts[-1], {}) if accepted_attempts else {}
             if (accepted.get('requested_model') != MODEL or accepted.get('finish_reason') != 'stop'
                     or not isinstance(accepted.get('returned_model'), str)
-                    or not PRO_FAMILY.fullmatch(accepted['returned_model'])):
+                    or not MODEL_FAMILY.fullmatch(accepted['returned_model'])):
                 raise PublicationRejected('cold-fixed-model-returned-model-not-pro')
             response = validate_selection(response)
             completed_at = _now(generated_at)
