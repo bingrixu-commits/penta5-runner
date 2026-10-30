@@ -169,7 +169,7 @@ def render_block():
         for key, digit in (position_limit.get('blocked_digits') or {}).items():
             position_parts.append(
                 f'{kill3_tail.POSITION_LABELS.get(key, key)}已连杀 {digit} 满 '
-                f'{kill3_tail.MAX_CONSECUTIVE_PERIODS} 期 → 本期必须换码')
+                f'{kill3_tail.MAX_CONSECUTIVE_PERIODS} 期 → 本期不得再用')
         blocked_drop = position_limit.get('blocked_drop')
         if blocked_drop:
             position_parts.append(
