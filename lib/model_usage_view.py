@@ -163,8 +163,11 @@ def render(summary, *, now=None):
         balance_value = '-'
         balance_sub = '余额接口未返回可解析余额'
     burn = balance.get('burn_1h_cny')
-    if _is_number(burn):
-        balance_sub += ' · 近1h 约 %s/h' % _money(burn)
+    burn_span = balance.get('burn_1h_span_hours')
+    if _is_number(burn) and _is_number(burn_span) and burn_span < 0.75:
+        balance_sub += ' · 近期(%.0f分钟)约 %s/h' % (burn_span * 60, _money(burn))
+    elif _is_number(burn):
+        balance_sub += ' · 近1h约 %s/h' % _money(burn)
     else:
         balance_sub += ' · 烧钱速率待样本积累'
     runway = balance.get('runway_hours')

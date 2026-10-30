@@ -662,8 +662,9 @@ def _balance(root, now):
             return None
         delta = float(latest['balance']) - float(base['balance'])
         if delta > 0.01:
-            return {'recharged': True, 'cny_per_hour': None}
-        return {'recharged': False, 'cny_per_hour': round(-delta / span, 3)}
+            return {'recharged': True, 'cny_per_hour': None, 'span_hours': round(span, 3)}
+        return {'recharged': False, 'cny_per_hour': round(-delta / span, 3),
+                'span_hours': round(span, 3)}
 
     burn_1h, burn_6h, burn_24h = rate(1), rate(6), rate(24)
     runway = None
@@ -676,6 +677,9 @@ def _balance(root, now):
             'burn_1h_cny': (burn_1h or {}).get('cny_per_hour'),
             'burn_6h_cny': (burn_6h or {}).get('cny_per_hour'),
             'burn_24h_cny': (burn_24h or {}).get('cny_per_hour'),
+            'burn_1h_span_hours': (burn_1h or {}).get('span_hours'),
+            'burn_6h_span_hours': (burn_6h or {}).get('span_hours'),
+            'burn_24h_span_hours': (burn_24h or {}).get('span_hours'),
             'runway_hours': runway,
             'samples': len(samples),
             'recharged_recently': bool((burn_1h or {}).get('recharged'))}
@@ -723,7 +727,12 @@ def _health(summary):
     runway = balance.get('runway_hours')
     if isinstance(runway, (int, float)) and runway < 2:
         status = _raise_status(status, 'warn')
-        reasons.append('按近 1h 扣费速率余额仅够 %.1f 小时' % runway)
+        span = balance.get('burn_1h_span_hours')
+        if isinstance(span, (int, float)) and span < 0.75:
+            reasons.append('按近期扣费速率（约 %.0f 分钟窗口）余额仅够 %.1f 小时'
+                           % (span * 60, runway))
+        else:
+            reasons.append('按近 1h 扣费速率余额仅够 %.1f 小时' % runway)
     return {'status': status, 'reasons': reasons[:8]}
 
 
