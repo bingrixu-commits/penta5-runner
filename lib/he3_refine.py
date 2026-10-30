@@ -408,37 +408,56 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
         _status(root, 'requesting', reference, clock)
         response = None
         http_status = None
+        request_attempt = 0
         request_started = monotonic()
-        with request_timeout(deadline.remaining()):
+        envelope = None
+        last_request_error = None
+        for request_attempt in (1, 2):
+            response = None
+            http_status = None
+            envelope = None
+            request_started = monotonic()
             try:
-                require_ai_enabled(root=root, clock=clock)
-                operation_window.request_budget(minimum=25)
-                request_sent = True
-                http_timeout = min(80.0, deadline.remaining() - 1)
-                emit_http_phase(log, reference, 1, 'start')
-                try:
-                    operation_window.request_budget(minimum=25)
-                    if deadline.remaining() < 25:
-                        raise PublicationRejected('operation-window-insufficient-budget')
-                    response = post('https://api.deepseek.com/chat/completions',
-                        json={'model': MODEL, 'messages': [{'role': 'user', 'content': input_doc['prompt']}],
-                              'thinking': {'type': 'enabled'}, 'reasoning_effort': 'high',
-                              'response_format': {'type': 'json_object'}, 'max_tokens': MAX_TOKENS},
-                        headers={'Authorization': 'Bearer ' + api_key, 'Content-Type': 'application/json'},
-                        timeout=http_timeout)
-                    http_status = response.status_code
-                finally:
-                    emit_http_phase(log, reference, 1, 'complete', status=http_status)
-                envelope = response.json() if http_status == 200 else None
-            finally:
-                close = getattr(response, 'close', None)
-                if callable(close):
+                with request_timeout(deadline.remaining()):
                     try:
-                        close()
-                    except PublicationRejected:
-                        raise
-                    except Exception:
-                        pass
+                        require_ai_enabled(root=root, clock=clock)
+                        operation_window.request_budget(minimum=25)
+                        request_sent = True
+                        http_timeout = min(80.0, deadline.remaining() - 1)
+                        emit_http_phase(log, reference, request_attempt, 'start')
+                        try:
+                            operation_window.request_budget(minimum=25)
+                            if deadline.remaining() < 25:
+                                raise PublicationRejected('operation-window-insufficient-budget')
+                            response = post('https://api.deepseek.com/chat/completions',
+                                json={'model': MODEL, 'messages': [{'role': 'user', 'content': input_doc['prompt']}],
+                                      'thinking': {'type': 'enabled'}, 'reasoning_effort': 'high',
+                                      'response_format': {'type': 'json_object'}, 'max_tokens': MAX_TOKENS},
+                                headers={'Authorization': 'Bearer ' + api_key, 'Content-Type': 'application/json'},
+                                timeout=http_timeout)
+                            http_status = response.status_code
+                        finally:
+                            emit_http_phase(log, reference, request_attempt, 'complete', status=http_status)
+                        envelope = response.json() if http_status == 200 else None
+                    finally:
+                        close = getattr(response, 'close', None)
+                        if callable(close):
+                            try:
+                                close()
+                            except PublicationRejected:
+                                raise
+                            except Exception:
+                                pass
+            except (OSError, TimeoutError) as error:
+                last_request_error = type(error).__name__
+                http_status = None
+            if http_status == 200:
+                break
+            retryable = (http_status in (429, 500, 502, 503, 504)
+                         or (http_status is None and last_request_error is not None))
+            if not retryable or request_attempt >= 2 or deadline.remaining() < 30:
+                break
+            _log(log, 'HE3_REFINE transient provider failure; retry attempt %d/2' % (request_attempt + 1))
         deadline.check()
         if http_status != 200:
             _status(root, 'failed', reference, clock,
@@ -449,7 +468,7 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
             if isinstance(message, str) and message.startswith('AI_RESPONSE_META '):
                 metadata.append(json.loads(message[len('AI_RESPONSE_META '):]))
             _log(log, message)
-        _response_metadata(capture, envelope, reference, 1, MODEL, api_key, monotonic() - request_started,
+        _response_metadata(capture, envelope, reference, request_attempt, MODEL, api_key, monotonic() - request_started,
                            deadline=deadline)
         if envelope['choices'][0].get('finish_reason') != 'stop':
             raise ValueError('incomplete-refinement-response')
