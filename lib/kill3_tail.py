@@ -46,6 +46,7 @@ CLOSE_SECONDS = 70
 MIN_REQUEST_SECONDS = 20.0
 MAX_TOKENS = 8192
 REASONING_EFFORT = 'high'
+NONRETRYABLE_HTTP_STATUSES = frozenset((400, 401, 402, 422))
 
 POSITIONS = (
     ('q', '千位', 0),
@@ -629,6 +630,14 @@ def _metadata(reference, attempt, model, api_key, envelope, elapsed):
     }
 
 
+class ProviderHTTPError(OSError):
+    """Provider HTTP failure carrying the status code for retry decisions."""
+
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
 def _post(messages, timeout):
     import requests
     api_key = resolve_api_key()
@@ -648,7 +657,8 @@ def _post(messages, timeout):
     )
     try:
         if response.status_code != 200:
-            raise OSError(f'provider-http-{response.status_code}')
+            raise ProviderHTTPError(f'provider-http-{response.status_code}',
+                                    response.status_code)
         return response.json()
     finally:
         close = getattr(response, 'close', None)
@@ -668,7 +678,10 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
     api_key = resolve_api_key()
     messages = [{'role': 'user', 'content': prompt}]
     last_error = 'no-attempt'
+    last_status = None
+    attempts_used = 0
     for attempt in (1, 2, 3):
+        attempts_used = attempt
         require_ai_enabled(clock=beijing_now)
         remaining = (deadline - beijing_now()).total_seconds()
         if remaining < MIN_REQUEST_SECONDS:
@@ -696,7 +709,15 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
         except Exception as error:
             # Provider bodies and raw model text are never echoed or retried blindly.
             last_error = type(error).__name__
-            log(f'kill3 attempt {attempt}/3 rejected; error_type={last_error}; not published.')
+            status = getattr(error, 'status', None)
+            if type(status) is not int:
+                status = None
+            last_status = status
+            status_note = '' if status is None else f'; http_status={status}'
+            log(f'kill3 attempt {attempt}/3 rejected; error_type={last_error}{status_note}; not published.')
+            if status in NONRETRYABLE_HTTP_STATUSES:
+                log(f'kill3 nonretryable provider HTTP {status}; stop retries; not published.')
+                break
             if attempt == 3:
                 break
             detail = str(error)[:100]
@@ -705,7 +726,9 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
             pause = max(0.0, min(4.0, (deadline - beijing_now()).total_seconds() - 25.0))
             if pause:
                 time.sleep(pause)
-    raise RuntimeError(f'kill3 inference failed after 3 attempts: {last_error}; not published')
+    status_note = '' if last_status is None else f'; http_status={last_status}'
+    raise RuntimeError(f'kill3 inference failed after {attempts_used} attempt(s): '
+                       f'{last_error}{status_note}; not published')
 
 
 def create_seal(reference, target, reference_open_time, prediction, prompt, audit,
