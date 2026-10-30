@@ -20,6 +20,7 @@ from ai_prediction_guard import publication_rejection
 from ai_call_control import AICallsDisabled, require_ai_enabled
 
 import kill3_tail
+import panel_context
 from panel_io import update_panel
 from kill_three_view import apply_kill_three_block
 
@@ -89,11 +90,17 @@ def main():
     previous_tail_key = previous_tail.get('key') or None
     previous_tail_label = previous_tail.get('label') or None
     position_limit = kill3_tail.position_restrictions(seals)
+    panel_snapshot = panel_context.build(
+        reference, target,
+        kill3_stats=kill3_tail.today_stats(),
+        kill3_previous=previous_seal)
+    _panel_text, _panel_sha = panel_context.prompt_text(panel_snapshot)
+    print('kill3 panel context sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
     prompt, audit = kill3_tail.build_prompt(
         reference, target, rows,
         blocked_tail_key=previous_tail_key,
         previous_tail_label=previous_tail_label,
-        position_limit=position_limit)
+        position_limit=position_limit, panel_snapshot=panel_snapshot)
 
     def _value_check(item):
         kill3_tail.validate_tail_choice(item, previous_tail_key)

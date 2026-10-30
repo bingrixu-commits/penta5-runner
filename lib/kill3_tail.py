@@ -68,7 +68,7 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill3-tail-v4'
+RULE_VERSION = 'kill3-tail-v5-panel-context'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 2
 
@@ -348,7 +348,7 @@ def _cold_line(ranks, limit=3):
 
 
 def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tail_label=None,
-                 position_limit=None):
+                 position_limit=None, panel_snapshot=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
@@ -399,6 +399,16 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
                        '中间放弃该位置不清零；'
                        f'同一放弃位置最多连用 {MAX_CONSECUTIVE_PERIODS} 期，满后下一期必须更换）')
     position_limit_text = '\n'.join(limit_lines)
+    panel_section = ''
+    panel_context_text = None
+    panel_context_sha = None
+    if isinstance(panel_snapshot, dict):
+        from panel_context import prompt_text as _panel_prompt_text
+        panel_context_text, panel_context_sha = _panel_prompt_text(panel_snapshot)
+        panel_section = (
+            '【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带'
+            ' reference/target；仅供自主决策参考，不是未来概率保证）】'
+            + chr(10) + panel_context_text + chr(10) + chr(10))
     prompt = (
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
@@ -424,7 +434,7 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         '反向形态 = 目标期实际四位形态不等于这两个封存形态（反向排除项）；'
         '以上 5 项（2 个计入位置 + 1 个合尾 + 2 项形态）同时命中才算整组命中；\n'
         '5. 冷热、遗漏、重码只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
-        '6. 只能使用上面给出的历史，不得引用其他未提供的数据。\n\n'
+        '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄或为避开同号强行换码，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"positions":{"q":<0-9整数>,"b":<0-9整数>,"s":<0-9整数>},'
         '"display_only":"q|b|s|g",'
@@ -435,8 +445,12 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         'display_only 必须是 positions 的 3 个键之一；'
         '两个形态字符串都必须是 4 个字符。'
     )
+    if panel_section:
+        _marker = prompt.find('【任务】')
+        if _marker != -1:
+            prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill3-tail-prompt-v4',
+        'version': 'kill3-tail-prompt-v5-panel-context',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -448,6 +462,8 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         'blocked_tail': blocked_tail_key,
         'previous_tail_label': previous_tail_label,
         'position_limit': limit,
+        'panel_context_sha256': panel_context_sha,
+        'panel_context': panel_snapshot if isinstance(panel_snapshot, dict) else None,
     }
     return prompt, audit
 
@@ -755,6 +771,8 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'model_metadata': response_meta,
         'prompt_sha256': sha256(prompt.encode('utf-8')).hexdigest(),
         'input_sha256': audit.get('history_sha256'),
+        'panel_context_sha256': audit.get('panel_context_sha256'),
+        'panel_context': audit.get('panel_context'),
         'window': WINDOW,
     }
     if isinstance(extra, dict):
