@@ -124,8 +124,10 @@ def main():
         kill3_tail.mark_publication_failed(reference, f'panel-write-{type(error).__name__}')
         print(f'kill3 panel publication failed: {type(error).__name__}')
         return 1
+    display_only = prediction.get('display_only')
     picked = ' · '.join(
         f'{kill3_tail.POSITION_LABELS[key]} 杀{prediction["positions"][key]}'
+        + ('(仅展示)' if key == display_only else '')
         for key, _label, _index in kill3_tail.POSITIONS if key in prediction['positions'])
     dropped = kill3_tail.POSITION_LABELS.get(prediction['dropped'], prediction['dropped'])
     print(f'kill3 published: ref={reference} target={target} {picked} · '

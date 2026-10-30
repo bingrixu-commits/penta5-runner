@@ -72,9 +72,9 @@ def _stats_html(stats):
         parity = patterns.get('reverse_parity') or {}
         size = patterns.get('reverse_size') or {}
         join = ' · '.join([
-            f'整组命中率（6 项全中） <b>{_pct(stats.get("group_rate"))}</b>'
+            f'整组命中率（5 项全中：2 位置 + 合尾 + 2 形态） <b>{_pct(stats.get("group_rate"))}</b>'
             f'（{stats.get("group_hits")}/{total} 期）',
-            f'位置杀码 <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
+            f'位置杀码（2 注/期） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
             f'（{stats.get("positions", {}).get("hits")}/{stats.get("positions", {}).get("bets")} 注）',
             f'合尾杀码 <b>{_pct(stats.get("tail", {}).get("rate"))}</b>'
             f'（{stats.get("tail", {}).get("hits")}/{stats.get("tail", {}).get("bets")} 期）',
@@ -87,6 +87,10 @@ def _stats_html(stats):
                 f'最早一期开奖后核验（北京时间 05:00 清零）')
     if late:
         join += f' · 未计入（发布晚于开奖）{late} 期'
+    legacy = stats.get('legacy') or {}
+    if legacy.get('total'):
+        join += (f' · 旧 3 位置口径 {legacy.get("total")} 期'
+                 f'（整组 {legacy.get("group_hits")} 中）已归档不计入')
     win, loss = stats.get('current_win_streak') or 0, stats.get('current_loss_streak') or 0
     if win:
         join += f' · 当前 <b style="color:#15803d">连中 {win} 期</b>'
@@ -99,14 +103,16 @@ def _settlement_line(settlement):
     if not isinstance(settlement, dict):
         return '已发布，等待目标期开奖核验。'
     positions = settlement.get('positions') or {}
-    hit_positions = sum(1 for item in positions.values() if item.get('hit') is True)
+    counted = settlement.get('counted') or list(positions)
+    hit_positions = sum(1 for key in counted
+                        if (positions.get(key) or {}).get('hit') is True)
     tail = settlement.get('tail') or {}
     tail_hit = tail.get('hit') is True
     tail_label = tail.get('label') or ''
     group = settlement.get('group_hit') is True
     actual = settlement.get('actual') or []
     parts = ['目标期已开奖：' + ''.join(str(value) for value in actual),
-             f'位置 {hit_positions}/{len(positions)} 命中',
+             f'位置 {hit_positions}/{len(counted)} 命中',
              f'{tail_label}合尾 {"命中" if tail_hit else "未中"}（实际 {tail.get("actual", "-")}）']
     patterns = settlement.get('patterns') or {}
     for field, label in (('reverse_parity', '单双形态'), ('reverse_size', '大小形态')):
@@ -135,14 +141,17 @@ def render_block():
                     f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}'
                     f'{_foot_html()}</section>{END}')
         positions = seal.get('positions') or {}
+        display_only = seal.get('display_only')
         cards = []
         for key, label, _index in kill3_tail.POSITIONS:
             if key not in positions:
                 continue
+            sub = ('排除 1 码（仅展示，不计入整组）' if key == display_only
+                   else '排除 1 码')
             cards.append(
                 f'<div class="k3-card"><div class="k3-pos">{label}</div>'
                 f'<div class="k3-kill">{escape(str(positions.get(key, "-")))}</div>'
-                f'<div class="k3-sub">排除 1 码</div></div>')
+                f'<div class="k3-sub">{sub}</div></div>')
         tail = seal.get('tail') or {}
         if tail:
             cards.append(
@@ -196,7 +205,8 @@ def render_block():
                 f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>'
                 f'<div class="k3-meta">{meta}</div>'
                 f'<div class="k3-grid">{"".join(cards)}</div>'
-                f'<div class="k3-drop">放弃位置：{escape(str(dropped))}（AI 只杀 3 个位置）</div>'
+                f'<div class="k3-drop">放弃位置：{escape(str(dropped))}'
+                f'（AI 选 3 个位置，其中 2 个计入整组、1 个仅展示）</div>'
                 f'{restrict_html}{position_html}'
                 f'<div class="k3-reason">理由：{reason}</div>'
                 f'{_stats_html(stats)}'
@@ -250,14 +260,16 @@ def _attack_html(seal):
 
 def _foot_html():
     return ('<div class="k3-foot">'
-            '由 DeepSeek 决定：从千/百/十/个中选 3 个位置各排除 1 码、放弃 1 个位置，'
-            '从 5 种合尾中选 1 种排除 1 个和尾数字（每期与上一期不同，从上期未用的四种中选），'
-            '并给出两项四位反向形态。<br>'
+            '由 DeepSeek 决定：从千/百/十/个中选 3 个位置各排除 1 码、放弃 1 个位置；'
+            '3 个位置中只有 2 个计入整组与攻击语，第 3 个仅展示、不计入；'
+            '合尾从 5 种中选 1 种排除 1 个和尾数字（每期与上一期不同），并给出两项四位反向形态。<br>'
             '同一位置杀码最多连用 3 期（中间放弃该位不清零）、同一放弃位置最多连用 3 期，'
             '满后下一期必须更换。<br>'
-            '命中 = 该位置实际开奖号<b>不在</b>杀码上（杀号成功）；合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
+            '命中 = 该位置实际开奖号<b>不在</b>杀码上（只统计 2 个计入位置）；'
+            '合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态（被杀的 3 个位置取杀码形态反面）。<br>'
-            '3 个位置 + 1 个合尾 + 2 项反向形态共 6 项同时命中才算整组命中；'
+            '2 个计入位置 + 1 个合尾 + 2 项反向形态共 5 项同时命中才算整组命中；'
+            '旧 3 位置口径（6 项）的封存记录保留但不计入本统计；'
             '只统计开奖前发布、开奖后核验的记录；北京时间 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与；'
             '平台提前 70 秒关盘。'
             '</div>')

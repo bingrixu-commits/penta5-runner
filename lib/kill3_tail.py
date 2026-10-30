@@ -3,6 +3,8 @@
 口径（面板、封存与统计都按此写死）：
 - 由 DeepSeek 从 千/百/十/个 四个位置中选 3 个位置，每个位置排除 1 个数字（杀码），
   剩余的 1 个位置为「放弃」；
+- 3 个被杀位置中恰好 2 个计入整组与攻击语（counted），第 3 个用 display_only 标明，
+  只展示、不计入整组；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
 - 另输出两项反向形态（与八项独立框架同口径）：
   四位单双形态 reverse_parity、四位大小形态 reverse_size；
@@ -10,7 +12,7 @@
 - 位置命中 = 该位置实际开奖号 != 杀码；
 - 合尾命中 = 该合尾实际和值个位 != 排除码；
 - 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
-- 整组命中 = 3 个位置 + 1 个合尾 + 2 项反向形态同时命中（共 6 项）；
+- 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态同时命中（共 5 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 同一位置杀码最多连用 3 期（中间放弃该位置不清零）、同一放弃位置最多连用 3 期，
   满后下一期必须更换；
@@ -65,12 +67,14 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill3-tail-v3'
+RULE_VERSION = 'kill3-tail-v4'
 MAX_CONSECUTIVE_PERIODS = 3
+COUNTED_POSITIONS = 2
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
     'positions 恰好 3 个键，键名只能从 q/b/s/g 中选择；每个值为 0 至 9 的整数；'
+    'display_only 必须是 positions 的 3 个键之一（该位置只展示、不计入整组）；'
     'tail 为 {{"key": 五种之一, "kill": 0 至 9 的整数}}；'
     'reverse_parity 为四个单/双字符，reverse_size 为四个大/小字符，'
     '被杀位置必须取杀码形态的反面（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
@@ -215,10 +219,12 @@ def build_attack(seal):
         return ''.join(char for char in order if char != text)
 
     positions = seal.get('positions') or {}
+    display_only = seal.get('display_only')
     parts = []
     for key, label in (('q', '千'), ('b', '百'), ('s', '十'), ('g', '个')):
+        killed = key in positions and key != display_only
         parts.append(ATTACK_POSITION_LABELS[key] +
-                     (remaining(positions[key]) if key in positions else order))
+                     (remaining(positions[key]) if killed else order))
     parts.append('四定')
     tail = seal.get('tail') or {}
     tail_label = ATTACK_TAIL_LABELS.get(tail.get('key'))
@@ -278,6 +284,13 @@ def normalize_response(response):
     dropped = [key for key, _label, _index in POSITIONS if key not in kills]
     if len(dropped) != 1:
         raise ValueError('必须恰好放弃 1 个位置')
+    display_only = _position_key(response.get('display_only'))
+    if display_only not in kills:
+        raise ValueError('display_only 必须是所选 3 个位置之一')
+    counted = [key for key, _label, _index in POSITIONS
+               if key in kills and key != display_only]
+    if len(counted) != COUNTED_POSITIONS:
+        raise ValueError(f'必须恰好 {COUNTED_POSITIONS} 个位置计入整组')
     tail = response.get('tail')
     if not isinstance(tail, dict):
         raise ValueError('tail 必须是对象')
@@ -307,6 +320,8 @@ def normalize_response(response):
             raise ValueError(f'大小反向形态在{position_key}位置必须取杀码形态的反面')
     return {
         'positions': kills,
+        'display_only': display_only,
+        'counted': counted,
         'dropped': dropped[0],
         'tail': {'key': tail_key, 'label': TAILS[tail_key]['label'], 'kill': str(number)},
         'reverse_parity': patterns['reverse_parity'],
@@ -394,27 +409,31 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         '【合尾选择限制】\n' + restriction + '\n\n'
         '【位置与弃位使用限制】\n' + position_limit_text + '\n\n'
         '【任务】\n'
-        '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；\n'
+        '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；'
+        '其中恰好 2 个位置计入整组（攻击语只按这 2 个位置排除），'
+        '第 3 个位置用 display_only 标明，只展示、不计入整组与攻击语；\n'
         '2. 从上述 5 种合尾中挑 1 种（本期不得与上一期相同），排除 1 个和尾数字（0-9）；\n'
         '3. 给出两项四位反向排除形态：reverse_parity 为按千百十个顺序的四位单双形态，'
         'reverse_size 为四位大小形态；被杀的 3 个位置必须取杀码形态的反面'
         '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），放弃位置的字符自选；\n'
-        '4. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码；'
+        '4. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码（只算 2 个计入位置）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
         '反向形态 = 目标期实际四位形态不等于这两个封存形态（反向排除项）；'
-        '以上 6 项同时命中才算整组命中；\n'
+        '以上 5 项（2 个计入位置 + 1 个合尾 + 2 项形态）同时命中才算整组命中；\n'
         '5. 冷热、遗漏、重码只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '6. 只能使用上面给出的历史，不得引用其他未提供的数据。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"positions":{"q":<0-9整数>,"b":<0-9整数>,"s":<0-9整数>},'
+        '"display_only":"q|b|s|g",'
         '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
         '"reverse_parity":"<四个单/双字符>","reverse_size":"<四个大/小字符>",'
         '"reason":"40字以内"}\n'
         '注意：positions 必须恰好 3 个键（从 q/b/s/g 中选），键名与数字都必须合法；'
+        'display_only 必须是 positions 的 3 个键之一；'
         '两个形态字符串都必须是 4 个字符。'
     )
     audit = {
-        'version': 'kill3-tail-prompt-v3',
+        'version': 'kill3-tail-prompt-v4',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -699,6 +718,8 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'published_at': None,
         'publication_state': 'prepared',
         'positions': prediction['positions'],
+        'display_only': prediction.get('display_only'),
+        'counted': prediction.get('counted') or [],
         'dropped': prediction['dropped'],
         'tail': prediction['tail'],
         'reverse_parity': prediction['reverse_parity'],
@@ -796,7 +817,10 @@ def settle_pending(snapshot=None, now=None):
                    and all(char in palette for char in sealed_form)
                    and actual_form != sealed_form)
             patterns[field] = {'form': sealed_form, 'actual': actual_form, 'hit': bool(hit)}
-        group_hit = (all(item['hit'] for item in positions.values()) and tail_entry['hit']
+        counted = seal.get('counted') or [key for key in positions
+                                          if key != seal.get('display_only')]
+        group_hit = (all(positions[key]['hit'] for key in counted if key in positions)
+                     and tail_entry['hit']
                      and all(item['hit'] for item in patterns.values()))
         published = parse_time(seal.get('published_at'))
         drawn = parse_time(record.get('opentime'))
@@ -812,6 +836,8 @@ def settle_pending(snapshot=None, now=None):
             'settled_at': now.isoformat(),
             'actual': [str(value) for value in actual],
             'positions': positions,
+            'display_only': seal.get('display_only'),
+            'counted': list(counted),
             'dropped': seal.get('dropped'),
             'tail': tail_entry,
             'patterns': patterns,
@@ -839,14 +865,18 @@ def today_stats(now=None):
     start = business_start(now)
     settlements = load_settlements()
     seals = load_seals()
-    todays = [item for item in settlements
-              if item.get('verified') is True and _business_key(item.get('settled_at')) == start]
+    verified = [item for item in settlements
+                if item.get('verified') is True
+                and _business_key(item.get('settled_at')) == start]
+    todays = [item for item in verified if item.get('display_only')]
+    legacy = [item for item in verified if not item.get('display_only')]
     total = len(todays)
     group_hits = sum(1 for item in todays if item.get('group_hit') is True)
     position_bets = position_hits = 0
     per_position = {key: {'bets': 0, 'hits': 0} for key, _label, _index in POSITIONS}
     for item in todays:
-        for key, entry in (item.get('positions') or {}).items():
+        for key in (item.get('counted') or []):
+            entry = (item.get('positions') or {}).get(key)
             if key not in per_position or not isinstance(entry, dict):
                 continue
             per_position[key]['bets'] += 1
@@ -895,6 +925,8 @@ def today_stats(now=None):
         'current_loss_streak': loss,
         'pending': pending,
         'late': late,
+        'legacy': {'total': len(legacy),
+                   'group_hits': sum(1 for item in legacy if item.get('group_hit') is True)},
         'latest_period': latest,
     }
 
