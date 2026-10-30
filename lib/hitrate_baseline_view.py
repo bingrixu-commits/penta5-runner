@@ -1,8 +1,13 @@
-"""面板「整组命中率 vs 随机期望」区块。
+"""面板「整组命中率 vs 随机期望」区块（累计版）。
 
-数据源 data/hitrate_baseline.json（由 lib/hitrate_baseline.py 每轮重算）。
+数据源：
+- data/framework_hitrate_cumulative.json（scripts/framework_hitrate_cumulative.py 每 15 分钟生成）：
+  版本锁定累计、精确枚举基线、Wilson 95% 区间、双侧 p、发布覆盖率、计划期命中率、按模型分档；
+- data/hitrate_baseline.json（lib/hitrate_baseline.py 每轮重算）：用于「今日 10 期」参考列与单项基线。
+
 口径：整组命中 = 一期全部项目同时命中；随机期望 = 现行规则 10^4 组合精确枚举校准
 （不是单项准确率，也不是不同项数框架之间的可比排名）。
+累计样本 n<200 一律标「样本不足」，不做优劣结论；旧版本样本单独列出、不混算。
 
 自包含 section + 内联 style；<!-- HITRATE_BASE_START/END --> 标记原地替换；
 标记不存在时回退插入到真实命中率块之后；任何异常原样返回 html。
@@ -10,12 +15,15 @@
 from html import escape
 from pathlib import Path
 import json
+from datetime import datetime, timedelta
 
 ROOT = Path('/root/penta5-runner')
-REPORT_PATH = ROOT / 'data' / 'hitrate_baseline.json'
+CUMULATIVE_PATH = ROOT / 'data' / 'framework_hitrate_cumulative.json'
+BASELINE_PATH = ROOT / 'data' / 'hitrate_baseline.json'
 MARKER = 'HITRATE_BASE'
 START = f'<!-- {MARKER}_START -->'
 END = f'<!-- {MARKER}_END -->'
+STALE_MINUTES = 120
 
 STYLE = """
 #hitrate-base{box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;padding:14px;border:1px solid #a5b4fc;border-radius:12px;background:#f8faff;color:#1e293b;font:14px/1.6 sans-serif;min-width:0;overflow-wrap:anywhere}
@@ -28,20 +36,23 @@ STYLE = """
 #hitrate-base th{color:#475569;font-weight:600}
 #hitrate-base .hb-good{color:#15803d;font-weight:700}
 #hitrate-base .hb-bad{color:#b91c1c;font-weight:700}
-#hitrate-base .hb-foot{font-size:12px;color:#64748b;margin-top:4px;line-height:1.7}
+#hitrate-base .hb-warn{color:#b45309;font-weight:700}
+#hitrate-base .hb-foot{font-size:11.5px;color:#64748b;line-height:1.55}
 #hitrate-base .hb-note{font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 8px;margin:8px 0}
+#hitrate-base .hb-big{font-size:15px;font-weight:800}
+#hitrate-base .hb-sub{font-size:11px;color:#64748b}
 """
 
 
-def _load():
+def _load(path):
     try:
-        return json.loads(REPORT_PATH.read_text(encoding='utf-8'))
+        return json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return None
 
 
-def _pct(value):
-    return f'{value * 100:.2f}%' if isinstance(value, (int, float)) else '-'
+def _pct(value, digits=2):
+    return f'{value * 100:.{digits}f}%' if isinstance(value, (int, float)) else '-'
 
 
 def _delta(value):
@@ -52,15 +63,116 @@ def _p(value):
     return f'{value:.3f}' if isinstance(value, (int, float)) else '-'
 
 
-def render_block(report=None):
-    report = report if report is not None else _load()
+def _verdict_class(verdict):
+    text = str(verdict or '')
+    if '偏离' in text:
+        return 'hb-warn'
+    if '样本不足' in text or '待校准' in text:
+        return 'hb-foot'
+    return 'hb-good'
+
+
+def _cumulative_fresh(report):
+    generated = report.get('generated_at')
+    if not generated:
+        return False
+    try:
+        moment = datetime.fromisoformat(generated)
+    except (TypeError, ValueError):
+        return False
+    return datetime.now() - moment < timedelta(minutes=STALE_MINUTES)
+
+
+def _today_map(baseline):
+    mapping = {}
+    for row in (baseline or {}).get('rows') or ():
+        key = row.get('key')
+        if key:
+            mapping[key] = row
+    return mapping
+
+
+def _render_cumulative(cumulative, baseline):
+    rows = []
+    today = _today_map(baseline)
+    for item in cumulative.get('rows') or ():
+        key = item.get('key')
+        rule = escape(str(item.get('rule') or ''))
+        window = escape(str(item.get('window') or ''))
+        verdict = str(item.get('verdict') or '-')
+        lo, hi = (item.get('ci95') or [None, None])[:2]
+        model_split = item.get('model_split') or []
+        model_text = ''
+        if model_split:
+            model_text = '<div class="hb-foot">模型：' + ' · '.join(
+                f"{escape(str(part.get('model')))} n={part.get('n')} {_pct(part.get('rate'))}"
+                for part in model_split) + '</div>'
+        history = item.get('history') or []
+        history_text = ''
+        if history:
+            history_text = '<div class="hb-foot">历史版本(不混算)：' + ' · '.join(
+                f"{escape(str(part.get('revision')))} n={part.get('n')} {_pct(part.get('rate'))}"
+                for part in history) + '</div>'
+        planned_rate = item.get('planned_hit_rate')
+        coverage = item.get('coverage')
+        coverage_text = _pct(coverage) if coverage is not None else '-'
+        planned_text = "<div class=\"hb-foot\">计划期命中 " + _pct(planned_rate) + "</div>" if planned_rate is not None else ""
+        today_row = today.get(key) or {}
+        today_rate = today_row.get('rate')
+        today_n = today_row.get('n')
+        today_text = f"{_pct(today_rate)} ({today_n}期)" if isinstance(today_rate, (int, float)) else '-'
+        rows.append(
+            f"<tr><td><b>{escape(str(item.get('label') or key))}</b>"
+            f"<div class=\"hb-foot\">{rule} · {window} · {escape(str(item.get('first_period') or ''))}→{escape(str(item.get('last_period') or ''))}</div>"
+            f"{model_text}{history_text}</td>"
+            f"<td>{item.get('items') if item.get('items') is not None else '-'}</td>"
+            f"<td>{item.get('n', 0)}</td>"
+            f"<td><span class=\"hb-big\">{_pct(item.get('rate'))}</span>"
+            f"<div class=\"hb-sub\">[{_pct(lo)}, {_pct(hi)}]</div></td>"
+            f"<td>{_pct(item.get('expected'))}</td>"
+            f"<td>{_delta(item.get('delta'))}</td>"
+            f"<td>{_p(item.get('p'))}</td>"
+            f"<td class=\"{_verdict_class(verdict)}\">{escape(verdict)}</td>"
+            f"<td>{coverage_text}{planned_text}</td>"
+            f"<td>{today_text}</td></tr>")
+    singles = ' · '.join(f"{escape(str(row['label']))} {_pct(row['baseline'])}"
+                         for row in (baseline or {}).get('single_baselines') or ())
+    stale_warning = ''
+    if not _cumulative_fresh(cumulative):
+        stale_warning = ('<div class="hb-note">累计报告超过 %d 分钟未更新（生成于 %s），'
+                         '以下为上一次结果；正在等待脚本刷新。</div>' % (STALE_MINUTES, escape(str(cumulative.get('generated_at') or '-'))))
+    as_of = escape(str(cumulative.get('as_of_period') or (baseline or {}).get('as_of_period') or ''))
+    basis = escape(str(cumulative.get('basis') or (baseline or {}).get('basis') or ''))
+    return (
+        f'{START}<section id="hitrate-base" data-as-of="{as_of}">'
+        f'<style>{STYLE}</style>'
+        f'<h3>整组命中率 vs 随机期望（累计·版本锁定）</h3>'
+        f'<div class="hb-meta">累计更新 {escape(str(cumulative.get("generated_at") or "-"))} · '
+        f'数据截至 {as_of} · 只统计已核验样本 · 随机期望：{basis}</div>'
+        f'{stale_warning}'
+        f'<table><thead><tr><th>框架 / 规则</th><th>项数</th><th>累计样本</th>'
+        f'<th>累计命中率(95%CI)</th><th>随机期望</th><th>偏差</th><th>p</th><th>判定</th>'
+        f'<th>覆盖率</th><th>今日(参考)</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
+        f'<div class="hb-note">整组命中率是「一期 N 项全部命中」的联合概率，不是单项准确率；'
+        f'7~9 项框架的随机期望本来就只有 41%~62%。累计样本 n&lt;200 时只报数字、不下结论。'
+        f'覆盖率 = 当前版本已核验期数 / 首期到末期计划期数；计划期命中率把漏发期按 0 命中计入，'
+        f'用于暴露 402/停机造成的真实损失——稳定性问题会直接压低这个值，而不是提高命中率数字。</div>'
+        f'<div class="hb-foot">单项随机基线：{singles}。</div>'
+        f'<div class="hb-foot">随机期望按现行规则用 10^4 种开奖组合精确枚举校准（已计入合尾/形态/保留码共享同一组开奖号的相关性，'
+        f'不是简单相乘）；换规则版本即重置累计，旧版本样本单独列在框架格内且不混算。</div>'
+        f'<div class="hb-foot">「今日」列只做波动参考（约 10 期），不参与判定。'
+        f'不同项数的框架不能按整组百分比横向排名。</div>'
+        f'</section>{END}')
+
+
+def _render_baseline(report):
+    """累计报告不可用时的旧版渲染（今日 10 期）。"""
     if not report or not report.get('rows'):
         return (f'{START}<section id="hitrate-base"><h3>整组命中率 vs 随机期望</h3>'
                 f'<div class="hb-meta">报告尚未生成</div></section>{END}')
     rows = []
     for item in report['rows']:
         verdict = str(item.get('verdict') or '-')
-        css = 'hb-bad' if verdict == '偏离随机基线' else 'hb-good'
         rows.append(
             f"<tr><td>{escape(str(item.get('label') or item.get('key')))}"
             f"<div class=\"hb-foot\">{escape(str(item.get('rule') or ''))}</div></td>"
@@ -70,13 +182,13 @@ def render_block(report=None):
             f"<td>{_pct(item.get('expected'))}</td>"
             f"<td>{_delta(item.get('delta'))}</td>"
             f"<td>{_p(item.get('p'))}</td>"
-            f"<td class=\"{css}\">{escape(verdict)}</td></tr>")
+            f"<td class=\"{_verdict_class(verdict)}\">{escape(verdict)}</td></tr>")
     singles = ' · '.join(f"{escape(str(row['label']))} {_pct(row['baseline'])}"
                          for row in report.get('single_baselines') or ())
     return (
         f'{START}<section id="hitrate-base" data-as-of="{escape(str(report.get("as_of_period") or ""))}">'
         f'<style>{STYLE}</style>'
-        f'<h3>整组命中率 vs 随机期望（解释 40%~62% 从哪来）</h3>'
+        f'<h3>整组命中率 vs 随机期望（今日）</h3>'
         f'<div class="hb-meta">业务日 {escape(str(report.get("biz_date") or "-"))} · '
         f'只统计已核验样本 · 随机期望来源：{escape(str(report.get("basis") or ""))}</div>'
         f'<table><thead><tr><th>框架 / 规则</th><th>项目数</th><th>样本</th>'
@@ -92,8 +204,16 @@ def render_block(report=None):
         f'</section>{END}')
 
 
+def render_block(report=None):
+    cumulative = _load(CUMULATIVE_PATH)
+    baseline = report if isinstance(report, dict) else _load(BASELINE_PATH)
+    if cumulative and cumulative.get('rows'):
+        return _render_cumulative(cumulative, baseline)
+    return _render_baseline(baseline)
+
+
 def apply_hitrate_baseline_block(content, report=None):
-    """原地替换/插入「整组命中率 vs 随机期望」块；任何异常原样返回。"""
+    """原地替换/插入「整组命中率」块；任何异常原样返回。"""
     try:
         if not isinstance(content, str) or not content:
             return content
