@@ -75,6 +75,7 @@ OK_STATES = frozenset(('success', 'current', 'published', 'preserved', 'waiting'
 MANUAL_STATES = frozenset(('paused',))
 FAILED_STATES = frozenset(('failed', 'error', 'errored', 'timeout', 'killed',
                            'rejected'))
+PAUSE_MARKER = 'data/ai_api_paused.json'
 REFERENCE_STATUS_FILES = (
     ('he3_refine', 'he3_refine_status.json'),
     ('cold_framework', 'cold_framework_status.json'),
@@ -368,11 +369,26 @@ def check_stat50(ctx):
                   {'last_seal': last_seal, 'lag': lag})
 
 
+def _paused_jobs(root):
+    payload, _ = _load_json(Path(root) / PAUSE_MARKER)
+    jobs = payload.get('jobs') if isinstance(payload, dict) else None
+    return set(jobs) if isinstance(jobs, list) else set()
+
+
 def check_reference_statuses(ctx):
     latest = ctx.get('latest')
     entries = []
+    paused = _paused_jobs(ctx['root'])
     for name, filename in REFERENCE_STATUS_FILES:
         payload, error = _load_json(ctx['root'] / 'data' / filename)
+        if name in paused:
+            state = payload.get('status') if isinstance(payload, dict) else 'missing'
+            ref = payload.get('reference_period') if isinstance(payload, dict) else None
+            entries.append(_entry(name, OK,
+                                  'paused (AI API disabled by %s); last status=%s reference=%s'
+                                  % (PAUSE_MARKER, state, ref),
+                                  {'paused': True, 'status': state, 'reference_period': ref}))
+            continue
         if not isinstance(payload, dict):
             entries.append(_entry(name, FAIL,
                                   'missing/unreadable data/%s (%s)'
