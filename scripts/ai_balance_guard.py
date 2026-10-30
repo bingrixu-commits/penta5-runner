@@ -29,6 +29,10 @@ BALANCE_TIMEOUT = 10
 BALANCE_ENV_KEYS = ('PENTA5_FRAMEWORK_API_KEY', 'PENTA5_KILLER_API_KEY')
 STATE_NAME = 'ai_balance_guard.json'
 PAUSE_CONFIRMATIONS = 2
+# 余额低于该值就提前停（避免 0 元附近发请求吃 HTTP 402 漏期）；
+# 充值后要回到 RESUME_BALANCE_CNY 以上才恢复，避免来回抖动。
+PAUSE_BALANCE_CNY = 0.50
+RESUME_BALANCE_CNY = 2.00
 
 
 def state_path(root):
@@ -115,13 +119,20 @@ def fetch_balance(url, secret, timeout=BALANCE_TIMEOUT):
             'unavailable': (is_available is False) or balance <= 0.0}
 
 
+def _low_balance(balance):
+    if balance.get('unavailable'):
+        return True
+    value = balance.get('total_balance')
+    return isinstance(value, (int, float)) and value < PAUSE_BALANCE_CNY
+
+
 def decide(control, balance, state):
     """Pure decision step; mutates only state counters/marker fields (no writes)."""
     if not balance.get('ok'):
         state['last_error'] = balance.get('error')
         return 'skip-balance-error'
     state['last_error'] = None
-    if balance['unavailable']:
+    if _low_balance(balance):
         state['consecutive_unavailable'] = min(9, int(state.get('consecutive_unavailable') or 0) + 1)
         if not control['enabled']:
             return 'skip-already-stopped'
@@ -134,6 +145,9 @@ def decide(control, balance, state):
     if control['generation'] != state.get('paused_generation'):
         return 'clear-marker'
     if not control['enabled']:
+        value = balance.get('total_balance')
+        if isinstance(value, (int, float)) and value < RESUME_BALANCE_CNY:
+            return 'skip-wait-resume-balance'
         return 'resume'
     return 'clear-marker'
 
