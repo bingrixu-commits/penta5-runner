@@ -128,9 +128,12 @@ def main():
         'window': WINDOW, 'lookback': LOOKBACK,
         'rule': '每位置杀第1冷码;按近 LOOKBACK 期各位置杀号命中率取前3;组合全中为命中',
         'recommendation': {
+            # 2026-10-30: 展示按固定位置顺序(千、百、十、个)对齐,不按命中率排序;
+            # 选择逻辑仍是按最近 LOOKBACK 期命中率取前 3(排序只影响展示顺序)。
             'positions': [{'key': k, 'label': LABELS[k], 'kill': current[k]['value'],
                            'omission': current[k]['omission'],
-                           'recent_rate': current[k]['recent_rate']} for k in chosen_now],
+                           'recent_rate': current[k]['recent_rate']}
+                          for k in POSITION_KEYS if k in chosen_now],
             'skipped': [{'key': k, 'label': LABELS[k],
                          'recent_rate': current[k]['recent_rate']}
                         for k in POSITION_KEYS if k not in chosen_now],
@@ -166,6 +169,7 @@ def main():
               f"近{LOOKBACK}期该位置杀号命中 {item['recent_rate']:.2%})")
     print("  放弃: " + "、".join(item['label'] for item in rec['skipped']))
     print(f"  理论组合命中率: {rec['theoretical_product']:.2%}")
+    print("  口径: 位置按 千/百/十/个 对齐; 核算只使用前4球, 第5球不参与。")
 
     bt = report['backtest']
     print(f"\n=== 该规则滚动回测({bt['periods']} 期)===")
