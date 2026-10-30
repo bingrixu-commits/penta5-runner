@@ -49,7 +49,7 @@ def _three_position_line():
             return ''
         positions = seal.get('positions') or {}
         picks = ' · '.join(
-            '<b>%s 杀%s</b>' % (kill3_tail.POSITION_LABELS.get(key, key), value)
+            '<b>%s 杀%s</b>' % (kill3_tail.POSITION_LABELS.get(key, key), positions[key])
             for key, _label, _index in kill3_tail.POSITIONS if key in positions)
         if not picks:
             return ''
