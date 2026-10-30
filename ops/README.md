@@ -97,3 +97,9 @@
   cron 日志记 `COLD_HE3_PARITY_REPAIRED ref=... from=... to=...`。
   封存 schema/selection_policy 不变，只有审计日志多一行；仅当修复后仍不合法
   （如 he2/字段错误）才走原来的重试。
+- **2026-10-30 09:32 三位置杀码建议加「当前连中/连败」**：原面板只显示历史极值
+  （最多连中/最多连败），看不到规则当下状态。scripts/kill_three_pick.py 的
+  streaks() 额外返回回测序列末尾仍在延续的 current_win/current_loss，JSON
+  backtest 加 current_win_streak/current_loss_streak；lib/kill_three_view.py 增加
+  「当前 连中 N 手（进行中）」绿色 /「连败」红色展示。position-cold 是 systemd
+  守护(penta5-position-cold.service)调用 kill_three_pick.main()，已重启加载新代码。

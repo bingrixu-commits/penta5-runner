@@ -41,6 +41,11 @@ def ranking(samples):
 
 
 def streaks(outcomes):
+    """Return (best_win, best_loss, current_win, current_loss).
+
+    2026-10-30: 面板新增「当前连中/连败」——取回测序列末尾仍在延续的那一段，
+    让用户能看到规则当下的实时状态（最多连中/连败只是历史极值）。
+    """
     best_win = best_loss = cur_win = cur_loss = 0
     for ok in outcomes:
         if ok:
@@ -51,7 +56,7 @@ def streaks(outcomes):
             cur_win = 0
         best_win = max(best_win, cur_win)
         best_loss = max(best_loss, cur_loss)
-    return best_win, best_loss
+    return best_win, best_loss, cur_win, cur_loss
 
 
 def main():
@@ -96,7 +101,7 @@ def main():
 
     total = len(combined)
     wins = sum(1 for x in combined if x)
-    win_streak, loss_streak = streaks(combined)
+    win_streak, loss_streak, current_win, current_loss = streaks(combined)
 
     # 当前建议:用最新数据(不含未来)
     latest_rates = {}
@@ -140,6 +145,7 @@ def main():
             'combined_rate': round(wins / total, 6) if total else None,
             'expected_product': round(0.9 ** 3, 6),
             'max_win_streak': win_streak, 'max_loss_streak': loss_streak,
+            'current_win_streak': current_win, 'current_loss_streak': current_loss,
             'per_position': {LABELS[k]: {'bets': per_position_bets[k][0],
                                          'hits': per_position_bets[k][1],
                                          'rate': round(per_position_bets[k][1] / per_position_bets[k][0], 6)
@@ -165,6 +171,10 @@ def main():
     print(f"\n=== 该规则滚动回测({bt['periods']} 期)===")
     print(f"  组合命中率: {bt['combined_rate']:.2%}   理论乘积: {bt['expected_product']:.2%}")
     print(f"  最多连中: {bt['max_win_streak']} 手   最多连败: {bt['max_loss_streak']} 手")
+    if bt['current_win_streak']:
+        print(f"  当前状态: 连中 {bt['current_win_streak']} 手(进行中)")
+    else:
+        print(f"  当前状态: 连败 {bt['current_loss_streak']} 手(进行中)")
     print("  分位置参与统计:")
     for label, item in bt['per_position'].items():
         print(f"    {label}: 参与 {item['bets']} 次, 命中率 {item['rate']:.2%}")

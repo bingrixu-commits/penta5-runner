@@ -42,6 +42,19 @@ def _load():
         return None
 
 
+def _current_streak_html(backtest):
+    """当前进行中的连中/连败（回测序列末尾仍在延续的一段）。"""
+    win = backtest.get('current_win_streak')
+    loss = backtest.get('current_loss_streak')
+    if isinstance(win, int) and win > 0:
+        return ('<span>当前 <b style="color:#15803d">连中 ' + str(win) + ' 手</b>'
+                '<span style="font-size:12px;color:#64748b"> (进行中)</span></span>')
+    if isinstance(loss, int) and loss > 0:
+        return ('<span>当前 <b style="color:#b91c1c">连败 ' + str(loss) + ' 手</b>'
+                '<span style="font-size:12px;color:#64748b"> (进行中)</span></span>')
+    return '<span>当前连中/连败 <b>-</b></span>'
+
+
 def _pct(value):
     return f'{value * 100:.2f}%' if isinstance(value, (int, float)) else '-'
 
@@ -82,6 +95,7 @@ def render_block(report=None):
         f'<span style="font-size:12px;color:#64748b"> (理论乘积 {_pct(backtest.get("expected_product"))})</span></span>'
         f'<span>最多连中 <b>{backtest.get("max_win_streak", "-")}</b> 手</span>'
         f'<span>最多连败 <b>{backtest.get("max_loss_streak", "-")}</b> 手</span>'
+        f'{_current_streak_html(backtest)}'
         f'<span>回测期数 <b>{backtest.get("periods", "-")}</b></span>'
         f'</div>'
         f'<div class="kt-foot">命中 = 该位置实际开奖号<b>不在</b>杀码上(杀号成功)。'
