@@ -44,7 +44,7 @@ STATE_PATH = ROOT / 'data' / 'state.json'
 WINDOW = 50
 CLOSE_SECONDS = 70
 MIN_REQUEST_SECONDS = 20.0
-MAX_TOKENS = 8192
+MAX_TOKENS = 12288
 REASONING_EFFORT = 'high'
 NONRETRYABLE_HTTP_STATUSES = frozenset((400, 401, 402, 422))
 
@@ -626,7 +626,7 @@ def _metadata(reference, attempt, model, api_key, envelope, elapsed):
         'reasoning_effort': REASONING_EFFORT,
         'max_tokens': MAX_TOKENS,
         'elapsed_seconds': round(max(0.0, float(elapsed)), 3),
-        'request_policy_version': 'kill3-high-8k-deadline-v1',
+        'request_policy_version': 'kill3-high-12k-deadline-v1',
     }
 
 
