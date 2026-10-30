@@ -4,6 +4,7 @@
 Reads the shadow ledger; decides whether the live burn-in is good enough to
 replace the official pattern selection. Never changes predictions itself.
 """
+import argparse
 import json
 import os
 import sys
@@ -59,8 +60,11 @@ def _model_stats(records):
     return counts(live), counts(backfill)
 
 
-def main():
-    root = ROOT
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="A0 promotion gate")
+    parser.add_argument("--root", default=str(ROOT))
+    args = parser.parse_args(argv)
+    root = Path(args.root)
     shadow = _read(root / 'data/joint_form_shadow.json', {}) or {}
     now = beijing_now()
     status = {'version': 1, 'checked_at': now.isoformat(), 'status': 'waiting',
@@ -102,6 +106,21 @@ def main():
         status['status'] = 'not-met'
     status['live_periods'] = min(status['models'][m]['live']['n'] for m in status['models'])
     status['strong'] = strong
+    auto_path = root / 'data' / 'joint_form_auto_promote.json'
+    auto_state = _read(auto_path, {}) or {}
+    if isinstance(auto_state, dict) and auto_state.get('manual_disable') is True:
+        status['auto_promoted'] = False
+    elif isinstance(auto_state, dict) and auto_state.get('enabled') is True:
+        status['auto_promoted'] = True
+    elif status['status'] in ('ready', 'ready-strong'):
+        _atomic(auto_path, {'version': 1, 'enabled': True, 'promoted_at': now.isoformat(),
+                            'gate_status': status['status'], 'source': 'joint_form_promotion_gate'})
+        status['auto_promoted'] = True
+        with (root / 'data' / 'joint_form_promotion.log').open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps({'event': 'auto-promote-enabled', 'at': now.isoformat(),
+                                     'gate_status': status['status']}, ensure_ascii=False) + '\n')
+    else:
+        status['auto_promoted'] = False
     _atomic(root / 'data/joint_form_promotion.json', status)
     log_path = root / 'data/joint_form_promotion.log'
     try:

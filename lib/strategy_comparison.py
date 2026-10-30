@@ -156,6 +156,8 @@ def _version_identity(seal,metadata,model):
     transport_version=transport.get('version') if isinstance(transport,dict) else policy
     gate=metadata.get('strategy_validation')
     gate_version=gate.get('version') if isinstance(gate,dict) and gate.get('checked') is True else None
+    if gate_version is None and metadata.get('joint_form_optimized') is True:
+        gate_version='joint-form-optimized-v1'
     thinking,effort,tokens=metadata.get('thinking'),metadata.get('reasoning_effort'),metadata.get('max_tokens')
     if (not all(known(value) for value in (strategy_id,revision,policy,transport_version,gate_version,
                                            metadata.get('requested_model'),metadata.get('returned_model')))

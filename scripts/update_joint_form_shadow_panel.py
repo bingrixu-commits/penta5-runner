@@ -48,6 +48,14 @@ def main(argv=None):
         lines.append('<div>实盘门禁：%d/%d 期（%s）｜ %s；强验证目标 %d 期</div>'
                      % (promotion.get('live_periods', 0), gate.get('burn_in_periods', 72),
                         promotion.get('status'), ' ｜ '.join(parts), target))
+    try:
+        auto = json.loads((root / 'data/joint_form_auto_promote.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        auto = {}
+    if isinstance(auto, dict) and auto.get('manual_disable') is True:
+        lines.append('<div style="color:#b45309;">自动转正：已手动关闭</div>')
+    elif isinstance(auto, dict) and auto.get('enabled') is True:
+        lines.append('<div style="color:#15803d;font-weight:bold;">✅ 门禁已解除：现网 framework/killer 从下一期起使用联合优化形态（AI 杀码/合尾/保留集不变；旧封存保留）</div>')
     lines.extend(['<div style="font-size:12px;color:#64748b;">规则：AI 杀码/合尾/保留集不变，'
                   '仅按 10^4 开奖组合精确选择两个排除形态，使整组同时失手概率最低；'
                   '旧封存与现网主卡不受影响。</div>', '</div>', END])

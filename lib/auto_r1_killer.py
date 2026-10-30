@@ -281,6 +281,21 @@ try:
             retry_instruction=(KILLER_RETRY_INSTRUCTION if hasattr(response_validator, 'strategy_validation') else None))
 except KillerResponseError as error:
     raise SystemExit(str(error)) from None
+
+# A0: joint-form optimization (dormant until the auto-promotion gate enables it)
+joint_form_applied = False
+try:
+    from joint_form_optimizer import optimize_killer_response
+    _joint_form = optimize_killer_response(r, root=os.path.dirname(os.path.dirname(STATS_PATH)))
+    if _joint_form is not None:
+        r = _joint_form['response']
+        joint_form_applied = True
+        print('JOINT_FORM_OPTIMIZED kind=killer ref=%s ai=%s opt=%s expected_ai=%.6f expected_opt=%.6f'
+              % (period, _joint_form['ai_patterns'], _joint_form['opt_patterns'],
+                 _joint_form['expected_ai'], _joint_form['expected_opt']))
+except Exception as _joint_form_error:
+    print('JOINT_FORM_OPTIMIZER_SKIPPED kind=killer reason=%s' % type(_joint_form_error).__name__)
+
 k1_list, k2_list, k3_list, k4_list = (r[key] for key in ('k1', 'k2', 'k3', 'k4'))
 
 k1_str = "/".join(str(x) for x in k1_list) if k1_list else "--"
@@ -300,10 +315,14 @@ if any(not isinstance(value,str) or not re.fullmatch(r'(?:[单双]{4}|[奇偶]{4
     raise SystemExit('Invalid pattern predictions; existing sealed result preserved.')
 
 # 记录本期杀码与合尾/形态，供下一次开奖时对账
+killer_metadata = accepted_killer_response_metadata(period)
+if joint_form_applied and isinstance(killer_metadata, dict):
+    killer_metadata = {key: value for key, value in killer_metadata.items() if key != 'strategy_validation'}
+    killer_metadata['joint_form_optimized'] = True
 pending_candidate = {
     "ref_period": period,
     "model_context_audit": model_context_audit,
-    "model_metadata": accepted_killer_response_metadata(period),
+    "model_metadata": killer_metadata,
     "target_period": next_period(period),
     "kills": {
         "k1": k1_list,
@@ -355,6 +374,7 @@ _he_h3 = "".join([d for d in _base_d if d != str(he_h3).strip()])
 
 killer_attack_str = f"千{_q}百{_b}十{_s}个{_g}四定千百十个合{_he_all}千百十合{_he_q3}百十个合{_he_h3}除{p1}除{p2}"
 
+joint_form_note = (' ｜ 形态：本地精确联合优化（AI 杀码/合尾杀不变）' if joint_form_applied else '')
 # 4. 同步更新到 panel.html
 card = f"""<!-- R1_KILLER_START -->
 <div style="margin: 20px auto; max-width: 1000px; padding: 14px 20px; background: #ffffff; border: 2px solid #1677ff; border-radius: 8px; font-family: sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
@@ -364,7 +384,7 @@ card = f"""<!-- R1_KILLER_START -->
         </span>
         <span style="font-size: 12px; color: #888;">AI 计算时间: {response_generated_at.strftime("%H:%M:%S")}（北京时间）</span>
     </div>
-    <div style="font-size: 12px; color: #64748b; margin-bottom: 6px;">推理模式：高强度思考（high）</div>
+    <div style="font-size: 12px; color: #64748b; margin-bottom: 6px;">推理模式：高强度思考（high）{joint_form_note}</div>
     <div style="font-size: 15px; line-height: 2.2; color: #333;">
         • <b>四位杀码 (各排除1码 · 今日可核验战绩):</b>
             第1位杀 <span style="color: #d9363e; font-weight:bold; font-size: 18px;">{k1_str}</span> {rate1}, 

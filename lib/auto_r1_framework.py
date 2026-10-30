@@ -221,6 +221,20 @@ with reserve_request('framework', period, post=requests.post,
         operation_window=operation_window, validator=response_validator,
         retry_instruction=(FRAMEWORK_RETRY_INSTRUCTION if hasattr(response_validator, 'strategy_validation') else None))
 
+# A0: joint-form optimization (dormant until the auto-promotion gate enables it)
+joint_form_applied = False
+try:
+    from joint_form_optimizer import optimize_framework_response
+    _joint_form = optimize_framework_response(r, root=os.path.dirname(os.path.dirname(SEALS_PATH)))
+    if _joint_form is not None:
+        r = _joint_form['response']
+        joint_form_applied = True
+        print('JOINT_FORM_OPTIMIZED kind=framework ref=%s ai=%s opt=%s expected_ai=%.6f expected_opt=%.6f'
+              % (period, _joint_form['ai_patterns'], _joint_form['opt_patterns'],
+                 _joint_form['expected_ai'], _joint_form['expected_opt']))
+except Exception as _joint_form_error:
+    print('JOINT_FORM_OPTIMIZER_SKIPPED kind=framework reason=%s' % type(_joint_form_error).__name__)
+
 # 兜底默认值
 def get_keep_digits(kill_list):
     all_d = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
@@ -251,6 +265,8 @@ b_pk = "".join(str(x) for x in pk.get("b", []))
 s_pk = "".join(str(x) for x in pk.get("s", []))
 g_pk = "".join(str(x) for x in pk.get("g", []))
 
+joint_form_note = (' ｜ 形态：本地精确联合优化（AI 定位杀/合尾杀/保留集不变）' if joint_form_applied else '')
+
 # 组装标准攻击语
 attack_str = f"千{q_keep}百{b_keep}十{s_keep}个{g_keep}四定千百十合{he_q3_keep}百十个合{he_h3_keep}除{p_ds}除{p_dx}二数合{he2_keep}三数合{he3_keep}各"
 
@@ -267,7 +283,7 @@ framework_card = f"""<!-- R1_FRAMEWORK_START -->
     <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 12px;">
         <div>
             <span style="font-size: 16px; font-weight: bold; color: #0f172a;">🎯 DeepSeek 杀码框架 (参考期号: {period})</span>
-            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">2个定位排除 + 2个合尾排除 + 2个形态排除 + 二数合保留4码 + 三数合保留6码；开奖前封存</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">2个定位排除 + 2个合尾排除 + 2个形态排除 + 二数合保留4码 + 三数合保留6码；开奖前封存{joint_form_note}</div>
         </div>
         <span style="font-size: 12px; color: #888;">AI 计算时间: {calc_time}（北京时间）</span>
     </div>
@@ -327,9 +343,13 @@ function copyR1FrameworkAttack() {{
 
 publication_snapshot = checked_source_snapshot(persist=False)
 operation_window.require_open()
+framework_metadata = accepted_framework_response_metadata(period)
+if joint_form_applied and isinstance(framework_metadata, dict):
+    framework_metadata = {key: value for key, value in framework_metadata.items() if key != 'strategy_validation'}
+    framework_metadata['joint_form_optimized'] = True
 prepared_seal = store_prepared(seals, SEALS_PATH, publication_snapshot,
                {'ref_period': period, 'response': r, 'model_context_audit': model_context_audit,
-                'model_metadata': accepted_framework_response_metadata(period)}, framework_card,
+                'model_metadata': framework_metadata}, framework_card,
                generated_at=response_generated_at, enqueue=False)
 if publish_saved(seals, SEALS_PATH, period, 'R1_FRAMEWORK', checked_source_snapshot,
         operation_window=operation_window):
