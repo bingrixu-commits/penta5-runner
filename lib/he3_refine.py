@@ -28,7 +28,21 @@ ROOT = Path('/root/penta5-runner')
 MARKER = 'HE3_REFINE'
 LEGACY_REVISION = 'he3-refine-v1'
 REVISION = 'he3-refine-v2-balanced'
-MODEL = 'deepseek-flash'
+def _resolve_model():
+    # 2026-10-30: 合尾重要，允许按任务指定模型(PENTA5_MODEL_HE3)；
+    # 未配置时保持原来的 flash，行为不变。
+    import os as _os
+    raw = (_os.environ.get('PENTA5_MODEL_HE3') or '').strip()
+    if raw:
+        return raw
+    try:
+        from app_secrets import get_secret
+        return get_secret('PENTA5_MODEL_HE3')
+    except Exception:
+        return 'deepseek-flash'
+
+
+MODEL = _resolve_model()
 WAIT_PARENT_SECONDS = 225.0
 
 

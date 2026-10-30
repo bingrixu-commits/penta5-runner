@@ -67,3 +67,8 @@
 - **纯统计任务本来就不调 API**（无成本）：stat50 对照、cold_backtest、strategy_settled、
   model_daily、model_significance、real_hitrate、cold_hit_stats、kill_three、
   position_cold 等。
+- **2026-10-30 08:31 合尾(he3_refine)恢复并改用 v4-pro**：用户认为合尾重要，要求用好的
+  模型。`lib/he3_refine.py` 的 MODEL 改为可配置(`PENTA5_MODEL_HE3`，未配置时仍 flash)，
+  `.env` 设 `PENTA5_MODEL_HE3=deepseek-v4-pro`，cron 恢复。he3 每次 prompt 仅 ~640
+  tokens、每天约 50 次调用，pro 成本约 0.5 元/天级；其余 3 个统计型任务
+  (selected_six/cold_framework/cold_fixed_framework) 仍暂停(见 data/ai_api_paused.json)。
