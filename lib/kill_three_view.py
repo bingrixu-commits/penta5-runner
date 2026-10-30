@@ -177,12 +177,12 @@ def render_block():
         position_parts = []
         for key, digit in (position_limit.get('blocked_digits') or {}).items():
             position_parts.append(
-                f'{kill3_tail.POSITION_LABELS.get(key, key)}已连杀 {digit} 满 '
+                f'{kill3_tail.POSITION_LABELS.get(key, key)}杀码 {digit} 已连用 '
                 f'{kill3_tail.MAX_CONSECUTIVE_PERIODS} 期（含中间弃位）→ 本期不得再用')
         blocked_drop = position_limit.get('blocked_drop')
         if blocked_drop:
             position_parts.append(
-                f'放弃位置已连弃 {kill3_tail.POSITION_LABELS.get(blocked_drop, blocked_drop)} 满 '
+                f'放弃位置 {kill3_tail.POSITION_LABELS.get(blocked_drop, blocked_drop)} 已连用 '
                 f'{kill3_tail.MAX_CONSECUTIVE_PERIODS} 期 → 本期必须换放弃位置')
         position_html = ''
         if position_parts:
