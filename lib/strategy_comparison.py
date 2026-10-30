@@ -36,6 +36,36 @@ def _read(path):
     value=json.loads(raw)
     if not isinstance(value,dict):raise ValueError('invalid-strategy-source')
     return value
+# six 封存 data/selected_six_seals.json 已超单文件读取上限, 证据字段不能删。
+# 超限时改读同目录紧凑索引: scripts/build_six_seal_index.py 在字节流里定位
+# "prediction_seals" 对象后只做等价搬运, 每个 seal 的全部字段原样保留, 后续
+# validate_publication 的 seal_sha256/card_html 等校验强度不变; 索引按源文件
+# size+mtime 自动重建, 重建或读取失败时保留原 oversized 报错与 source_error 行为。
+SIX_SEAL_INDEX='selected_six_seal_index.json'
+MAX_STRATEGY_SOURCE=128*1024*1024
+SIX_SEAL_INDEX_TIMEOUT=60
+
+def _refresh_six_seal_index(path):
+    import subprocess,sys
+    root=Path(path).parent.parent
+    script=root/'scripts'/'build_six_seal_index.py'
+    if not script.is_file():raise ValueError('missing-six-seal-indexer')
+    completed=subprocess.run([sys.executable,str(script),'--root',str(root),'--if-stale'],
+        capture_output=True,text=True,timeout=SIX_SEAL_INDEX_TIMEOUT,cwd=str(root))
+    if completed.returncode!=0:raise ValueError('six-seal-index-build-failed')
+
+def _read_strategy_source(model,path):
+    if model!='six':return _read(path)
+    try:size=path.stat().st_size
+    except OSError:return _read(path)
+    if size<=MAX_STRATEGY_SOURCE:return _read(path)
+    try:
+        _refresh_six_seal_index(path)
+        return _read(path.parent/SIX_SEAL_INDEX)
+    except Exception as error:
+        print('six seal index unavailable: '+type(error).__name__,flush=True)
+        raise ValueError('oversized-strategy-source') from None
+
 def _strategy(seal,model):
     if model in ('killer','framework'):
         audit=seal.get('model_context_audit');body=audit.get('body') if isinstance(audit,dict) else None
@@ -262,7 +292,7 @@ def build_comparison(snapshot,*,root=ROOT,ledgers=None,delivery=None):
                 # 形状, 避免每次刷新再读 65MB+29MB 死数据。
                 source={'prediction_seals':{}}
             else:
-                source=ledgers[model] if ledgers is not None else _read(Path(root)/'data'/FILES[model])
+                source=ledgers[model] if ledgers is not None else _read_strategy_source(model,Path(root)/'data'/FILES[model])
             seals=source.get('prediction_seals',{})
             if not isinstance(seals,dict):raise ValueError('invalid-strategy-index')
             for reference,seal in sorted(seals.items()):
