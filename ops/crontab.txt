@@ -8,7 +8,6 @@
 # Fixed 50-draw statistical candidates; no model API calls
 1,6,11,16,21,26,31,36,41,46,51,56 * * * * flock -n /var/lock/penta5-stat50.lock bash -c 'sleep 20 && cd /root/penta5-runner && timeout 45 python3 -u scripts/run_stat50_compare.py >> data/stat50_compare_cron.log 2>&1'
 # Independent six-to-five extra reference; original AI contracts unchanged
-*/5 * * * * flock -n /var/lock/penta5-he3.lock bash -c 'sleep 40 && cd /root/penta5-runner && timeout --kill-after=5s 255 python3 -u scripts/run_he3_refine.py >> data/he3_refine_cron.log 2>&1'
 # Independent Pro selected-six prospective framework
 * * * * * flock -n /var/lock/penta5-obs.lock bash -c 'sleep 45 && cd /root/penta5-runner && timeout --kill-after=3s 50 python3 -u scripts/run_runtime_observability.py >> data/runtime_observability_cron.log 2>&1'
 9 5 * * * flock -n /var/lock/penta5-evidence.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 480 python3 -u scripts/run_evidence_backup.py >> data/evidence_backup_cron.log 2>&1'

@@ -55,12 +55,12 @@
   `PENTA5_AUTOTOP6_MILP` 仍为 `cuopt`。`scripts/ops_health_check.py` 把
   `cuopt-url-unset` 判为“已停用 OK”。若以后真部署了 cuopt 服务：填回 URL →
   `pm2 restart penta5-runner --update-env && pm2 save` 即可。
-- **2026-10-30 成本控制：暂停 3 个 pro AI 任务的 cron**（`selected_six`、`cold_framework`、
-  `cold_fixed_framework`）。原因：这三项不是纯统计（会调 DeepSeek v4-pro），其中
+- **2026-10-30 成本控制：暂停 4 个统计型 AI 任务的 cron**（`selected_six`、`cold_framework`、
+  `cold_fixed_framework`、`he3_refine`）。原因：这三项不是纯统计（会调 DeepSeek v4-pro），其中
   cold_fixed 每期还要 3 次校验重试，是余额消耗主因；用户要求统计型模型不再调用 API。
-  处理：crontab 移除 3 行（25→22），创建 `data/ai_api_paused.json` 标记暂停，
+  处理：crontab 移除 4 行（25→21），创建 `data/ai_api_paused.json` 标记暂停，
   `scripts/ops_health_check.py` 对 paused 任务跳过 lag 告警（显示 paused/OK）；
-  其余仍保留：framework、killer、he3_refine（全部 flash，费用极低）+ 所有本地统计/回测。
+  其余仍保留：framework、killer 两个 AI 主推（flash，费用极低）+ 所有本地统计/回测。
   面板上这 3 个区块会**冻结在最后发布期 099**，不再更新预测。
   恢复：`git log -p ops/crontab.txt` 找回 3 行 → 加回 crontab（或 `crontab_tool.sh install`
   历史版本），删除 `data/ai_api_paused.json`，等下一期即可。
