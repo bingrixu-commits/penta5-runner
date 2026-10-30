@@ -12,6 +12,7 @@ import json
 
 ROOT = Path('/root/penta5-runner')
 REPORT_PATH = ROOT / 'data/cold_hit_stats.json'
+KILL_THREE_PATH = ROOT / 'data/kill_three_pick.json'
 MARKER = 'COLD_HIT_STATS'
 START = f'<!-- {MARKER}_START -->'
 END = f'<!-- {MARKER}_END -->'
@@ -36,6 +37,27 @@ STYLE = """
 #cold-hit-stats th:first-child,#cold-hit-stats td:first-child{text-align:left}
 #cold-hit-stats .ch-foot{margin-top:10px;font-size:12px;color:#94a3b8}
 """
+
+
+def _three_position_line():
+    """冷码杀号战绩块顶部显示「本期取哪三个位置」——数据来自三位置杀码建议。"""
+    try:
+        report = json.loads(KILL_THREE_PATH.read_text(encoding='utf-8'))
+        rec = report.get('recommendation') or {}
+        positions = rec.get('positions') or []
+        if not positions:
+            return ''
+        picks = ' · '.join(
+            '<b>%s 杀%s</b>' % (item.get('label', ''), item.get('kill', '-'))
+            for item in positions)
+        skipped = '、'.join(item.get('label', '') for item in rec.get('skipped') or ())
+        tail = ('（放弃:%s）' % skipped) if skipped else ''
+        return ('<div class="ch-pick" style="margin:6px 0 10px;font-size:13px;color:#334155;">'
+                '本期三位置建议：' + picks + tail +
+                '<span style="font-size:12px;color:#64748b;margin-left:6px;">'
+                '（详见下方「三位置杀码建议」）</span></div>')
+    except (OSError, ValueError):
+        return ''
 
 
 def _load():
@@ -133,6 +155,7 @@ def render_block(report=None):
         f'<h3>冷码杀号战绩</h3>'
         f'<div class="ch-meta">按系统冷码口径取每位置前 N 个冷码作杀号,'
         f'数据截至 {report.get("as_of_period", "")} · 计算于 {report.get("generated_at", "")}</div>'
+        f'{_three_position_line()}'
         f'<div class="ch-grid">{"".join(cards)}</div>'
         f'<div class="ch-foot">命中 = 该位置实际开奖号<b>不在</b>冷码集合内(杀号成功)。'
         f'理论命中率 = (10-N)/10,即杀1码 90% / 杀2码 80% / 杀3码 70%。'
