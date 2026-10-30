@@ -24,13 +24,15 @@ ROOT = Path('/root/penta5-runner')
 SELECTED_REQUEST_BUDGET_SECONDS = 110.0
 SELECTED_REASONING_EFFORT = 'low'
 SELECTED_MAX_TOKENS = 2048
-FAST_TRANSPORT_VERSION = 'selected-six-fast-transport-v1'
+FAST_TRANSPORT_VERSION = 'selected-six-fast-transport-v2'
+LEGACY_TRANSPORT_VERSION = 'selected-six-fast-transport-v1'
 PLATFORM_CLOSE_SECONDS = 70
 OPERATION_RESERVE_SECONDS = 90
 PUBLICATION_RESERVE_SECONDS = 10
 PRO_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?pro(?:-[0-9]{4})?')
 RETRY_INSTRUCTION = (
-    '上次响应未通过校验。只返回完整JSON对象，恰好含selected_positions、selected_tails、he2_keep、'
+    '上次响应未通过校验。首选直接照抄 options 中任一项的 response 字段（只可改 reason），'
+    '不要重造数字。只返回完整JSON对象，恰好含selected_positions、selected_tails、he2_keep、'
     'he3_keep、reverse_parity、reverse_size、reason。'
     'selected_positions从q/b/s/g恰好选两个不同键，每个值为一个0至9整数；'
     'selected_tails从all/qbs/qbg/qsg/bsg恰好选两个不同键，每个值为一个0至9整数。'
@@ -154,20 +156,22 @@ def _request_transport(input_doc, context):
 def _valid_transport(value, input_doc):
     if (not isinstance(value, dict) or set(value) != {'version', 'input_sha256', 'context',
             'context_sha256', 'prompt_sha256', 'operation_reserve_seconds'}
-            or value.get('version') != FAST_TRANSPORT_VERSION
+            or value.get('version') not in (FAST_TRANSPORT_VERSION, LEGACY_TRANSPORT_VERSION)
             or value.get('input_sha256') != _digest(input_doc)
             or type(value.get('operation_reserve_seconds')) is not int
             or value['operation_reserve_seconds'] != OPERATION_RESERVE_SECONDS
             or not isinstance(value.get('context'), dict)
             or value.get('context_sha256') != _digest(value['context'])):
         return False
-    from selected_six_request_options import validate_request_context, wire_prompt
+    from selected_six_request_options import (validate_request_context, wire_prompt,
+                                              wire_prompt_legacy)
     try:
         validate_request_context(input_doc, value['context'])
     except (ValueError, TypeError, KeyError, OverflowError):
         return False
+    render = wire_prompt_legacy if value.get('version') == LEGACY_TRANSPORT_VERSION else wire_prompt
     return value.get('prompt_sha256') == sha256(
-        wire_prompt(value['context'], revision=input_doc.get('revision')).encode('utf-8')).hexdigest()
+        render(value['context'], revision=input_doc.get('revision')).encode('utf-8')).hexdigest()
 
 
 def _log(log, message):
