@@ -169,3 +169,18 @@
   与 `COLD_HIT_STATS`/`POSITION_COLD`/`MODEL_SIGNI`/`REAL_HIT` 此前未登记，导致这些周期块
   只有整页刷新才更新。已把 5 个标记加入 names，版本升到 `quiet-panel-v16-live-sections`；
   刷新脚本变化后浏览器需要手动刷新一次以装载新脚本，之后每 8 秒自动合并最新封存/统计。
+
+- **2026-10-30 12:06 合尾改为「五选一且不得与上一期相同」，并把五种合尾对比喂给 AI**：
+  用户反馈「合尾从五种合尾选，不是固定百十个」。排查确认不是硬编码：132–139 期百十个合尾的
+  候选码 7 连续 47–50 期未开（超长遗漏），模型按统计连续选它是有依据的；但观感上像固定。
+  现改为：提示词新增五种合尾候选对比（候选码/近50期出现次数/当前遗漏/近50与近30期该尾候选
+  杀号命中率，按命中率排序，并注明顺序不代表推荐），且本期合尾不得与上一期相同（从其余四种
+  中选），本地校验 `validate_tail_choice` 拒绝重复并在重试反馈里说明；封存记录写入
+  `tail_restriction`（上期合尾），面板显示「合尾限制」行，攻击语随之更新。
+  实测 145 期百十个 → 146 期千百十 杀 9，理由「避开上期百十个合尾」。
+- **2026-10-30 12:09 修复 live refresh 整轮失败（必须手动刷新）**：上一轮把 5 个周期块加入
+  live refresh 名单后，`REAL_HIT` 的 START/END 标记在 HTML 解析后不配对（START 落入未闭合 DIV），
+  导致 `ranges()` 抛 unbalanced-marker、整轮刷新失败并显示「数据更新暂未完成」。
+  已把 REAL_HIT 移出名单（其余 KILL_THREE/COLD_HIT_STATS/POSITION_COLD/MODEL_SIGNI 保留），
+  版本升到 `quiet-panel-v17-live-sections`；用 jsdom 复跑 apply()：无异常、KILL_THREE 区块
+  随新封存更新（23 个 plan），标记配对全部通过。REAL_HIT 区块自身的未闭合 DIV 留待后续修正。
