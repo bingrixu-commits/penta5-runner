@@ -132,3 +132,13 @@
   真正"从4个位置里取3个"的是三位置杀码建议块。已在冷码杀号战绩块顶部加一行
   「本期三位置建议：百位 杀x · 十位 杀y · 个位 杀z（放弃:千位）（详见下方三位置杀码建议）」，
   数据直接读 data/kill_three_pick.json，随每期刷新。
+- **2026-10-30 10:35 出码/统计区块提前显示**：用户反馈"出码都快关盘才蹦出来"。
+  诊断：面板同步进程原来在 draw+180s 结算点才跑 /root/run_stats.py，整轮 134s，
+  写到面板时已是 draw+285~309s（关盘=draw+230s）→ 统计/建议区块总在关盘后出现。
+  修复：① SETTLE_SECONDS 180→45（开奖数据 draw+3s 已入 state.json）；
+  ② /root/run_stats.py 在快阶段(base/cold/framework/killer/stat50 ~15s)后先写一次
+  面板(early_panel)，把三位置杀码/冷码杀号战绩/位置冷码/显著性/真实命中率等
+  出码与统计块提前展示；selected_six(~60s)/he3_extra(~52s)两个重算放到后面，
+  结束时再最终写一次面板。实测：建议块 draw+~65s 可见(关盘前 ~165s)，整轮
+  draw+183s 完成(关盘前 ~47s)。/root/run_stats.py 备份在
+  /root/archive/run_stats.py.bak-20261030-early-panel。

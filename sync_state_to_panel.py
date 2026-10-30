@@ -37,7 +37,11 @@ REFRESH_TIMEOUT_SECONDS = 600
 # 实测开奖节拍: 每 300s 一期; 每期开奖后 180s 再刷新, 此时各 AI 任务/stat50
 # 的封存都已落盘, 一轮刷新即可覆盖整期。预测卡片由各任务自己写面板, 不等这里。
 PERIOD_SECONDS = 300
-SETTLE_SECONDS = 180
+# 2026-10-30: 180→75s。开奖数据在 draw+~3s 已进 state.json，180s 结算点导致
+# "/root/run_stats.py" 在 draw+180s 才启动、draw+285~309s 才写完面板（关盘=draw+230s），
+# 统计/建议类区块因此总在关盘后才更新。75s 起跑后整轮约在 draw+170~200s 完成，
+# 赶在关盘前；冲突/重试逻辑不变。
+SETTLE_SECONDS = 45
 HEARTBEAT_SECONDS = 600
 RETRY_SECONDS = 120
 POLL_SECONDS = 5
