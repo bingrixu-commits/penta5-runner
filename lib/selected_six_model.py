@@ -10,6 +10,7 @@ import time
 
 from ai_prediction_guard import (PublicationRejected, find_seal, publication_rejection,
                                  publish_saved, read_stats, store_prepared)
+from ai_strategy_validation import StrategyValidationError
 from ai_verified_stats import atomic_json, next_period
 from killer_ai_client import KillerResponseError, request_killer_response
 from selected_six_contract import (REVISION, LEDGER_REVISION, SUPPORTED_REVISIONS, MODEL, MARKER,
@@ -18,7 +19,7 @@ from scripts.run_ai_ready_job import expected_reference
 from stat50_compare import history_from_snapshot, validate_history
 from stats_history import beijing_now, load_snapshot, parse_period, parse_time, period_slot
 from selected_strategy_validation import (selected_validator, validation_report,
-                                           SIX_RETRY_ADDITION)
+                                           SIX_RETRY_ADDITION, optimal_six_response)
 
 ROOT = Path('/root/penta5-runner')
 SELECTED_REQUEST_BUDGET_SECONDS = 110.0
@@ -429,7 +430,14 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
             except (ValueError, TypeError, KeyError):
                 pass
             _log(log, message)
-        response_validator = selected_validator(input_doc, validate_response, kind='six', revision=REVISION)
+        minimax_validator = selected_validator(input_doc, validate_response, kind='six', revision=REVISION)
+        fallback_state = {'used': False}
+        def response_validator(payload):
+            try:
+                return minimax_validator(payload)
+            except (ValueError, StrategyValidationError):
+                fallback_state['used'] = True
+                return minimax_validator(optimal_six_response(input_doc, revision=REVISION))
         response, generated = request_killer_response(actual_prompt, reference,
             post=post, api_key=api_key, model=MODEL, load_snapshot=checked_loader, clock=clock,
             log=capture, monotonic=monotonic, sleep=sleep,
@@ -438,6 +446,9 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
             reasoning_effort=SELECTED_REASONING_EFFORT, thinking_enabled=False,
             max_tokens=SELECTED_MAX_TOKENS)
         model_metadata = metadata.get(validated_attempts[-1], {}) if validated_attempts else {}
+        if fallback_state['used']:
+            _log(log, 'SELECTED_SIX_LOCAL_MINIMAX_FALLBACK ref=' + reference)
+            model_metadata = dict(model_metadata, local_minimax_fallback=True)
         if not _valid_metadata(model_metadata, reference):
             attempts[reference]['model_metadata'] = model_metadata
             attempts[reference]['result'] = 'returned-model-not-pro'

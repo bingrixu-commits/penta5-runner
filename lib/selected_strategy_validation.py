@@ -175,6 +175,63 @@ def _minimax(response, masks, revision=None):
             'legal_single_item_comparisons': comparisons, 'selected_scores': scores}
 
 
+
+def _best_digit(masks, field, key):
+    return min(range(10), key=lambda digit: (_score(_mask(masks, (field, key, digit))), digit))
+
+
+def _best_keep(masks, field, allowed, width, revision):
+    def legal(keep):
+        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_REVISION):
+            return 2 <= sum(int(digit) % 2 for digit in keep) <= 3
+        return True
+    values = [''.join(combo) for combo in combinations(allowed, width) if legal(''.join(combo))]
+    return min(values, key=lambda keep: (_score(_mask(masks, (field, None, keep))), keep))
+
+
+def _best_form(masks, field, palette, column, selected_positions):
+    def legal(form):
+        for position, kill in selected_positions.items():
+            if form[POSITION_KEYS.index(position)] != reverse_attributes(kill)[column]:
+                return False
+        return True
+    values = [''.join(form) for form in product(palette, repeat=4) if legal(''.join(form))]
+    return min(values, key=lambda value: (_score(_mask(masks, (field, None, value))), value))
+
+
+def optimal_six_response(input_doc, *, revision=SIX_REVISION):
+    """Deterministic minimax optimum for the frozen 50-draw window.
+
+    Used only when the provider response fails the frozen rule validation; it
+    never rewrites a response that already passed.  It applies the same
+    five-block lexicographic objective the validators check.
+    """
+    history = input_doc['history']
+    moment = datetime.fromisoformat(history[-1]['opentime'])
+    history = validate_history(history, input_doc['reference_period'], moment)
+    masks = _failure_maps(history)
+    position_rank = sorted(POSITION_KEYS, key=lambda key: (
+        _score(_mask(masks, ('selected_positions', key, _best_digit(masks, 'selected_positions', key)))),
+        POSITION_KEYS.index(key)))
+    selected_positions = {key: _best_digit(masks, 'selected_positions', key) for key in position_rank[:2]}
+    selected_positions = {key: selected_positions[key] for key in POSITION_KEYS if key in selected_positions}
+    tail_rank = sorted(TAIL_POSITIONS, key=lambda key: (
+        _score(_mask(masks, ('selected_tails', key, _best_digit(masks, 'selected_tails', key)))),
+        tuple(TAIL_POSITIONS).index(key)))
+    selected_tails = {key: _best_digit(masks, 'selected_tails', key) for key in tail_rank[:2]}
+    selected_tails = {key: selected_tails[key] for key in TAIL_POSITIONS if key in selected_tails}
+    response = {
+        'selected_positions': selected_positions,
+        'selected_tails': selected_tails,
+        'he2_keep': _best_keep(masks, 'he2_keep', '02468', 4, revision),
+        'he3_keep': _best_keep(masks, 'he3_keep', '0123456789', 5, revision),
+        'reverse_parity': _best_form(masks, 'reverse_parity', '单双', 0, selected_positions),
+        'reverse_size': _best_form(masks, 'reverse_size', '大小', 1, selected_positions),
+        'reason': '本地分段稳定性最优回退：模型输出未通过冻结校验，按五段词典序计算'}
+    if revision != SIX_REVISION:
+        response.pop('reverse_parity', None); response.pop('reverse_size', None)
+    return response
+
 def selected_validator(input_doc, base_validator, *, kind, revision):
     """Return one response-only closure; old revisions retain their old contract."""
     if kind not in METHODS:
