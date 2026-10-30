@@ -84,10 +84,18 @@ def main():
         return 0
     deadline, target = kill3_tail.deadline_for(reference)
     rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
-    prompt, audit = kill3_tail.build_prompt(reference, target, rows)
+    previous_seal = seals[-1] if seals else None
+    previous_tail = (previous_seal.get('tail') or {}) if isinstance(previous_seal, dict) else {}
+    previous_tail_key = previous_tail.get('key') or None
+    previous_tail_label = previous_tail.get('label') or None
+    prompt, audit = kill3_tail.build_prompt(
+        reference, target, rows,
+        blocked_tail_key=previous_tail_key,
+        previous_tail_label=previous_tail_label)
     try:
         prediction, generated_at, meta = kill3_tail.request_prediction(
-            prompt, reference, target, deadline)
+            prompt, reference, target, deadline,
+            value_check=lambda item: kill3_tail.validate_tail_choice(item, previous_tail_key))
     except Exception as error:
         print(f"kill3 request failed: {type(error).__name__}: {str(error)[:140]}")
         return 1
@@ -97,7 +105,10 @@ def main():
         print(f'kill3 publication rejected after inference: {rejection}; ref={reference}')
         return 0
     seal = kill3_tail.create_seal(reference, target, latest.get('opentime'), prediction,
-                                  prompt, audit, generated_at, meta)
+                                  prompt, audit, generated_at, meta,
+                                  extra={'tail_restriction': {
+                                      'previous_tail_key': previous_tail_key,
+                                      'previous_tail_label': previous_tail_label}})
     kill3_tail.save_seal(seal)
     kill3_tail.mark_published(reference)
     try:

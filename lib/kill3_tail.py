@@ -69,7 +69,8 @@ RETRY_INSTRUCTION = (
     'tail 为 {{"key": 五种之一, "kill": 0 至 9 的整数}}；'
     'reverse_parity 为四个单/双字符，reverse_size 为四个大/小字符，'
     '被杀位置必须取杀码形态的反面（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
-    '放弃位置的字符自选；reason 40 字以内。不要输出任何其他文字、解释或代码块。'
+    '放弃位置的字符自选；合尾不得与上一期相同（若因合尾限制被拒，请改选其余四种之一）；'
+    'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
 
 
@@ -323,7 +324,7 @@ def _cold_line(ranks, limit=3):
                      for number, count, omission in ranks[:limit])
 
 
-def build_prompt(reference, target, rows):
+def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tail_label=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
@@ -331,22 +332,39 @@ def build_prompt(reference, target, rows):
     for key, label, index in POSITIONS:
         ranks = rank_digits([row[index] for row in window])
         position_lines.append(f'· {label}：{_cold_line(ranks)}')
-    tail_lines = []
+    tail_rows = []
     for key in TAIL_KEYS:
         values = [tail_value(row, key) for row in window]
         ranks = rank_digits(values)
-        tail_lines.append(f'· {TAILS[key]["label"]}：{_cold_line(ranks)}')
+        kill = ranks[0][0]
+        hits50 = sum(1 for value in values if value != kill)
+        recent = values[-30:]
+        hits30 = sum(1 for value in recent if value != kill)
+        tail_rows.append((key, TAILS[key]['label'], kill, ranks[0][1], ranks[0][2],
+                          hits50 / len(values), hits30 / len(recent)))
+    tail_rows.sort(key=lambda row: (-row[5], -row[6], -row[4]))
+    tail_lines = [
+        f'· {label}：候选 {kill}（近50期出{count}次/当前遗漏{omission}期），'
+        f'近50期该尾候选杀号命中 {hit50:.2%}，近30期 {hit30:.2%}'
+        for _key, label, kill, count, omission, hit50, hit30 in tail_rows]
+    if blocked_tail_key and previous_tail_label:
+        restriction = (f'上一期合尾：{previous_tail_label}；本期不得选择「{previous_tail_label}」，'
+                       '必须从其余四种合尾中选。')
+    else:
+        restriction = '本期无合尾限制。'
     prompt = (
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
         f'{history}\n\n'
         '【近50期各位置冷热（出现次数少、当前遗漏长优先；仅历史统计，不代表未来概率）】\n'
         + '\n'.join(position_lines) + '\n\n'
-        '【近50期五种合尾冷热（合尾 = 对应位置数字之和的个位；仅历史统计）】\n'
+        '【五种合尾候选对比（合尾 = 对应位置数字之和的个位；'
+        '按该尾候选码近50期真实杀号命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(tail_lines) + '\n\n'
+        '【合尾选择限制】\n' + restriction + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；\n'
-        '2. 从上述 5 种合尾中挑 1 种，排除 1 个和尾数字（0-9）；\n'
+        '2. 从上述 5 种合尾中挑 1 种（本期不得与上一期相同），排除 1 个和尾数字（0-9）；\n'
         '3. 给出两项四位反向排除形态：reverse_parity 为按千百十个顺序的四位单双形态，'
         'reverse_size 为四位大小形态；被杀的 3 个位置必须取杀码形态的反面'
         '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），放弃位置的字符自选；\n'
@@ -365,14 +383,30 @@ def build_prompt(reference, target, rows):
         '两个形态字符串都必须是 4 个字符。'
     )
     audit = {
-        'version': 'kill3-tail-prompt-v1',
+        'version': 'kill3-tail-prompt-v2',
         'reference': reference,
         'target': target,
         'window': WINDOW,
         'history_sha256': sha256(history.encode('utf-8')).hexdigest(),
         'rows': [[str(int(value)) for value in row] for row in window],
+        'tail_comparison': [{'key': key, 'label': label, 'candidate': str(kill),
+                             'hit50': round(hit50, 6), 'hit30': round(hit30, 6)}
+                            for key, label, kill, _count, _omission, hit50, hit30 in tail_rows],
+        'blocked_tail': blocked_tail_key,
+        'previous_tail_label': previous_tail_label,
     }
     return prompt, audit
+
+
+def validate_tail_choice(prediction, blocked_tail_key=None):
+    """本期合尾不得与上一期相同（从上期未使用的四种中选择）。"""
+    if not blocked_tail_key:
+        return prediction
+    chosen = (prediction.get('tail') or {}).get('key')
+    if chosen == blocked_tail_key:
+        label = TAILS[blocked_tail_key]['label']
+        raise ValueError(f'本期合尾不得与上一期相同（上一期为{label}），请从其余四种合尾中选')
+    return prediction
 
 
 def resolve_model():
@@ -482,7 +516,7 @@ def _post(messages, timeout):
                 pass
 
 
-def request_prediction(prompt, reference, target, deadline, log=print):
+def request_prediction(prompt, reference, target, deadline, log=print, value_check=None):
     """At most three paid calls inside the frozen publication window."""
     from ai_call_control import require_ai_enabled
 
@@ -508,6 +542,8 @@ def request_prediction(prompt, reference, target, deadline, log=print):
                 raise ValueError('响应未正常结束')
             message = choice.get('message') if isinstance(choice.get('message'), dict) else {}
             prediction = normalize_response(_extract_json(message.get('content')))
+            if value_check is not None:
+                value_check(prediction)
             meta = _metadata(reference, attempt, model, api_key, envelope,
                              time.monotonic() - started)
             log('AI_RESPONSE_META ' + json.dumps(meta, ensure_ascii=True, allow_nan=False,
@@ -530,8 +566,8 @@ def request_prediction(prompt, reference, target, deadline, log=print):
 
 
 def create_seal(reference, target, reference_open_time, prediction, prompt, audit,
-                generated_at, response_meta):
-    return {
+                generated_at, response_meta, extra=None):
+    seal = {
         'version': 1,
         'rule_version': 'kill3-tail-v1',
         'ref_period': str(reference),
@@ -553,6 +589,9 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'input_sha256': audit.get('history_sha256'),
         'window': WINDOW,
     }
+    if isinstance(extra, dict):
+        seal.update(extra)
+    return seal
 
 
 def save_seal(seal):

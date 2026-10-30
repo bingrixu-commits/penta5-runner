@@ -158,6 +158,12 @@ def render_block():
                     f'<div class="k3-sub">排除该四位形态</div></div>')
         dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
         reason = escape(str(seal.get('reason') or '')) or '（无）'
+        restriction = seal.get('tail_restriction') or {}
+        restrict_html = ''
+        if restriction.get('previous_tail_label'):
+            restrict_html = (
+                f'<div class="k3-drop">合尾限制：上一期是'
+                f'{escape(str(restriction.get("previous_tail_label")))}，本期从其余四种合尾中选</div>')
         model = seal.get('model_label') or kill3_tail.model_label()
         meta = (f'参考期 {escape(str(seal.get("ref_period", "")))} ｜ '
                 f'目标期 {escape(str(seal.get("target_period", "")))} ｜ '
@@ -176,6 +182,7 @@ def render_block():
                 f'<div class="k3-meta">{meta}</div>'
                 f'<div class="k3-grid">{"".join(cards)}</div>'
                 f'<div class="k3-drop">放弃位置：{escape(str(dropped))}（AI 只杀 3 个位置）</div>'
+                f'{restrict_html}'
                 f'<div class="k3-reason">理由：{reason}</div>'
                 f'{_stats_html(stats)}'
                 f'<div class="k3-verify">{verify}</div>'
@@ -229,7 +236,8 @@ def _attack_html(seal):
 def _foot_html():
     return ('<div class="k3-foot">'
             '由 DeepSeek 决定：从千/百/十/个中选 3 个位置各排除 1 码、放弃 1 个位置，'
-            '从 5 种合尾中选 1 种排除 1 个和尾数字，并给出两项四位反向形态。<br>'
+            '从 5 种合尾中选 1 种排除 1 个和尾数字（每期与上一期不同，从上期未用的四种中选），'
+            '并给出两项四位反向形态。<br>'
             '命中 = 该位置实际开奖号<b>不在</b>杀码上（杀号成功）；合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态（被杀的 3 个位置取杀码形态反面）。<br>'
             '3 个位置 + 1 个合尾 + 2 项反向形态共 6 项同时命中才算整组命中；'
