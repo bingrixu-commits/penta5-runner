@@ -3,6 +3,9 @@
 0 5 * * * flock -n /var/lock/penta5-b196b01f.lock bash -c 'python3 /root/penta5-runner/reset_daily.py >> /root/reset.log 2>&1'
 */30 * * * * flock -n /var/lock/penta5-03c2b9e5.lock bash -c '/bin/bash /root/penta5-runner/guard_daily.sh >/dev/null 2>&1'
 */5 * * * * flock -n /var/lock/penta5-killer.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_ai_ready_job.py killer >> auto_r1_killer.log 2>&1'
+*/5 * * * * flock -n /var/lock/penta5-coldfixed.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 225 python3 -u scripts/run_cold_fixed_framework.py >> data/cold_fixed_framework_cron.log 2>&1'
+*/5 * * * * flock -n /var/lock/penta5-cold.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 225 python3 -u scripts/run_cold_framework.py >> data/cold_framework_cron.log 2>&1'
+*/5 * * * * flock -n /var/lock/penta5-six.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 295 python3 -u scripts/run_selected_six.py >> data/selected_six_cron.log 2>&1'
 */5 * * * * flock -w 30 /var/lock/penta5-he3.lock bash -c 'sleep 40 && cd /root/penta5-runner && timeout --kill-after=5s 255 python3 -u scripts/run_he3_refine.py >> data/he3_refine_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-framework.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_ai_ready_job.py framework >> auto_r1_framework.log 2>&1'
 # Prospective same-input Flash / Pro comparison

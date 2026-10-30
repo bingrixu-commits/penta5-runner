@@ -79,3 +79,11 @@
   2) he3 cron 的 `flock -n` 改为 `flock -w 30`：run_stats 刷新末尾会短暂占用
      `/var/lock/penta5-he3.lock`（he3_extra 阶段），`-n` 会让 he3 静默跳过整期；
      改为最多等 30s 再执行。手动验证 ref=105 已用 v4-pro 成功发布。
+- **2026-10-30 08:57 恢复 3 个暂停任务（用户要求）**：selected_six、cold_framework、
+  cold_fixed_framework 的 cron 已按 git 历史原样加回（crontab 22→25 行），删除
+  data/ai_api_paused.json，ops_health 恢复正常 lag 检查。注意：08:59-09:10 账户余额
+  一度归零，所有 AI 任务（含 framework/killer/he3）在该窗口 402，期号 107-110 缺口
+  无法回补；09:12 充值后自动恢复，无需重启。
+- **已知待优化（不影响出数）**：cold_fixed_framework 每期会用 3 次尝试才通过
+  （前两次 `strategy-response-cold-he3-parity` 校验被拒，第 3 次才过），token 约 3 倍；
+  若要优化需查 pro 模型对 he3_keep 单双约束的遵循率（可加更强的重试反馈或本地校正）。
