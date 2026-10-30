@@ -23,6 +23,8 @@ Collects a fixed set of probes into one JSON report plus a human table:
   data_tmp           stale data/tmp* leftovers (age > 10 min; warn > 2 / > 100 MiB)
   crontab_drift      live crontab vs reviewed ops/crontab.txt snapshot
   evidence_size      evidence archive + runtime observability directory sizes
+  deepseek_balance   DeepSeek key total_balance (>=8 CNY ok, 3-8 warn, <3 fail)
+  provider_402       recent provider HTTP 402 in the AI job logs (<30 min -> warn)
 
 Writes (atomic) data/ops_health.json, data/ops_health_state.json and appends
 data/ops_alerts.log only for *transitions* (a check newly entering warn/fail,
@@ -30,7 +32,7 @@ escalating, or recovering).  Exit code is 0 for every health outcome - this is
 a probe, not a gate - and only 1 for an unexpected internal error.
 
 Standard library only, read-only with respect to pipeline state: it never runs
-project scripts, never writes system scheduler state or git metadata, and never calls external services.
+project scripts, never writes system scheduler state or git metadata, and only calls the DeepSeek balance endpoint.
 """
 from __future__ import annotations
 
@@ -42,6 +44,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -82,6 +86,23 @@ REFERENCE_STATUS_FILES = (
     ('cold_fixed_framework', 'cold_fixed_framework_status.json'),
     ('selected_six', 'selected_six_status.json'),
 )
+
+DEEPSEEK_ENV_KEYS = ('PENTA5_FRAMEWORK_API_KEY', 'DEEPSEEK_API_KEY', 'PENTA5_KILLER_API_KEY')
+DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
+DEEPSEEK_BALANCE_TIMEOUT = 10
+BALANCE_OK_CNY = 8.0
+BALANCE_WARN_CNY = 3.0
+PROVIDER_402_LOGS = (
+    'ai_job_framework.log',
+    'ai_job_killer.log',
+    'cold_framework_cron.log',
+    'selected_six_cron.log',
+)
+PROVIDER_402_PATTERN = re.compile(r'"status"\s*:\s*402(?!\d)|HTTP\s+402(?!\d)')
+PROVIDER_402_AT_RE = re.compile(r'"at"\s*:\s*"([^"]+)"')
+PROVIDER_402_WINDOW_SECONDS = 30 * 60
+PROVIDER_402_TAIL_LINES = 4000
+PROVIDER_402_TAIL_BYTES = 8 * 1024 * 1024
 
 
 def _one_line(text):
@@ -818,6 +839,160 @@ def check_crontab(ctx):
                   {'missing': len(missing), 'extra': len(extra)})
 
 
+def _dotenv_secret(path, keys):
+    """Return (name, value) for the first present .env key; never expose value elsewhere."""
+    found = {}
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as stream:
+            for raw in stream:
+                line = raw.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                name, _, value = line.partition('=')
+                name = name.strip()
+                if name.startswith('export '):
+                    name = name[len('export '):].strip()
+                if name not in keys:
+                    continue
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1].strip()
+                if value:
+                    found[name] = value
+    except OSError as exc:
+        return None, 'cannot read .env: %s' % type(exc).__name__
+    for name in keys:
+        if name in found:
+            return name, found[name]
+    return None, 'no API key in .env (%s)' % '/'.join(keys)
+
+
+def check_deepseek_balance(ctx):
+    """DeepSeek 余额: >=8 CNY ok, 3-8 CNY warn, <3 CNY fail; 查询/解析失败 warn。"""
+    source, secret = _dotenv_secret(ctx['root'] / '.env', DEEPSEEK_ENV_KEYS)
+    if source is None:
+        return _entry('deepseek_balance', WARN, 'balance skipped: %s' % secret)
+    request = urllib.request.Request(
+        DEEPSEEK_BALANCE_URL,
+        headers={'Authorization': 'Bearer ' + secret, 'Accept': 'application/json'})
+    try:
+        with urllib.request.urlopen(request, timeout=DEEPSEEK_BALANCE_TIMEOUT) as response:
+            payload = json.loads(response.read().decode('utf-8', 'replace'))
+    except urllib.error.HTTPError as exc:
+        return _entry('deepseek_balance', WARN,
+                      'balance query failed: HTTPError %s' % exc.code)
+    except (OSError, ValueError) as exc:
+        return _entry('deepseek_balance', WARN,
+                      'balance query failed: %s' % type(exc).__name__)
+    try:
+        first = payload['balance_infos'][0]
+        balance = float(first['total_balance'])
+        currency = str(first.get('currency') or 'CNY')
+        available = payload.get('is_available')
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        return _entry('deepseek_balance', WARN,
+                      'balance parse failed: %s' % type(exc).__name__)
+    if balance >= BALANCE_OK_CNY:
+        status = OK
+    elif balance >= BALANCE_WARN_CNY:
+        status = WARN
+    else:
+        status = FAIL
+    detail = ('total_balance=%.2f %s is_available=%s source=%s (ok>=%.0f warn>=%.0f)'
+              % (balance, currency, available, source, BALANCE_OK_CNY, BALANCE_WARN_CNY))
+    return _entry('deepseek_balance', status, detail,
+                  {'balance': balance, 'currency': currency,
+                   'is_available': available, 'source_key': source})
+
+
+def _read_log_tail(path, max_lines=PROVIDER_402_TAIL_LINES,
+                   max_bytes=PROVIDER_402_TAIL_BYTES):
+    with open(path, 'rb') as stream:
+        stream.seek(0, os.SEEK_END)
+        size = stream.tell()
+        stream.seek(max(0, size - max_bytes))
+        data = stream.read()
+    lines = data.decode('utf-8', 'replace').splitlines()
+    if size > len(data) and lines:
+        lines = lines[1:]
+    return lines[-max_lines:]
+
+
+def _provider_402_time(line):
+    match = PROVIDER_402_AT_RE.search(line)
+    if match is None:
+        return None
+    text = match.group(1).strip()
+    if text.endswith(('Z', 'z')):
+        text = text[:-1] + '+00:00'
+    return _parse_time(text)
+
+
+def check_provider_402(ctx):
+    """近 30 分钟 AI 任务日志出现 provider HTTP 402 -> warn; 读不到按 unknown/ok。"""
+    data = ctx['root'] / 'data'
+    now = ctx['now']
+    events = []
+    skipped = []
+    for filename in PROVIDER_402_LOGS:
+        path = data / filename
+        try:
+            lines = _read_log_tail(path)
+        except OSError as exc:
+            skipped.append('%s:%s' % (filename, type(exc).__name__))
+            continue
+        file_events = []
+        for line in lines:
+            if not PROVIDER_402_PATTERN.search(line):
+                continue
+            file_events.append({'file': 'data/' + filename,
+                                'time': _provider_402_time(line)})
+        if not file_events:
+            continue
+        timed = [event['time'] for event in file_events if event['time'] is not None]
+        # 带 at 的 AI_HTTP_PHASE 行是可靠时间; 无时间的纯文本报错行(同一 402 的
+        # traceback)用本文件最近的 timed 402 近似; 若整文件都没有时间才退回 mtime
+        # (活跃日志的 mtime 会一直刷新, 不能直接当每行时间, 否则旧 402 永远算"近期")。
+        fallback = max(timed) if timed else None
+        approximate = fallback is None
+        if fallback is None:
+            try:
+                fallback = datetime.fromtimestamp(path.stat().st_mtime, TZ)
+            except OSError:
+                skipped.append('%s:no-mtime' % filename)
+                continue
+        for event in file_events:
+            if event['time'] is None:
+                event['time'] = fallback
+                event['approximate'] = approximate
+            events.append(event)
+    recent = [event for event in events
+              if (now - event['time']).total_seconds() <= PROVIDER_402_WINDOW_SECONDS]
+    if recent:
+        latest = max(recent, key=lambda item: item['time'])
+        detail = ('402 in last 30m: count=%d latest_file=%s latest_at=%s'
+                  % (len(recent), latest['file'],
+                     latest['time'].isoformat(timespec='seconds')))
+        if latest.get('approximate'):
+            detail += ' (file mtime approx)'
+        if skipped:
+            detail += '; skipped=' + ','.join(skipped[:3])
+        return _entry('provider_402', WARN, detail,
+                      {'recent': len(recent), 'events': len(events),
+                       'latest_file': latest['file'],
+                       'latest_at': latest['time'].isoformat(timespec='seconds'),
+                       'skipped': len(skipped)})
+    detail = '近30分钟无402'
+    if events:
+        latest = max(events, key=lambda item: item['time'])
+        detail += (' (older_402=%d last=%s)'
+                   % (len(events), latest['time'].isoformat(timespec='seconds')))
+    if skipped:
+        detail += '; skipped=' + ','.join(skipped[:3])
+    return _entry('provider_402', OK, detail,
+                  {'recent': 0, 'events': len(events), 'skipped': len(skipped)})
+
+
 CHECK_FUNCS = (
     check_latest_draw,
     check_ai_jobs,
@@ -834,6 +1009,8 @@ CHECK_FUNCS = (
     check_data_tmp,
     check_crontab,
     check_evidence_size,
+    check_deepseek_balance,
+    check_provider_402,
 )
 FALLBACK_NAMES = {
     'check_latest_draw': ('latest_draw',),
@@ -851,6 +1028,8 @@ FALLBACK_NAMES = {
     'check_data_tmp': ('data_tmp',),
     'check_crontab': ('crontab_drift',),
     'check_evidence_size': ('evidence_size',),
+    'check_deepseek_balance': ('deepseek_balance',),
+    'check_provider_402': ('provider_402',),
 }
 
 
