@@ -34,6 +34,31 @@ MODELS = {
     'cold': ('Pro 冷码框架', None, 'cold_framework_status.json', 'cold_framework_cron.log', 'COLD_FRAMEWORK'),
     'cold_fixed': ('Pro 30期固定冷码', None, 'cold_fixed_framework_status.json', 'cold_fixed_framework_cron.log', 'COLD_FIXED_FRAMEWORK'),
 }
+_MODEL_ENV_KEYS = {'killer': 'PENTA5_MODEL_KILLER', 'framework': 'PENTA5_MODEL_FRAMEWORK'}
+_TIER_PREFIX = {'deepseek-flash': 'Flash', 'deepseek-v4-flash': 'Flash', 'deepseek-v4-pro': 'Pro'}
+
+
+def _model_tiers(root):
+    """Read only the non-secret model-tier keys for display; never returns API keys."""
+    values = {}
+    try:
+        lines = (Path(root) / '.env').read_text(encoding='utf-8').splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        text = line.strip()
+        if not text or text.startswith('#') or '=' not in text:
+            continue
+        key, _, value = text.partition('=')
+        key = key.strip()
+        if key in ('PENTA5_MODEL_KILLER', 'PENTA5_MODEL_FRAMEWORK', 'PENTA5_DEEPSEEK_MODEL'):
+            values[key] = value.strip().strip('"').strip("'")
+    result = {}
+    for job, key in _MODEL_ENV_KEYS.items():
+        model = values.get(key) or values.get('PENTA5_DEEPSEEK_MODEL')
+        result[job] = _TIER_PREFIX.get(model, '')
+    return result
+
 COLD_FAMILIES = {
     'cold': ('cold_framework', ('cold-framework-v1-30-pos3-tail3',
                                'cold-framework-v2-30-pos3-tail2',
@@ -603,9 +628,13 @@ def build_summary(bundle, now):
         recent = [row for row in rows if row['eligible'] is True][-50:]
         published_refs = [ref for ref, event in evidence.items() if event.get('publication_state') == 'published']
         last = max(published_refs, key=period_slot) if published_refs else None
+        label = config[0]
+        tier = (bundle.get('model_tiers') or {}).get(key, '')
+        if tier:
+            label = tier + ' ' + re.sub(r'^(?:Flash|Pro)\s+', '', config[0])
         model_rows[key] = {**{name: current[name] for name in ('status', 'reference_period', 'target_period', 'stages',
                               'durations_seconds', 'close_remaining_seconds', 'error_code', 'request_registered_at')},
-                           'label': config[0], 'phase': phase, 'server_panel_target_period': panel_target,
+                           'label': label, 'phase': phase, 'server_panel_target_period': panel_target,
                            'panel_matches': matches,
                            **({'active_rule_start_target': active_start} if key=='cold50_fixed' else {}),
                            'availability': current.get('availability',observation(key,{},None,now)),
@@ -651,6 +680,7 @@ def _log_history(path):
 def collect(*, root=ROOT, clock=beijing_now):
     """Read each fixed source once, sequentially compact large ledgers, no writes."""
     root = Path(root)
+    model_tiers = _model_tiers(root)
     data = root / 'data'
     initial = _now(clock())
     errors, loaded, failed_reads = [], {}, set()
@@ -758,7 +788,7 @@ def collect(*, root=ROOT, clock=beijing_now):
     version_comparison=comparison.get('version_comparison') if isinstance(comparison,dict) else None
     bundle = {'control': {} if 'data/ai_api_control.json' in failed_reads else control, 'records': records, 'conflicts': sorted(conflicts), 'evidence': evidence,
               'statuses': statuses, 'diagnostics': diagnostics, 'panel_html': panel, 'errors': errors,
-              'model_starts': starts, 'active_rule_starts': active_rule_starts,
+              'model_starts': starts, 'active_rule_starts': active_rule_starts, 'model_tiers': model_tiers,
               'unavailable_models': unavailable,'delivery':delivery}
     result=build_summary(bundle, _now(clock()))
     # This separately validated strategy appendix is optional. Never reinterpret

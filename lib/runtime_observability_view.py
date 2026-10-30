@@ -312,7 +312,11 @@ def render(summary):
                    '数据就绪。' if source.get('source_ready') is True else '数据就绪状态：—。')
     meta = ('更新：' + (updated.strftime('%Y-%m-%d %H:%M:%S') if updated else '—') + '（北京时间）'
             '；完整数据期：' + (latest or '—') + '；本轮应到参考期：' + (_period(source.get('expected_reference')) or '—'))
-    rows = ''.join(_row(key, label, models.get(key), day) for key, label in MODELS)
+    def row_label(key, fallback):
+        value = models.get(key)
+        dynamic = value.get('label') if isinstance(value, dict) else None
+        return dynamic if isinstance(dynamic, str) and dynamic else fallback
+    rows = ''.join(_row(key, row_label(key, label), models.get(key), day) for key, label in MODELS)
     return (START + '\n<section id="runtime-observability" data-runtime-updated="'
             + (updated.isoformat() if updated else '') + '">' + STYLE
             + '<details id="runtime-observability-details"><summary id="runtime-observability-line" aria-label="运行摘要，展开查看明细">'
