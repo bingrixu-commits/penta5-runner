@@ -262,6 +262,24 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
                 try:
                     return validate_selection(payload)
                 except ValueError as error:
+                    # 2026-10-30: pro often returns an unbalanced he3_keep (e.g. 02468)
+                    # even though the prompt states the hard 2-odd/3-odd rule. Retrying
+                    # burned ~3x tokens. Locally project the model's own digits onto the
+                    # closest allowed balanced keep (deterministic, max overlap), then
+                    # re-validate; only fall through to retry when still invalid.
+                    if str(error) == 'strategy-response-cold-he3-parity' and isinstance(payload, dict):
+                        repaired = core.repair_he3_keep(payload.get('he3_keep'))
+                        if repaired is not None:
+                            candidate = dict(payload)
+                            candidate['he3_keep'] = repaired
+                            try:
+                                repaired_result = validate_selection(candidate)
+                            except ValueError:
+                                repaired_result = None
+                            if repaired_result is not None:
+                                _log(log, 'COLD_HE3_PARITY_REPAIRED ref=' + reference
+                                     + ' from=' + str(payload.get('he3_keep')) + ' to=' + repaired)
+                                return repaired_result
                     # Emit only our fixed schema/strategy codes, never provider text.
                     code = str(error)
                     allowed = {'cold-fixed-model-invalid-selection', 'cold-fixed-model-invalid-reason',

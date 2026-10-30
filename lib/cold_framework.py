@@ -127,6 +127,33 @@ def _keep(value, field):
     return value
 
 
+_ALLOWED_HE3_KEEPS = tuple(''.join(values) for values in combinations('0123456789', 5)
+                           if sum(int(digit) % 2 for digit in values) in (2, 3))
+
+
+def repair_he3_keep(value):
+    """Deterministically enforce the user's hard parity constraint on AI output.
+
+    2026-10-30: pro keeps returning unbalanced 5-digit sets (e.g. 02468) although
+    the prompt states the 2-odd/3-odd rule, so each period burned ~3 attempts.
+    This projects the model's own digits onto the allowed balanced keeps with
+    maximum overlap (lexicographic tie-break, fully deterministic). Returns None
+    if the value is structurally invalid and cannot be repaired.
+    """
+    if (not isinstance(value, str) or len(value) != 5 or len(set(value)) != 5
+            or any(digit not in '0123456789' for digit in value)):
+        return None
+    odd = sum(int(digit) % 2 for digit in value)
+    if odd in (2, 3):
+        return value
+    best = None
+    for candidate in _ALLOWED_HE3_KEEPS:
+        overlap = len(set(candidate) & set(value))
+        if best is None or overlap > best[0] or (overlap == best[0] and candidate < best[1]):
+            best = (overlap, candidate)
+    return best[1] if best else None
+
+
 def validate_new_he3_keep(value):
     """Require balanced new proposals; historical seal replay stays unchanged."""
     value = _keep(value, 'he3_keep')

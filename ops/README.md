@@ -87,3 +87,13 @@
 - **已知待优化（不影响出数）**：cold_fixed_framework 每期会用 3 次尝试才通过
   （前两次 `strategy-response-cold-he3-parity` 校验被拒，第 3 次才过），token 约 3 倍；
   若要优化需查 pro 模型对 he3_keep 单双约束的遵循率（可加更强的重试反馈或本地校正）。
+- **2026-10-30 09:23 cold_fixed/cold_framework 的 he3 单双校验改为本地兜底（省 3 倍 token）**：
+  诊断发现 deepseek-v4-pro 对「he3_keep 必须 2 单 3 双或 3 单 2 双」的硬约束遵循率只有约
+  1/3（实测连续 3 次输出 01234/02468/04568，仅第一次合规），原先靠 3 次重试硬扛：
+  cold_fixed 今日 1033 次请求 vs 684 期发布、其中 200 次 parity 拒绝。现改为在
+  `checked_selection` 里捕获 `strategy-response-cold-he3-parity` 后，用
+  `core.repair_he3_keep()` 把模型自己的 5 个数字确定性投影到最近的合法均衡集合
+  （最大重合、字典序破同，纯本地、不额外调 API），再次校验通过即接受，并在
+  cron 日志记 `COLD_HE3_PARITY_REPAIRED ref=... from=... to=...`。
+  封存 schema/selection_policy 不变，只有审计日志多一行；仅当修复后仍不合法
+  （如 he2/字段错误）才走原来的重试。
