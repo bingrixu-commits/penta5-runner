@@ -72,3 +72,10 @@
   `.env` 设 `PENTA5_MODEL_HE3=deepseek-v4-pro`，cron 恢复。he3 每次 prompt 仅 ~640
   tokens、每天约 50 次调用，pro 成本约 0.5 元/天级；其余 3 个统计型任务
   (selected_six/cold_framework/cold_fixed_framework) 仍暂停(见 data/ai_api_paused.json)。
+- **2026-10-30 08:48 合尾(he3_refine)切 pro 的两个配套修复**：
+  1) `_validate_saved` 原来把 `returned_model` 硬编码为 flash 白名单，切 pro 会报
+     `unverified-refinement-model`；已改成"模型族一致"校验（flash 族/pro 族，历史
+     flash 封存仍合法、新 pro 封存也合法，跨族降级/升级仍拒）。
+  2) he3 cron 的 `flock -n` 改为 `flock -w 30`：run_stats 刷新末尾会短暂占用
+     `/var/lock/penta5-he3.lock`（he3_extra 阶段），`-n` 会让 he3 静默跳过整期；
+     改为最多等 30s 再执行。手动验证 ref=105 已用 v4-pro 成功发布。

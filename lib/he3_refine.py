@@ -44,6 +44,19 @@ def _resolve_model():
 
 MODEL = _resolve_model()
 WAIT_PARENT_SECONDS = 225.0
+# 2026-10-30: 合尾支持按任务切 flash/pro。历史封存是 flash、新封存可能是 pro，
+# 校验按「模型族」判断（同一族内允许尾号），不再硬编码只认 flash。
+FLASH_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?flash(?:-[0-9]{4})?')
+PRO_FAMILY = re.compile(r'deepseek-(?:v4(?:\.1)?-)?pro(?:-[0-9]{4})?')
+
+
+def _model_family(value):
+    if isinstance(value, str):
+        if FLASH_FAMILY.fullmatch(value):
+            return 'flash'
+        if PRO_FAMILY.fullmatch(value):
+            return 'pro'
+    return None
 
 
 def _digest(value):
@@ -275,10 +288,11 @@ def _validate_saved(seal, reference, now, *, root, published=True, parent_seals=
             response['he3_drop'], response['he3_keep5'], response['reason'], generated):
         raise ValueError('refinement-card-changed')
     metadata = seal.get('model_metadata')
+    requested_family = _model_family(metadata.get('requested_model')) if isinstance(metadata, dict) else None
+    returned_family = _model_family(metadata.get('returned_model')) if isinstance(metadata, dict) else None
     if (not isinstance(metadata, dict) or metadata.get('ref') != reference
-            or metadata.get('requested_model') != MODEL or metadata.get('finish_reason') != 'stop'
-            or not isinstance(metadata.get('returned_model'), str)
-            or re.fullmatch(r'deepseek-(?:v4(?:\.1)?-)?flash(?:-[0-9]{4})?', metadata['returned_model']) is None):
+            or requested_family is None or returned_family != requested_family
+            or metadata.get('finish_reason') != 'stop'):
         raise ValueError('unverified-refinement-model')
     if published or seal.get('publication_state') == 'published':
         at = parse_time(seal.get('published_at'))
@@ -510,7 +524,10 @@ def main():
             result = run_once()
             code = 0 if result['published'] or result.get('status') == 'paused' else 1
         except Exception as error:
-            _log(print, 'Additional he3 reference not published; error_type=' + type(error).__name__)
+            import traceback
+            _log(print, 'Additional he3 reference not published; error_type=' + type(error).__name__
+                 + '; error=' + str(error)[:200])
+            traceback.print_exc()
             code = 1
         try:
             from he3_refine_view import refresh_he3_refine_panel
