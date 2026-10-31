@@ -52,3 +52,10 @@
 - 一天内 4 次口径切换（v6 → v7 → v6 → v8），每次切换今日命中率清零重算，观测抖动被误读为退化。
 - 两个 DSH 窗口并发改同一工作区 2 次（v7 无记录回归、v8 与回滚并行）。
 - 结论：稳定性的来源是口径冻结 + 单写者 + 分层统计，不是继续调策略追数字。
+
+## 8. 冻结守卫（机器强制，2026-10-31 22:14 起）
+
+- 冻结戳：ops/kill3-freeze.json，记录 rule_version、frozen_at（21:41:42）、freeze_ref_period（20261031254）、min_periods=100、freeze_hours=72，以及 4 个受控源码 sha256（lib/kill3_tail.py、lib/kill_three_view.py、scripts/run_kill3_tail.py、lib/panel_context.py）。
+- ops_health 新增探针 kill3_freeze：口径版本与受控源码 hash 不变 → OK，并显示进度（N/100 期、已冻结 h/72h）；任一变化 → WARN，detail 列出变更文件或口径差异。其他框架（framework/six/cold/killer 等）的稳定化改动不在此守卫范围。
+- 经批准的变更（冻结期满走门禁，或冻结期内允许的 bug 修复）完成后，必须重算受控文件 hash、更新冻结戳并记录原因与 commit；否则监控会持续 WARN。
+- 冻结期结束条件：≥100 期 或 满 72 小时，先到为准；当前进度见 ops_health 的 kill3_freeze 行。

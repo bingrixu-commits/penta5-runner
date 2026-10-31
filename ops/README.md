@@ -359,3 +359,5 @@
   沿用占 53.5% 期。备份：/root/ops/tail-hold3-killer-221211/（3 个 .py + golden-killer.json）。
   回滚：git revert。至此五个框架（AI三位置/固定八码/七项独立/冷码七项/killer）合尾稳定化全部落地；
   影子任务停止对照，保留只读历史与面板说明。
+
+- **2026-10-31 22:14 kill3 冻结守卫上线（机器强制口径冻结 / 单写者）**：用户确认冻结期「≥100 期或 72 小时先到为准」并要求其他窗口不得再改 kill3。新增 ops/kill3-freeze.json（rule_version=kill3-tail-v8-three-positions-hold3、frozen_at=2026-10-31T21:41:42+08:00、freeze_ref_period=20261031254、min_periods=100、freeze_hours=72、4 个受控源码 sha256：lib/kill3_tail.py / lib/kill_three_view.py / scripts/run_kill3_tail.py / lib/panel_context.py）+ ops_health 新探针 kill3_freeze（RULE_VERSION 或受控 hash 变化即 WARN；同时显示进度与已冻结时长）。实测：kill3_freeze OK「freeze kill3-tail-v8-three-positions-hold3 · 进度 13/100 期 · 已冻结 0.5h/72h · 冻结中」。冻结期内其他框架的 hold3 稳定化提交（b6bc46f/0bb4f57/38fd332，15 文件）不含 kill3 受控文件，守卫判定未违反。回滚：git revert 本提交（冻结戳与探针一并移除）。

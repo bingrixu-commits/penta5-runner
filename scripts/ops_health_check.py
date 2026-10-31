@@ -7,6 +7,7 @@ Collects a fixed set of probes into one JSON report plus a human table:
   job:framework      data/ai_job_status.json status + last_success_ref lag (>=2 fail)
   job:killer         same for the killer job
   kill3_stability    24h rule_version switches / missing ref slots / publish latency p50
+  kill3_freeze       freeze stamp: rule_version + monitored source hashes unchanged, period progress
   stat50_seal        max prediction_seals key in data/stat50_compare_seals.json
   he3_refine         reference_period lag + status
   cold_framework     reference_period lag + status
@@ -38,6 +39,7 @@ project scripts, never writes system scheduler state or git metadata, and only c
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -116,6 +118,9 @@ KILL3_MISSING_WARN_SLOTS = 1
 KILL3_MISSING_FAIL_SLOTS = 2
 KILL3_LATENCY_WARN_SECONDS = 180
 KILL3_LATENCY_FAIL_SECONDS = 300
+KILL3_FREEZE_JSON = 'ops/kill3-freeze.json'
+KILL3_FREEZE_HOURS = 72
+KILL3_FREEZE_PERIODS = 100
 
 
 def _one_line(text):
@@ -522,6 +527,83 @@ def check_kill3_stability(ctx):
                    'sealed_24h': len(sealed_24h),
                    'latency_samples': len(latencies_ms),
                    'current_rule_version': current_version})
+
+
+def _file_sha256(path):
+    digest = hashlib.sha256()
+    try:
+        with path.open('rb') as handle:
+            for chunk in iter(lambda: handle.read(65536), b''):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def check_kill3_freeze(ctx):
+    """口径冻结守卫：冻结期内 RULE_VERSION 或受控源码变化即 WARN（须走变更门禁）。"""
+    root = ctx['root']
+    payload, error = _load_json(root / KILL3_FREEZE_JSON)
+    if not isinstance(payload, dict):
+        return _entry('kill3_freeze', WARN,
+                      'freeze stamp missing/unreadable: %s' % (error or 'not a dict'))
+    frozen_version = str(payload.get('rule_version') or '')
+    frozen_at = _parse_time(payload.get('frozen_at'))
+    freeze_ref = str(payload.get('freeze_ref_period') or '')
+    try:
+        min_periods = int(payload.get('min_periods') or KILL3_FREEZE_PERIODS)
+        max_hours = float(payload.get('freeze_hours') or KILL3_FREEZE_HOURS)
+    except (TypeError, ValueError):
+        min_periods, max_hours = KILL3_FREEZE_PERIODS, KILL3_FREEZE_HOURS
+    source = root / 'lib' / 'kill3_tail.py'
+    try:
+        text = source.read_text(encoding='utf-8', errors='replace')
+    except OSError as exc:
+        return _entry('kill3_freeze', FAIL, 'cannot read kill3_tail.py: %s' % exc)
+    match = re.search(r"^[ \t]*RULE_VERSION\s*=\s*'([^']+)'", text, re.M)
+    current_version = match.group(1) if match else None
+    problems = []
+    if current_version != frozen_version:
+        problems.append('口径变更 frozen=%s current=%s'
+                        % (frozen_version or '-', current_version or '-'))
+    changed = []
+    for rel, expected in (payload.get('files') or {}).items():
+        if expected and _file_sha256(root / rel) != expected:
+            changed.append(str(rel))
+    if changed:
+        problems.append('冻结期源码变更: %s' % ', '.join(changed[:3]))
+    periods = 0
+    try:
+        seals_payload, _ = _load_json(root / 'data' / 'kill3_tail' / 'seals.json')
+        records = (seals_payload or {}).get('records') if isinstance(seals_payload, dict) else None
+        for record in records or []:
+            if not isinstance(record, dict):
+                continue
+            ref = str(record.get('ref_period') or '')
+            if (record.get('publication_state') == 'published'
+                    and ref and ref >= freeze_ref):
+                periods += 1
+    except Exception:
+        periods = 0
+    hours = None
+    if frozen_at is not None:
+        hours = (ctx['now'] - frozen_at).total_seconds() / 3600.0
+    expired = bool((hours is not None and hours >= max_hours) or periods >= min_periods)
+    status = WARN if problems else OK
+    parts = ['freeze ' + (frozen_version or '-'),
+             '进度 %d/%d 期' % (periods, min_periods)]
+    if hours is not None:
+        parts.append('已冻结 %.1fh/%.0fh' % (hours, max_hours))
+    parts.append('冻结期已满（可评审）' if expired else '冻结中')
+    if problems:
+        parts.append('；'.join(problems))
+    return _entry('kill3_freeze', status, ' · '.join(parts),
+                  {'rule_version': frozen_version,
+                   'current_rule_version': current_version,
+                   'periods': periods, 'min_periods': min_periods,
+                   'hours': None if hours is None else round(hours, 2),
+                   'freeze_hours': max_hours, 'expired': expired,
+                   'changed_files': changed})
 
 
 def check_stat50(ctx):
@@ -1227,6 +1309,7 @@ CHECK_FUNCS = (
     check_ai_jobs,
     check_kill3,
     check_kill3_stability,
+    check_kill3_freeze,
     check_stat50,
     check_reference_statuses,
     check_panel,
@@ -1250,6 +1333,7 @@ FALLBACK_NAMES = {
     'check_ai_jobs': ('job:framework', 'job:killer'),
     'check_kill3': ('kill3_tail',),
     'check_kill3_stability': ('kill3_stability',),
+    'check_kill3_freeze': ('kill3_freeze',),
     'check_stat50': ('stat50_seal',),
     'check_reference_statuses': tuple(name for name, _ in REFERENCE_STATUS_FILES),
     'check_panel': ('panel_html',),
