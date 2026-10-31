@@ -12,8 +12,6 @@ penta5-runner 的 operation window 硬约束：lib/ai_operation_window.py 里 PL
 §
 penta5-runner he3 统计缓存：lib/he3_refine_stats.py 2026-10-30 加入 data/he3_refresh.stamp.json 输入指纹缓存，he3_extra 阶段 53s→3.2s（输出逐字节一致）；PENTA5_HE3_STATS_CACHE=0 禁用、删 stamp 强制冷算；新开奖会改变 tail 记录指纹从而必 miss。同一日期还新增 scripts/ops_health_check.py（19 项体检，每 10min，data/ops_health.json + data/ops_alerts.log，仅状态跃迁告警）、scripts/refresh_source_manifest.py（--if-drift，04:55 重建证据备份 baseline）、scripts/crontab_tool.sh + ops/crontab.txt（crontab 版本化与 drift 告警）。
 §
-penta5-runner：退役数据 selected_framework_* 与 pro_compare_* 已于 2026-10-30 归档到 /root/archive/retired-20261030/（gzip 共 12MB，原始 93MB）；evidence_backup 的 REQUIRED_DATA 已移除两项、strategy_comparison 不再读取 legacy 'selected' 账本。找回方法=gunzip 回 data/ 并回退 commit 0c86888。cuopt：用户确认没有 8.138.155.17（阿里云广州）这台服务器、也决定不再买/租服务器，已把 pm2+ecosystem 的 PENTA5_CUOPT_URL 置空（commit 8fb0c23），auto-top6 直接 JS 穷举回退，ops_health 把 cuopt-url-unset 判为「已停用 OK」；不要建议重新部署 GPU。
-§
 penta5-runner 面板 2026-10-31 新增「刮刮乐·单双大小」静态区块（commit 464c85e 只含 scripts/panel_scratch_card.py 幂等补丁脚本）：panel.html 里 stat-grid 之后插入 #scratch-card；样式 id=penta5-scratch-style、脚本 id=penta5-scratch-card（都无 START/END 标记，panel-sync 只按标记改区块、不会覆盖，已连续两轮重建验证保留）。卡片读 #disp_period/#disp_numbers/#disp_hewei/#disp_time，用 MutationObserver + penta5:panel-updated 事件在每期头部数字变化时自动换卡（重铺 canvas 涂层）；canvas 刮开>50% 自动揭开，60s 未刮自动揭开，右上角有「全部刮开」。panel.html 是 skip-worktree，改动仅在磁盘，备份 /root/ops/scratch-card-20261031/。注意：面板页自带 live-refresh 会校验脚本哈希，改 panel.html 后旧页面会提示手动刷新一次。
 §
 penta5-runner 2026-10-31 上线三项（commits 7200fcc/efedb85/9d37acf）：① scripts/ops_health_check.py 新增 deepseek_balance（ok>=8/warn>=3/fail<3 CNY，脚本自己解析 .env 的 PENTA5_FRAMEWORK_API_KEY）与 provider_402（近30分钟日志有 402→warn）；② 面板新增「整组命中率 vs 随机期望」区块：lib/hitrate_baseline.py 生成 data/hitrate_baseline.json（精确枚举基线 killer 41.62/framework 55.59/selected_six 51.60/冷码 54.27/固定 54.36/he3 93.75/kill3 61.91%），lib/hitrate_baseline_view.py 渲染，/root/run_stats.py 每轮先重算再在 update_panel 最外层注入（run_stats.py 不在 git，备份 /root/ops/remediation-20261031/）；③ six「来源核验暂不可用」修复：scripts/build_six_seal_index.py 对 350MB selected_six_seals.json 做字节级 prediction_seals 提取生成 data/selected_six_seal_index.json（54MB/1059 seals，字段全保留、校验不降级），lib/strategy_comparison.py 在源超 128MB 时读索引、源 size/mtime 变更自动重建、失败回落 source_error；面板 six 现显示整组 47.06%/定位 90.52%。
@@ -31,3 +29,5 @@ penta5-runner 2026-10-31 上线「模型运行观测层」：lib/model_usage.py 
 阿萨
 §
 penta5-runner：面板「整组命中率 vs 随机期望（累计·版本锁定）」大表已于 2026-11-01 移到独立页 /hitrate（cron 每15min 重写 hitrate.html，面板只留 hitrate-base-entry 入口），不要再加回主面板。提交 598000f/b3bede4，备份 /root/ops/hitrate-page-20261101-044355/。
+§
+penta5-runner .env 的 PENTA5_MODEL_* 行由 scripts/model_tier_guard.py（cron 每10分钟，data/model_tier_guard.log）按余额自动全量切 flash/pro，且会增删个别键（如 KILL1/KILL2P 行可能消失）；各 task 脚本的真实模型解析有回退链（kill1: KILL1→KILLER→DEEPSEEK_MODEL；kill2p: KILL2P→KILL3→KILLER→DEEPSEEK_MODEL）。读「某任务当前用什么模型」必须按回退链解析 .env，不能只看单键。
