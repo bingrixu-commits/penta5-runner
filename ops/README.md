@@ -193,3 +193,16 @@
   通过（含 KILL_THREE/COLD_HIT_STATS/POSITION_COLD/MODEL_SIGNI/REAL_HIT/STRATEGY_BOARD_DERIVED）。
   jsdom 实测：29 个 name 配对 BAD=0；apply() 对 KILL_THREE 产出 25 个 plan、对 REAL_HIT
   （89.91%→88.88%）正常合并，无异常、无「数据更新暂未完成」提示。
+
+
+- **2026-10-31 11:55 彻底退役「30期固定冷码七项框架」(cold_fixed)**：用户要求把这套框架清理干净。
+  处理：① 删除 `*/5` cron（28→27 jobs，crontab_tool.sh diff matches）；② 面板区块与攻击语
+  编辑器条目移除（attack editor v6），`lib/model_retirement.py` 每轮幂等 strip 该区块；
+  ③ 运行观测/命中率累计/模型用量/面板上下文/发布时效等派生视图全部去 cold_fixed，聚合时过滤
+  历史 ledger；④ 29 个数据文件（8.8M → gz 772K）归档到
+  `/root/archive/retired-20261031-cold-fixed/`（manifest.json + README.md，含逐文件 sha256
+  与回滚步骤）；⑤ 删除剩余代码文件 `lib/cold_fixed_framework{,_model,_view}.py`、
+  `scripts/run_cold_fixed_framework.py`（9791b08，无调用方），清理 model_usage 采集状态与 pycache。
+  相关提交：297a0b2、c61effe、d3d1fe4、9791b08。回滚：`git revert 9791b08 d3d1fe4 c61effe 297a0b2`
+  + 按归档 README 执行 gunzip 恢复数据 + `bash scripts/crontab_tool.sh install` + 恢复 logrotate 备份。
+  注意：本日志中 2026-10-30 关于 cold_fixed 的条目均为历史记录，该框架现已不再运行。
