@@ -19,6 +19,7 @@
 from datetime import datetime
 from html import escape
 import json
+import math
 
 import kill3_tail
 
@@ -53,6 +54,21 @@ STYLE = """
 
 def _pct(value):
     return f'{value * 100:.2f}%' if isinstance(value, (int, float)) else '-'
+def _wilson(hits, n, z=1.96):
+    """Wilson 95% CI（比例）；样本为 0 时返回 None。"""
+    try:
+        hits, n = int(hits), int(n)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    p = hits / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return centre - half, centre + half
+
+
 
 
 def _clock(value):
@@ -68,6 +84,10 @@ def _stats_html(stats):
     pending = stats.get('pending') or 0
     late = stats.get('late') or 0
     if total:
+        tail_stats = stats.get('tail') or {}
+        tail_ci = _wilson(tail_stats.get('hits'), tail_stats.get('bets'))
+        tail_ci_text = (f'，95%CI {tail_ci[0] * 100:.1f}–{tail_ci[1] * 100:.1f}%'
+                        if tail_ci else '')
         patterns = stats.get('patterns') or {}
         parity = patterns.get('reverse_parity') or {}
         size = patterns.get('reverse_size') or {}
@@ -76,8 +96,8 @@ def _stats_html(stats):
             f'（{stats.get("group_hits")}/{total} 期）',
             f'位置杀码（2 注/期，随机基线90%） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
             f'（{stats.get("positions", {}).get("hits")}/{stats.get("positions", {}).get("bets")} 注）',
-            f'合尾杀码（随机基线90%） <b>{_pct(stats.get("tail", {}).get("rate"))}</b>'
-            f'（{stats.get("tail", {}).get("hits")}/{stats.get("tail", {}).get("bets")} 期）',
+            f'合尾杀码（随机基线90%） <b>{_pct(tail_stats.get("rate"))}</b>'
+            f'（{tail_stats.get("hits")}/{tail_stats.get("bets")} 期{tail_ci_text}）',
             f'单双反向（随机基线93.75%） <b>{_pct(parity.get("rate"))}</b>（{parity.get("hits")}/{total} 期）',
             f'大小反向（随机基线93.75%） <b>{_pct(size.get("rate"))}</b>（{size.get("hits")}/{total} 期）',
             f'待核验 <b>{pending}</b> 期',
@@ -97,6 +117,10 @@ def _stats_html(stats):
     elif loss:
         join += f' · 当前 <b style="color:#b91c1c">连败 {loss} 期</b>'
     join += f' · 今日四手连败 <b>{stats.get("four_loss_cycles") or 0}</b> 次（不重叠计数）'
+    if total and total < 200:
+        sigma = 100.0 * math.sqrt(0.9 * 0.1 / total)
+        join += (f' · 单项样本 n={total}（&lt;200 属小样本：90% 项 1σ≈{sigma:.1f}pp、'
+                 f'2σ≈{2 * sigma:.1f}pp），单日单项只作波动参考')
     return f'<div class="k3-stats"><span>{join}</span></div>'
 
 
