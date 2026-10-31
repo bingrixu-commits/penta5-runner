@@ -536,3 +536,32 @@ TAIL_STABILITY_SHADOW 区块后 panel.html 中「冷码七项」「冷码七项�
 import_from_state.js 及 SHA256SUMS.before）。
 `api/import_from_state.js` 的 cold_framework_json / cold_framework_success 是 RDS 落库列，已无生产方
 （预测对象不再有 coldFramework 字段，写入恒为 NULL），不展示、不进统计，随 schema 保留。
+
+## 2026-11-01 03:53 按用户要求保留/恢复冷码统计模块
+
+用户 03:53 指令「相关统计模块留着」：02:38 的「彻底清理」应只针对 cold_framework（AI 冷码七项框架），
+**冷码观察 / 冷码杀号战绩 / 位置冷码 / 冷码回测（position_cold 守护进程）这些统计模块要保留**。据此恢复，
+cold_framework 及其面板区块仍保持退役。
+
+- **恢复代码（commit 5c62a34）**：`git checkout b0319a5^ -- ` 恢复 lib/cold_observation.py、
+  cold_observation_view.py、cold_hit_stats_view.py、position_cold_view.py；scripts/cold_backtest.py、
+  cold_hit_stats.py、position_cold_daemon.py、position_cold_report.py、kill_three_pick.py（10 文件原样）；
+  lib/model_retirement.py 恢复为只剥除 COLD_FRAMEWORK（不再剥除三个统计块）。
+- **恢复运行（commit 18c1055 + repo 外）**：systemd `penta5-position-cold.service` enable --now
+  （active，position_cold_daemon 每期重算 position_cold_report 与 cold_hit_stats，实测 04:01:13
+  trigger=new-period=20261101048 elapsed=12.33s）；`/root/run_stats.py`（repo 外，备份
+  `/root/ops/cold-family-20261031183554/run_stats.py`）恢复 position_cold_view / cold_hit_stats_view /
+  cold_observation_view 三个 import、cold_observation 阶段与面板链两个 apply 调用（保留并行窗口 kill2 退役改动）；
+  `/etc/logrotate.d/penta5` 恢复 cold_backtest/cold_hit_stats 两行；ops/crontab.txt 恢复冷码回测 10 */6 行并
+  install（32 jobs，diff 一致）；panel_live_refresh names 恢复三块名；数据由
+  `/root/archive/retired-20261101-cold-family/cold-family-data.tar.gz` 解档恢复。
+- **保持清理（未恢复）**：cold_framework 全部（见 7ce1814/a950546/79fb363 与 02:38 清理节）、
+  cold50/cold50_fixed 休眠残留、attack_editor 的 cold50 攻击语定义、runtime_observability / panel_delivery_timing /
+  operational_availability 中 cold 家族死代码、5 个视图的 COLD_* 回退锚点字符串（不影响功能）。
+- **验证**：panel.html COLD_OBSERVATION / COLD_HIT_STATS / POSITION_COLD 三块各 1（服务器每轮 run_stats 重建后仍在）；
+  cold_observation.json sample_count=30 stats_error=false；cold_hit_stats.json / position_cold_report.json 由
+  position_cold_daemon 按新期号刷新；py_compile + import smoke 通过；REFRESH_SCRIPT 三块名各 1 且 install 幂等。
+- **回滚**：`git revert 18c1055 5c62a34`；run_stats 回拷 `/root/ops/cold-family-20261031183554/run_stats.py`；
+  systemctl disable --now + 删 unit（备份在 `/root/ops/cold-family-20261031183554/`）；crontab/logrotate 按备份回退；
+  数据无需处理（已解档回 data/）。
+
