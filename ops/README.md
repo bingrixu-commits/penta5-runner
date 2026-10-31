@@ -301,3 +301,10 @@
   已刷新，仅余额/用量已知 warn。备份：/root/ops/kill3-v8-hold3-210925/（6 个 .py +
   golden-v6.json）。回滚：git revert 2b7c958；回滚后下一期按 v6 口径封存，v8 封存保留
   （不影响历史核验）。
+
+- **2026-10-31 21:40–21:51 kill3 稳定方案落地（冻结 v8 + 面板口径追溯 + manifest 自动基线 + kill3_stability 探针）**：用户要求「给一个稳定方案」，按四层落地：
+  1) 冻结：新增 ops/kill3-stability-plan.md，声明冻结 kill3-tail-v8-three-positions-hold3（3 位置全部计入/整组 6 项/位置 3 注/尾码 hold3），冻结 72 小时且 ≥100 期；之后变更必须影子→门禁（n≥50、整组相对现行 95%CI 不劣、单项不低于精确基线 −2σ）→ 新 revision，一天最多 1 次、一版只改一项、先算 10^4 精确基线；并写清单写者部署、备份/回滚、监控阈值、余额与 402 纪律。
+  2) 面板：KILL_THREE 新增只读「口径追溯行」——口径 kill3-tail-v8-three-positions-hold3 · 自 ref 20261031254 起（本版 N 期）· 整组精确基线 54.78%（6 项）· 口径已冻结（ops/kill3-stability-plan.md）；21:46:11 发布期起自然渲染，未改任何统计口径（当时今日整组 4/7=57.14%、位置 19/21=90.48%，与存档一致）。提交 99e3f1b（lib/kill3_tail.py 新增只读 version_info()，lib/kill_three_view.py 渲染色行）。
+  3) 监控：ops_health 新增 kill3_stability 探针：24h rule_version 切换次数（≥2 仅 WARN，提示口径churn）、24h 缺期槽数（历史缺期/AI 总闸关闭所致 → WARN）、最近 6 个应封存槽位缺期（≥2 → FAIL，可操作）、最近 20 期发布延迟中位数（>180s WARN、>300s FAIL）。实测 version_changes=8 missing_slots=61 recent_missing=0 p50_latency=40s。提交 dfb5184。
+  4) manifest：复核确认此前「每小时 fail」不是误报——是每次源码变更后未刷新基线的预期 drift；新增版本化 .githooks/post-commit（core.hooksPath=.githooks），lib|scripts|ops 变更的 commit 提交后自动 refresh_source_manifest --if-drift；实测提交 dfb5184 后自动写 auto-baseline-20261031-215029，21:50:32 manifest_drift 恢复 OK。
+  验证：HEAD dfb5184、git status 干净；ops_health overall=warn，只剩 kill3_stability（口径churn 历史提示）与 model_usage（今日 402 历史 8 次）两项已解释 warn，无 fail；kill3 最新封存 ref 20261031261 正常发布、面板 data-as-of 同步；余额已充值至 21.96 元、余额守护自动恢复（warn→ok）。回滚：git revert dfb5184 99e3f1b，并 git config --unset core.hooksPath（如需移除自动基线 hook）；已封存记录一律不动。
