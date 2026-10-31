@@ -29,3 +29,5 @@ penta5-runner 2026-10-31 06:51 状态：服务器全自动、本机关机不影�
 penta5-runner 2026-10-31 上线「模型运行观测层」：lib/model_usage.py + lib/model_usage_view.py + scripts/run_model_usage.py（每分钟 cron，flock penta5-model-usage，日志 data/model_usage_cron.log 已入 logrotate）；只读 7 个 AI 任务日志的 AI_* 观测行 → data/model_usage/ledger-YYYYMM.jsonl + summary.json；面板 #model-usage 区块（MODEL_USAGE_START/END，在 RUNTIME_OBSERVABILITY_END 后，run_stats 重生成不覆盖）；ops_health 新增 model_usage 项。首轮回填 8715 事件，402=619/429=7 与原始日志 grep 一致。commits 1bb95cf/270817a；备份 /root/ops/model-usage-20261031/。
 §
 阿萨
+§
+penta5-runner：面板「整组命中率 vs 随机期望（累计·版本锁定）」大表已于 2026-11-01 移到独立页 /hitrate（cron 每15min 重写 hitrate.html，面板只留 hitrate-base-entry 入口），不要再加回主面板。提交 598000f/b3bede4，备份 /root/ops/hitrate-page-20261101-044355/。
