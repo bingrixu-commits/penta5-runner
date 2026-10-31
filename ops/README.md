@@ -206,3 +206,15 @@
   相关提交：297a0b2、c61effe、d3d1fe4、9791b08。回滚：`git revert 9791b08 d3d1fe4 c61effe 297a0b2`
   + 按归档 README 执行 gunzip 恢复数据 + `bash scripts/crontab_tool.sh install` + 恢复 logrotate 备份。
   注意：本日志中 2026-10-30 关于 cold_fixed 的条目均为历史记录，该框架现已不再运行。
+
+- **2026-10-31 12:14 AI 三位置杀码升 v6：3 个位置全部计入整组（6 项 / 3 注）**：
+  用户确认「定位排除设置三个」——v4/v5 只在面板显示 3 张位置卡、其中 2 个计入整组（第 3 个
+  display_only 仅展示），现改为 3 个位置全部计入整组与攻击语：整组 = 3 位置 + 1 合尾 + 2 反向形态
+  共 6 项，位置杀码 3 注/期，攻击语 3 个位置各 9 码、弃位保留 10 码；`RULE_VERSION` 升
+  `kill3-tail-v6-three-positions`，提示词/校验/封存/统计同步更新，settlement 新增 `rule_version`
+  字段、`today_stats` 改为版本锁定（只计 v6，v1–v5 归档），面板新增「今日四手连败 N 次（不重叠计数）」。
+  旧 v1–v5 封存与结算逐字节保留；v1–v3 本为 3 位置 6 项版，历史参考 55 期 observed 56.36%（exp 54.70%）。
+  10^4 精确枚举：5 项口径 exp 62.07% / obs 63.16%（95 期），6 项口径 exp 54.78% / obs 53.68%（同 95 期）。
+  提交 e20b9e1；备份 /root/ops/kill3-v6-121237/（含 golden.json 与回滚 README）；首个 v6 封存
+  ref 20261031147。回滚：`git revert e20b9e1`，并把 /root/ops/kill3-v6-121237/ 下 5 个 .py 回拷原路径。
+
