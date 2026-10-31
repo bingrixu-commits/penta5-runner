@@ -1,7 +1,7 @@
 """AI 单位置杀码 + 一合尾 + 一形态建议面板区块（kill1 独立框架）。
 
 数据源 data/kill1_tail/{seals,settlements}.json，由 scripts/run_kill1_tail.py 每期生成。
-与 kill3/kill2 完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
+与 kill3 完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
 
 命中口径（写死，面板脚注同步展示）：
 - 位置命中 = 该位置实际开奖号 != 排除码（恰好 1 个位置，1 注/期）；
@@ -14,7 +14,7 @@
 设计要点：
 - 自包含 section（id 见 _section_open）+ 内联样式，不依赖面板已有 CSS 类；
 - 用 START / END 起止注释标记原地替换；
-- 标记缺失时按 KILL_TWO_END -> KILL_THREE_END -> </body> 顺序插入；
+- 标记缺失时按 KILL_THREE_END -> </body> 顺序插入；
 - 任何异常原样返回 html，绝不影响整页刷新。
 """
 from datetime import datetime
@@ -214,7 +214,7 @@ def _version_html():
                          + str(int(info.get('count') or 0)) + ' 期）')
         parts.append('整组精确基线 %.2f%%（%d 项）'
                      % (float(baseline[1]) * 100.0, int(baseline[0])))
-        parts.append('kill1 独立框架：与 kill3/kill2 独立封存 / 结算 / 统计')
+        parts.append('kill1 独立框架：与 kill3 独立封存 / 结算 / 统计')
         return '<div class="k1-drop">' + ' · '.join(parts) + '</div>'
     except Exception:
         return ''
@@ -386,7 +386,7 @@ def apply_kill_one_block(content, report=None):
         end = content.find(END)
         if start != -1 and end != -1 and end > start:
             return content[:start] + fragment + content[end + len(END):]
-        for anchor in ('<!-- KILL_TWO_END -->', '<!-- KILL_THREE_END -->'):
+        for anchor in ('<!-- KILL_THREE_END -->',):
             position = content.find(anchor)
             if position != -1:
                 position += len(anchor)

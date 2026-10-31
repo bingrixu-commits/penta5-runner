@@ -1,4 +1,4 @@
-"""Compact panel-wide context for the AI kill3 / kill2 decision (read-only, no provider calls).
+"""Compact panel-wide context for the AI kill3 / kill1 decision (read-only, no provider calls).
 
 Collects the data the operator sees on the panel — other frameworks' latest
 published decisions, today's hit rates, version-locked cumulative rates,
@@ -176,26 +176,6 @@ def _kill3_self(reference, kill3_stats, kill3_previous):
     return {'previous': previous, 'today': stats, 'reference': reference}
 
 
-def _kill2_self(reference, kill2_stats, kill2_previous):
-    previous = None
-    if isinstance(kill2_previous, dict):
-        previous = _pick(kill2_previous, ('ref_period', 'target_period', 'rule_version',
-                                          'positions', 'display_only', 'counted', 'dropped',
-                                          'unselected', 'tail', 'he2_keep',
-                                          'he3_keep', 'reverse_parity', 'reverse_size',
-                                          'generated_at', 'published_at'))
-    stats = None
-    if isinstance(kill2_stats, dict):
-        stats = _pick(kill2_stats, ('total', 'group_hits', 'group_rate',
-                                    'positions', 'tail', 'he2_keep', 'he3_keep', 'patterns',
-                                    'current_win_streak', 'current_loss_streak',
-                                    'max_loss_streak', 'four_loss_cycles',
-                                    'pending', 'latest_period'))
-    if previous is None and stats is None:
-        return None
-    return {'previous': previous, 'today': stats, 'reference': reference}
-
-
 def _kill1_self(reference, kill1_stats, kill1_previous):
     previous = None
     if isinstance(kill1_previous, dict):
@@ -216,8 +196,7 @@ def _kill1_self(reference, kill1_stats, kill1_previous):
 
 
 def build(reference, target, *, kill3_stats=None, kill3_previous=None,
-          kill2_stats=None, kill2_previous=None, kill1_stats=None,
-          kill1_previous=None, now=None):
+          kill1_stats=None, kill1_previous=None, now=None):
     moment = now or datetime.now().astimezone()
     snapshot = {
         'as_of_reference': str(reference),
@@ -231,8 +210,6 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
         'model_tiers': _model_tiers(),
         'kill3_self': _kill3_self(reference, kill3_stats, kill3_previous),
     }
-    if kill2_stats is not None or kill2_previous is not None:
-        snapshot['kill2_self'] = _kill2_self(reference, kill2_stats, kill2_previous)
     if kill1_stats is not None or kill1_previous is not None:
         snapshot['kill1_self'] = _kill1_self(reference, kill1_stats, kill1_previous)
     models = _strategy_models().get('models') or {}
@@ -261,7 +238,7 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     # Hard bound: drop the largest optional sections until the JSON is small enough.
     payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if len(payload) > MAX_JSON_CHARS:
-        for key in ('panel_cumulative', 'panel_hitrate_10p', 'kill3_self', 'kill2_self', 'kill1_self'):
+        for key in ('panel_cumulative', 'panel_hitrate_10p', 'kill3_self', 'kill1_self'):
             snapshot.pop(key, None)
             payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
             if len(payload) <= MAX_JSON_CHARS:

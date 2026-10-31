@@ -41,8 +41,6 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v6-three-positions'): (6, 0.5478),
     ('kill3_tail', 'kill3-tail-v7-two-counted'): (5, 0.6191),
     ('kill3_tail', 'kill3-tail-v8-three-positions-hold3'): (6, 0.5478),
-    ('kill2_tail', 'kill2-tail-v1-two-positions-he2he3'): (7, 0.5726),
-    ('kill2_tail', 'kill2-tail-v2-three-select-two-counted'): (7, 0.5726),
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
 }
 LABELS = {
@@ -51,7 +49,6 @@ LABELS = {
     'selected_six': '七项独立框架 selected_six（7 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
-    'kill2_tail': 'AI 二位置杀码（7 项）',
     'kill1_tail': 'AI 单位置杀码（3 项）',
 }
 SINGLE_BASELINES = (
@@ -193,40 +190,6 @@ def _kill3_rows():
     return [_row('kill3_tail', rule, total, hits, 'data/kill3_tail/settlements.json')]
 
 
-def _kill2_rows():
-    seals = _read(DATA / 'kill2_tail' / 'seals.json') or {}
-    settlements = _read(DATA / 'kill2_tail' / 'settlements.json') or {}
-    records = seals.get('records') if isinstance(seals, dict) else None
-    rows = settlements.get('records') if isinstance(settlements, dict) else None
-    if not records or not rows:
-        return []
-    rule = records[-1].get('rule_version')
-    if not rule:
-        return []
-    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
-                 for record in records if isinstance(record, dict)}
-    now = datetime.now(TZ)
-    business_day = _business_start(now)
-    hits = 0
-    total = 0
-    for record in rows:
-        if not isinstance(record, dict) or not record.get('verified'):
-            continue
-        if 'counted' not in record:
-            continue
-        if (record.get('rule_version') != rule
-                and seal_rule.get(str(record.get('ref_period'))) != rule):
-            continue
-        day = _period_business_day(record.get('target_period'))
-        if day != business_day:
-            continue
-        total += 1
-        hits += int(bool(record.get('group_hit')))
-    if not total:
-        return []
-    return [_row('kill2_tail', rule, total, hits, 'data/kill2_tail/settlements.json')]
-
-
 def _kill1_rows():
     seals = _read(DATA / 'kill1_tail' / 'seals.json') or {}
     settlements = _read(DATA / 'kill1_tail' / 'settlements.json') or {}
@@ -281,7 +244,6 @@ def build():
     rows.extend(_selected_six_row())
     rows.extend(_he3_row())
     rows.extend(_kill3_rows())
-    rows.extend(_kill2_rows())
     rows.extend(_kill1_rows())
     now = datetime.now(TZ)
     return {

@@ -52,8 +52,6 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v6-three-positions'): (6, 0.5478),
     ('kill3_tail', 'kill3-tail-v7-two-counted'): (5, 0.6191),
     ('kill3_tail', 'kill3-tail-v8-three-positions-hold3'): (6, 0.5478),
-    ('kill2_tail', 'kill2-tail-v1-two-positions-he2he3'): (7, 0.5726),
-    ('kill2_tail', 'kill2-tail-v2-three-select-two-counted'): (7, 0.5726),
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
 }
 LABELS = {
@@ -62,7 +60,6 @@ LABELS = {
     'selected_six': '七项独立框架 selected_six（7 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
-    'kill2_tail': 'AI 二位置杀码（7 项）',
     'kill1_tail': 'AI 单位置杀码（3 项）',
 }
 WINDOWS = {
@@ -71,7 +68,6 @@ WINDOWS = {
     'selected_six': '当前规则版本累计',
     'he3_refine': '当前规则版本累计',
     'kill3_tail': '当前规则版本累计',
-    'kill2_tail': '当前规则版本累计',
     'kill1_tail': '当前规则版本累计',
 }
 ROLLING_WINDOWS = (('24h', 288), ('7d', 2016))
@@ -86,7 +82,7 @@ COVERAGE_NOTE = (
     '累计覆盖率 coverage 是「当前规则版本首期→末期」的累计口径，含历史缺口，不能当现行覆盖率：'
     '2026-10-31 01030..01038 / 01059 / 01085 / 01091..01128 / 01135..01143 等连续段为账户余额停跑、'
     'AI 总闸关闭（并非现行掉链），13:15 恢复后主链未再连续掉期（此后仅个别单期偶发缺口）；'
-    '另各框架「引入前」期数（如 kill2_tail 自 20261031272 起）也不属于掉链。'
+    '另各框架「引入前」期数（如 kill1_tail 自 20261101014 起）也不属于掉链。'
     '现行水平请看 coverage_24h / coverage_7d / plan_hit_rate_24h / plan_hit_rate_7d。')
 
 
@@ -809,38 +805,6 @@ def cum_kill3():
                   rolling=rolling, launch=launch)
 
 
-def cum_kill2():
-    settlements = _read(DATA / 'kill2_tail' / 'settlements.json') or {}
-    seals = _read(DATA / 'kill2_tail' / 'seals.json') or {}
-    seal_records = seals.get('records') or []
-    rule = 'kill2-tail-v1-two-positions-he2he3'
-    if seal_records and isinstance(seal_records[-1], dict):
-        rule = seal_records[-1].get('rule_version') or rule
-    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
-                 for record in seal_records if isinstance(record, dict)}
-    records, rolling, launch = [], [], []
-    for record in seal_records:
-        if isinstance(record, dict) and record.get('target_period'):
-            launch.append(record.get('target_period'))
-    for row in settlements.get('records') or []:
-        if not isinstance(row, dict):
-            continue
-        if row.get('target_period'):
-            launch.append(row.get('target_period'))
-        if not row.get('verified'):
-            continue
-        if 'counted' not in row:
-            continue
-        hit = bool(row.get('group_hit'))
-        rolling.append((row.get('target_period'), hit))
-        if (row.get('rule_version') != rule
-                and seal_rule.get(str(row.get('ref_period'))) != rule):
-            continue
-        records.append((row.get('target_period'), hit, None))
-    return _build('kill2_tail', rule, records, 'data/kill2_tail/settlements.json',
-                  rolling=rolling, launch=launch)
-
-
 def cum_kill1():
     settlements = _read(DATA / 'kill1_tail' / 'settlements.json') or {}
     seals = _read(DATA / 'kill1_tail' / 'seals.json') or {}
@@ -881,7 +845,6 @@ def build():
     for name, func in (('killer', cum_killer), ('framework', cum_framework),
                        ('selected_six', cum_selected_six), ('he3_refine', cum_he3),
                        ('kill3_tail', cum_kill3),
-                       ('kill2_tail', cum_kill2),
                        ('kill1_tail', cum_kill1)):
         try:
             row = func()

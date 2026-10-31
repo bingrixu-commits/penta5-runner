@@ -151,31 +151,6 @@ def _kill3_entries():
     return rows
 
 
-def _kill2_entries():
-    """kill2_tail（AI 二位置 + 一合尾 + 二数合/三数合）的尾项稳定化复盘行。"""
-    actuals = {}
-    for settlement in (_read(DATA / 'kill2_tail/settlements.json', {}) or {}).get('records') or []:
-        nums = settlement.get('actual')
-        target = settlement.get('target_period')
-        if target and isinstance(nums, list) and len(nums) >= 4:
-            actuals[str(target)] = [int(x) for x in nums[:4]]
-    seals = {}
-    for seal in (_read(DATA / 'kill2_tail/seals.json', {}) or {}).get('records') or []:
-        if isinstance(seal, dict) and seal.get('tail_policy'):
-            seals[str(seal.get('target_period'))] = seal
-    rows = []
-    for target in sorted(seals):
-        seal = seals[target]
-        nums = actuals.get(target)
-        tail = seal.get('tail') or {}
-        key = str(tail.get('key') or '').replace('tail_', '')
-        if nums is None or key not in TAIL:
-            continue
-        hit = [_tv(nums, key) != int(tail.get('kill')) % 10]
-        rows.append((target, (seal.get('tail_policy') or {}).get('reused_previous') is True, hit))
-    return rows
-
-
 def _kill1_entries():
     '''kill1_tail（AI 单位置 + 一合尾 + 一形态）的尾项稳定化复盘行。'''
     actuals = {}
@@ -203,7 +178,6 @@ def _kill1_entries():
 
 FRAMEWORKS = (
     ('AI三位置', _kill3_entries),
-    ('AI二位置+二数合/三数合', _kill2_entries),
     ('AI单位置+一合尾+一形态', _kill1_entries),
     ('固定八码', _framework_entries),
     ('七项独立v7', _six_entries),

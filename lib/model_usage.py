@@ -27,14 +27,13 @@ TZ = timezone(timedelta(hours=8))
 ROOT = Path('/root/penta5-runner')
 USAGE_DIR = 'data/model_usage'
 
-# 只有这 7 个日志当前会出现 AI_* 观测行；新增 AI 任务需要在这里补一行。
+# 只有这 6 个日志当前会出现 AI_* 观测行；新增 AI 任务需要在这里补一行。
 SOURCE_LOGS = (
     ('framework', 'data/ai_job_framework.log'),
     ('killer', 'data/ai_job_killer.log'),
     ('six', 'data/selected_six_cron.log'),
     ('he3', 'data/he3_refine_cron.log'),
     ('kill3', 'data/kill3_tail_cron.log'),
-    ('kill2', 'data/kill2_tail_cron.log'),
     ('kill1', 'data/kill1_tail_cron.log'),
 )
 
