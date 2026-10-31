@@ -273,3 +273,5 @@
   - kill3 遥测(766d4e6): kill3 补 AI_HTTP_PHASE start/complete(复用 lib.ai_http_observability, 不改重试/发布语义); 18:10/18:15 两周期各 1 start + 1 complete(status=200), model_usage ledger 出现 kill3 kind=http 事件, 402/429/timeout 分类链路打通.
   - 面板入口(766d4e6): 累计/今日 fallback 区块加 打开命中率看板(/accuracy) 链接; 18:18 面板重建后已 live, 六区块标记各 1.
   - 回滚: git revert 766d4e6 a05711b + 恢复 .env 两行(备份见上); 无需重启服务.
+
+  - 补充(18:26): 累计报告 killer/framework 的 model_split 改为从封存 prediction_seals 的 model_metadata 取 requested_model（此前 hit_stats publication 无该字段导致分档为空）；修复后 framework = flash n=1689 55.83% / pro n=124 54.84%(冻结), killer = flash n=1182 39.17% / pro n=6 0%。

@@ -235,6 +235,22 @@ def _model_of(publication):
     return None
 
 
+def _seal_model_map(path):
+    """seal ref_period -> requested_model（framework/killer 的 hit_stats 不带 model_metadata 时兜底）。"""
+    document = _read(path) or {}
+    seals = document.get('prediction_seals') if isinstance(document, dict) else None
+    if not isinstance(seals, dict):
+        return {}
+    mapping = {}
+    for reference, seal in seals.items():
+        if not isinstance(seal, dict):
+            continue
+        model = _model_of(seal)
+        if model:
+            mapping[str(reference)] = model
+    return mapping
+
+
 def _rule_from_strategy(key):
     stats = _read(DATA / 'strategy_comparison_stats.json') or {}
     model = (stats.get('models') or {}).get(key) or {}
@@ -244,12 +260,14 @@ def _rule_from_strategy(key):
 def cum_killer():
     doc = _read(DATA / 'r1_stats.json') or {}
     evaluations = doc.get('verified_evaluations') or []
+    model_by_ref = _seal_model_map(DATA / 'r1_stats.json')
     records = []
     for row in evaluations:
         outcome = row.get('outcome') or {}
         if not isinstance(outcome, dict) or len(outcome) < 9:
             continue
-        records.append((row.get('target_period'), all(bool(v) for v in outcome.values()), None))
+        records.append((row.get('target_period'), all(bool(v) for v in outcome.values()),
+                        model_by_ref.get(str(row.get('ref_period')))))
     rule = _rule_from_strategy('killer') or 'conditional-transition-v2'
     row = _build('killer', rule, records, 'data/r1_stats.json',
                  '账本未标注规则版本；按现行规则 conditional-transition-v2 复核全部记录')
@@ -262,13 +280,14 @@ def cum_killer():
 def cum_framework():
     doc = _read(DATA / 'r1_framework_hit_stats.json') or {}
     verified = list((doc.get('verified') or {}).values())
+    model_by_ref = _seal_model_map(DATA / 'r1_framework_seals.json')
     records = []
     for row in verified:
         outcome = row.get('outcomes') or {}
         if not isinstance(outcome, dict) or len(outcome) < 8:
             continue
-        records.append((row.get('target_period'), all(bool(v) for v in outcome.values()),
-                        _model_of(row.get('publication'))))
+        model = model_by_ref.get(str(row.get('ref_period'))) or _model_of(row.get('publication'))
+        records.append((row.get('target_period'), all(bool(v) for v in outcome.values()), model))
     rule = _rule_from_strategy('framework') or 'marginal-frequency-v2'
     row = _build('framework', rule, records, 'data/r1_framework_hit_stats.json',
                  '账本未标注规则版本；按现行规则 marginal-frequency-v2 复核全部记录')
