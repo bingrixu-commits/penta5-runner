@@ -281,3 +281,23 @@
 
 - **2026-10-31 20:56–21:00 kill3 口径回滚：恢复 v6「3 个位置全部计入整组」（撤销 v7 的 2 计入）**：用户要求「显示的 3 个位置都加入统计」，确认按计入整组处理。回滚 81a3d61（v7 三位置展示、2 个计入、5 项/2 注），恢复到 kill3-tail-v6-three-positions：3 个被杀位置全部计入整组与攻击语，整组 = 3 位置 + 合尾 + 2 形态共 6 项，位置 3 注/期，不再有 display_only。v7 的 81 条封存与基线元数据原样保留（归档；旧口径标签更正为 v1–v5、v7）。提交 c39148a（2 文件，21+/30-；备份 /root/ops/kill3-rewind-205518/ 含回滚前 4 文件 + seals/settlements 快照 + rewind.diff）。精确期望：6 项 0.5478 / 5 项 0.6191（v6-prep 枚举，见 /root/ops/kill3-v6-121237/README-v6.md）。参考：v7 81 期若按 6 项口径回算 43/81=53.1%。
   证据：①20:56:19 手动补发封存 ref=20261031251（20:55:35 cron 因编辑窗口撞上模块导入冲突标记失败一次，未造成缺期）→ target 20261031252，rule=v6、display_only=None、counted=[q,b,s]；②21:00:53 cron 正常封存 ref=20261031252 → 253（v6）；③结算 20261031252 独立复算逐项一致（千位杀8 vs 实际8 未中 → 6 项整组未中；百/十/合尾/两形态命中），counted 3；④面板 KILL_THREE 21:00 重渲染：3 张位置卡均「排除 1 码」、「全部计入整组」、统计行「整组命中率（6 项全中：3 位置+合尾+2 形态）14/23=60.87% · 位置杀码（3 注/期）63/69=91.30% · 旧口径（v1–v5、v7）121 期归档」、攻击语 3 个 9 码位置 + 弃位 10 码（四定×1、除×2）；⑤ops_health kill3_tail=ok，manifest 重建 auto-baseline-20261031-205851，整体仅遗留已知 model_usage/余额 warn。回滚：git revert c39148a + 从上述备份回拷 lib/kill3_tail.py、lib/kill_three_view.py（v7 封存无需处理）。
+
+- **2026-10-31 21:10 AI 三位置杀码升 v8（尾码稳定化 hold3-until-miss，影子复核达标转正）**：
+  按 21:05 定点复核结论转正（影子 forward 51~53 期：合计 88.70% vs 88.70%，95%CI
+  [-2.90,+2.90]、McNemar p=1.0，换码次数全部下降，其中 AI 三位置 50→12；复盘报告
+  /root/ops/tail-stability-shadow-20261031-163308/review-20261031-2105.md）。改动：
+  RULE_VERSION 升为 「kill3-tail-v8-three-positions-hold3」；尾码改为「上期尾码命中且连用
+  未满 3 期 → 沿用上期尾码；失手或连用满 3 期 → 用模型本期新选」；删除提示词
+  「合尾不得与上一期相同」硬规则；封存新增 tail_policy（policy/hold_max/model_tail/
+  reused_previous/note/previous_*），沿用时的 reason 改写为「稳定化沿用 + AI 候选 +
+  模型原话」；提示词改【合尾稳定化规则】；面板新增「尾码稳定化：…」行与脚注；
+  today_stats 按 v8 版本锁定、v1–v6/v7 归档；命中率基线映射新增 v8=(6 项, 0.5478)。
+  旧封存逐字节保留（v6/v7 结算继续核验）。
+  证据：①首期 v8 封存 ref=20261031254→target 20261031255，reused=True（上期 tail_all/8
+  命中），封存 tail_all/8、模型候选 tail_qsg/5 留档；结算 target 255：tail hit=True、
+  group_hit=True（v8 统计 1/1）；②第二期 ref 255 继续沿用（第 2 期，满 3 期后下期强制
+  换码）；③面板 21:17 重渲染：尾码稳定化行、旧口径（v1–v6、v7）146 期归档、合尾单项
+  显示 95%CI；④影子区块已移除 AI 三位置行并标注「已转正 v8」；⑤ops_health manifest
+  已刷新，仅余额/用量已知 warn。备份：/root/ops/kill3-v8-hold3-210925/（6 个 .py +
+  golden-v6.json）。回滚：git revert 2b7c958；回滚后下一期按 v6 口径封存，v8 封存保留
+  （不影响历史核验）。
