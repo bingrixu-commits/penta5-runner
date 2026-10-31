@@ -477,6 +477,19 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
                              writer=_writer(root, writer), clock=clock,
                              operation_deadline=operation_deadline)
         _status(root, 'published' if published else 'rejected', reference, clock)
+        if published:
+            # Publish-time card write strips the derived attack block; restore it now
+            # from the in-memory seal so the phrase appears at +0s instead of waiting
+            # for the heavy refresh behind the statistics lock.
+            seal = find_seal(ledger, reference)
+            if isinstance(seal, dict):
+                try:
+                    from selected_six_view import apply_selected_attack_block, render_attack_block
+                    from panel_io import update_panel
+                    update_panel(lambda html: apply_selected_attack_block(html, render_attack_block(seal)),
+                                 path=root / 'panel.html')
+                except Exception as error:
+                    _log(log, 'SELECTED_SIX_ATTACK_PANEL_DEFERRED error_type=' + type(error).__name__)
         _log(log, f'SELECTED_SIX_INDEPENDENT ref={reference} target={next_period(reference)} published={published}')
         return {'status': 'published' if published else 'rejected', 'published': published, 'ref_period': reference}
     except AICallsDisabled as error:
