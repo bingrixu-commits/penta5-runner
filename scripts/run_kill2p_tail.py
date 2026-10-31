@@ -90,7 +90,7 @@ def main():
     panel_snapshot = panel_context.build(
         reference, target,
         kill2p_stats=kill2p_tail.today_stats(),
-        kill2p_previous=previous_seal)
+        kill2p_previous=previous_seal, extra_panel_input=True)
     _panel_text, _panel_sha = panel_context.prompt_text(panel_snapshot)
     print('kill2p panel context sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
     prompt, audit = kill2p_tail.build_prompt(

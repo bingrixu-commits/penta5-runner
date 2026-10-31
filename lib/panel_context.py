@@ -1,4 +1,4 @@
-"""Compact panel-wide context for the AI kill3 / kill1 decision (read-only, no provider calls).
+"""Compact panel-wide context for the AI kill3 / kill1 / kill2p decision (read-only, no provider calls).
 
 Collects the data the operator sees on the panel — other frameworks' latest
 published decisions, today's hit rates, version-locked cumulative rates,
@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path('/root/penta5-runner')
 DATA = ROOT / 'data'
 MAX_JSON_CHARS = 9000
+MAX_JSON_CHARS_RICH = 12000
 
 
 def _read(path, default=None):
@@ -214,9 +215,89 @@ def _kill2p_self(reference, kill2p_stats, kill2p_previous):
     return {'previous': previous, 'today': stats, 'reference': reference}
 
 
+def _cold_stats_frame():
+    """Compact snapshot of the restored cold-code statistics blocks (read-only)."""
+    observation = _read(DATA / 'cold_observation.json', {}) or {}
+    positions = {}
+    for key in ('q', 'b', 's', 'g'):
+        block = (observation.get('positions') or {}).get(key)
+        if not isinstance(block, dict):
+            continue
+        items = [item for item in (block.get('items') or []) if isinstance(item, dict)][:1]
+        positions[key] = {'cold': block.get('cold'),
+                          'top': [{'v': item.get('value'), 'n': item.get('count'),
+                                   'omit': item.get('current_omission')} for item in items]}
+    tails = {}
+    for key, block in (observation.get('tails') or {}).items():
+        if not isinstance(block, dict):
+            continue
+        items = [item for item in (block.get('items') or []) if isinstance(item, dict)][:1]
+        tails[str(key)] = {'cold': block.get('cold'),
+                           'top': [{'v': item.get('value'), 'n': item.get('count'),
+                                    'omit': item.get('current_omission')} for item in items]}
+    shapes = {}
+    for kind, block in (observation.get('shapes') or {}).items():
+        if isinstance(block, dict):
+            cold = block.get('cold') or []
+            shapes[str(kind)] = cold[0] if cold else None
+    report = _read(DATA / 'position_cold_report.json', {}) or {}
+    position_windows = [entry for entry in (_pick(entry, ('window', 'rank', 'line'))
+                                            for entry in (report.get('windows') or [])
+                                            if isinstance(entry, dict)) if entry]
+    hit_stats = _read(DATA / 'cold_hit_stats.json', {}) or {}
+    hit_windows = []
+    for entry in (hit_stats.get('windows') or []):
+        if not isinstance(entry, dict):
+            continue
+        tops = {}
+        for rank, block in (entry.get('tops') or {}).items():
+            if isinstance(block, dict):
+                tops[str(rank)] = _pick(block, ('rate', 'baseline',
+                                                'current_win_streak', 'current_loss_streak'))
+        hit_windows.append({'window': entry.get('window'), 'samples': entry.get('samples'),
+                            'tops': tops})
+    if not observation and not report and not hit_stats:
+        return None
+    return {'reference_period': observation.get('reference_period'),
+            'sample_count': observation.get('sample_count'),
+            'window_size': observation.get('window_size'),
+            'positions': positions, 'tails': tails, 'shapes': shapes,
+            'position_cold': {'as_of_period': report.get('as_of_period'),
+                              'windows': position_windows},
+            'cold_hit_stats': {'as_of_period': hit_stats.get('as_of_period'),
+                               'windows': hit_windows},
+            'note': '冷码为历史样本排序统计，不是下期概率保证；仅作参考'}
+
+
+def _ai_self_frame(kind):
+    """Latest published decision + last-10 settled form of another AI framework (read-only)."""
+    document = _read(DATA / kind / 'seals.json', {}) or {}
+    records = [item for item in (document.get('records') or [])
+               if isinstance(item, dict) and item.get('publication_state') == 'published']
+    fields = ['ref_period', 'target_period', 'rule_version', 'positions', 'tail', 'published_at']
+    if kind == 'kill3_tail':
+        fields += ['display_only', 'counted', 'reverse_parity', 'reverse_size']
+    elif kind == 'kill1_tail':
+        fields += ['counted', 'form_type', 'form']
+    latest = _pick(records[-1], fields) if records else None
+    settlements = _read(DATA / kind / 'settlements.json', {}) or {}
+    verified = [item for item in (settlements.get('records') or [])
+                if isinstance(item, dict) and item.get('verified')]
+    recent = verified[-10:]
+    hits = sum(1 for item in recent if item.get('group_hit') is True)
+    return {'latest': latest,
+            'last10': {'n': len(recent), 'hits': hits,
+                       'rate': round(hits / len(recent), 4) if recent else None,
+                       'latest_target': recent[-1].get('target_period') if recent else None}}
+
+
+def _ai_self_frames():
+    return {'kill3': _ai_self_frame('kill3_tail'), 'kill1': _ai_self_frame('kill1_tail')}
+
+
 def build(reference, target, *, kill3_stats=None, kill3_previous=None,
           kill1_stats=None, kill1_previous=None, kill2p_stats=None,
-          kill2p_previous=None, now=None):
+          kill2p_previous=None, extra_panel_input=False, now=None):
     moment = now or datetime.now().astimezone()
     snapshot = {
         'as_of_reference': str(reference),
@@ -257,14 +338,19 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     stat50 = _stat50_frame()
     if stat50:
         snapshot['frameworks']['stat50'] = stat50
+    if extra_panel_input:
+        snapshot['cold_stats'] = _cold_stats_frame()
+        snapshot['other_ai_self'] = _ai_self_frames()
     # Hard bound: drop the largest optional sections until the JSON is small enough.
+    # kill2p v2（extra_panel_input）多喂冷码统计与其它 AI 框架实值，使用独立上限，避免挤压 kill3/kill1。
+    limit = MAX_JSON_CHARS_RICH if extra_panel_input else MAX_JSON_CHARS
     payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-    if len(payload) > MAX_JSON_CHARS:
+    if len(payload) > limit:
         for key in ('panel_cumulative', 'panel_hitrate_10p', 'kill3_self', 'kill1_self',
-                    'kill2p_self'):
+                    'kill2p_self', 'cold_stats', 'other_ai_self'):
             snapshot.pop(key, None)
             payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-            if len(payload) <= MAX_JSON_CHARS:
+            if len(payload) <= limit:
                 break
     return snapshot
 

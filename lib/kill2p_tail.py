@@ -15,7 +15,10 @@ AI 二位置杀码 + 一合尾 + 两反向形态（独立框架，数据独立�
 - 整组命中 = 2 个位置 + 1 个合尾 + 2 项反向形态同时命中（共 5 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 位置与杀码不做连用限制（用户 2026-11-01 确认「不限制，完全由模型选」）；
-- 只使用前 4 球（千/百/十/个），第 5 球不参与。
+- 只使用前 4 球（千/百/十/个），第 5 球不参与；
+- v2 起面板上下文扩展（选码/计入口径不变）：新增 cold_stats（冷码观察近30期各位置冷码、位置冷码
+  Top-N、冷码杀号战绩窗口命中率）与 other_ai_self（kill3/kill1 最近封存与近 10 期战绩）；
+  整组仍 5 项、位置 2 注/期，整组精确随机基线仍 62.03%；
 
 数据落点：
 - data/kill2p_tail/seals.json        每期封存（同一参考期不可替换）
@@ -69,7 +72,7 @@ REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 FORM_LABELS = dict(REVERSE_LABELS)
 
-RULE_VERSION = 'kill2p-tail-v1-two-positions-one-tail-two-forms'
+RULE_VERSION = 'kill2p-tail-v2-panel-context-rich'
 COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
@@ -374,7 +377,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         from panel_context import prompt_text as _panel_prompt_text
         panel_context_text, panel_context_sha = _panel_prompt_text(panel_snapshot)
         panel_section = (
-            '【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带'
+            '【面板全量上下文（含冷码统计与其它 AI 框架最近发布/战绩；只含已发布数据，各条自带'
             ' reference/target；仅供自主决策参考，不是未来概率保证）】'
             + chr(10) + panel_context_text + chr(10) + chr(10))
     prompt = (
@@ -415,7 +418,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill2p-tail-prompt-v1-two-positions-one-tail-two-forms',
+        'version': 'kill2p-tail-prompt-v2-panel-context-rich',
         'reference': reference,
         'target': target,
         'window': WINDOW,

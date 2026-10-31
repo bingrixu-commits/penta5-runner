@@ -44,6 +44,7 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v9-two-counted-hold3'): (5, 0.6191),
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
     ('kill2p_tail', 'kill2p-tail-v1-two-positions-one-tail-two-forms'): (5, 0.6203),
+    ('kill2p_tail', 'kill2p-tail-v2-panel-context-rich'): (5, 0.6203),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
