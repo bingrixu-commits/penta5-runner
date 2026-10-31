@@ -2,7 +2,7 @@
   "files": {
     "lib/kill3_tail.py": "496dd526701731d9e97bc0d48e685ef181899d29b625caa96d3266ad1fd5f00a",
     "lib/kill_three_view.py": "097ec649819f90641f1495e5d832f3b9de1da64e9c713b7d4d4eb484092ae260",
-    "lib/panel_context.py": "11f6d164239e57f4333e0d9114b4b5a7f8439f64a8527490762d59049dd0df70",
+    "lib/panel_context.py": "c782632b33c1bf402e8baf5803f468cfcab2113d28d90dd65b11023a4493f284",
     "scripts/run_kill3_tail.py": "28d043701f9168cea8e44eefb2d13952af52cef946fe37bba3962736bd9e262d"
   },
   "freeze_hours": 72,
@@ -33,6 +33,14 @@
       "new_sha256": "11f6d164239e57f4333e0d9114b4b5a7f8439f64a8527490762d59049dd0df70",
       "old_sha256": "95aa4cd808c87a3ce789cc0707895019cac92035b19b24ec0c68eb9ff14a6991",
       "reason": "为新增 kill1_tail 框架在面板上下文新增可选 kill1_stats/kill1_previous 入参与 kill1_self 键；kill3/kill2 调用路径不传 kill1 参数，固定 fixture 下 A/B 两版模块 build()+prompt_text() 的 snapshot/prompt_text sha256 逐字节相同（kill3 2492ed52b8f5a36d…、kill2 65cb1b363cf79a81…），仅 kill1 调用新增 kill1_self，不改变 kill3/kill2 口径"
+    },
+    {
+      "at": "2026-11-01T02:26:00+08:00",
+      "commit": "7ce1814",
+      "file": "lib/panel_context.py",
+      "new_sha256": "c782632b33c1bf402e8baf5803f468cfcab2113d28d90dd65b11023a4493f284",
+      "old_sha256": "11f6d164239e57f4333e0d9114b4b5a7f8439f64a8527490762d59049dd0df70",
+      "reason": "按用户要求退役 cold_framework（冷码七项框架），删除 panel_context 的 _cold_frame 与 frameworks.cold_framework 注入；A/B 证明：kill1/kill2/kill3 固定 fixture 下新版 build()+prompt_text() 的 snapshot 与旧版逐字节相同、仅去掉 frameworks.cold_framework 一个键（其余键值全等），kill3 RULE_VERSION 与选码口径未变，属面板上下文输入的有意裁剪"
     }
   ],
   "min_periods": 100,
