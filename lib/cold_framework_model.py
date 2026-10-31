@@ -363,6 +363,23 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
                     'reason': ('本地2:3奇偶修正：模型原he3_keep=%s，按规则修正为%s；模型理由：%s'
                                % (raw_keep, response['he3_keep'], response['reason']))[:490],
                 })
+            try:
+                from cold_tail_hold import apply_cold_tail_hold
+                tail_hold = apply_cold_tail_hold(root / 'data', context['target_period'], source)
+            except Exception as error:
+                tail_hold = None
+                _log(log, 'COLD_TAIL_HOLD_SKIPPED error_type=' + type(error).__name__)
+            if isinstance(tail_hold, dict):
+                model_tails = {}
+                for key in response['selected_tails']:
+                    if key in core.TAIL_INDEXES:
+                        value = context['tail_candidates'].get(key)
+                        if type(value) is int and 0 <= value <= 9:
+                            model_tails[key] = value
+                tail_hold['model_tails'] = model_tails
+                metadata['tail_hold3'] = tail_hold
+                _log(log, 'COLD_TAIL_HOLD ref=%s reused=%s note=%s' % (
+                    reference, tail_hold.get('reused_previous'), tail_hold.get('note')))
             selection = {key: response[key] for key in ('selected_positions', 'selected_tails', *core.KEEP_KEYS)}
             ledger['attempts'][reference].update(state='response-received', selection=selection, metadata=metadata)
             core._write(path, ledger)

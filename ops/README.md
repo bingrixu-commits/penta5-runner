@@ -338,3 +338,24 @@
   首期实盘：ref 20261031265→target 20261031266，tail_policy 写入（上期千百十杀0 命中、连用第2期 →
   沿用），published=True；状态 published。备份：/root/ops/tail-hold3-six-220235/（3 个 .py +
   golden-six.json）。回滚：git revert；无需回滚数据（封存仅多 metadata 字段）。
+
+- **2026-10-31 22:10 冷码七项启用合尾 pair-hold3 稳定化（本地确定性后处理，不升 revision）**：
+  冷码框架两合尾做本地确定性后处理：上期两项合尾均命中且自动沿用未满 3 期时沿用上期两项
+  （类型+冷码），失手/满 3 期改由本期冷码重选。新增 lib/cold_tail_hold.py（只读），
+  lib/cold_framework.py 的 build_prediction 支持从 selection_metadata.tail_hold3 取 sealed_tails
+  并以同一 metadata 可重放（_validate_seal 回归通过）；lib/cold_framework_model.py 在响应
+  校验后写入 tail_hold3；视图统计规则补说明。历史回归：现有 9 个日账本、1072 条封存
+  _validate_day/_validate_seal 全部 PASS（旧封存无 tail_hold3 不受影响）。首期实盘：
+  ref 20261031266→target 20261031267 published=True，tail_hold3 reused=True（上期 qbs/2、qsg/8
+  两项均命中，沿用第1期），model_tails 留档 all/8、qbs/2。
+  备份：/root/ops/tail-hold3-cold-220822/（4 个 .py + golden-cold.json）。回滚：git revert。
+
+- **2026-10-31 22:15 killer 九项启用三合尾 triple-hold3 稳定化（本地确定性后处理，不升 revision）**：
+  三项合尾（all/qbs/bsg）做本地确定性后处理：上期三项均命中且自动沿用未满 3 期时沿用上期
+  三项尾码，失手/满 3 期改由模型本期重选。新增 lib/killer_tail_hold.py（只读），
+  lib/auto_r1_killer.py 在请求校验后、卡片/封存前调用，封存 model_metadata.tail_hold3 留档；
+  命中口径与基线不变（三项仍各为杀 1 码 90%）。历史回放（r1_stats verified_evaluations 2223 期/
+  6669 项）：命中率 89.98%→90.18%（+0.19pp，噪声内），三尾码组换码次数 1997→943（-53%），
+  沿用占 53.5% 期。备份：/root/ops/tail-hold3-killer-221211/（3 个 .py + golden-killer.json）。
+  回滚：git revert。至此五个框架（AI三位置/固定八码/七项独立/冷码七项/killer）合尾稳定化全部落地；
+  影子任务停止对照，保留只读历史与面板说明。

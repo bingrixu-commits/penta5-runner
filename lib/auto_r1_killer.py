@@ -307,6 +307,16 @@ try:
 except Exception as _joint_form_error:
     print('JOINT_FORM_OPTIMIZER_SKIPPED kind=killer reason=%s' % type(_joint_form_error).__name__)
 
+killer_tail_hold = None
+try:
+    from killer_tail_hold import apply_killer_tail_hold
+    killer_tail_hold = apply_killer_tail_hold(r, stats, period, latest_numbers)
+    if killer_tail_hold is not None:
+        print('KILLER_TAIL_HOLD3 ref=%s reused=%s note=%s' % (
+            period, killer_tail_hold.get('reused_previous'), killer_tail_hold.get('note')))
+except Exception as _killer_tail_error:
+    print('KILLER_TAIL_HOLD3_SKIPPED reason=%s' % type(_killer_tail_error).__name__)
+
 k1_list, k2_list, k3_list, k4_list = (r[key] for key in ('k1', 'k2', 'k3', 'k4'))
 
 k1_str = "/".join(str(x) for x in k1_list) if k1_list else "--"
@@ -330,6 +340,9 @@ killer_metadata = accepted_killer_response_metadata(period)
 if joint_form_applied and isinstance(killer_metadata, dict):
     killer_metadata = {key: value for key, value in killer_metadata.items() if key != 'strategy_validation'}
     killer_metadata['joint_form_optimized'] = True
+if killer_tail_hold is not None and isinstance(killer_metadata, dict):
+    killer_metadata = dict(killer_metadata)
+    killer_metadata['tail_hold3'] = killer_tail_hold
 pending_candidate = {
     "ref_period": period,
     "model_context_audit": model_context_audit,

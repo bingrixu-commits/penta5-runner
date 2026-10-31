@@ -85,7 +85,7 @@ SCRIPT = r"""<script id="r1-killer-hit-script">
     span.style.cssText+=';display:inline-block;max-width:100%;white-space:normal;overflow-wrap:anywhere;vertical-align:middle;';
     var valid=sameDay&&metric&&Number.isSafeInteger(metric.hits)&&Number.isSafeInteger(metric.total)&&metric.total>0&&metric.hits>=0&&metric.hits<=metric.total;
     span.textContent=data.stats_error===true?'统计核验失败，暂停显示命中率':!sameDay?'北京时间05:00已清零，等待本周期数据':valid?'排除成功率 '+(metric.hits/metric.total*100).toFixed(2)+'%（'+metric.hits+'/'+metric.total+'期）':'暂无今日已验证数据';
-    span.title=data.stats_error===true?'统计核验失败，暂停显示命中率':'排除类随机基线：杀1码90%（位置/三合尾同）；四位形态93.75%。北京时间05:00起只统计开奖前发布且开奖后核验的前4球；单日n小波动大，以累计为准。';
+    span.title=data.stats_error===true?'统计核验失败，暂停显示命中率':'排除类随机基线：杀1码90%（位置/三合尾同）；四位形态93.75%。北京时间05:00起只统计开奖前发布且开奖后核验的前4球；单日n小波动大，以累计为准。三项合尾启用稳定化：上期三项均命中时沿用上期尾码、最多自动沿用3期（封存 tail_hold3 留档）。';
   });
 })();
 </script>"""

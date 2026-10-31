@@ -50,50 +50,10 @@ def _items(mapping):
 def _collect():
     """Return {framework: [(target, numbers, items)]} oldest-first."""
     result = {}
-    killer = []
-    doc = _read(DATA / 'r1_stats.json', {}) or {}
-    for entry in doc.get('verified_evaluations') or []:
-        nums = entry.get('actual')
-        target = entry.get('target_period')
-        publication = entry.get('publication') or {}
-        items = []
-        for field, key in (('he_all', 'all'), ('he_q3', 'qbs'), ('he_h3', 'bsg')):
-            kill = publication.get(field)
-            if kill is not None:
-                items.append((key, int(kill)))
-        if isinstance(nums, list) and len(nums) >= 4 and target and items:
-            killer.append((str(target), [int(x) for x in nums[:4]], sorted(items)))
-    if killer:
-        result['killer九项'] = killer
+    # killer 已于 2026-10-31 22:15 启用 triple-hold3；至此五项框架全部转正，影子不再纳入。
     # 固定八码 已于 2026-10-31 22:00 启用 pair-hold3 稳定化，不再列入影子对照。
     # 七项独立 已于 2026-10-31 22:05 启用单尾 hold3 稳定化，不再列入影子对照。
-    six = []
-    doc = _read(DATA / 'selected_six_hit_stats.json', {}) or {}
-    for entry in (doc.get('verified') or {}).values():
-        publication = entry.get('publication') or {}
-        if publication.get('revision') != 'selected-six-independent-v7-single-tail':
-            continue
-        actual = entry.get('actual') or {}
-        nums, target = actual.get('numbers'), entry.get('target_period')
-        items = _items((publication.get('response') or {}).get('selected_tails'))
-        if isinstance(nums, list) and len(nums) >= 4 and target and items:
-            six.append((str(target), [int(x) for x in nums[:4]], items))
-    if six:
-        result['七项独立v7'] = six
-    cold = {}
-    for path in glob.glob(str(DATA / 'cold_framework_20*.json')):
-        document = _read(path, {}) or {}
-        predictions, actuals = document.get('predictions') or {}, document.get('actuals') or {}
-        for target, prediction in predictions.items():
-            if prediction.get('revision') != 'cold-framework-v3-30-pos3-tail2-he2x4-he3x5':
-                continue
-            actual = actuals.get(target) or {}
-            nums = actual.get('numbers')
-            items = _items(prediction.get('selected_tails'))
-            if isinstance(nums, list) and len(nums) >= 4 and items:
-                cold[str(target)] = (str(target), [int(x) for x in nums[:4]], items)
-    if cold:
-        result['冷码七项'] = [cold[key] for key in sorted(cold)]
+    # 七项独立 v7（22:05）与冷码七项（22:10）均已转正，影子不再纳入。
     # AI 三位置 已于 2026-10-31 21:10 转正 v8（hold3-until-miss），不再列入影子对照。
     return result
 
@@ -235,8 +195,9 @@ def render_block(data):
         '<th>现行换码</th><th>稳定化换码</th><th>上线后前瞻 n（现行→稳定化）</th></tr></thead><tbody>'
         + ''.join(rows) + '</tbody></table>'
         '<div class="ts-foot">单尾杀1码随机基线90%。稳定化不会提高命中率（数学上限），只降低换码频率。'
-        'AI 三位置（2026-10-31 21:10，v8）、固定八码（22:00，pair-hold3）、'
-        '七项独立 v7（22:05，hold3）已转正，不再列入本影子；冷码七项待转正，旧封存保留。</div>'
+        'AI 三位置（21:10，v8）、固定八码（22:00，pair-hold3）、七项独立 v7（22:05，hold3）、'
+        '冷码七项（22:10，pair-hold3）、killer（22:15，triple-hold3）已全部转正；'
+        '本影子停止对照，保留只读历史。旧封存一律保留。</div>'
         '</section>\n' + END)
 
 

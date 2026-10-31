@@ -252,7 +252,8 @@ def _metadata(metadata, context, now, required=False):
                        'completed_at', 'input_sha256', 'finish_reason'}
     optional_fields = {'request_id', 'reason', 'reference_period', 'selection_policy',
                        'panel_context_sha256', 'panel_context',
-                       'he3_keep_raw', 'he3_parity_repaired', 'he3_repair_policy'}
+                       'he3_keep_raw', 'he3_parity_repaired', 'he3_repair_policy',
+                       'tail_hold3'}
     if (not required_fields.issubset(metadata)
             or not set(metadata).issubset(required_fields | optional_fields)
             or _model_family(metadata['requested_model']) is None
@@ -281,6 +282,37 @@ def _metadata(metadata, context, now, required=False):
         raise ValueError('cold-framework-invalid-ai-metadata')
     if 'panel_context' in metadata and not isinstance(metadata['panel_context'], dict):
         raise ValueError('cold-framework-invalid-ai-metadata')
+    if 'tail_hold3' in metadata:
+        hold = metadata['tail_hold3']
+        if (not isinstance(hold, dict) or hold.get('policy') not in
+                ('pair-hold3-until-miss',) or hold.get('hold_max') != 3
+                or type(hold.get('reused_previous')) is not bool
+                or type(hold.get('previous_streak')) is not int
+                or not 0 <= hold['previous_streak'] <= 288
+                or not isinstance(hold.get('note'), str) or len(hold['note']) > 200):
+            raise ValueError('cold-framework-invalid-ai-metadata')
+        previous = hold.get('previous_tails')
+        if not (previous is None or (isinstance(previous, dict) and len(previous) == 2
+                and set(previous).issubset(TAIL_INDEXES)
+                and all(type(value) is int and 0 <= value <= 9 for value in previous.values()))):
+            raise ValueError('cold-framework-invalid-ai-metadata')
+        hits = hold.get('previous_hits')
+        if not (hits is None or (isinstance(hits, dict)
+                and all(type(value) is bool for value in hits.values()))):
+            raise ValueError('cold-framework-invalid-ai-metadata')
+        model_tails = hold.get('model_tails')
+        if not (model_tails is None or (isinstance(model_tails, dict)
+                and all(type(value) is int and 0 <= value <= 9 for value in model_tails.values()))):
+            raise ValueError('cold-framework-invalid-ai-metadata')
+        sealed = hold.get('sealed_tails')
+        if hold['reused_previous']:
+            if (not isinstance(sealed, dict) or len(sealed) != _tail_count(REVISION)
+                    or not set(sealed).issubset(TAIL_INDEXES)
+                    or any(type(value) is not int or not 0 <= value <= 9
+                           for value in sealed.values())):
+                raise ValueError('cold-framework-invalid-ai-metadata')
+        elif sealed is not None:
+            raise ValueError('cold-framework-invalid-ai-metadata')
     return deepcopy(metadata)
 
 
@@ -295,13 +327,22 @@ def build_prediction(snapshot, now, selection, metadata=None, *, revision=REVISI
     selected = _selection(selection, revision)
     body = {key: value for key, value in context.items()
             if key not in ('position_candidates', 'tail_candidates')}
+    selection_metadata = _metadata(metadata, context, now)
+    selected_tails = {key: context['tail_candidates'][key]
+                      for key in selected['selected_tails']}
+    hold = selection_metadata.get('tail_hold3') if isinstance(selection_metadata, dict) else None
+    if isinstance(hold, dict) and hold.get('reused_previous') is True:
+        sealed = hold.get('sealed_tails')
+        if (isinstance(sealed, dict) and len(sealed) == _tail_count(revision)
+                and set(sealed).issubset(TAIL_INDEXES)
+                and all(type(value) is int and 0 <= value <= 9 for value in sealed.values())):
+            selected_tails = {key: int(value) for key, value in sealed.items()}
     body.update({
         'sealed_at': now.isoformat(),
         'selected_positions': {key: context['position_candidates'][key]
                                for key in selected['selected_positions']},
-        'selected_tails': {key: context['tail_candidates'][key]
-                          for key in selected['selected_tails']},
-        'selection_metadata': _metadata(metadata, context, now),
+        'selected_tails': selected_tails,
+        'selection_metadata': selection_metadata,
     })
     if revision == REVISION:
         body.update({field: selected[field] for field in KEEP_KEYS})
