@@ -27,3 +27,5 @@ penta5-runner 2026-10-31 提示词部署：selected_six 首答硬性要求已上
 penta5-runner 2026-10-31 06:51 状态：服务器全自动、本机关机不影响。A0：影子任务 68bb193、门禁 070c48a、自动解除/转正 135f17a（门禁 ready 自动写 data/joint_form_auto_promote.json enabled；framework/killer 下一期起仅把两个排除形态换成 10^4 精确联合最优，AI 杀码/合尾/保留集不变；旧封存保留；回滚=该文件 manual_disable=true）。历史 2100 期 framework 55.98→58.55(+2.57pp)、killer 39.97→42.78(+2.80pp)；优化响应通过发布校验；门禁 ready 临时根测试通过。当前 burn-in 2/72（面板底 #joint-form-shadow 实时显示）。余额 10.6 CNY 仅约1h，跑满72期需充值约40-50 CNY，否则 AI 停摆无法自动解除门禁。ops_health ok。
 §
 penta5-runner 2026-10-31 上线「模型运行观测层」：lib/model_usage.py + lib/model_usage_view.py + scripts/run_model_usage.py（每分钟 cron，flock penta5-model-usage，日志 data/model_usage_cron.log 已入 logrotate）；只读 7 个 AI 任务日志的 AI_* 观测行 → data/model_usage/ledger-YYYYMM.jsonl + summary.json；面板 #model-usage 区块（MODEL_USAGE_START/END，在 RUNTIME_OBSERVABILITY_END 后，run_stats 重生成不覆盖）；ops_health 新增 model_usage 项。首轮回填 8715 事件，402=619/429=7 与原始日志 grep 一致。commits 1bb95cf/270817a；备份 /root/ops/model-usage-20261031/。
+§
+阿萨
