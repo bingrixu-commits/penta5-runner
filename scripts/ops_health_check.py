@@ -9,7 +9,6 @@ Collects a fixed set of probes into one JSON report plus a human table:
   stat50_seal        max prediction_seals key in data/stat50_compare_seals.json
   he3_refine         reference_period lag + status
   cold_framework     reference_period lag + status
-  cold_fixed_framework  reference_period lag + status
   selected_six       reference_period lag + status
   panel_html         panel.html mtime age (warn > 10 min, fail > 30 min)
   evidence_backup    /root/evidence-archives/latest-verified.json age + archive file
@@ -84,7 +83,6 @@ PAUSE_MARKER = 'data/ai_api_paused.json'
 REFERENCE_STATUS_FILES = (
     ('he3_refine', 'he3_refine_status.json'),
     ('cold_framework', 'cold_framework_status.json'),
-    ('cold_fixed_framework', 'cold_fixed_framework_status.json'),
     ('selected_six', 'selected_six_status.json'),
 )
 
@@ -97,7 +95,6 @@ PROVIDER_402_LOGS = (
     'ai_job_framework.log',
     'ai_job_killer.log',
     'cold_framework_cron.log',
-    'cold_fixed_framework_cron.log',
     'selected_six_cron.log',
     'he3_refine_cron.log',
     'kill3_tail_cron.log',
