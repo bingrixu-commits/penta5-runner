@@ -250,3 +250,18 @@
   持平（killer 90.05% vs 90.02%、冷码 89.33% vs 89.12%、固定八码 89.15% vs 90.16%），
   换码次数降至1/3~1/6；若上线需各框架出新 revision，且 AI三位置须同时删除"不得与上一期
   相同"规则（待用户确认）。
+
+- **2026-10-31 16:46 合尾稳定化候选影子任务上线（只读对照，不改现网口径/封存）**：用户确认
+  「照你的意思来」；按建议先做影子而非直接改口径。政策 tail-hold3-until-miss：同一尾类+尾码
+  命中后沿用、最多连用3期，失手或满3期改模型本期新选码。新增 lib/tail_stability_shadow.py
+  + scripts/run_tail_stability_shadow.py + 面板区块 TAIL_STABILITY_SHADOW（插入 HITRATE_BASE 之后），
+  cron 每5分钟（sleep50，flock penta5-tail-shadow，日志 data/tail_stability_shadow_cron.log），
+  已写入 ops/crontab.txt 并 crontab_tool.sh install / diff 一致（27→28 jobs）；面板 live refresh
+  names 注册该区块（quiet-panel-v19-live-sections）。产物 data/tail_stability_shadow.json：
+  backfill（全历史同批开奖回放）+ forward（从 start_period=20261031201 起逐期前瞻，按封存回放）。
+  首轮回放：killer 90.04%（n=6474）/固定八码 90.17%（n=4344）/冷码 89.11%（n=1900），稳定化
+  命中率持平（killer 90.04%、冷码 90.67%、固定八码 89.94%），换码次数约降至 1/3~1/6。
+  注意：AI三位置v7 现行"合尾不得与上一期相同"硬规则未动（影子策略忽略该规则）；正式上线需
+  各框架出新 revision 并删除该规则，待前瞻样本（n≥50）后再决定。回滚：删除 cron 行并
+  crontab_tool.sh install；回滚代码 git revert；区块可由 lib/tail_stability_shadow.py:
+  apply_block 保留/删除（删除时同时移除面板块）。
