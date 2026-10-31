@@ -406,6 +406,7 @@
 - 后续（未做）：`evidence_backup REQUIRED_DATA` 暂不加 `data/kill2_tail/seals.json`，待首个完整 evidence verify 通过后再加（避免 preflight 立刻 required-evidence-members-missing）。
 
 - 二期结算（2026-10-31 22:45 起）：ref 20261031272 → target 273 开奖 4453，7 项再次全部命中，verified；今日 kill2 为 2/2 期（位置 4/4 注、合尾/二数合/三数合/两形态均 2/2），面板统计行已自动显示「整组 100.00%（2/2 期）· 精确基线 57.26%（7 项）」。
+- **整组基线口径备注（独立验证发现）**：本框架登记 57.26% 沿用同构 selected-six v7 的历史封存配置逐配置枚举均值（/tmp/gain_gate_v7.json 的 items7_exact_v46=0.5726806，git 136d74f）；若按「合法封存配置均匀分布」期望，独立复算为 0.5702（1500 配置均值，stdev 0.0077，范围 0.5510–0.5899），两者差 0.24pp，远小于配置间波动 ±1.9pp，对监控影响 <0.25pp。登记沿用 0.5726 以保持与 selected-six v7 可比；若后续统一改用 0.5702 需同批改三个基线表（hitrate_baseline/framework_hitrate_cumulative/视图兜底）并重算历史 delta。
 - kill3 冻结守卫：因本次在共享模块 lib/panel_context.py 增加可选 kill2 参数，按 ops/kill3-stability-plan.md「经批准变更后重算 hash 并更新本文件」更新 ops/kill3-freeze.json 的 panel_context.py sha256（818f6f1），并在 hash_updates 记录 kill3 固定 fixture snapshot/prompt sha 逐字节不变的证据；kill3 RULE_VERSION/口径/封存未动。ops_health 当前仅剩 kill3_stability（历史版本切换提示）与 model_usage（历史 402）两条已知 WARN，无 FAIL。
 
 回滚：`git revert <本批 commit>`；`/root/run_stats.py` 回拷 `/root/ops/kill2-framework-20261031/run_stats.py.bak`；logrotate 回拷 `/root/ops/kill2-framework-20261031/penta5.logrotate.bak`；crontab 删除 kill2 行后 `scripts/crontab_tool.sh install`；`data/kill2_tail/` 历史证据保留不动。
