@@ -939,6 +939,7 @@ def check_provider_402(ctx):
     now = ctx['now']
     events = []
     skipped = []
+    untimed_skipped = 0
     for filename in PROVIDER_402_LOGS:
         path = data / filename
         try:
@@ -946,44 +947,44 @@ def check_provider_402(ctx):
         except OSError as exc:
             skipped.append('%s:%s' % (filename, type(exc).__name__))
             continue
-        file_events = []
-        for line in lines:
+        timed = []
+        untimed = []
+        for index, line in enumerate(lines):
             if not PROVIDER_402_PATTERN.search(line):
                 continue
-            file_events.append({'file': 'data/' + filename,
-                                'time': _provider_402_time(line)})
-        if not file_events:
-            continue
-        timed = [event['time'] for event in file_events if event['time'] is not None]
-        # 带 at 的 AI_HTTP_PHASE 行是可靠时间; 无时间的纯文本报错行(同一 402 的
-        # traceback)用本文件最近的 timed 402 近似; 若整文件都没有时间才退回 mtime
-        # (活跃日志的 mtime 会一直刷新, 不能直接当每行时间, 否则旧 402 永远算"近期")。
-        fallback = max(timed) if timed else None
-        approximate = fallback is None
-        if fallback is None:
-            try:
-                fallback = datetime.fromtimestamp(path.stat().st_mtime, TZ)
-            except OSError:
-                skipped.append('%s:no-mtime' % filename)
+            moment = _provider_402_time(line)
+            if moment is None:
+                untimed.append(index)
+            else:
+                timed.append((index, moment))
+        moments = [moment for _, moment in timed]
+        # 无时间戳 402 行(同一 402 的报错/traceback)只就近挂到同文件前 50 行内
+        # 带 at 的 AI_HTTP_PHASE 402 事件; 不再用文件 mtime 兜底——活跃日志的
+        # mtime 一直刷新, 会把旧 402 文本行算成"近期".
+        for index in untimed:
+            attached = None
+            for timed_index, moment in timed:
+                if index - 50 <= timed_index < index:
+                    attached = moment
+            if attached is None:
+                untimed_skipped += 1
                 continue
-        for event in file_events:
-            if event['time'] is None:
-                event['time'] = fallback
-                event['approximate'] = approximate
-            events.append(event)
+            moments.append(attached)
+        for moment in moments:
+            events.append({'file': 'data/' + filename, 'time': moment})
     recent = [event for event in events
               if (now - event['time']).total_seconds() <= PROVIDER_402_WINDOW_SECONDS]
+    untimed_note = ('; untimed_skipped=%d' % untimed_skipped) if untimed_skipped else ''
     if recent:
         latest = max(recent, key=lambda item: item['time'])
-        detail = ('402 in last 30m: count=%d latest_file=%s latest_at=%s'
+        detail = ('402 in last 30m: count=%d latest_file=%s latest_at=%s%s'
                   % (len(recent), latest['file'],
-                     latest['time'].isoformat(timespec='seconds')))
-        if latest.get('approximate'):
-            detail += ' (file mtime approx)'
+                     latest['time'].isoformat(timespec='seconds'), untimed_note))
         if skipped:
             detail += '; skipped=' + ','.join(skipped[:3])
         return _entry('provider_402', WARN, detail,
                       {'recent': len(recent), 'events': len(events),
+                       'untimed_skipped': untimed_skipped,
                        'latest_file': latest['file'],
                        'latest_at': latest['time'].isoformat(timespec='seconds'),
                        'skipped': len(skipped)})
@@ -992,10 +993,12 @@ def check_provider_402(ctx):
         latest = max(events, key=lambda item: item['time'])
         detail += (' (older_402=%d last=%s)'
                    % (len(events), latest['time'].isoformat(timespec='seconds')))
+    detail += untimed_note
     if skipped:
         detail += '; skipped=' + ','.join(skipped[:3])
     return _entry('provider_402', OK, detail,
-                  {'recent': 0, 'events': len(events), 'skipped': len(skipped)})
+                  {'recent': 0, 'events': len(events),
+                   'untimed_skipped': untimed_skipped, 'skipped': len(skipped)})
 
 
 MODEL_USAGE_STALE_SECONDS = 30 * 60

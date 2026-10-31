@@ -102,8 +102,8 @@ def _row(key, rule, n, hits, source, note=''):
     p = p_two(hits, n, expected) if expected is not None else None
     if expected is None:
         verdict = '基线待校准'
-    elif n < 30:
-        verdict = '样本不足'
+    elif n < 200:
+        verdict = '样本不足(n<200)'
     elif p is not None and p < 0.05:
         verdict = '偏离随机基线'
     else:
@@ -283,6 +283,7 @@ def build():
         'biz_date': _business_start(now).strftime('%Y-%m-%d'),
         'as_of_period': _as_of(rows),
         'basis': BASELINE_BASIS,
+        'min_sample': 200,
         'definition': '整组命中 = 该框架一期要求全部项目同时命中；随机期望按现行规则精确枚举校准',
         'single_baselines': [{'label': label, 'baseline': value} for label, value in SINGLE_BASELINES],
         'rows': rows,

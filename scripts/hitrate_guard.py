@@ -24,7 +24,7 @@ from stats_history import beijing_now, period_slot
 
 STATE_NAME = 'hitrate_guard.json'
 LOG_NAME = 'hitrate_guard.log'
-MIN_SAMPLE = 100
+MIN_SAMPLE = 200
 MISSING_LOOKBACK = 100
 PENDING_GRACE_MINUTES = 20
 FALLBACK_WINDOW_HOURS = 24
@@ -105,8 +105,107 @@ def _verified_periods(root, relative):
     return set()
 
 
-def _missing(root, now, watermark):
+def _draw_reference(root):
+    document = _read_json(root / 'data' / 'stats_draw_history.json', {}) or {}
+    records = document.get('records') if isinstance(document, dict) else None
+    if not isinstance(records, list):
+        return []
+    periods = set()
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        period = _period(row.get('period'))
+        if period:
+            periods.add(period)
+    return sorted(periods)[-MISSING_LOOKBACK:]
+
+
+def _killer_reference(root):
     killer = _read_json(root / 'data/r1_stats.json', {}) or {}
+    evaluations = killer.get('verified_evaluations')
+    if not isinstance(evaluations, list):
+        evaluations = []
+    return sorted({str(row.get('target_period')) for row in evaluations
+                   if isinstance(row, dict) and _period(row.get('target_period'))
+                   })[-MISSING_LOOKBACK:]
+
+
+def _ai_control(root):
+    document = _read_json(root / 'data' / 'ai_api_control.json', {}) or {}
+    introduced = _stamp_iso(document.get('introduced_at')) if isinstance(document, dict) else None
+    transitions = []
+    raw = document.get('transitions') if isinstance(document, dict) else None
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            at = _stamp_iso(item.get('at'))
+            if at is None:
+                continue
+            transitions.append((at, bool(item.get('enabled'))))
+    transitions.sort(key=lambda pair: pair[0])
+    return introduced, transitions
+
+
+def _switch_off(introduced, transitions, moment):
+    """AI 总闸在该期 slot 时刻是否处于关闭；introduced_at 之前视为 enabled。"""
+    if introduced is None or moment is None or moment < introduced:
+        return False
+    enabled = None
+    for at, state in transitions:
+        if at > moment:
+            break
+        enabled = state
+    return enabled is False
+
+
+def _classified_missing(root, now, watermark):
+    reference = _draw_reference(root)
+    reference_source = 'draw_history'
+    if not reference:
+        reference = _killer_reference(root)
+        reference_source = 'killer-fallback'
+    introduced, transitions = _ai_control(root)
+    deadlines = now - timedelta(minutes=PENDING_GRACE_MINUTES)
+    models = {}
+    for key, relative in (
+            ('framework', 'data/r1_framework_hit_stats.json'),
+            ('six', 'data/selected_six_hit_stats.json'),
+            ('he3', 'data/he3_refine_hit_stats.json')):
+        have = _verified_periods(root, relative)
+        missing = [period for period in reference if period not in have]
+        switch_off, unexplained = [], []
+        for period in missing:
+            # 该期的预测在参考期(该期 slot 前 5 分钟)发起、在该期 slot 开奖；
+            # 两个时刻任一处于「总闸关闭」都归因为总闸，避免关闸窗口尾部边界的
+            # 缺期被误报成 unexplained。
+            stamp = _stamp(period)
+            attempt = stamp - timedelta(minutes=5) if stamp is not None else None
+            if _switch_off(introduced, transitions, stamp) or _switch_off(introduced, transitions, attempt):
+                switch_off.append(period)
+            else:
+                unexplained.append(period)
+        alert = []
+        for period in unexplained:
+            stamp = _stamp(period)
+            if stamp is None or stamp > deadlines:
+                continue
+            if watermark is not None and stamp < watermark:
+                continue
+            alert.append(period)
+        status = 'fail' if len(alert) > 5 else 'warn' if alert else 'ok'
+        models[key] = {'missing_count': len(missing), 'alert_count': len(alert),
+                       'switch_off_count': len(switch_off),
+                       'unexplained_count': len(unexplained),
+                       'missing_periods': missing[-8:],
+                       'switch_off_periods': switch_off[-8:],
+                       'alert_periods': alert[-8:], 'status': status}
+    return {'reference_count': len(reference), 'reference_source': reference_source,
+            'models': models}
+
+
+def _missing_legacy(root, now, watermark):
+    killer = _read_json(root / 'data' / 'r1_stats.json', {}) or {}
     evaluations = killer.get('verified_evaluations')
     if not isinstance(evaluations, list):
         evaluations = []
@@ -132,7 +231,15 @@ def _missing(root, now, watermark):
         status = 'fail' if len(alert) > 5 else 'warn' if alert else 'ok'
         models[key] = {'missing_count': len(missing), 'alert_count': len(alert),
                        'missing_periods': missing[-8:], 'status': status}
-    return {'reference_count': len(reference), 'models': models}
+    return {'reference_count': len(reference), 'reference_source': 'killer-legacy',
+            'models': models}
+
+
+def _missing(root, now, watermark):
+    try:
+        return _classified_missing(root, now, watermark)
+    except Exception:
+        return _missing_legacy(root, now, watermark)
 
 
 def _hitrate_status(row):
@@ -209,6 +316,11 @@ def main(argv=None):
                       'hitrate_non_ok': [row['key'] for row in rows if row['status'] not in ('ok', 'insufficient', 'unknown')],
                       'six': {'fallbacks_24h': six['fallbacks_24h'], 'failures_2h': six['final_failures_2h']},
                       'missing_alert': {key: value['alert_count'] for key, value in (missing.get('models') or {}).items()},
+                      'missing_split': {key: {'switch_off': value.get('switch_off_count', 0),
+                                              'unexplained': value.get('unexplained_count', 0),
+                                              'alert': value['alert_count']}
+                                        for key, value in (missing.get('models') or {}).items()},
+                      'missing_reference': missing.get('reference_source'),
                       'balance': last_balance}, ensure_ascii=False))
     return 0
 
