@@ -406,3 +406,15 @@
 - 后续（未做）：`evidence_backup REQUIRED_DATA` 暂不加 `data/kill2_tail/seals.json`，待首个完整 evidence verify 通过后再加（避免 preflight 立刻 required-evidence-members-missing）。
 
 回滚：`git revert <本批 commit>`；`/root/run_stats.py` 回拷 `/root/ops/kill2-framework-20261031/run_stats.py.bak`；logrotate 回拷 `/root/ops/kill2-framework-20261031/penta5.logrotate.bak`；crontab 删除 kill2 行后 `scripts/crontab_tool.sh install`；`data/kill2_tail/` 历史证据保留不动。
+
+- **2026-10-31 22:30–22:48 七项独立 v7 发布/显示短暂异常（3 期 expired-unpublished，已恢复）**：
+  现象：ref 20261031270/271/272（target 271/272/273）连续 3 期封存为 expired-unpublished，
+  panel 刷新报 Exception/ImportError，selected_six_status 短暂 rejected；其余四框架
+  （kill3/固定八码/冷码/killer）同期发布正常。处理：先回滚本窗口 22:20 加的六项面板标记
+  （提交 19d9240，怀疑其触发刷新异常），随后确认模块 import 已恢复；22:45 周期起
+  正常，22:48 封存 ref 20261031273→274 published=True、status=published、面板卡片恢复。
+  归因：与并行编辑窗口的未提交改动时间重合（当时 git status 有 panel_context/
+  panel_live_refresh/hitrate_baseline 等多文件未提交，疑似编辑窗口撞模块导入），
+  非合尾稳定化逻辑本身（其余四框架正常）。影响：三期六项统计按缺期处理，不补发历史期；
+  已封存数据未改动。教训：多窗口并行时避免同时编辑共享模块；代码改动后以
+  selected_six_status=poll 确认恢复再继续。回滚：无需（异常已自行恢复）。
