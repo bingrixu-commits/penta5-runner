@@ -2,7 +2,7 @@
 
 Collects the data the operator sees on the panel — other frameworks' latest
 published decisions, today's hit rates, version-locked cumulative rates,
-stat50/cold/he3 summaries, model tiers and the kill3 own recent record — into a
+stat50/cold/he3 summaries, model tiers, 三数共现避开1/2/3组参考 and the kill3 own recent record — into a
 bounded JSON snapshot. The snapshot is embedded verbatim into the kill3 prompt,
 stored in the seal (panel_context / panel_context_sha256) and therefore fully
 auditable/replayable. Missing or stale sources are reported as notes instead of
@@ -295,6 +295,35 @@ def _ai_self_frames():
     return {'kill3': _ai_self_frame('kill3_tail'), 'kill1': _ai_self_frame('kill1_tail')}
 
 
+def _three_avoid2():
+    """三数共现避开 1/2/3 组参考（与面板核验块同源 data/three_avoid2_daily.json，只读）。"""
+    doc = _read(DATA / 'three_avoid2_daily.json', None) or {}
+    if not isinstance(doc, dict) or not doc.get('business_day'):
+        return None
+    groups = {}
+    latest_groups = ((doc.get('latest_groups') or {}).get('groups')) or {}
+    pending_groups = ((doc.get('pending_groups') or {}).get('groups')) or {}
+    for key, label in (('threeDigitAvoid', '避开1组'), ('threeDigitHit', '避开2组'),
+                       ('threeDigitAvoid2', '避开3组')):
+        latest = latest_groups.get(key) or {}
+        pending = pending_groups.get(key) or {}
+        item = {'value': pending.get('value') or latest.get('value')}
+        if isinstance(latest.get('success'), bool):
+            item['latest_success'] = latest['success']
+        groups[label] = item
+    current = doc.get('current') or {}
+    previous = doc.get('previous') or {}
+    return {
+        'as_of_period': doc.get('as_of_period'),
+        'groups': groups,
+        'latest_period': (doc.get('latest_groups') or {}).get('period'),
+        'latest_merged_success': (doc.get('latest_groups') or {}).get('merged_success'),
+        'pending_period': (doc.get('pending_groups') or {}).get('period'),
+        'today_merged': _pick(current, ('hit', 'total', 'rate', 'baseline')),
+        'prev_day_merged': _pick(previous, ('hit', 'total', 'rate', 'baseline', 'sealed')),
+    }
+
+
 def build(reference, target, *, kill3_stats=None, kill3_previous=None,
           kill1_stats=None, kill1_previous=None, kill2p_stats=None,
           kill2p_previous=None, extra_panel_input=False, now=None):
@@ -309,6 +338,7 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
         'panel_hitrate_10p': _hitrate_panel(),
         'panel_cumulative': _cumulative_panel(),
         'model_tiers': _model_tiers(),
+        'three_avoid2': _three_avoid2(),
         'kill3_self': _kill3_self(reference, kill3_stats, kill3_previous),
     }
     if kill1_stats is not None or kill1_previous is not None:
@@ -347,7 +377,7 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if len(payload) > limit:
         for key in ('panel_cumulative', 'panel_hitrate_10p', 'kill3_self', 'kill1_self',
-                    'kill2p_self', 'cold_stats', 'other_ai_self'):
+                    'kill2p_self', 'cold_stats', 'other_ai_self', 'three_avoid2'):
             snapshot.pop(key, None)
             payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
             if len(payload) <= limit:
