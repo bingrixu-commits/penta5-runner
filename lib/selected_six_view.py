@@ -470,6 +470,8 @@ def render_stats_block(summary, job_status=None, *, reference=None, now=None, co
             '三数合保留5码固定2奇3偶或3奇2偶。反向形态为千百十个四位完整形态（单双/大小）：'
             '被排除定位的字符取排除码反面，其余位置按五段minimax自选；'
             '两项为反向排除项，目标期实际四位形态不等于该形态才算该项命中，攻击语用「除」排除该形态。'
+            '合尾尾码稳定化：上期该尾码命中且自动沿用未满3期时系统沿用上期尾码；失手或满3期由'
+            '模型重选（重选可与上期同码）；封存 model_metadata.tail_policy 留档，命中口径不变。'
             '历史证据保留，成绩不能保证下一期命中。平台提前70秒关盘。</div>'
             + previous_text +
             '<div style="font-size:12px;">最近核验期：' + escape(data['latest_settled_period'] or '—')

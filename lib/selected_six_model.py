@@ -479,6 +479,18 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
         report = validation_report(response_validator)
         if report:
             model_metadata = dict(model_metadata, strategy_validation=report)
+        try:
+            from six_tail_hold import apply_six_tail_hold
+            tail_policy = apply_six_tail_hold(response, seals, reference,
+                                              (history[-1] or {}).get('numbers'))
+        except Exception as error:
+            tail_policy = None
+            _log(log, 'SELECTED_SIX_TAIL_HOLD_SKIPPED ref=%s error_type=%s'
+                 % (reference, type(error).__name__))
+        if isinstance(tail_policy, dict):
+            model_metadata = dict(model_metadata, tail_policy=tail_policy)
+            _log(log, 'SELECTED_SIX_TAIL_HOLD ref=%s reused=%s note=%s'
+                 % (reference, tail_policy.get('reused_previous'), tail_policy.get('note')))
         require_ai_enabled(root=root,clock=clock)
         candidate = {'revision': REVISION, 'ref_period': reference, 'history': history,
                      'history_sha256': _digest(history), 'input_doc': input_doc,

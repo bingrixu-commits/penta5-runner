@@ -66,6 +66,7 @@ def _collect():
     if killer:
         result['killer九项'] = killer
     # 固定八码 已于 2026-10-31 22:00 启用 pair-hold3 稳定化，不再列入影子对照。
+    # 七项独立 已于 2026-10-31 22:05 启用单尾 hold3 稳定化，不再列入影子对照。
     six = []
     doc = _read(DATA / 'selected_six_hit_stats.json', {}) or {}
     for entry in (doc.get('verified') or {}).values():
@@ -234,8 +235,8 @@ def render_block(data):
         '<th>现行换码</th><th>稳定化换码</th><th>上线后前瞻 n（现行→稳定化）</th></tr></thead><tbody>'
         + ''.join(rows) + '</tbody></table>'
         '<div class="ts-foot">单尾杀1码随机基线90%。稳定化不会提高命中率（数学上限），只降低换码频率。'
-        'AI 三位置（2026-10-31 21:10，v8）与固定八码（22:00，pair-hold3）已转正，'
-        '不再列入本影子；七项独立 v7、冷码七项待转正，旧封存保留。</div>'
+        'AI 三位置（2026-10-31 21:10，v8）、固定八码（22:00，pair-hold3）、'
+        '七项独立 v7（22:05，hold3）已转正，不再列入本影子；冷码七项待转正，旧封存保留。</div>'
         '</section>\n' + END)
 
 

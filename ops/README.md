@@ -324,3 +324,17 @@
   本期换码；模型本次仍选同码），面板卡片显示「合尾稳定化：本期换码」，framework 任务 success。
   备份：/root/ops/tail-hold3-framework-215629/（3 个 .py + golden-framework.json）。
   回滚：git revert <hash>；无需回滚数据（封存仅多 metadata 字段）。
+
+- **2026-10-31 22:05 七项独立 v7 启用合尾单码 hold3 稳定化（本地确定性后处理，不升 revision）**：
+  延续框架级稳定化方案，对七项独立 v7 的单合尾做本地确定性后处理：上期尾码命中且自动沿用
+  未满 3 期时沿用上期尾码；失手/满 3 期由模型本期重选。新增 lib/six_tail_hold.py（纯函数、只读），
+  lib/selected_six_model.py 在响应校验后、卡片/封存前调用，封存 model_metadata.tail_policy 留档
+  （policy/hold_max/reused_previous/note/model_tail/previous_tail/previous_hit/previous_streak/
+  previous_ref_period）；沿用时 response.reason 改写为含 AI 候选与模型原话；命中口径与随机基线
+  不变（单尾 90%，七项整组精确基线 57.26% 不变）；旧封存无 tail_policy 仍可原样校验。
+  面板统计规则补「合尾尾码稳定化」说明。
+  历史回放（selected_six v7 单尾 92 期真实封存 + 开奖，逐期确定性重放）：单尾命中率 84.78%→89.13%
+  （+4.35pp，n=92 小样本），尾码换码次数 39→19（-51%），沿用占 38% 期。
+  首期实盘：ref 20261031265→target 20261031266，tail_policy 写入（上期千百十杀0 命中、连用第2期 →
+  沿用），published=True；状态 published。备份：/root/ops/tail-hold3-six-220235/（3 个 .py +
+  golden-six.json）。回滚：git revert；无需回滚数据（封存仅多 metadata 字段）。
