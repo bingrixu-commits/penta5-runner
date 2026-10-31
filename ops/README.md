@@ -630,3 +630,45 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   framework_hitrate_cumulative.py scripts/、kill3-freeze.json ops/，再 python3 -m py_compile；无需重启服务（cron 每轮新解释器加载，面板每轮重建）。
 - 注意：hitrate_baseline.py / framework_hitrate_cumulative.py 中的 v9 基线登记（5, 0.6191）已写入线上并在本轮统计生效，
   但这两个文件同时被并行窗口（kill2p 新框架）改动，其提交会一并带上本登记。
+
+## 2026-11-01 04:15 新框架 kill2p：AI 二位置杀码 + 一合尾 + 两反向形态（5 项，独立封存/统计）
+
+用户 2026-11-01 03:46 指令「给我弄一个排除模型，结合几十期数据，从四个位置选择两个位置排除，还有一个合尾」，
+经 ask_user_question 钉死口径：**新建独立框架**、整组 **5 项 = 2 位置 + 1 合尾 + 2 反向形态**、历史窗口 **近 50 期**、
+合尾 **五选一 + 杀 1 尾 + hold3-until-miss**、位置/杀码 **不做连用限制**。
+
+- **口径（写死）**：DeepSeek 从 千/百/十/个 四位置中选恰好 2 个、各排除 1 码（位置 2 注/期；其余 2 位不参与定位项、攻击语保留 10 码）；
+  5 种合尾选 1 种排除 1 个和尾数字（hold3-until-miss，与 kill1/kill3 同口径）；
+  两项四位反向形态 reverse_parity（单双）/reverse_size（大小），被杀 2 位取杀码形态反面、其余 2 位 AI 自选；
+  整组命中 = 2 位置 + 1 合尾 + 2 形态共 5 项同时命中；无位置/杀码连用限制（用户明确「完全由模型选」）；只用前 4 球；北京时间 05:00 清零。
+- **RULE_VERSION**：kill2p-tail-v1-two-positions-one-tail-two-forms；独立封存/结算 data/kill2p_tail/{seals,settlements}.json；
+  独立 AI 请求（PENTA5_MODEL_KILL2P > PENTA5_MODEL_KILL3 > PENTA5_MODEL_KILLER > PENTA5_DEEPSEEK_MODEL）；
+  独立面板区块 kill-two-p-ai（KILL_TWO_P_START/END、names KILL_TWO_P）；独立攻击语 kill2p-attack-*（编辑器 all-attack-editor-v12-kill2p）。
+- **整组随机基线**：10^4 开奖空间 x 80,000 均匀配置精确枚举 = **0.620302 -> 0.6203（62.03%）**；
+  单项相乘 0.9x0.9x0.9x0.9375x0.9375 = 0.6407 偏乐观，已否定。枚举方法用 kill1 3 项 0.75375 与 kill3 5 项口径交叉验证。
+- **模块测试**：服务器 /tmp/kill2p_module_test.py **41 PASS / 0 FAIL**（normalize 恰好 2 位置/形态反面校验/build_attack/结算 5 项/today_stats/hold3 复用与满 3 期）。
+- **A/B 行为保持**：lib/panel_context.py 仅新增可选 kill2p_stats/kill2p_previous 入参与 kill2p_self 键；新旧模块固定 fixture 下
+  kill3 snapshot sha **0fda1290…**、kill1 **0383c3ac…**、noargs **3b33018a…** 逐字节相同；带 kill2p 入参仅新增 kill2p_self。
+  8ef648f 的 kill3 v9 冻结戳已把本改动 hash **36fa7154…** 登记进 ops/kill3-freeze.json files。
+- **12 处挂接点**（grep 计数见验收）：/root/run_stats.py（import + 2 处 update_panel 链）、panel_context、hitrate_baseline、
+  framework_hitrate_cumulative、ops_health（check_kill2p + cron 日志）、model_usage、evidence_backup、attack_editor、panel_live_refresh、
+  tail_hold_review、ops/crontab.txt（每 5 分钟 sleep 40、flock /var/lock/penta5-kill2pt.lock）、/etc/logrotate.d/penta5。
+- **首期真实证据**：ref **20261101051** -> target **20261101052**，published **2026-11-01T04:15:51+08:00**（deepseek-flash 8.2s，
+  prompt 3502 tok / reasoning 1194）；封存 positions {q:3, b:6}、tail 千百个 杀1、单双 双单双单、大小 大小大小；
+  攻击语 `千124567890百123457890十1234567890个1234567890四定千百个合234567890除双单双单除大小大小`；
+  面板 kill-two-p-ai data-as-of 与最新封存一致、攻击语 textarea 与 build_attack(seals[-1]) 逐字节一致。
+- **首期结算**：target 20261101052 开奖 [0,1,8,5]：2 位置命中（千3->0、百6->1）、合尾命中（千百个 0+1+5=6≠1）、
+  大小命中（实际「小小大大」≠封存「大小大小」）、单双未中（实际「双单双单」= 封存），**整组 group_hit=False、verified=True（4/5 单项命中）**。
+- **第二期**：ref 20261101052 -> target 20261101053，published 04:20:53（9.96s）；尾码按 hold3 沿用上期（上期命中、第 1 期），
+  位置/形态沿用（无连用限制），攻击语与第一期相同——符合「完全由模型选」口径。
+- **派生统计**：framework_hitrate_cumulative 04:22 生成已含 kill2p_tail 行（5 项/0.6203）；hitrate_baseline 下一轮 hitrate_guard 起含 kill2p_tail 行；
+  ops_health kill2p_tail **OK ref=20261101051 published_at=04:15:51**。
+- **改动文件**：新增 lib/kill2p_tail.py、lib/kill_two_p_view.py、scripts/run_kill2p_tail.py；改 lib/panel_context.py、lib/attack_editor_view.py、
+  lib/panel_live_refresh.py、lib/hitrate_baseline.py、scripts/framework_hitrate_cumulative.py、scripts/ops_health_check.py、lib/model_usage.py、
+  lib/evidence_backup.py、scripts/tail_hold_review.py、ops/crontab.txt、ops/kill3-freeze.json、ops/README.md；repo 外 /root/run_stats.py
+  （备份 /root/ops/kill2p-framework-20261101-040624/run_stats.py）、/etc/logrotate.d/penta5（备份同批）。
+- **commit**：063c701（核心三件套 + panel_context）、91771f0（派生统计/监控/攻击语挂接）、本批（cron + logrotate + 冻结登记 + README）。
+- **回滚**：git revert 本批 91771f0 063c701；/root/run_stats.py 回拷 /root/ops/kill2p-framework-20261101-040624/run_stats.py；
+  crontab 删除 kill2p 行后 bash scripts/crontab_tool.sh install；/etc/logrotate.d/penta5 删除 kill2p 行（回拷备份）；
+  data/kill2p_tail/ 历史封存/结算保留（回滚后不再写入）；面板下一轮重建自动移除 KILL_TWO_P 块。
+- **成本提示**：每期 1 次 DeepSeek 请求（288 次/日）；04:05 余额 31.22 元，余额守护会在低余额时自动停 AI 总闸。

@@ -68,11 +68,11 @@
     },
     {
       "at": "2026-11-01T04:10:43+08:00",
-      "commit": "pending-kill2p",
+      "commit": "063c701",
       "file": "lib/panel_context.py",
       "new_sha256": "36fa71540ba84134ef03d3f29d6ebd522d8d1664bd3097237c2ba4b2ee30c92d",
       "old_sha256": "0657aceb9b1d94a75b8427e76ff325f33586adebdf959790524ee2f8c1b70f36",
-      "reason": "并行窗口新增独立框架 kill2p_tail 在 panel_context 增加可选 kill2p_stats/kill2p_previous 入参与 kill2p_self 键；kill3 调用路径不传该参数、输出应逐字节不变，由该窗口 A/B 登记（其 commit 完成后更新此处 sha 与 commit）。"
+      "reason": "新增独立框架 kill2p_tail 在 panel_context 增加可选 kill2p_stats/kill2p_previous 入参与 kill2p_self 键；A/B 证明：固定 fixture 下 kill3 snapshot sha 0fda1290…、kill1 0383c3ac…、noargs 3b33018a… 与旧版逐字节相同，带 kill2p 入参仅新增 kill2p_self 键；kill3 调用路径不传该参数、口径未变。core commit 063c701。"
     }
   ],
   "min_periods": 100,
