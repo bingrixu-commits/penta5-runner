@@ -250,8 +250,11 @@ def _metadata(metadata, context, now, required=False):
         raise ValueError('cold-framework-missing-ai-metadata')
     required_fields = {'requested_model', 'returned_model', 'requested_at',
                        'completed_at', 'input_sha256', 'finish_reason'}
+    optional_fields = {'request_id', 'reason', 'reference_period', 'selection_policy',
+                       'panel_context_sha256', 'panel_context',
+                       'he3_keep_raw', 'he3_parity_repaired', 'he3_repair_policy'}
     if (not required_fields.issubset(metadata)
-            or not set(metadata).issubset(required_fields | {'request_id', 'reason', 'reference_period', 'selection_policy', 'panel_context_sha256', 'panel_context'})
+            or not set(metadata).issubset(required_fields | optional_fields)
             or _model_family(metadata['requested_model']) is None
             or not isinstance(metadata['returned_model'], str)
             or _model_family(metadata['returned_model']) != _model_family(metadata['requested_model'])
@@ -266,6 +269,16 @@ def _metadata(metadata, context, now, required=False):
     for field in ('request_id', 'reason'):
         if field in metadata and (not isinstance(metadata[field], str) or len(metadata[field]) > 500):
             raise ValueError('cold-framework-invalid-ai-metadata')
+    if 'he3_keep_raw' in metadata:
+        raw = metadata['he3_keep_raw']
+        if (not isinstance(raw, str) or len(raw) != 5 or len(set(raw)) != 5
+                or any(digit not in '0123456789' for digit in raw)):
+            raise ValueError('cold-framework-invalid-ai-metadata')
+        if (metadata.get('he3_parity_repaired') is not True
+                or metadata.get('he3_repair_policy') != HE3_PARITY_POLICY):
+            raise ValueError('cold-framework-invalid-ai-metadata')
+    elif 'he3_parity_repaired' in metadata or 'he3_repair_policy' in metadata:
+        raise ValueError('cold-framework-invalid-ai-metadata')
     if 'panel_context' in metadata and not isinstance(metadata['panel_context'], dict):
         raise ValueError('cold-framework-invalid-ai-metadata')
     return deepcopy(metadata)

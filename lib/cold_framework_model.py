@@ -266,6 +266,7 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
             owned = True
             _status(root, 'requesting', reference, clock)
             received_metadata, accepted_attempts = {}, []
+            repair_state = {'he3_keep_raw': None}
             def capture(message):
                 try:
                     if isinstance(message, str) and message.startswith('AI_RESPONSE_META '):
@@ -303,6 +304,7 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
                             if repaired_result is not None:
                                 _log(log, 'COLD_HE3_PARITY_REPAIRED ref=' + reference
                                      + ' from=' + str(payload.get('he3_keep')) + ' to=' + repaired)
+                                repair_state['he3_keep_raw'] = str(payload.get('he3_keep'))
                                 return repaired_result
                     # Emit only our fixed schema/strategy codes, never provider text.
                     code = str(error)
@@ -352,6 +354,15 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
                 'reason': response['reason'],
                 'selection_policy': core.HE3_PARITY_POLICY,
             }
+            if repair_state['he3_keep_raw'] is not None:
+                raw_keep = repair_state['he3_keep_raw']
+                metadata.update({
+                    'he3_keep_raw': raw_keep,
+                    'he3_parity_repaired': True,
+                    'he3_repair_policy': core.HE3_PARITY_POLICY,
+                    'reason': ('本地2:3奇偶修正：模型原he3_keep=%s，按规则修正为%s；模型理由：%s'
+                               % (raw_keep, response['he3_keep'], response['reason']))[:490],
+                })
             selection = {key: response[key] for key in ('selected_positions', 'selected_tails', *core.KEEP_KEYS)}
             ledger['attempts'][reference].update(state='response-received', selection=selection, metadata=metadata)
             core._write(path, ledger)

@@ -221,7 +221,7 @@ FIVE_STATS_SCRIPT = """<script id="he3-five-stats-control">
     if(history){var warning=document.createElement('span');warning.setAttribute('data-he3-retained-notice','1');warning.style.cssText='display:block;font-size:12px;color:#92400e;';
       warning.textContent='本行保留已核验的封存号码，不代表当前第8项的原6码；等待新一期独立结果。';container.appendChild(warning);}
     var rate=document.createElement('span');rate.setAttribute('data-he3-inline-rate','1');rate.style.cssText='display:block;color:#3730a3;';
-    rate.textContent=(history?'今日5码汇总：':'')+label;rate.title='独立五码统计；原六码及原8项统计不变。';container.appendChild(rate);
+    rate.textContent=(history?'今日5码汇总：':'剩余5码独立参考（不计入原8项）：')+label;rate.title='独立五码统计；原六码及原8项统计不变。';container.appendChild(rate);
   }
   function projectInline(label){
     var badges=document.querySelectorAll('[data-r1-hit-key="he3_keep"]');
