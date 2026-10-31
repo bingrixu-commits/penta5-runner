@@ -172,6 +172,33 @@ def _form_derivation(seal):
             + f'；弃位{dropped}字符自选')
 
 
+def _version_html():
+    """口径追溯行：当前 revision、自哪期起、本版期数、精确基线（只读）。"""
+    try:
+        info = kill3_tail.version_info()
+    except Exception:
+        return ''
+    try:
+        rule = str(info.get('rule_version') or '')
+        first = info.get('first_ref')
+        count = int(info.get('count') or 0)
+        base = None
+        try:
+            from hitrate_baseline import RULE_BASELINE
+            base = RULE_BASELINE.get(('kill3_tail', rule))
+        except Exception:
+            base = None
+        parts = ['口径 ' + escape(rule)]
+        if first:
+            parts.append('自 ref ' + escape(str(first)) + ' 起（本版 ' + str(count) + ' 期）')
+        if base:
+            parts.append('整组精确基线 %.2f%%（%d 项）' % (base[1] * 100.0, base[0]))
+        parts.append('口径已冻结：变更走影子验证（ops/kill3-stability-plan.md）')
+        return '<div class="k3-drop">' + ' · '.join(parts) + '</div>'
+    except Exception:
+        return ''
+
+
 def render_block():
     try:
         data = kill3_tail.current_summary()
@@ -184,7 +211,7 @@ def render_block():
                 body += (f'<div class="k3-meta">最近一次：参考期 {escape(str(previous.get("ref_period", "")))}'
                          f' · 目标期 {escape(str(previous.get("target_period", "")))}</div>')
             return (f'{START}<section id="kill-three-ai"><style>{STYLE}</style>'
-                    f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}'
+                    f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}{_version_html()}'
                     f'{_foot_html()}</section>{END}')
         positions = seal.get('positions') or {}
         display_only = seal.get('display_only')
@@ -270,7 +297,7 @@ def render_block():
                 f'（AI 选 3 个位置，{counted_note}）</div>'
                 f'{restrict_html}{position_html}{derive_html}'
                 f'<div class="k3-reason">理由：{reason}</div>'
-                f'{_stats_html(stats)}'
+                f'{_stats_html(stats)}{_version_html()}'
                 f'<div class="k3-verify">{verify}</div>'
                 f'{_attack_html(seal)}'
                 f'{_foot_html()}</section>{END}')

@@ -1092,6 +1092,18 @@ def today_stats(now=None):
     }
 
 
+def version_info():
+    """Current rule revision coverage: first/last published ref and seal count."""
+    seals = load_seals()
+    rule = RULE_VERSION
+    refs = [str(seal.get('ref_period')) for seal in seals
+            if isinstance(seal, dict) and seal.get('rule_version') == rule
+            and seal.get('publication_state') == 'published' and seal.get('ref_period')]
+    return {'rule_version': rule, 'count': len(refs),
+            'first_ref': refs[0] if refs else None,
+            'last_ref': refs[-1] if refs else None}
+
+
 def current_summary(now=None):
     """The recommendation for the latest drawn reference period, if published."""
     now = now or beijing_now()

@@ -1,0 +1,8 @@
+#!/bin/sh
+# penta5: 源码提交后自动刷新 verification-manifest 基线（fail-soft，不阻塞提交）
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$top" || exit 0
+if git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null | grep -qE '^(lib|scripts|ops)/'; then
+  python3 scripts/refresh_source_manifest.py --root "$top" --if-drift >/dev/null 2>&1 || true
+fi
+exit 0
