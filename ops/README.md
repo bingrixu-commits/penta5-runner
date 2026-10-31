@@ -432,3 +432,5 @@
 - 封存新增 `display_only` / `dropped`；结算、攻击语、面板（3 张位置卡，其中 1 张标注「仅展示，不计入整组」）、统计（2 注/期）全部按“2 个计入位置”口径。旧 v1 封存/结算原样保留为 legacy，不计入 v2 统计。
 - 回归：kill3 v8 的 panel_context 固定 fixture snapshot/prompt sha256 仍逐字节不变（9d45ac95…），kill3 口径/封存未动；kill3 冻结 stamp 的 panel_context.py hash 已按变更门禁更新并留 hash_updates 证据。
 - 回滚：git revert 本提交；下一期起按 v1 口径封存，v2 封存保留。
+- **v2 首期正式封存与结算（2026-11-01 00:05 起）**：ref 20261101001 → target 20261101002，published 00:05:54，positions q1/b8/s6，display_only=s，counted q/b，dropped=g；攻击语 `千234567890百123456790十1234567890个1234567890四定百十个合123456890除双单单双除大小小大二数合0268三数合34689各`（display_only 与放弃位置均保留 10 码）。target 002 结算：display_only=s、counted q/b、7 项整组命中（verified）。面板 KILL_TWO 已显示 8 卡（3 张位置卡中 1 张标注「仅展示，不计入整组」）、统计行「7 项全中：2 位置计入 + 合尾 + 二数合 + 三数合 + 2 形态」、旧 v1 17 期（整组 8 中）归档不计入；hitrate/cumulative 已切 v2 规则行（expected 57.26%）。
+- **过渡期 1 期（ref 20261031288→20261101001）**：该期封存在 00:00:57 热更新窗口内由旧版 create_seal 写入，rule 已标 v2 但缺 display_only/dropped 字段（counted q/b 正常，按 counted 结算 group=False），其攻击语按当时旧口径生成。属 1 期过渡记录，封存不改写、不补写；其后封存字段完整。整组机械基线仍 57.26%（7 项构成未变，display_only 不影响概率）；若要把整组拉回旧 5 项那版的 ~61.9%，需另立 revision 把二数合/三数合移出整组。
