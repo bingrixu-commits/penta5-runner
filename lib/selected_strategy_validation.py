@@ -17,6 +17,7 @@ from selected_framework_contract import (REVISION as SEVEN_REVISION,
 from selected_six_contract import (REVISION as SIX_REVISION,
                                     V2_REVISION as SIX_V2_REVISION,
                                     V3_REVISION as SIX_V3_REVISION,
+                                    V4_REVISION as SIX_V4_REVISION,
                                     SUPPORTED_REVISIONS as SIX_REVISIONS,
                                     reverse_attributes)
 from stat50_compare import validate_history
@@ -89,12 +90,12 @@ def _options(item, response, masks, revision=None):
     field, key, _ = item
     if key is None:
         values = list(masks[(field, None)])
-        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_REVISION):
+        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_V4_REVISION, SIX_REVISION):
             # v3/v4 compare only balanced 2:3 keep sets; older revisions keep
             # the complete legal domain byte-for-byte.
             values = [value for value in values
                       if 2 <= sum(int(digit) % 2 for digit in value) <= 3]
-        elif field in ('reverse_parity', 'reverse_size') and revision == SIX_REVISION:
+        elif field in ('reverse_parity', 'reverse_size') and revision in (SIX_V4_REVISION, SIX_REVISION):
             # v4 forms must mirror the selected positions' kill digits; only the
             # other positions are free, so compare inside this constrained set.
             column = 0 if field == 'reverse_parity' else 1
@@ -182,7 +183,7 @@ def _best_digit(masks, field, key):
 
 def _best_keep(masks, field, allowed, width, revision):
     def legal(keep):
-        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_REVISION):
+        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_V4_REVISION, SIX_REVISION):
             return 2 <= sum(int(digit) % 2 for digit in keep) <= 3
         return True
     values = [''.join(combo) for combo in combinations(allowed, width) if legal(''.join(combo))]
@@ -243,7 +244,7 @@ def selected_validator(input_doc, base_validator, *, kind, revision):
     # Six-item v2/v3/v4 seals carry the fast-transport option context, so their
     # saved minimax context must be revalidated under its own rule version.
     # Seven-item behavior is unchanged.
-    strict_six = kind == 'six' and revision in (SIX_V2_REVISION, SIX_V3_REVISION, SIX_REVISION)
+    strict_six = kind == 'six' and revision in (SIX_V2_REVISION, SIX_V3_REVISION, SIX_V4_REVISION, SIX_REVISION)
     if revision != active and not strict_six:
         return base_validator
     frozen = deepcopy(input_doc)

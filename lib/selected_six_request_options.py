@@ -11,7 +11,7 @@ import json
 import random
 
 from ai_verified_stats import next_period
-from selected_six_contract import (REVISION, V3_REVISION, SUPPORTED_REVISIONS,
+from selected_six_contract import (REVISION, V3_REVISION, V4_REVISION, FORM_REVISIONS, SUPPORTED_REVISIONS,
                                    build_input_doc, reverse_attributes, validate_response)
 from selected_strategy_validation import (POSITION_KEYS, TAIL_POSITIONS, SIX_RETRY_ADDITION,
     _failure_maps, _score, selected_validator, validation_report)
@@ -152,7 +152,7 @@ def _tables(frozen, masks):
                           for da, db in product(digits[a], digits[b])]
     for field in ('he2_keep', 'he3_keep'):
         allowed = list(masks[(field, None)])
-        if field == 'he3_keep' and frozen['revision'] in (V3_REVISION, REVISION):
+        if field == 'he3_keep' and frozen['revision'] in (V3_REVISION, V4_REVISION, REVISION):
             # Current rules: only 2:3 balanced keep sets are legal candidates.
             allowed = [keep for keep in allowed if 2 <= sum(int(digit) % 2 for digit in keep) <= 3]
         scores = {keep: _score(masks[(field, None)][keep]) for keep in allowed}
@@ -160,7 +160,7 @@ def _tables(frozen, masks):
         candidates[field] = [{'keep': keep, 'score': list(score)}
                              for keep, score in scores.items() if score == minimum]
         domains[field] = [row['keep'] for row in candidates[field]]
-    if frozen['revision'] == REVISION:
+    if frozen['revision'] in FORM_REVISIONS:
         # Four-position forms are constrained by the selected positions, so the
         # complete score table (not just points) is offered for AI comparison.
         for field in ('reverse_parity', 'reverse_size'):
@@ -192,9 +192,9 @@ def _base_context(frozen, candidates, pairs):
             'history_codes': [''.join(map(str, row['numbers'])) for row in frozen['history']],
             'block_size': 10, 'block_count': 5, 'variance_denominator': 25,
             'validation_scope': SCOPE,
-            'instruction': (INSTRUCTION_FORMS if frozen['revision'] == REVISION else
+            'instruction': (INSTRUCTION_FORMS if frozen['revision'] in FORM_REVISIONS else
                             INSTRUCTION_REVERSE if frozen['revision'] == V3_REVISION else INSTRUCTION),
-            'panel_context': frozen.get('panel_context'),
+            **({'panel_context': frozen['panel_context']} if frozen.get('panel_context') is not None else {}),
             'candidates': candidates, 'position_pairs': pairs['selected_positions'],
             'tail_pairs': pairs['selected_tails']}
 
@@ -232,7 +232,7 @@ def build_request_options(input_doc, *, max_options=8):
                 response[field] = deepcopy(domains[field][ordinal % size])
                 ordinal //= size
             response['reason'] = '同一冻结50期五段minimax同分合法候选'
-            if revision == REVISION:
+            if revision in FORM_REVISIONS:
                 for field in ('reverse_parity', 'reverse_size'):
                     column = 0 if field == 'reverse_parity' else 1
                     legal = list(masks[(field, None)])
@@ -286,7 +286,7 @@ def validate_request_context(input_doc, context):
 
 
 def wire_prompt(context, *, revision=None):
-    if revision == REVISION:
+    if revision in FORM_REVISIONS:
         return WIRE_PREFIX_FORMS + _canonical(context)
     if revision == V3_REVISION:
         return WIRE_PREFIX_REVERSE + _canonical(context)
@@ -295,6 +295,6 @@ def wire_prompt(context, *, revision=None):
 
 def wire_prompt_legacy(context, *, revision=None):
     """Validation-only prefix for pre-2026-10-31 v1 transport evidence."""
-    if revision == REVISION:
+    if revision in FORM_REVISIONS:
         return WIRE_PREFIX_FORMS_V1 + _canonical(context)
     return wire_prompt(context, revision=revision)
