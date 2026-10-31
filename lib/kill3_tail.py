@@ -5,8 +5,9 @@
   剩余的 1 个位置为「放弃」；
 - 3 个被杀位置全部计入整组与攻击语（counted），不再有 display_only 仅展示位；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
-- 尾码稳定化（v8 起）：上期尾码命中且连用未满 3 期时沿用上期尾码；失手或连用满 3 期后
-  改由模型本期新选；模型尾项在封存里记为换码候选（tail_policy.model_tail）；
+- 尾码稳定化（v8 起）：上期尾码命中且自动沿用未满 3 期时沿用上期尾码；失手或自动沿用
+  满 3 期后由模型本期重选（重选可与上期同码）；模型尾项在封存里记为换码候选
+  （tail_policy.model_tail）；
 - 另输出两项反向形态（与八项独立框架同口径）：
   四位单双形态 reverse_parity、四位大小形态 reverse_size；
   被杀的 3 个位置取杀码单双/大小的反面，放弃位置的字符由 AI 自选；
@@ -631,7 +632,9 @@ def apply_tail_policy(prediction, seals, settlements):
         note = '沿用上期尾码（第%s期，上期命中）' % state.get('previous_streak')
     elif previous and state.get('previous_hit') is True:
         final = model_tail
-        note = '换码（上期命中但已连用%s期满%s期）' % (state.get('previous_streak'), TAIL_HOLD_MAX)
+        note = '换码（自动沿用已满%s期，改由模型重选）' % TAIL_HOLD_MAX
+        if model_tail.get('key') == previous.get('key') and str(model_tail.get('kill')) == str(previous.get('kill')):
+            note += '（模型本次仍选同码）'
     elif previous and state.get('previous_hit') is False:
         final = model_tail
         note = '换码（上期未命中）'
