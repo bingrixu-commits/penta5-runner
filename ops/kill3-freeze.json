@@ -2,13 +2,23 @@
   "files": {
     "lib/kill3_tail.py": "496dd526701731d9e97bc0d48e685ef181899d29b625caa96d3266ad1fd5f00a",
     "lib/kill_three_view.py": "097ec649819f90641f1495e5d832f3b9de1da64e9c713b7d4d4eb484092ae260",
-    "lib/panel_context.py": "9a8e458f6360fce19fa414a3063026637eee30bfabc164c334bbfc1b62d3226b",
+    "lib/panel_context.py": "0791a310ddd402a74da375050253ecf3657a219cd9d5080a32f916c4c8150028",
     "scripts/run_kill3_tail.py": "28d043701f9168cea8e44eefb2d13952af52cef946fe37bba3962736bd9e262d"
   },
   "freeze_hours": 72,
   "freeze_ref_period": "20261031254",
   "frozen_at": "2026-10-31T21:41:42+08:00",
   "frozen_commit": "99e3f1b",
+  "hash_updates": [
+    {
+      "at": "2026-10-31T22:50:00+08:00",
+      "commit": "2f7a8b0",
+      "file": "lib/panel_context.py",
+      "new_sha256": "0791a310ddd402a74da375050253ecf3657a219cd9d5080a32f916c4c8150028",
+      "old_sha256": "9a8e458f6360fce19fa414a3063026637eee30bfabc164c334bbfc1b62d3226b",
+      "reason": "为新增 kill2_tail 面板上下文新增可选 kill2_stats/kill2_previous 参数；kill3 调用路径无参数变化，固定 fixture 下 kill3 panel_context snapshot/prompt_text sha256 逐字节不变（9d45ac95...），不改变 kill3 口径"
+    }
+  ],
   "min_periods": 100,
   "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。",
   "rule_version": "kill3-tail-v8-three-positions-hold3",
