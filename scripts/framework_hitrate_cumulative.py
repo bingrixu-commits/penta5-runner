@@ -19,7 +19,7 @@ import json
 import math
 import os
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path('/root/penta5-runner')
@@ -27,6 +27,10 @@ DATA = ROOT / 'data'
 OUT = DATA / 'framework_hitrate_cumulative.json'
 MIN_SAMPLE = 200
 BASIS = '现行规则 10^4 开奖组合精确枚举校准（2026-10-31）'
+DATA_LAG_NOTE = ('账本每期刷新，as_of 与各账本可能差 ≤1 期（时序竞争：最新一期结算与报告生成并发，'
+                 '报告可能落后或超前对应账本 1 期）')
+JOINT_FORM_BOUNDARY_NOTE = ('该时刻起 framework/killer 的 2 个反向形态改为联合优化形态（主判断不变）；'
+                            '跨分界累计趋势需谨慎解读')
 
 RULE_BASELINE = {
     ('killer', 'conditional-transition-v2'): (9, 0.4162),
@@ -140,6 +144,53 @@ def _verdict(n, p):
     return '与随机无法区分'
 
 
+def _period_slot(period):
+    try:
+        text = str(period)
+        day = date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+        index = int(text[8:11])
+        return datetime(day.year, day.month, day.day) + timedelta(minutes=5 * index)
+    except (TypeError, ValueError):
+        return None
+
+
+def _joint_form_boundary():
+    """joint_form 自动转正分界时刻；未转正或缺 promoted_at 时返回 (None, None)。"""
+    promotion = _read(DATA / 'joint_form_promotion.json') or {}
+    if promotion.get('auto_promoted') is not True:
+        return None, None
+    promote_state = _read(DATA / 'joint_form_auto_promote.json') or {}
+    promoted_at = promotion.get('promoted_at') or promote_state.get('promoted_at')
+    if not isinstance(promoted_at, str) or not promoted_at:
+        return None, None
+    try:
+        moment = datetime.fromisoformat(promoted_at)
+    except (TypeError, ValueError):
+        return None, None
+    if moment.tzinfo is not None:
+        moment = moment.replace(tzinfo=None)
+    return promoted_at, moment
+
+
+def _post_optimized_count(records, promoted_moment):
+    """target 槽位晚于转正时刻的已核验期数（分界后形态已改用联合优化形态）。"""
+    count = 0
+    for target, _, _ in records:
+        slot = _period_slot(target)
+        if slot is not None and slot > promoted_moment:
+            count += 1
+    return count
+
+
+def _with_post_optimized(row, records, promoted_at, promoted_moment):
+    count = _post_optimized_count(records, promoted_moment)
+    row['post_optimized_n'] = count
+    suffix = ('其中 %d 期 target 槽位晚于 joint_form 转正时刻 %s（该时刻起反向形态改用联合优化形态，'
+              '主判断不变），跨分界累计趋势需谨慎解读' % (count, promoted_at))
+    row['note'] = (row['note'] + '；' + suffix) if row.get('note') else suffix
+    return row
+
+
 def _build(key, rule, records, source, note=''):
     """records: [(target_period, joint_hit_bool, model_or_None)]。"""
     n = len(records)
@@ -200,8 +251,12 @@ def cum_killer():
             continue
         records.append((row.get('target_period'), all(bool(v) for v in outcome.values()), None))
     rule = _rule_from_strategy('killer') or 'conditional-transition-v2'
-    return _build('killer', rule, records, 'data/r1_stats.json',
-                  '账本未标注规则版本；按现行规则 conditional-transition-v2 复核全部记录')
+    row = _build('killer', rule, records, 'data/r1_stats.json',
+                 '账本未标注规则版本；按现行规则 conditional-transition-v2 复核全部记录')
+    promoted_at, promoted_moment = _joint_form_boundary()
+    if promoted_moment is not None:
+        row = _with_post_optimized(row, records, promoted_at, promoted_moment)
+    return row
 
 
 def cum_framework():
@@ -215,8 +270,12 @@ def cum_framework():
         records.append((row.get('target_period'), all(bool(v) for v in outcome.values()),
                         _model_of(row.get('publication'))))
     rule = _rule_from_strategy('framework') or 'marginal-frequency-v2'
-    return _build('framework', rule, records, 'data/r1_framework_hit_stats.json',
-                  '账本未标注规则版本；按现行规则 marginal-frequency-v2 复核全部记录')
+    row = _build('framework', rule, records, 'data/r1_framework_hit_stats.json',
+                 '账本未标注规则版本；按现行规则 marginal-frequency-v2 复核全部记录')
+    promoted_at, promoted_moment = _joint_form_boundary()
+    if promoted_moment is not None:
+        row = _with_post_optimized(row, records, promoted_at, promoted_moment)
+    return row
 
 
 def cum_selected_six():
@@ -302,7 +361,7 @@ def cum_cold(key, prefix):
     files = sorted(path for path in DATA.glob(prefix + '*.json')
                    if path.name[len(prefix):].startswith(tuple('0123456789'))
                    and path.name.count('-') == 2)
-    records, history, latest_revision = [], {}, None
+    records, history, latest_revision, dropped_legacy = [], {}, None, {}
     for path in files:
         doc = _read(path) or {}
         revision = doc.get('revision')
@@ -319,6 +378,8 @@ def cum_cold(key, prefix):
                 continue
             outcome = _cold_outcome(pred, [int(value) for value in numbers[:4]])
             if outcome is None:
+                legacy_key = revision or '(未标注)'
+                dropped_legacy[legacy_key] = dropped_legacy.get(legacy_key, 0) + 1
                 continue
             if revision and revision == latest_revision:
                 records.append((target, outcome, None))
@@ -331,6 +392,15 @@ def cum_cold(key, prefix):
     row['history'] = [{'revision': revision, 'n': value[0], 'hits': value[1],
                        'rate': round(value[1] / value[0], 6) if value[0] else None}
                       for revision, value in sorted(history.items())]
+    dropped_count = sum(dropped_legacy.values())
+    row['dropped_legacy'] = {'count': dropped_count,
+                             'revisions': dict(sorted(dropped_legacy.items()))}
+    if dropped_count:
+        detail = '、'.join('%s=%d' % (name, count)
+                          for name, count in sorted(dropped_legacy.items()))
+        suffix = ('另有 %d 条旧口径记录（形状不符合现行 7 项：%s）未计入且未单列，属已知披露缺口'
+                  % (dropped_count, detail))
+        row['note'] = (row['note'] + '；' + suffix) if row.get('note') else suffix
     return row
 
 
@@ -359,6 +429,7 @@ def cum_kill3():
 def build():
     rows = []
     errors = []
+    promoted_at, promoted_moment = _joint_form_boundary()
     for name, func in (('killer', cum_killer), ('framework', cum_framework),
                        ('selected_six', cum_selected_six), ('he3_refine', cum_he3),
                        ('cold_framework', lambda: cum_cold('cold_framework', 'cold_framework_')),
@@ -369,6 +440,10 @@ def build():
                 rows.append(row)
         except Exception as error:  # keep other frameworks alive
             errors.append('%s: %s: %s' % (name, type(error).__name__, error))
+    for row in rows:
+        if row.get('key') == 'selected_six':
+            row['note'] = ((row['note'] + '；' + DATA_LAG_NOTE)
+                           if row.get('note') else DATA_LAG_NOTE)
     as_of = None
     for row in rows:
         period = row.get('last_period')
@@ -382,6 +457,12 @@ def build():
         'basis': BASIS,
         'min_sample': MIN_SAMPLE,
         'definition': '整组命中 = 一期全部项目同时命中；随机期望按现行规则精确枚举；覆盖率=已核验/计划期数',
+        'data_lag_note': DATA_LAG_NOTE,
+        'joint_form_boundary': ({
+            'promoted_at': promoted_at,
+            'affected': ['killer', 'framework'],
+            'note': JOINT_FORM_BOUNDARY_NOTE,
+        } if promoted_moment is not None else None),
         'errors': errors,
         'rows': rows,
     }

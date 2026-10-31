@@ -113,6 +113,11 @@ def _render_cumulative(cumulative, baseline):
             history_text = '<div class="hb-foot">历史版本(不混算)：' + ' · '.join(
                 f"{escape(str(part.get('revision')))} n={part.get('n')} {_pct(part.get('rate'))}"
                 for part in history) + '</div>'
+        post_optimized = item.get('post_optimized_n')
+        boundary_text = ''
+        if isinstance(post_optimized, int) and not isinstance(post_optimized, bool):
+            boundary_text = ('<div class="hb-foot">口径分界后样本 %d 期（target 槽位晚于转正时刻，'
+                             '形态改用联合优化）</div>' % post_optimized)
         planned_rate = item.get('planned_hit_rate')
         coverage = item.get('coverage')
         coverage_text = _pct(coverage) if coverage is not None else '-'
@@ -124,7 +129,7 @@ def _render_cumulative(cumulative, baseline):
         rows.append(
             f"<tr><td><b>{escape(str(item.get('label') or key))}</b>"
             f"<div class=\"hb-foot\">{rule} · {window} · {escape(str(item.get('first_period') or ''))}→{escape(str(item.get('last_period') or ''))}</div>"
-            f"{model_text}{history_text}</td>"
+            f"{model_text}{history_text}{boundary_text}</td>"
             f"<td>{item.get('items') if item.get('items') is not None else '-'}</td>"
             f"<td>{item.get('n', 0)}</td>"
             f"<td><span class=\"hb-big\">{_pct(item.get('rate'))}</span>"
@@ -141,6 +146,12 @@ def _render_cumulative(cumulative, baseline):
     if not _cumulative_fresh(cumulative):
         stale_warning = ('<div class="hb-note">累计报告超过 %d 分钟未更新（生成于 %s），'
                          '以下为上一次结果；正在等待脚本刷新。</div>' % (STALE_MINUTES, escape(str(cumulative.get('generated_at') or '-'))))
+    boundary = cumulative.get('joint_form_boundary') or {}
+    boundary_note = ''
+    if isinstance(boundary, dict) and boundary.get('promoted_at'):
+        boundary_note = ('<div class="hb-note">口径分界：%s 起 framework/killer 的 2 个反向形态改为联合优化形态'
+                         '（主判断不变）；该时刻前后不是同一形态口径，跨分界累计趋势需谨慎解读。</div>'
+                         % escape(str(boundary.get('promoted_at'))))
     as_of = escape(str(cumulative.get('as_of_period') or (baseline or {}).get('as_of_period') or ''))
     basis = escape(str(cumulative.get('basis') or (baseline or {}).get('basis') or ''))
     return (
@@ -149,7 +160,7 @@ def _render_cumulative(cumulative, baseline):
         f'<h3>整组命中率 vs 随机期望（累计·版本锁定）</h3>'
         f'<div class="hb-meta">累计更新 {escape(str(cumulative.get("generated_at") or "-"))} · '
         f'数据截至 {as_of} · 只统计已核验样本 · 随机期望：{basis}</div>'
-        f'{stale_warning}'
+        f'{stale_warning}{boundary_note}'
         f'<table><thead><tr><th>框架 / 规则</th><th>项数</th><th>累计样本</th>'
         f'<th>累计命中率(95%CI)</th><th>随机期望</th><th>偏差</th><th>p</th><th>判定</th>'
         f'<th>覆盖率</th><th>今日(参考)</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
@@ -158,7 +169,7 @@ def _render_cumulative(cumulative, baseline):
         f'覆盖率 = 当前版本已核验期数 / 首期到末期计划期数；计划期命中率把漏发期按 0 命中计入，'
         f'用于暴露 402/停机造成的真实损失——稳定性问题会直接压低这个值，而不是提高命中率数字。</div>'
         f'<div class="hb-foot">单项随机基线：{singles}。</div>'
-        f'<div class="hb-foot">单尾杀 1 码的 90% 是数学上限（10 选 1 杀 1 码）；单日 n&lt;30 的小格波动 ±10pp 属正常，请以累计样本为准。</div>'
+        f'<div class="hb-foot">单尾杀 1 码的 90% 是数学上限（10 选 1 杀 1 码）；单日 n&lt;200 一律标「样本不足」，只做波动参考，请以累计样本为准。</div>'
         f'<div class="hb-foot">随机期望按现行规则用 10^4 种开奖组合精确枚举校准（已计入合尾/形态/保留码共享同一组开奖号的相关性，'
         f'不是简单相乘）；换规则版本即重置累计，旧版本样本单独列在框架格内且不混算。</div>'
         f'<div class="hb-foot">「今日」列只做波动参考（约 10 期），不参与判定。'
@@ -198,11 +209,11 @@ def _render_baseline(report):
         f'<div class="hb-note">整组命中率是「一期 N 项全部命中」的联合概率，不是单项准确率。'
         f'7~9 项框架的随机期望本来就只有 41%~62%，所以面板上的 40%~60% ≠ 模型退化。</div>'
         f'<div class="hb-foot">单项随机基线：{singles}。</div>'
-        f'<div class="hb-foot">单尾杀 1 码的 90% 是数学上限（10 选 1 杀 1 码）；单日 n&lt;30 的小格波动 ±10pp 属正常，请以累计样本为准。</div>'
+        f'<div class="hb-foot">单尾杀 1 码的 90% 是数学上限（10 选 1 杀 1 码）；单日 n&lt;200 一律标「样本不足」，只做波动参考，请以累计样本为准。</div>'
         f'<div class="hb-foot">随机期望按现行规则用 10^4 种开奖组合精确枚举校准（已计入合尾/形态/保留码共享同一组开奖号的相关性，'
         f'不是简单相乘）；换规则版本即重置校准，未知版本显示「基线待校准」。</div>'
         f'<div class="hb-foot">缺预测 / 待核验 / 冲突期不进分母；'
-        f'样本 &lt;30 或 p&gt;0.05 时不能判定优于或劣于随机。不同项数的框架不能按整组百分比横向排名。</div>'
+        f'样本 &lt;200 或 p&gt;0.05 时不能判定优于或劣于随机。不同项数的框架不能按整组百分比横向排名。</div>'
         f'</section>{END}')
 
 
