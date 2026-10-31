@@ -603,3 +603,8 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - **回滚**：`git revert 6238ba0 0f2df82 <本批>`；回拷 `/root/run_stats.py`（用 `/root/ops/kill2-retire-20261101-034721/run_stats.rollback.py`）、
   `/etc/logrotate.d/penta5` 加回两条日志行；`crontab` 加回两行后 `scripts/crontab_tool.sh install`；
   `tar -xzf /root/archive/retired-20261101-kill2/kill2-data.tar.gz -C /root/penta5-runner/`；面板与派生 JSON 由下一轮 run_stats / 各路脚本重生成。
+
+- **补充（04:08 复验）**：并行窗口恢复冷码 logrotate 条目时把 `data/kill2_tail_cron.log`、`data/kill2_v35_shadow_cron.log` 两行一并带回
+  （`/etc/logrotate.d/penta5` 行 72/73），已再次删除并复验 0 行、`logrotate -d` 通过；该文件其余冷码条目保留。
+  另：并行窗口正在开发新框架 `kill2p_tail`（二位置 + 一合尾 + 两反向形态，WIP 未提交），其新文件注释里提到「kill2 已退役」属说明性文字，不是功能引用；
+  该窗口的 kill3 v9 / panel_context 在途改动会临时令 ops_health `kill3_freeze` WARN，与本退役无关。
