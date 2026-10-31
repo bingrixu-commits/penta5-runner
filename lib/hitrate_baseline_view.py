@@ -174,6 +174,7 @@ def _render_cumulative(cumulative, baseline):
         f'不是简单相乘）；换规则版本即重置累计，旧版本样本单独列在框架格内且不混算。</div>'
         f'<div class="hb-foot">「今日」列只做波动参考（约 10 期），不参与判定。'
         f'不同项数的框架不能按整组百分比横向排名。</div>'
+        f'<div class="hb-foot"><a href="/accuracy" target="_blank" rel="noopener">→ 打开命中率看板（逐日明细）</a></div>'
         f'</section>{END}')
 
 
@@ -214,6 +215,7 @@ def _render_baseline(report):
         f'不是简单相乘）；换规则版本即重置校准，未知版本显示「基线待校准」。</div>'
         f'<div class="hb-foot">缺预测 / 待核验 / 冲突期不进分母；'
         f'样本 &lt;200 或 p&gt;0.05 时不能判定优于或劣于随机。不同项数的框架不能按整组百分比横向排名。</div>'
+        f'<div class="hb-foot"><a href="/accuracy" target="_blank" rel="noopener">→ 打开命中率看板（逐日明细）</a></div>'
         f'</section>{END}')
 
 

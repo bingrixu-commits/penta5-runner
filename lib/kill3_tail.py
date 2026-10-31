@@ -33,6 +33,7 @@ import time
 from stats_history import (beijing_now, business_start, load_snapshot, parse_time,
                            period_slot)
 from ai_verified_stats import atomic_json, digit, next_period
+from ai_http_observability import emit_http_phase
 from ai_prediction_guard import PublicationRejected
 
 ROOT = Path('/root/penta5-runner')
@@ -704,8 +705,13 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
             raise PublicationRejected('insufficient-time-for-kill3-request')
         timeout = max(10.0, min(90.0, remaining - 10.0))
         started = time.monotonic()
+        # HTTP boundary telemetry: best-effort, never changes retry/publication semantics.
+        http_phase_completed = False
+        emit_http_phase(log, reference, attempt, 'start')
         try:
             envelope = _post(messages, timeout)
+            emit_http_phase(log, reference, attempt, 'complete', status=200)
+            http_phase_completed = True
             choices = envelope.get('choices')
             if not isinstance(choices, list) or not choices:
                 raise ValueError('响应缺少 choices')
@@ -724,6 +730,11 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
             return prediction, beijing_now(), meta
         except Exception as error:
             # Provider bodies and raw model text are never echoed or retried blindly.
+            if not http_phase_completed:
+                phase_status = getattr(error, 'status', None)
+                emit_http_phase(log, reference, attempt, 'complete',
+                                status=phase_status if type(phase_status) is int else None)
+                http_phase_completed = True
             last_error = type(error).__name__
             status = getattr(error, 'status', None)
             if type(status) is not int:
