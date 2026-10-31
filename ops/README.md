@@ -740,3 +740,23 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - **回滚**：`git revert 598000f` + 回拷 `/root/ops/hitrate-page-20261101-044355/run_stats.py` 到 `/root/run_stats.py`
   + `pm2 restart penta5-runner`；回滚后 run_stats 恢复旧链，面板下一轮自动重建回大表。
   如需彻底移除独立页：再删 `hitrate.html` 并 `git update-index --no-skip-worktree hitrate.html`（路由可保留为 404 兜底前先改回）。
+
+## 2026-11-01 05:37 模型档位余额守卫（充值后自动全量归位 Pro）
+
+用户 05:35：「我缴费了 pro模型要自动全量归位」。核查 provider 余额仍为 15.84 CNY（充值尚未到账），
+先把「到账后自动归位」做成机制：
+
+- **scripts/model_tier_guard.py**（每 10 分钟 cron，flock /var/lock/penta5-modeltier.lock）：
+  - balance ≥ `pro_on_balance`(50) → 把 `PENTA5_MODEL_KILL1/KILL3/KILL2P` 全量切 `deepseek-v4-pro`（缺键自动补齐）
+  - balance < `flash_below_balance`(15) → 全量切 `deepseek-flash`
+  - 阈值之间保持现状（不回摆）；状态/日志 `data/model_tier_guard.json` / `data/model_tier_guard.log`
+  - 写前备份 .env 到 `/root/ops/model-tier-guard/<ts>/.env.bak`，原子替换 0600；阈值/目标可在
+    `data/model_tier_guard.json` 调整（targets 可扩到 KILLER/FRAMEWORK/HE3）
+- 部署时实测：余额 15.84 → 首次运行 `hold-mid`、未改 .env（sha 31678823… 不变）；dry-run 验证
+  50→switch-pro、5→switch-flash 逻辑正确；cron/logrotate 已装（crontab_tool diff 一致）。
+- 风险提示：三框架全 Pro 实测约 ¥27–36/小时（且 Pro 偶发格式校验失败重试、耗时 33–74s 接近发布窗口），
+  余额 ≥50 只能跑约 1.5–2 小时；若希望跑一天需充值到数百元量级，或把 targets 缩到单个框架。
+- 回滚：git revert 本提交 + 回拷 `/root/ops/model-tier-guard/crontab.txt.bak` 后 `scripts/crontab_tool.sh install`；
+  logrotate 回拷 `logrotate-penta5.bak`；`.env` 从 `/root/ops/model-tier-guard/<ts>/.env.bak` 或
+  `/root/ops/model-pro-050545/.env.before-pro` 恢复。
+
