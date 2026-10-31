@@ -19,6 +19,7 @@ from ai_prediction_guard import PublicationRejected
 import cold_fixed_framework as core
 from killer_ai_client import request_killer_response
 from stats_history import TZ, beijing_now, business_start, load_snapshot, period_slot
+import panel_context
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -310,7 +311,11 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
                 observed_posts += 1  # Uncertain transport outcomes remain paid tombstones.
                 return actual_post(*args, **kwargs)
             require_ai_enabled(root=root, clock=clock)
-            response, generated_at = request_killer_response(_prompt(context), reference,
+            _panel_snapshot = panel_context.build(reference, context['target_period'])
+            _panel_text, _panel_sha = panel_context.prompt_text(_panel_snapshot)
+            _panel_prompt = (_prompt(context) + '\n\n【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带 reference/target；仅供自主决策参考，不是未来概率保证）】\n' + _panel_text)
+            _log(log, 'PANEL_CONTEXT kind=cold_fixed sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
+            response, generated_at = request_killer_response(_panel_prompt, reference,
                 post=counted_post, api_key=api_key, model=MODEL, load_snapshot=checked_loader,
                 clock=clock, log=capture, monotonic=monotonic, sleep=sleep,
                 validator=checked_selection, retry_instruction=RETRY_INSTRUCTION,
@@ -327,6 +332,7 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
             if completed_at < requested_at or completed_at > _now(clock()):
                 raise PublicationRejected('cold-fixed-model-invalid-completion-time')
             metadata = {'requested_model': MODEL, 'returned_model': accepted['returned_model'],
+                    'panel_context_sha256': _panel_sha,
                         'requested_at': requested_at.isoformat(), 'completed_at': completed_at.isoformat(),
                         'input_sha256': context['input_sha256'], 'finish_reason': 'stop',
                         'reason': response['reason'], 'selection_policy': core.HE3_PARITY_POLICY}
