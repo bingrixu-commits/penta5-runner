@@ -696,6 +696,9 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   prompt_tokens 4983 / completion_tokens 1655 / 10.36s / deepseek-flash）。旧 6 条 v1 封存 records sha256 未变
   （`0c7f28ae…`）。面板 panel.html 已出现 `kill2p-tail-v2-panel-context-rich`（口径追溯行）。
 - **衍生统计**：hitrate/cumulative 已登记 v2 行；v2 首期结算（target 20261101058 开奖后）起自动出现 kill2p 行。
+- **连续两期生效与首期结算（04:52 复验）**：第二期 ref **20261101058** → target 20261101059，published 04:50:5x，
+  rule v2、panel_context_sha256=c7ebc9625bcf88cb…（同样含 cold_stats/other_ai_self）；v2 首期 target 20261101058 结算
+  group_hit=True（verified，n=1）；hitrate/cumulative 现网已出现 kill2p v2 行（n=1/hits=1/rate=1.0，expected 0.6203）。
 - **冻结守卫**：lib/panel_context.py 变更按 kill3 冻结门禁更新 hash（commit **dfdb5a7**，hash_updates 记录 A/B 证据）。
 - **验证脚本**：/tmp/test_kill2p_v2.py（A/B、rich 内容、模块版本、封存字段、旧封存不变、无面板兜底）全部 PASS；
   黄金基线 /root/ops/kill2p-v2-044339/golden-v1.json、golden-v2.json。
