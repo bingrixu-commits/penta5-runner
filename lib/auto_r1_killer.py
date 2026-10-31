@@ -399,6 +399,11 @@ _he_h3 = "".join([d for d in _base_d if d != str(he_h3).strip()])
 killer_attack_str = f"千{_q}百{_b}十{_s}个{_g}四定千百十个合{_he_all}千百十合{_he_q3}百十个合{_he_h3}除{p1}除{p2}"
 
 joint_form_note = (' ｜ 形态：本地精确联合优化（AI 杀码/合尾杀不变）' if joint_form_applied else '')
+killer_tail_note = ''
+if killer_tail_hold is not None:
+    killer_tail_note = (' ｜ 三合尾稳定化：沿用上期（第%s期）' % killer_tail_hold['previous_streak']
+                        if killer_tail_hold.get('reused_previous')
+                        else ' ｜ 三合尾稳定化：本期换码')
 # 4. 同步更新到 panel.html
 card = f"""<!-- R1_KILLER_START -->
 <div style="margin: 20px auto; max-width: 1000px; padding: 14px 20px; background: #ffffff; border: 2px solid #1677ff; border-radius: 8px; font-family: sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
@@ -408,7 +413,7 @@ card = f"""<!-- R1_KILLER_START -->
         </span>
         <span style="font-size: 12px; color: #888;">AI 计算时间: {response_generated_at.strftime("%H:%M:%S")}（北京时间）</span>
     </div>
-    <div style="font-size: 12px; color: #64748b; margin-bottom: 6px;">推理模式：高强度思考（high）{joint_form_note}</div>
+    <div style="font-size: 12px; color: #64748b; margin-bottom: 6px;">推理模式：高强度思考（high）{joint_form_note}{killer_tail_note}</div>
     <div style="font-size: 15px; line-height: 2.2; color: #333;">
         • <b>四位杀码 (各排除1码 · 今日可核验战绩):</b>
             第1位杀 <span style="color: #d9363e; font-weight:bold; font-size: 18px;">{k1_str}</span> {rate1}, 

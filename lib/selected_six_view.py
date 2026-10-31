@@ -603,6 +603,25 @@ def _card_reference(fragment):
         return None
 
 
+SIX_TAIL_POLICY_START = '<!-- SIX_TAIL_POLICY_START -->'
+SIX_TAIL_POLICY_END = '<!-- SIX_TAIL_POLICY_END -->'
+
+
+def _apply_six_tail_policy(html, policy_html):
+    if not policy_html:
+        return html
+    block = SIX_TAIL_POLICY_START + policy_html + SIX_TAIL_POLICY_END
+    start = html.find(SIX_TAIL_POLICY_START)
+    end = html.find(SIX_TAIL_POLICY_END)
+    if start != -1 and end > start:
+        return html[:start] + block + html[end + len(SIX_TAIL_POLICY_END):]
+    anchor = html.find('<!-- SELECTED_SIX_INDEPENDENT_STATS_END -->')
+    if anchor == -1:
+        return html
+    position = anchor + len('<!-- SELECTED_SIX_INDEPENDENT_STATS_END -->')
+    return html[:position] + block + html[position:]
+
+
 def _apply_selected_refresh(html, fragment, attack, statistics):
     found = _inspect(html)
     existing = _card_reference(found[MARKER][2]) if found[MARKER] else None
@@ -653,7 +672,20 @@ def refresh_selected_panel(snapshot=None, root=ROOT):
         result.update(reference=reference, available=bool(proof and proof.get('revision') == REVISION
                       and proof['ref_period'] == reference and now < period_slot(next_period(reference))-timedelta(seconds=70)),
                       retained_reference=proof['ref_period'] if proof and proof['ref_period'] != reference else None)
-        return _apply_selected_refresh(html, fragment, attack, statistics)
+        updated = _apply_selected_refresh(html, fragment, attack, statistics)
+        hold = None
+        metadata = proof.get('model_metadata') if isinstance(proof, dict) else None
+        policy = metadata.get('tail_policy') if isinstance(metadata, dict) else None
+        if isinstance(policy, dict) and policy.get('policy'):
+            note = str(policy.get('note') or '')
+            model_tail = policy.get('model_tail') or {}
+            candidate = ''
+            if isinstance(model_tail, dict) and model_tail.get('key'):
+                candidate = '（AI 候选：' + str(model_tail.get('label') or model_tail.get('key')) \
+                            + ' 杀' + str(model_tail.get('kill')) + '）'
+            hold = ('<div id="six-independent-tail-policy" class="six-tail-policy" '
+                    'data-penta5-live-derived="1">尾码稳定化：' + escape(note) + candidate + '</div>')
+        return _apply_six_tail_policy(updated, hold)
 
     update_panel(transform, path=root/'panel.html')
     return {**summary, **result}

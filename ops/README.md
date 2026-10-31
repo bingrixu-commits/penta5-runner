@@ -361,3 +361,17 @@
   影子任务停止对照，保留只读历史与面板说明。
 
 - **2026-10-31 22:14 kill3 冻结守卫上线（机器强制口径冻结 / 单写者）**：用户确认冻结期「≥100 期或 72 小时先到为准」并要求其他窗口不得再改 kill3。新增 ops/kill3-freeze.json（rule_version=kill3-tail-v8-three-positions-hold3、frozen_at=2026-10-31T21:41:42+08:00、freeze_ref_period=20261031254、min_periods=100、freeze_hours=72、4 个受控源码 sha256：lib/kill3_tail.py / lib/kill_three_view.py / scripts/run_kill3_tail.py / lib/panel_context.py）+ ops_health 新探针 kill3_freeze（RULE_VERSION 或受控 hash 变化即 WARN；同时显示进度与已冻结时长）。实测：kill3_freeze OK「freeze kill3-tail-v8-three-positions-hold3 · 进度 13/100 期 · 已冻结 0.5h/72h · 冻结中」。冻结期内其他框架的 hold3 稳定化提交（b6bc46f/0bb4f57/38fd332，15 文件）不含 kill3 受控文件，守卫判定未违反。回滚：git revert 本提交（冻结戳与探针一并移除）。
+
+- **2026-10-31 22:25 五框架合尾稳定化补「沿用/换码」标记 + 转正后复盘定时任务**：
+  面板标记：killer 卡片标题行、冷码七项卡片内、七项独立 v7 统计块后各加一行「尾码稳定化：
+  沿用上期（第N期）/本期换码（原因）」，均从封存元数据 tail_hold3 / tail_policy 派生；
+  固定八码卡片与 AI 三位置卡片此前已有同类标记。标记只在 post-hold 周期生成/渲染，
+  旧封存卡片字节不变（六项/框架的 card_html 摘要校验未改动）。
+  复盘任务：新增只读 scripts/tail_hold_review.py，统计各框架转正后首期起：期数、尾项样本、
+  尾项命中率(95%CI)、沿用期数/沿用率、换码期数，写 data/tail_hold_review.json 与
+  /root/ops/tail-hold-review/review-<stamp>.md；cron 每日 22:35（flock penta5-tail-review），
+  已写入 ops/crontab.txt 并安装（28→29 jobs，diff 一致）。
+  首轮回放：AI三位置 v8 自 ref 254 起 14 期尾项 12/14=85.71%（沿用率 42.9%）；
+  固定八码 4 期 87.50%、七项 v7 3 期 100%、冷码 2 期 75%、killer 1 期 66.67%
+  （样本尚小，3 日复盘再看）。备份：/root/ops/tail-markers-222012/（3 个 view 原文件）。
+  回滚：git revert；cron 回滚 = 删除 ops/crontab.txt 该行并 crontab_tool.sh install。

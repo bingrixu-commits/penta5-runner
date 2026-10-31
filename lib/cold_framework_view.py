@@ -443,6 +443,24 @@ def _histories(summary, header):
     return [by_revision[revision] for revision in (LEGACY_REVISION, FIVE_REVISION) if revision in by_revision]
 
 
+def _tail_policy_html(summary):
+    raw = summary.get('prediction') if isinstance(summary, dict) else None
+    if not isinstance(raw, dict):
+        return ''
+    metadata = raw.get('selection_metadata')
+    hold = metadata.get('tail_hold3') if isinstance(metadata, dict) else None
+    if not isinstance(hold, dict) or not hold.get('policy'):
+        return ''
+    note = str(hold.get('note') or '')
+    model_tails = hold.get('model_tails')
+    candidate = ''
+    if isinstance(model_tails, dict) and model_tails:
+        candidate = '（本期冷码候选：' + '、'.join(
+            str(key) + '=' + str(value) for key, value in sorted(model_tails.items())) + '）'
+    return ('<div class="cf-note" data-cold-tail-policy="1">尾码稳定化：'
+            + escape(note) + candidate + '</div>')
+
+
 def render_framework(summary):
     """Render only sanitized public metadata and verified derived statistics."""
     header = _header(summary)
@@ -471,7 +489,8 @@ def render_framework(summary):
             '<div id="cold-framework-api-status" class="cf-meta">' + api_status + '</div>'
             '<div id="cold-framework-card"' + attributes + '><div class="cf-meta">' + meta + '</div>'
             '<div id="cold-framework-validity" class="cf-status" role="status">' + validity + '</div>'
-            + _stats_html(data, header) + '<div class="cf-grid">' + _cards_html(prediction, data, header) + '</div></div>'
+            + _stats_html(data, header) + _tail_policy_html(summary)
+            + '<div class="cf-grid">' + _cards_html(prediction, data, header) + '</div></div>'
             '<div class="cf-attack"><b>冷码框架攻击语</b><div class="cf-note">复制本框架5项排除、二数合4码与三数合5码；未选的位置保留全部数字。</div>'
             '<textarea id="cold-framework-attack" readonly rows="3" aria-label="冷码框架攻击语">'
             + escape(attack) + '</textarea><button id="cold-framework-copy" type="button" disabled>复制攻击语</button> '
