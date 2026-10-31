@@ -816,3 +816,24 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 验证：ref 20261101075 的 kill3/kill1/kill2p/six/he3 封存均含 three_avoid2 段；
   ops_health kill3_freeze=OK、manifest_drift 已按 --if-drift 重建基线（overall=WARN 仅余
   coverage/model_usage/data_tmp 业务告警）。
+
+## 2026-11-01 位置杀码 holdK-until-miss 多档只读影子对照（1af215a）
+
+- 目标：位置杀码（kill1 单位置 / kill2p 二位置 / kill3 三位置 2 计入）的「换码」影子对照，
+  候选 holdK-until-miss（命中沿用、最多连用 K 期、失手或满 K 期换码），多档 hold2/3/5/不设上限。
+- 离线回放（未改现网）：kill1 现行 93.10%→hold3 93.10%（换码 19→8）；kill2p 96.88%（12→6）；
+  kill3 88.66%→hold3 89.35%（454→184）、直至失手 90.18%（65）。稳定化不提高命中率（数学上限），
+  只降换码频率；kill3 现行略低于 90% 基线受 max_consecutive=3 强制换码拖累。
+- 新增 lib/position_kill_shadow.py（只读影子，回放/前瞻双段，多档）、
+  scripts/run_position_kill_shadow.py（cron 入口）；只写 data/position_kill_shadow.json 与
+  panel.html POSITION_KILL_SHADOW 区块，不改任何封存/统计/攻击语。
+- lib/panel_live_refresh.py names 白名单 +POSITION_KILL_SHADOW、版本 v20→v21；
+  ops/crontab.txt 新增影子 cron（每 5 分钟 sleep 55、flock /var/lock/penta5-poskill-shadow.lock，
+  36→37 jobs）。
+- 验证：手工首跑 forward=0（正常）；cron 自动跑 generated_at 06:58→07:00:56、forward 0→1；
+  面板区块 START/END 各 1、数据行 3 框架；panel.html 白名单已刷入 POSITION_KILL_SHADOW + v21。
+- 复核：预登记判据（前瞻每框架 forward 注数 n≥50、命中率 95%CI 内不显著变差、换码明显下降）
+  由 schedule 2026-11-01 21:05 触发定点复核，达标才提转正方案，现网一律不动。
+- 备份：/root/ops/position-kill-shadow-20261101-065738/（panel_live_refresh.py、crontab.txt、新文件）。
+- 回滚：git revert 1af215a + scripts/crontab_tool.sh install（恢复 crontab.txt 基线 36 行）；
+  数据文件 data/position_kill_shadow.json 未跟踪可留可删。
