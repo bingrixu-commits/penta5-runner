@@ -467,3 +467,16 @@
 - **成本提示**：kill1 每期 1 次 DeepSeek 请求（288 次/日）；ops_health 首查时余额 8.54 元（按近 1h 扣费速率仅够约 1.6 小时），01:13 复测时用户已充值至 25.92 元；余额守护会在低余额时自动停 AI 总闸。
 - **回滚**：git revert 1e96ae5 052be4f 07dbf42 <本批>；/root/run_stats.py 回拷 /root/ops/kill1-framework-20261101-005247/run_stats.py；/etc/logrotate.d/penta5 删除 kill1 日志行（或回拷 /root/ops/kill1-framework-20261101-005247/ 内对应备份）；crontab 删除 kill1 行后 bash scripts/crontab_tool.sh install；data/kill1_tail/ 历史封存/结算保留不动（回滚后新期不再写入）。
 
+## 2026-11-01 02:08 彻底退役 cold_framework（AI 冷码七项框架）
+
+用户发图要求「撤除这个框架」（图中「DeepSeek Pro · 冷码七项框架」= cold_framework v3 30期冷码七项），按 cold_fixed（2026-10-31）退役同规格彻底撤除；**其它冷码块保留**：冷码杀号战绩（cold-hit-stats）、位置冷码（position-cold）、冷码观察、冷码回测每 6 小时 cron，以及 cold50/cold50_fixed 休眠代码。
+
+- **关停运行**：ops/crontab.txt 删除 cold 每 5 分钟行（flock penta5-cold，AI 每期请求）并 `scripts/crontab_tool.sh install`（diff 一致，32→31 行）；/etc/logrotate.d/penta5 删除 data/cold_framework_cron.log 行；lib/ai_runtime_jobs.py 从 AI 作业入口移除 run_cold_framework.py / cold_framework_model.py。
+- **面板移除**：lib/model_retirement.py 新增 COLD_MARKERS，run_stats 每次重建时剥除旧 COLD_FRAMEWORK 区块（旧块已一次性剥除）；panel_live_refresh（names/hooks）、attack_editor（v9-retire-cold-framework）、panel_delivery_timing、operational_availability、runtime_observability(_view) 全部去 cold 注册（cold50/cold50_fixed 休眠条目保留）。
+- **派生统计移除**：hitrate_baseline、framework_hitrate_cumulative（RULE_BASELINE/LABELS/WINDOWS/_cold_row/cum_cold 及仅 cold 使用的常量）、tail_hold_review（「冷码七项」）、model_usage（cold 日志源）、ops_health（cold status/402 日志）、evidence_backup（cold 账本 REQUIRED_DATA 与 cold 日文件必含校验）。重生成后 hitrate/cumulative **rows 8→7**、tail_hold_review **7→6 框架**、model_usage 7 源。
+- **面板上下文（冻结受控）**：lib/panel_context.py 删除 _cold_frame 与 frameworks.cold_framework 注入。A/B 证明：kill1/kill2/kill3 固定 fixture 下新版 snapshot 与旧版逐字节相同、仅去掉 frameworks.cold_framework 一个键；kill3 RULE_VERSION/选码口径未变。ops/kill3-freeze.json 已按变更门禁更新 hash（commit a950546，hash_updates 记录 A/B 证据）。
+- **代码删除**：commit **7ce1814** 含 git rm lib/cold_framework.py、lib/cold_framework_model.py、lib/cold_framework_view.py、lib/cold_tail_hold.py、scripts/run_cold_framework.py；全仓 .py/.txt/.sh 无 cold_framework 业务引用（仅 model_retirement 的 COLD_MARKERS 常量用于剥除旧块，保留）。
+- **数据归档**（不入 git）：/root/archive/retired-20261101-cold-framework/cold-framework-data.tar.gz（37 文件：每日预测/封存、attempts、cron 日志、ledger、status、lock，含 lib/data 下同源残留；原 12MB 压缩 1.1MB，sha256 eb3d802b…），同目录 README.md 记录回滚步骤；改前文件备份 /root/ops/cold-retire-20261101-021406/（含 /root/run_stats.py）。
+- **行为验证**：面板 panel.html 0 个 COLD_FRAMEWORK 标记、0 个「冷码七项框架」；ops_health 无 cold 项、hitrate_cumulative rows=7 OK；撤除后真实周期 ref 20261101029（02:25）kill3/kill2/kill1 三个 AI 框架均照常 published（02:25:40/50、02:25:44）。旧模块 vs 新模块同数据 A/B：hitrate/cumulative 存活行、tail 其余 6 框架逐字段完全相同。
+- **回滚**：git revert 7ce1814 a950546 本提交；回拷 /root/ops/cold-retire-20261101-021406/ 下 20 个文件（含 run_stats.py）与 /etc/logrotate.d/penta5；tar -xzf cold-framework-data.tar.gz -C /root/penta5-runner/；ops/crontab.txt 加回 cold 行后 crontab_tool.sh install；重启无必要（run_stats 每轮重读源码）。
+
