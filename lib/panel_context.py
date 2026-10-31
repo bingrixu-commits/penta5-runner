@@ -195,8 +195,28 @@ def _kill1_self(reference, kill1_stats, kill1_previous):
     return {'previous': previous, 'today': stats, 'reference': reference}
 
 
+def _kill2p_self(reference, kill2p_stats, kill2p_previous):
+    previous = None
+    if isinstance(kill2p_previous, dict):
+        previous = _pick(kill2p_previous, ('ref_period', 'target_period', 'rule_version',
+                                          'positions', 'counted', 'tail', 'tail_policy',
+                                          'reverse_parity', 'reverse_size',
+                                          'generated_at', 'published_at'))
+    stats = None
+    if isinstance(kill2p_stats, dict):
+        stats = _pick(kill2p_stats, ('total', 'group_hits', 'group_rate',
+                                    'positions', 'tail', 'patterns',
+                                    'current_win_streak', 'current_loss_streak',
+                                    'max_loss_streak', 'four_loss_cycles',
+                                    'pending', 'latest_period'))
+    if previous is None and stats is None:
+        return None
+    return {'previous': previous, 'today': stats, 'reference': reference}
+
+
 def build(reference, target, *, kill3_stats=None, kill3_previous=None,
-          kill1_stats=None, kill1_previous=None, now=None):
+          kill1_stats=None, kill1_previous=None, kill2p_stats=None,
+          kill2p_previous=None, now=None):
     moment = now or datetime.now().astimezone()
     snapshot = {
         'as_of_reference': str(reference),
@@ -212,6 +232,8 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     }
     if kill1_stats is not None or kill1_previous is not None:
         snapshot['kill1_self'] = _kill1_self(reference, kill1_stats, kill1_previous)
+    if kill2p_stats is not None or kill2p_previous is not None:
+        snapshot['kill2p_self'] = _kill2p_self(reference, kill2p_stats, kill2p_previous)
     models = _strategy_models().get('models') or {}
     for key, label in (('killer', '智能深排 killer'), ('framework', '固定八码框架'),
                        ('six', '七项独立框架')):
@@ -238,7 +260,8 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     # Hard bound: drop the largest optional sections until the JSON is small enough.
     payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if len(payload) > MAX_JSON_CHARS:
-        for key in ('panel_cumulative', 'panel_hitrate_10p', 'kill3_self', 'kill1_self'):
+        for key in ('panel_cumulative', 'panel_hitrate_10p', 'kill3_self', 'kill1_self',
+                    'kill2p_self'):
             snapshot.pop(key, None)
             payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
             if len(payload) <= MAX_JSON_CHARS:
