@@ -2,7 +2,7 @@
   "files": {
     "lib/kill3_tail.py": "a8c878d5dbfcaf596328b5f5dfb237bf7734e9c6ae2c80f6c23631dd7fc88299",
     "lib/kill_three_view.py": "34cbe0b0aa5011c4480145aafef42bd45f434ea58136a129e9bf65b7d0e1cf7f",
-    "lib/panel_context.py": "36fa71540ba84134ef03d3f29d6ebd522d8d1664bd3097237c2ba4b2ee30c92d",
+    "lib/panel_context.py": "bb2bca54a941740af52520fb1baf34e7e531c581bdaf9a0db03062f5d769d432",
     "scripts/run_kill3_tail.py": "28d043701f9168cea8e44eefb2d13952af52cef946fe37bba3962736bd9e262d"
   },
   "freeze_hours": 72,
@@ -73,6 +73,14 @@
       "new_sha256": "36fa71540ba84134ef03d3f29d6ebd522d8d1664bd3097237c2ba4b2ee30c92d",
       "old_sha256": "0657aceb9b1d94a75b8427e76ff325f33586adebdf959790524ee2f8c1b70f36",
       "reason": "新增独立框架 kill2p_tail 在 panel_context 增加可选 kill2p_stats/kill2p_previous 入参与 kill2p_self 键；A/B 证明：固定 fixture 下 kill3 snapshot sha 0fda1290…、kill1 0383c3ac…、noargs 3b33018a… 与旧版逐字节相同，带 kill2p 入参仅新增 kill2p_self 键；kill3 调用路径不传该参数、口径未变。core commit 063c701。"
+    },
+    {
+      "at": "2026-11-01T04:47:00+08:00",
+      "commit": "7f7b45e",
+      "file": "lib/panel_context.py",
+      "new_sha256": "bb2bca54a941740af52520fb1baf34e7e531c581bdaf9a0db03062f5d769d432",
+      "old_sha256": "36fa71540ba84134ef03d3f29d6ebd522d8d1664bd3097237c2ba4b2ee30c92d",
+      "reason": "kill2p 升 v2「扩 AI 输入」：panel_context 新增可选 extra_panel_input（默认 False）与 cold_stats/other_ai_self 两个富上下文键（冷码统计 + kill3/kill1 最近封存与近 10 期战绩），富上下文独立上限 12000；kill3/kill1 调用不传该参数，固定 fixture 下 build()+prompt_text() 与改前逐字节相同（kill3 72cc24ca…、kill1 feb6b4c8…、kill2p v1 模式 61f31de0…），不改变 kill3 口径"
     }
   ],
   "min_periods": 100,
