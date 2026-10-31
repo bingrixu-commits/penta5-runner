@@ -73,6 +73,7 @@
     <div class="meta" id="meta"></div>
     <div id="status" class="status">加载中…</div>
     <div id="sections"></div>
+    <div id="pageFooter" class="note">历史日账仅存本浏览器 localStorage，服务端只提供当日投影。</div>
   </div>
   <script>
 (function(){
@@ -90,27 +91,72 @@
     recommend2: "推荐2",
     killFramework: "杀框",
     fourDingFramework: "四定框架",
-    brotherNumberFramework: "取二兄弟框架",
     threeDuishu: "三对数",
     sixPeiSix: "六配六",
     fivePeiFive: "五配五四定",
     twoDigitAvoidAllThree: "对数避开(三组)"
   };
 
+  // 页面内基线：优先 /state rateDetails[key].randomBaseline；下表为 10^4 精确枚举/理论校正值。
+  // 审计依据：D-classic-models 报告（2026-10-31），累计 2999 期。
+  var EXACT_BASELINES = {
+    "position.wan.main": 90, "position.qian.main": 90, "position.bai.main": 90, "position.shi.main": 90,
+    "wan": 80, "qian": 80, "bai": 80, "shi": 80,
+    "positionTotal": 40.96, "threeDuishu": 90.26, "sixPeiSix": 93.76, "fivePeiFive": 87.02,
+    "totalHewei": 90, "threeFour": 72.90,
+    "wanQianBai": 90, "qianBaiShi": 90, "wanQianBaiShi": 90,
+    "sumAvoid": 96.28, "sumRangeAvoid": 99.82, "spanAvoid": 99.89, "repeatAvoid": 99.90,
+    "consecutiveAvoid": 98.32, "parityRatioAvoid": 93.75, "sizeRatioAvoid": 93.75,
+    "threeDigitAvoid": 97.96, "threeDigitAvoid2": 97.96, "threeDigitHit": 97.96,
+    "twoDigitAvoid": 90.26, "twoDigitAvoid2": 90.26, "twoDigitAvoid3": 90.26,
+    "twoDigitHit": 90.26, "anyTwoHeweiHit": 98.08, "anyThreeHeweiHit": 93.75
+  };
+  // 接口 rateDetails.randomBaseline 原值（与精确值不同的项，供 * 脚注）
+  var IFACE_BASELINE_ORIGINAL = {
+    "sumAvoid": 97, "sumRangeAvoid": 99, "spanAvoid": 99.5, "repeatAvoid": 99.5,
+    "consecutiveAvoid": 99.5, "parityRatioAvoid": 93, "sizeRatioAvoid": 93,
+    "twoDigitHit": 90, "anyTwoHeweiHit": 99, "anyThreeHeweiHit": 97
+  };
+  // 中性球序标签：平台官方球序 万/千/百/十/个（第5球不参与本模型）
+  var POSITION_LABELS = {
+    "position.wan.main": "第1位单定（平台万位）",
+    "position.qian.main": "第2位单定（平台千位）",
+    "position.bai.main": "第3位单定（平台百位）",
+    "position.shi.main": "第4位单定（平台十位）",
+    "wan": "第1位双码（平台万位）",
+    "qian": "第2位双码（平台千位）",
+    "bai": "第3位双码（平台百位）",
+    "shi": "第4位双码（平台十位）"
+  };
+  var CORE_KEYS = ["position.wan.main", "position.qian.main", "position.bai.main", "position.shi.main",
+    "wan", "qian", "bai", "shi", "positionTotal", "threeDuishu", "sixPeiSix", "fivePeiFive", "totalHewei",
+    "threeFour", "wanQianBai", "qianBaiShi", "wanQianBaiShi"];
+  var FILTER_KEYS = ["sumAvoid", "sumRangeAvoid", "spanAvoid", "repeatAvoid", "consecutiveAvoid",
+    "parityRatioAvoid", "sizeRatioAvoid", "threeDigitAvoid", "threeDigitAvoid2", "twoDigitAvoid",
+    "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit", "anyTwoHeweiHit", "anyThreeHeweiHit", "threeDigitHit"];
+  var RETIRED_MODELS = ["brotherNumberFramework", "compactAttack", "threeDingOne", "threeDingTwo"];
+  var DOUBLE_DISPLAY_MODELS = ["threeDuishu", "sixPeiSix", "fivePeiFive"];
+  var SAMPLE_MIN = 200;
+
+  // CORE_SNAP_KEYS 用于 localStorage 日账快照：标签/基线同步为中性口径与精确基线。
   var CORE_SNAP_KEYS = [
-    ["wanMain", "万位单定", 90],
-    ["qianMain", "千位单定", 90],
-    ["baiMain", "百位单定", 90],
-    ["shiMain", "十位单定", 90],
-    ["wan", "万位双码", 80],
-    ["qian", "千位双码", 80],
-    ["bai", "百位双码", 80],
-    ["shi", "十位双码", 80],
-    ["threeDuishu", "三对数", null],
-    ["sixPeiSix", "六配六", null],
-    ["fivePeiFive", "五配五四定", null],
-    ["totalHewei", "总合尾", null],
-    ["threeFour", "三合尾避开", null]
+    ["wanMain", "第1位单定（平台万位）", 90],
+    ["qianMain", "第2位单定（平台千位）", 90],
+    ["baiMain", "第3位单定（平台百位）", 90],
+    ["shiMain", "第4位单定（平台十位）", 90],
+    ["wan", "第1位双码（平台万位）", 80],
+    ["qian", "第2位双码（平台千位）", 80],
+    ["bai", "第3位双码（平台百位）", 80],
+    ["shi", "第4位双码（平台十位）", 80],
+    ["positionTotal", "定位双码总击(4位合取)", 40.96],
+    ["threeDuishu", "三对数", 90.26],
+    ["sixPeiSix", "六配六", 93.76],
+    ["fivePeiFive", "五配五四定", 87.02],
+    ["totalHewei", "总合尾", 90],
+    ["threeFour", "三合尾避开", 72.90],
+    ["wanQianBai", "千百十合尾", 90],
+    ["qianBaiShi", "百十个合尾", 90],
+    ["wanQianBaiShi", "千百十个合尾", 90]
   ];
 
   // UTC+8 minus the 05:00 reset, never the browser's local timezone.
@@ -174,11 +220,46 @@
     return Number(rate).toFixed(2).replace(/\.00$/, "") + "%";
   }
 
-  function row(label, rate, total, baseline, note){
+  function fmtBaseline(v){
+    if (v == null || !Number.isFinite(Number(v))) return "—";
+    return Number(v).toFixed(2).replace(/\.00$/, "");
+  }
+
+  function baselineFor(state, key){
+    var src=(state && state.rateDetails && state.rateDetails[key]) || {};
+    var api=num(src.randomBaseline);
+    var exact=EXACT_BASELINES[key];
+    if(api!=null){
+      if(exact!=null && Math.abs(api-exact)>0.005) return {value:exact, star:true, api:api};
+      return {value:api, star:false, api:null};
+    }
+    if(exact!=null) return {value:exact, star:true, api:null};
+    return {value:null, star:false, api:null};
+  }
+
+  function baselineFootnote(which){
+    if(which==="filters"){
+      var parts=[];
+      Object.keys(IFACE_BASELINE_ORIGINAL).forEach(function(k){parts.push(k+" 接口原值 "+IFACE_BASELINE_ORIGINAL[k]+"%");});
+      return "* 为 10^4 精确枚举校正值，接口原值：" + parts.join("、") + "；其余 * 项接口无随机基线。未标 * 为 /state rateDetails.randomBaseline 原值。";
+    }
+    return "* 为 10^4 精确枚举/理论校正值，接口原值：核心这 9 项接口无随机基线（positionTotal=4 双码合取 0.8^4、threeDuishu=对子共现、sixPeiSix/fivePeiFive=代码理论值、threeFour=三合尾 72.90、总合尾/3 条合尾=杀 1 尾码）。未标 * 为 /state rateDetails.randomBaseline 原值。";
+  }
+
+  function todayVerifiedCount(state){
+    var d=dailyDetail(state,"positionTotal");
+    return d.total||0;
+  }
+
+  function row(label, rate, total, baseline, note, starred){
     var cls = rateClass(rate, baseline);
-    var baseTxt = baseline == null ? "—" : ("基线 ~" + baseline + "%");
+    var baseTxt = baseline == null ? "—" : ("基线 ~" + fmtBaseline(baseline) + "%" + (starred ? "*" : ""));
+    var parts=[];
+    if(note) parts.push(note);
+    if(total != null && total < SAMPLE_MIN) parts.push("样本不足(n<200)");
+    var fullNote=parts.join(" · ");
     return "<tr>"
-      + "<td>" + esc(label) + (note ? "<div class=\"muted\" style=\"font-size:11px;margin-top:3px\">" + esc(note) + "</div>" : "") + "</td>"
+      + "<td>" + esc(label) + (fullNote ? "<div class=\"muted\" style=\"font-size:11px;margin-top:3px\">" + esc(fullNote) + "</div>" : "") + "</td>"
       + "<td class=\"rate " + cls + "\">" + esc(fmtRate(rate)) + "</td>"
       + "<td class=\"hide-sm\">" + esc(total == null ? "—" : String(total)) + "</td>"
       + "<td class=\"muted hide-sm\">" + esc(baseTxt) + "</td>"
@@ -289,7 +370,7 @@
     });
     if(!rows)rows='<tr><td colspan="4" class="empty">该日暂无已验证日账；旧版未证明统计口径的档案仅保留导出。</td></tr>';
     return section("按日百分比记 · "+day,
-      "北京时间05:00统一清零，仅开奖前发布且开奖后核验的本业务日记录；不以历史回放补造实战命中率。历史档案可手动选择。",
+      "北京时间05:00统一清零，仅开奖前发布且开奖后核验的本业务日记录；不以历史回放补造实战命中率。历史档案仅存本浏览器 localStorage，服务端只提供当日投影。",
       rows,buildDaySelector(allDays(state),day));
   }
 
@@ -309,34 +390,41 @@
     meta.push('<span class="chip '+(state.tipReady?"ok":"bad")+'">tipReady '+(state.tipReady?"是":"否")+'</span>');
     meta.push('<span class="chip '+(storm.active?"warn":"ok")+'">风暴 '+(storm.active?"开":"关")+'</span>');
     document.getElementById("meta").innerHTML=meta.join("");
+    var sampleN=todayVerifiedCount(state);
+    var sampleTxt="当前业务日已验证 "+sampleN+" 期；<200 时全部按样本不足处理，只作波动参考。";
     var core="";
-    [["position.wan.main",90],["position.qian.main",90],["position.bai.main",90],["position.shi.main",90],
-     ["wan",80],["qian",80],["bai",80],["shi",80],["positionTotal",null],
-     ["threeDuishu",null],["sixPeiSix",null],["fivePeiFive",null],["totalHewei",null],["threeFour",null],
-     ["wanQianBai",null],["qianBaiShi",null],["wanQianBaiShi",null]].forEach(function(pair){
-      var d=dailyDetail(state,pair[0]);
-      core+=row(d.label||MODEL_LABELS[pair[0]]||pair[0],d.rate,d.total,pair[1],d.total?"本业务日已核验 · "+d.hit+"/"+d.total:"暂无今日已验证数据");
+    CORE_KEYS.forEach(function(key){
+      var d=dailyDetail(state,key);
+      var b=baselineFor(state,key);
+      var label=POSITION_LABELS[key]||d.label||MODEL_LABELS[key]||key;
+      core+=row(label,d.rate,d.total,b.value,d.total?"本业务日已核验 · 命中 "+d.hit+"/"+d.total:"暂无今日已验证数据",b.star);
     });
     var attack="";
     Object.keys(MODEL_LABELS).forEach(function(key){
+      if(RETIRED_MODELS.indexOf(key)>=0)return;
       var d=dailyLedger(state,key,today);
-      attack+=row(MODEL_LABELS[key],d?d.rate:null,d?d.total:0,null,d?"本业务日已核验 · "+d.hit+"/"+d.total:"暂无今日已验证数据");
+      if(!d)return;
+      attack+=row(MODEL_LABELS[key],d.rate,d.total,null,"本业务日已核验 · 命中 "+d.hit+"/"+d.total);
     });
+    if(!attack)attack='<tr><td colspan="4" class="empty">当前业务日暂无策略模型已验证数据。</td></tr>';
     var filters="";
-    ["sumAvoid","sumRangeAvoid","spanAvoid","repeatAvoid","consecutiveAvoid","parityRatioAvoid","sizeRatioAvoid",
-     "threeDigitAvoid","threeDigitAvoid2","twoDigitAvoid","twoDigitAvoid2","twoDigitAvoid3","twoDigitHit",
-     "anyTwoHeweiHit","anyThreeHeweiHit","threeDigitHit"].forEach(function(key){
+    FILTER_KEYS.forEach(function(key){
       var d=dailyDetail(state,key);
-      filters+=row(d.label||key,d.rate,d.total,null,d.total?"本业务日已核验 · "+d.hit+"/"+d.total:"暂无今日已验证数据");
+      var b=baselineFor(state,key);
+      filters+=row(d.label||key,d.rate,d.total,b.value,d.total?"本业务日已核验 · 命中 "+d.hit+"/"+d.total:"暂无今日已验证数据",b.star);
     });
     var issues=((state.modelWatchdog||{}).lastIssues||[]).map(function(it){
       return row((it.label||it.key||"issue")+" · "+(it.action||""),null,null,null,"运维告警，非今日实战命中统计");
     }).join("");
     if(!issues)issues='<tr><td colspan="4" class="empty">当前无 watchdog 告警</td></tr>';
+    var coreNote="平台官方球序为万/千/百/十/个位（第5球不参与本模型）；历史标签『千位/万位』均指第1位，本页统一为「第N位+平台位名」。"+sampleTxt+baselineFootnote("core");
+    var attackExtra='<div class="note">与今日核心为同一评估的双重展示，不是两套模型：'+DOUBLE_DISPLAY_MODELS.map(function(k){return MODEL_LABELS[k]||k;}).join("、")+'。</div>';
+    var attackNote="整组随机基线需按各自规则精确枚举，本页不硬编码，勿在无对照下解读。"+sampleTxt;
+    var filterNote="高基线通过率不等于预测能力。"+sampleTxt+baselineFootnote("filters");
     document.getElementById("sections").innerHTML=renderDailySection(state,day)+
-      section("今日核心（业务日）",current?"本周期不足50期按已有实测期数统计。":"北京时间05:00已清零，等待服务端本周期数据。",core)+
-      section("今日进攻 / 推荐", "仅后端业务日日账，历史训练和回放不计入今日实战。",attack)+
-      section("今日过滤与参考项","高基线通过率不等于预测能力。",filters)+
+      section("今日核心（业务日）",current?coreNote:"北京时间05:00已清零，等待服务端本周期数据。"+sampleTxt,core)+
+      section("今日进攻 / 推荐",attackNote,attack,attackExtra)+
+      section("今日过滤与参考项",filterNote,filters)+
       section("Watchdog 告警","只读运维状态。",issues);
     var sel=document.getElementById("daySelect");
     if(sel)sel.onchange=function(){selectedDay=sel.value;explicitHistoryDay=selectedDay!==businessDay();render(lastState);};
