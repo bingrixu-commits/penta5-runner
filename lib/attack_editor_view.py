@@ -14,7 +14,7 @@ const definitions=[
  {id:'r1_framework_attack_text',copy:'r1_copy_btn',label:'杀码框架攻击语',kind:'framework'},
  {id:'r1_killer_attack_text',copy:'r1_killer_copy_btn',label:'深度排除攻击语',kind:'killer'},
  {id:'selected6-attack-text',copy:'selected6-attack-copy',label:'三定位七项框架攻击语',data:'selected6-attack-data'},
- {id:'six-independent-attack-text',copy:'six-independent-attack-copy',label:'八项独立框架攻击语',data:'six-independent-attack-data'},
+ {id:'six-independent-attack-text',copy:'six-independent-attack-copy',label:'七项独立框架攻击语',data:'six-independent-attack-data'},
  {id:'kill3-attack-text',copy:'kill3-attack-copy',label:'AI三位置+一合尾攻击语',data:'kill3-attack-data'},
  {id:'cold-framework-attack',copy:'cold-framework-copy',label:'冷码框架攻击语',data:'cold-framework-data'},
  {id:'cold50-framework-attack',copy:'cold50-framework-copy',label:'50期冷码框架攻击语',data:'cold50-framework-data'},

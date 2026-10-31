@@ -15,7 +15,7 @@ import os
 
 from ai_verified_stats import atomic_json, next_period, publication_evidence_error
 from selected_six_contract import (BASE_METRIC_KEYS, METRIC_KEYS, REVISION as RULE_REVISION,
-                                   SUPPORTED_REVISIONS, item_count, outcomes)
+                                   SUPPORTED_REVISIONS, item_count, outcomes, tail_count)
 from stats_history import (TZ, business_start, load_snapshot, parse_period, parse_time,
                            period_slot, valid_draw_record, validate_conflicting_periods)
 
@@ -54,9 +54,11 @@ def _verified_entry(proof, record, now):
     # acquire a fabricated seventh outcome during a later rules migration.
     result = outcomes(proof['response'], actual['numbers'], revision=proof['revision'])
     expected_count = item_count(proof['revision'])
+    # 2 positions + selected tails (2 before v7, 1 in v7) + 2 keep sets.
+    expected_base = 2 + tail_count(proof['revision']) + 2
     if (not isinstance(result, dict) or len(result) != expected_count
             or not set(result) <= set(METRIC_KEYS)
-            or len(set(result) & set(BASE_METRIC_KEYS)) != 6
+            or len(set(result) & set(BASE_METRIC_KEYS)) != expected_base
             or any(type(hit) is not bool for hit in result.values())):
         raise ValueError('invalid-selected-versioned-outcomes')
     return {'ref_period': proof['ref_period'], 'target_period': proof['target_period'],

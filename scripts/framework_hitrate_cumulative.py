@@ -33,6 +33,7 @@ RULE_BASELINE = {
     ('framework', 'marginal-frequency-v2'): (8, 0.5559),
     ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
     ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),
+    ('selected_six', 'selected-six-independent-v7-single-tail'): (7, 0.5726),
     ('cold_framework', 'cold-framework-v3-30-pos3-tail2-he2x4-he3x5'): (7, 0.5427),
     ('he3_refine', 'he3-refine-v2-balanced'): (1, 0.9375),
     ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
@@ -44,7 +45,7 @@ RULE_BASELINE = {
 LABELS = {
     'killer': '智能深排 killer（9 项）',
     'framework': '固定八码框架（8 项）',
-    'selected_six': '八项独立框架 selected_six（8 项）',
+    'selected_six': '七项独立框架 selected_six（7 项）',
     'cold_framework': '冷码七项框架',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',

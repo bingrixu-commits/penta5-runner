@@ -11,18 +11,21 @@ import json
 from ai_verified_stats import next_period
 from position_input_features import build_position_features
 from stat50_compare import validate_history
-from strategy_features import build_strategy, SIX_STRATEGY, LEGACY_SIX_STRATEGY
+from strategy_features import (build_strategy, SIX_STRATEGY, LEGACY_SIX_STRATEGY,
+                              SINGLE_TAIL_SIX_STRATEGY)
 
 LEGACY_REVISION = 'selected-six-independent-v1'
 V2_REVISION = 'selected-six-independent-v2-minimax'
 V3_REVISION = 'selected-six-independent-v3-minimax-reverse'
 V4_REVISION = 'selected-six-independent-v4-minimax-forms'
 V6_REVISION = 'selected-six-independent-v6-panel-context'
-PREVIOUS_REVISION = V4_REVISION
-REVISION = V6_REVISION
+V7_REVISION = 'selected-six-independent-v7-single-tail'
+PREVIOUS_REVISION = V6_REVISION
+REVISION = V7_REVISION
 LEDGER_REVISION = LEGACY_REVISION
-SUPPORTED_REVISIONS = frozenset((LEGACY_REVISION, V2_REVISION, V3_REVISION, V4_REVISION, V6_REVISION))
-FORM_REVISIONS = frozenset((V4_REVISION, V6_REVISION))
+SUPPORTED_REVISIONS = frozenset((LEGACY_REVISION, V2_REVISION, V3_REVISION, V4_REVISION,
+                                 V6_REVISION, V7_REVISION))
+FORM_REVISIONS = frozenset((V4_REVISION, V6_REVISION, V7_REVISION))
 def _resolve_model():
     for name in ('PENTA5_MODEL_SIX', 'PENTA5_DEEPSEEK_MODEL'):
         try:
@@ -54,6 +57,16 @@ RESPONSE_KEYS = frozenset(('selected_positions', 'selected_tails', 'he2_keep', '
 FORM_RESPONSE_KEYS = RESPONSE_KEYS | frozenset(('reverse_parity', 'reverse_size'))
 
 
+def single_tail(revision=REVISION):
+    if not isinstance(revision, str) or revision not in SUPPORTED_REVISIONS:
+        raise ValueError('unknown-selected-six-revision')
+    return revision == V7_REVISION
+
+
+def tail_count(revision=REVISION):
+    return 1 if single_tail(revision) else 2
+
+
 def he3_count(revision=REVISION):
     if not isinstance(revision, str) or revision not in SUPPORTED_REVISIONS:
         raise ValueError('unknown-selected-six-revision')
@@ -62,11 +75,13 @@ def he3_count(revision=REVISION):
 
 def item_count(revision=REVISION):
     he3_count(revision)
+    if revision == V7_REVISION:
+        return 7
     return 8 if revision in (V3_REVISION, V4_REVISION, V6_REVISION) else 6
 
 
-def _selected(values, allowed, label):
-    if (not isinstance(values, dict) or len(values) != 2
+def _selected(values, allowed, label, count=2):
+    if (not isinstance(values, dict) or len(values) != count
             or any(key not in allowed for key in values)
             or any(type(digit) is not int or not 0 <= digit <= 9 for digit in values.values())):
         raise ValueError('invalid-selected-' + label)
@@ -159,12 +174,13 @@ def validate_response(payload, *, revision=REVISION):
     except UnicodeEncodeError:
         raise ValueError('invalid-selected-six-reason') from None
     he3_keep = _keep(payload['he3_keep'], 5, '0123456789')
-    if revision in (V3_REVISION, V4_REVISION, V6_REVISION) and not 2 <= sum(int(digit) % 2 for digit in he3_keep) <= 3:
+    if revision in (V3_REVISION, V4_REVISION, V6_REVISION, V7_REVISION) and not 2 <= sum(int(digit) % 2 for digit in he3_keep) <= 3:
         # The current rules forbid all-odd/all-even and 4:1 counts; the balanced
         # candidate domain is compared by the same five-block minimax method.
         raise ValueError('invalid-selected-six-he3-parity')
     response = {'selected_positions': _selected(payload['selected_positions'], POSITION_KEYS, 'positions'),
-                'selected_tails': _selected(payload['selected_tails'], TAIL_POSITIONS, 'tails'),
+                'selected_tails': _selected(payload['selected_tails'], TAIL_POSITIONS, 'tails',
+                                            tail_count(revision)),
                 'he2_keep': _keep(payload['he2_keep'], 4, '02468'),
                 'he3_keep': he3_keep, 'reason': reason}
     if revision in FORM_REVISIONS:
@@ -366,6 +382,68 @@ def _forms_input_doc(reference, history, moment, *, revision=V4_REVISION, panel_
     return document
 
 
+def _single_tail_input_doc(reference, history, moment, *, panel_snapshot=None):
+    """Build the v7 fixed-minimax request: one self-chosen tail, seven items total."""
+    strategy = build_strategy(history, reference, SINGLE_TAIL_SIX_STRATEGY, now=moment)
+    history = validate_history(history, reference, moment)
+    target = next_period(reference)
+    codes = ', '.join(''.join(map(str, row['numbers'])) for row in history)
+    prompt = (
+        f'独立七项形态排除框架；最新已开奖参考期{reference}，仅预测下一目标期{target}。\n'
+        + codes + '\n'
+        '以上恰好50期连续真实开奖，按旧到新排列，最后一条为参考期；每条仅含前四球，'
+        '依次为千位q、百位b、十位s、个位g，0及前导0有效，第五球不参与。'
+        '只使用此窗口及本任务分段特征，不读取其他模型候选。'
+        '物理位置、合尾类型、排除数字、保留集与两个形态均由你自主决定；允许独立得出相同数字，禁止为异号强行换码。\n'
+        '【唯一决策方法：固定五段minimax】\n'
+        '把50期按旧到新固定划为五个连续区块，每块10期，不改边界或放大最新段。'
+        '所有定位、合尾排除候选、所有合法保留集和所有合法四位形态均有按正式核验定义计算的区块失败统计。'
+        '严格按固定优先级比较候选：先最小化五段中最大单段失败次数；最差段相同时，'
+        '再最小化五段失败次数方差；方差仍相同时，再最小化五段失败总量。'
+        '按这个最差段、方差、总量的词典序自主选择七项；不能用全窗总量优先覆盖最差段目标，'
+        '不能按近期加权、相邻转移或跨项目重叠替换本方法。'
+        '程序只描述完整候选的五段表现，不指定物理选择或最终号码。'
+        '样本内稳定性不能证明下一期有概率优势，也不能编造战绩或保证未来命中。\n'
+        '【七项任务及正式核验】\n'
+        '1、2：selected_positions从q/b/s/g中自主选恰好两个不同位置，各排除一个0至9整数。'
+        '目标期该位置实际数字不等于排除码时该项成功。两个位置可排相同数字，未选位置不补位。\n'
+        '3：selected_tails从all/qbs/qbg/qsg/bsg中自主选恰好一种合尾，排除一个0至9整数。'
+        'all=(千+百+十+个)%10，qbs=(千+百+十)%10，qbg=(千+百+个)%10，'
+        'qsg=(千+十+个)%10，bsg=(百+十+个)%10；目标期实际对应合尾不等于排除码时该项成功。\n'
+        '4：he2_keep从02468中恰好保留4个不同ASCII数字。计算目标前四球任意两个位置的六种组合，'
+        '分别求和后取%10；任意一种合尾落入保留集即算此项命中，不要求全部落入。\n'
+        '5：he3_keep从0123456789中恰好保留5个不同ASCII数字，且必须2奇3偶或3奇2偶'
+        '（5奇0偶、4奇1偶、1奇4偶、0奇5偶均不合格）。计算目标前四球任意三个位置的四种组合，'
+        '分别求和后取%10；任意一种合尾落入保留集即算此项命中，不要求全部落入。\n'
+        '6：reverse_parity为按千百十个顺序的四位单双形态，字符只能取单或双。'
+        '两个已选定位对应的字符必须等于该定位排除码的单双反面（例：百排除9为单，百位字符必须是双；'
+        '个排除6为双，个位字符必须是单）；其余位置自主选择。'
+        '目标期实际四位单双形态不等于该形态时该项成功，即反向排除该形态。\n'
+        '7：reverse_size为按千百十个顺序的四位大小形态，字符只能取大或小。'
+        '两个已选定位对应的字符必须等于该定位排除码的大小反面（例：百排除9为大，百位字符必须是小；'
+        '个排除6为小，个位字符必须是大）。其余位置自主选择。'
+        '目标期实际四位大小形态不等于该形态时该项成功，即反向排除该形态。\n'
+        '第6、7项同样按五段minimax比较：候选形态的失败次数等于该完整形态在对应10期区块中出现的次数；'
+        '先最大单段失败、再方差、最后总量，在满足定位字符约束的合法形态中取词典序最小。'
+        '整组七项必须同时通过才算整组命中。\n'
+        '【本任务完整独立分段策略】\n' + _canonical(strategy) + '\n'
+        '最终仅输出完整严格JSON对象，恰好selected_positions、selected_tails、he2_keep、he3_keep、'
+        'reverse_parity、reverse_size、reason七个字段。'
+        'reverse_parity与reverse_size各为恰好4个字符的字符串；selected_positions为恰好两个键的字典，'
+        'selected_tails为恰好一个键的字典，值必须为0至9整数，不能为布尔值、小数、数组或字符串。'
+        '保留集为规定长度的不重复ASCII数字字符串，保留前导0；不得默认补位或新增字段。'
+        'reason用60字以内简短中文说明本次最差段、方差、总量依据，不输出分析过程。')
+    if panel_snapshot is None:
+        from panel_context import build as _build_panel
+        panel_snapshot = _build_panel(reference, target)
+    from panel_context import prompt_text as _panel_prompt_text
+    panel_json, panel_sha = _panel_prompt_text(panel_snapshot)
+    prompt += ('\n\n【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带 reference/target；仅供自主决策参考，不是未来概率保证）】\n' + panel_json + '\n')
+    return {'version': 1, 'revision': V7_REVISION, 'reference_period': reference,
+            'target_period': target, 'history': deepcopy(history), 'strategy': strategy,
+            'prompt': prompt, 'panel_context': panel_snapshot}
+
+
 def build_input_doc(reference, history, *, revision=REVISION, panel_snapshot=None):
     he3_count(revision)
     if not isinstance(history, list) or len(history) != 50 or not isinstance(history[-1], dict):
@@ -377,6 +455,8 @@ def build_input_doc(reference, history, *, revision=REVISION, panel_snapshot=Non
         moment = None
     if moment is None or moment.tzinfo is None or moment.utcoffset() is None:
         raise ValueError('selected-six-opening-time-must-be-aware')
+    if revision == V7_REVISION:
+        return _single_tail_input_doc(reference, history, moment, panel_snapshot=panel_snapshot)
     if revision in FORM_REVISIONS:
         return _forms_input_doc(reference, history, moment, revision=revision,
                                 panel_snapshot=panel_snapshot)

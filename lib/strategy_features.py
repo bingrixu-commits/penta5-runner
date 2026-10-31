@@ -24,6 +24,7 @@ PRO4_STRATEGY = 'recent-weighted-v2'
 ISOLATED_SELECTED_STRATEGY = 'joint-overlap-v2'
 SELECTED_STRATEGY = 'joint-overlap-v3-three-positions'
 SIX_STRATEGY = 'block-stability-v2'
+SINGLE_TAIL_SIX_STRATEGY = 'block-stability-v3-single-tail'
 STRATEGY_LABELS = {
     LEGACY_KILLER_STRATEGY: '条件转移',
     LEGACY_FRAMEWORK_STRATEGY: '总体边际频次',
@@ -36,6 +37,7 @@ STRATEGY_LABELS = {
     ISOLATED_SELECTED_STRATEGY: '整组失败并集（完整候选）',
     SELECTED_STRATEGY: '整组失败并集（三定位固定七项）',
     SIX_STRATEGY: '分段稳定性（最差分段优先）',
+    SINGLE_TAIL_SIX_STRATEGY: '分段稳定性（最差分段优先·单合尾）',
 }
 TAIL_POSITIONS = {
     'all': (0, 1, 2, 3), 'qbs': (0, 1, 2), 'qbg': (0, 1, 3),
@@ -354,6 +356,15 @@ INSTRUCTIONS = {
                   '自主选两不同位置各排1码、两不同合尾各排1码、二数合保留4码、三数合保留5码，恰好六项。'
                   '不先按总体最冷筛选，不放大最新段，不叠加条件转移、近期指数权重或整组失败并集目标；'
                   '不读取或复用其他模型当前号码。分段统计不能证明下期概率。'),
+    SINGLE_TAIL_SIX_STRATEGY: ('只采用分段稳定方法：同50期固定分为5个连续10期区块，各区块等权。'
+                  '每项合法排除或保留候选严格按字典序最小化：先比较最大单段失败次数，'
+                  '相同再比较跨段失败次数方差，再相同才比较总失败次数；全相同允许任意合法同分项。'
+                  '定位/合尾的三项值分别来自maximum_single_block_failure_count、across_block_count_variance、total_counts；'
+                  '保留集取keep_failures对应列。保留项仍按每期任一组合合尾落入即通过，全部未落入才失败。'
+                  '自主选两不同位置各排1码、一个不同合尾排1码、二数合保留4码、三数合保留5码，共五项自选；'
+                  '连同程序按两个已选定位排除码自动推导的两项四位反向形态，整组共七项。'
+                  '不先按总体最冷筛选，不放大最新段，不叠加条件转移、近期指数权重或整组失败并集目标；'
+                  '不读取或复用其他模型当前号码。分段统计不能证明下期概率。'),
 }
 
 
@@ -377,6 +388,7 @@ def build_strategy(history, reference, strategy_id, now=None):
         KILLER_STRATEGY: _transition_v2, FRAMEWORK_STRATEGY: _marginal_v2,
         PRO4_STRATEGY: _weighted_v2, ISOLATED_SELECTED_STRATEGY: _joint_v2,
         SELECTED_STRATEGY: _joint_v3, SIX_STRATEGY: _block_stability_v2,
+        SINGLE_TAIL_SIX_STRATEGY: _block_stability_v2,
     }[strategy_id](draws)
     return {'strategy_id': strategy_id, 'label': STRATEGY_LABELS[strategy_id],
             'reference_period': reference, 'target_period': _next_period(parsed),

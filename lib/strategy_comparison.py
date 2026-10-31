@@ -29,7 +29,7 @@ def _tier_label(env_name, kind):
     return ('Pro ' if 'pro' in model else 'Flash ') + kind
 
 
-LABELS={'killer':_tier_label('PENTA5_MODEL_KILLER','智能深排'),'framework':_tier_label('PENTA5_MODEL_FRAMEWORK','固定八码框架'),'pro4':'Pro 四位独立单排','selected':'Pro 自选七项','six':'Pro 自选八项（独立）'}
+LABELS={'killer':_tier_label('PENTA5_MODEL_KILLER','智能深排'),'framework':_tier_label('PENTA5_MODEL_FRAMEWORK','固定八码框架'),'pro4':'Pro 四位独立单排','selected':'Pro 自选七项','six':'Pro 自选七项（独立）'}
 STRATEGIES=dict(zip(MODELS,(KILLER_STRATEGY,FRAMEWORK_STRATEGY,PRO4_STRATEGY,SELECTED_STRATEGY,SIX_STRATEGY)))
 LEGACY_STRATEGIES=dict(zip(MODELS,(LEGACY_KILLER_STRATEGY,LEGACY_FRAMEWORK_STRATEGY,LEGACY_PRO4_STRATEGY,LEGACY_SELECTED_STRATEGY,LEGACY_SIX_STRATEGY)))
 SUPPORTED_STRATEGIES={model:frozenset((STRATEGIES[model],LEGACY_STRATEGIES[model])) for model in MODELS}

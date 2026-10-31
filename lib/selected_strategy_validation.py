@@ -18,8 +18,12 @@ from selected_six_contract import (REVISION as SIX_REVISION,
                                     V2_REVISION as SIX_V2_REVISION,
                                     V3_REVISION as SIX_V3_REVISION,
                                     V4_REVISION as SIX_V4_REVISION,
+                                    V6_REVISION as SIX_V6_REVISION,
+                                    V7_REVISION as SIX_V7_REVISION,
+                                    FORM_REVISIONS as SIX_FORM_REVISIONS,
                                     SUPPORTED_REVISIONS as SIX_REVISIONS,
-                                    reverse_attributes)
+                                    reverse_attributes, single_tail)
+from strategy_features import SINGLE_TAIL_SIX_STRATEGY
 from stat50_compare import validate_history
 
 VERSION = 'strategy-response-v1'
@@ -90,12 +94,14 @@ def _options(item, response, masks, revision=None):
     field, key, _ = item
     if key is None:
         values = list(masks[(field, None)])
-        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_V4_REVISION, SIX_REVISION):
+        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_V4_REVISION, SIX_V6_REVISION,
+                                                SIX_REVISION):
             # v3/v4 compare only balanced 2:3 keep sets; older revisions keep
             # the complete legal domain byte-for-byte.
             values = [value for value in values
                       if 2 <= sum(int(digit) % 2 for digit in value) <= 3]
-        elif field in ('reverse_parity', 'reverse_size') and revision in (SIX_V4_REVISION, SIX_REVISION):
+        elif field in ('reverse_parity', 'reverse_size') and revision in (SIX_V4_REVISION,
+                                                                         SIX_V6_REVISION, SIX_REVISION):
             # v4 forms must mirror the selected positions' kill digits; only the
             # other positions are free, so compare inside this constrained set.
             column = 0 if field == 'reverse_parity' else 1
@@ -183,7 +189,8 @@ def _best_digit(masks, field, key):
 
 def _best_keep(masks, field, allowed, width, revision):
     def legal(keep):
-        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_V4_REVISION, SIX_REVISION):
+        if field == 'he3_keep' and revision in (SIX_V3_REVISION, SIX_V4_REVISION, SIX_V6_REVISION,
+                                                SIX_REVISION):
             return 2 <= sum(int(digit) % 2 for digit in keep) <= 3
         return True
     values = [''.join(combo) for combo in combinations(allowed, width) if legal(''.join(combo))]
@@ -219,7 +226,8 @@ def optimal_six_response(input_doc, *, revision=SIX_REVISION):
     tail_rank = sorted(TAIL_POSITIONS, key=lambda key: (
         _score(_mask(masks, ('selected_tails', key, _best_digit(masks, 'selected_tails', key)))),
         tuple(TAIL_POSITIONS).index(key)))
-    selected_tails = {key: _best_digit(masks, 'selected_tails', key) for key in tail_rank[:2]}
+    tail_limit = 1 if single_tail(revision) else 2
+    selected_tails = {key: _best_digit(masks, 'selected_tails', key) for key in tail_rank[:tail_limit]}
     selected_tails = {key: selected_tails[key] for key in TAIL_POSITIONS if key in selected_tails}
     response = {
         'selected_positions': selected_positions,
@@ -229,7 +237,7 @@ def optimal_six_response(input_doc, *, revision=SIX_REVISION):
         'reverse_parity': _best_form(masks, 'reverse_parity', '单双', 0, selected_positions),
         'reverse_size': _best_form(masks, 'reverse_size', '大小', 1, selected_positions),
         'reason': '本地分段稳定性最优回退：模型输出未通过冻结校验，按五段词典序计算'}
-    if revision != SIX_REVISION:
+    if revision not in SIX_FORM_REVISIONS:
         response.pop('reverse_parity', None); response.pop('reverse_size', None)
     return response
 
@@ -244,13 +252,15 @@ def selected_validator(input_doc, base_validator, *, kind, revision):
     # Six-item v2/v3/v4 seals carry the fast-transport option context, so their
     # saved minimax context must be revalidated under its own rule version.
     # Seven-item behavior is unchanged.
-    strict_six = kind == 'six' and revision in (SIX_V2_REVISION, SIX_V3_REVISION, SIX_V4_REVISION, SIX_REVISION)
+    strict_six = kind == 'six' and revision in (SIX_V2_REVISION, SIX_V3_REVISION, SIX_V4_REVISION,
+                                               SIX_V6_REVISION, SIX_REVISION)
     if revision != active and not strict_six:
         return base_validator
     frozen = deepcopy(input_doc)
+    expected_strategy = SINGLE_TAIL_SIX_STRATEGY if single_tail(revision) else METHODS[kind]
     if (not isinstance(frozen, dict) or frozen.get('revision') != revision
             or not isinstance(frozen.get('strategy'), dict)
-            or frozen['strategy'].get('strategy_id') != METHODS[kind]):
+            or frozen['strategy'].get('strategy_id') != expected_strategy):
         raise ValueError('strategy-response-invalid-selected-input')
     history = frozen.get('history')
     try:

@@ -14,7 +14,7 @@ from ai_strategy_validation import StrategyValidationError
 from ai_verified_stats import atomic_json, next_period
 from killer_ai_client import KillerResponseError, request_killer_response
 from selected_six_contract import (REVISION, LEDGER_REVISION, SUPPORTED_REVISIONS, MODEL, MARKER,
-    build_input_doc as _input_doc, validate_response)
+    build_input_doc as _input_doc, single_tail, validate_response)
 from scripts.run_ai_ready_job import expected_reference
 from stat50_compare import history_from_snapshot, validate_history
 from stats_history import beijing_now, load_snapshot, parse_period, parse_time, period_slot
@@ -44,6 +44,19 @@ RETRY_INSTRUCTION = (
     'he3_keep、reverse_parity、reverse_size、reason。'
     'selected_positions从q/b/s/g恰好选两个不同键，每个值为一个0至9整数；'
     'selected_tails从all/qbs/qbg/qsg/bsg恰好选两个不同键，每个值为一个0至9整数。'
+    'he2_keep恰好4个不重复ASCII数字且仅从02468选择；he3_keep恰好5个不重复ASCII数字，'
+    '且必须2奇3偶或3奇2偶（5奇0偶、4奇1偶、1奇4偶、0奇5偶均不合格）。'
+    'reverse_parity为恰好4个单/双字符、reverse_size为恰好4个大/小字符；'
+    '两个已选定位对应字符必须等于排除码形态的反面（百排9→百位=双/小；个排6→个位=单/小），'
+    '其余位置在给定形态分数表中按同一五段词典序取最小，且目标期实际形态不等于它才算命中。'
+    'reason为简短字符串。禁止布尔、小数、默认补位、重复键、额外字段和分析过程。')
+
+RETRY_INSTRUCTION_SINGLE_TAIL = (
+    '上次响应未通过校验。首选直接照抄 options 中任一项的 response 字段（只可改 reason），'
+    '不要重造数字。只返回完整JSON对象，恰好含selected_positions、selected_tails、he2_keep、'
+    'he3_keep、reverse_parity、reverse_size、reason。'
+    'selected_positions从q/b/s/g恰好选两个不同键，每个值为一个0至9整数；'
+    'selected_tails从all/qbs/qbg/qsg/bsg恰好选一个键，每个值为一个0至9整数。'
     'he2_keep恰好4个不重复ASCII数字且仅从02468选择；he3_keep恰好5个不重复ASCII数字，'
     '且必须2奇3偶或3奇2偶（5奇0偶、4奇1偶、1奇4偶、0奇5偶均不合格）。'
     'reverse_parity为恰好4个单/双字符、reverse_size为恰好4个大/小字符；'
@@ -442,7 +455,9 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
         response, generated = request_killer_response(actual_prompt, reference,
             post=post, api_key=api_key, model=MODEL, load_snapshot=checked_loader, clock=clock,
             log=capture, monotonic=monotonic, sleep=sleep,
-            validator=response_validator, retry_instruction=RETRY_INSTRUCTION + SIX_RETRY_ADDITION,
+            validator=response_validator,
+            retry_instruction=(RETRY_INSTRUCTION_SINGLE_TAIL if single_tail(REVISION)
+                               else RETRY_INSTRUCTION) + SIX_RETRY_ADDITION,
             request_budget_seconds=request_budget,
             reasoning_effort=SELECTED_REASONING_EFFORT, thinking_enabled=False,
             max_tokens=SELECTED_MAX_TOKENS)

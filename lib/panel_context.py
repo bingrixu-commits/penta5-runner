@@ -212,7 +212,7 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None, now=None)
     }
     models = _strategy_models().get('models') or {}
     for key, label in (('killer', '智能深排 killer'), ('framework', '固定八码框架'),
-                       ('six', '八项独立框架')):
+                       ('six', '七项独立框架')):
         frame = _framework_from_strategy(key, label, models)
         if frame:
             snapshot['frameworks'][key] = frame

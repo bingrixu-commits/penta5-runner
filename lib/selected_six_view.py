@@ -12,9 +12,10 @@ import re
 from ai_verified_stats import next_period
 from stats_history import (TZ, beijing_now, business_start, load_snapshot,
                            parse_period, period_slot)
-from selected_six_contract import (MARKER, MODEL, REVISION, V2_REVISION, V3_REVISION, V4_REVISION, FORM_REVISIONS,
-    SUPPORTED_REVISIONS, POSITION_KEYS, POSITION_LABELS, TAIL_POSITIONS, TAIL_LABELS,
-    METRIC_KEYS, REVERSE_LABELS, reverse_form, validate_response)
+from selected_six_contract import (MARKER, MODEL, REVISION, V2_REVISION, V3_REVISION, V4_REVISION,
+    V6_REVISION, V7_REVISION, FORM_REVISIONS, SUPPORTED_REVISIONS, POSITION_KEYS,
+    POSITION_LABELS, TAIL_POSITIONS, TAIL_LABELS, METRIC_KEYS, REVERSE_LABELS,
+    item_count, single_tail, tail_count, reverse_form, validate_response)
 
 ROOT = Path('/root/penta5-runner')
 STATS_MARKER = 'SELECTED_SIX_INDEPENDENT_STATS'
@@ -34,6 +35,16 @@ METRIC_LABELS = {**{'position_' + k: POSITION_LABELS[k] + '定位排除' for k i
                  **{'tail_' + k: TAIL_LABELS[k] + '排除' for k in TAIL_POSITIONS},
                  'he2_keep': '二数合保留4码', 'he3_keep': '三数合保留5码',
                  **REVERSE_LABELS}
+
+_ITEM_NUM = {5: '五', 6: '六', 7: '七', 8: '八'}
+
+
+def _item_label(revision=REVISION):
+    return _ITEM_NUM.get(item_count(revision), str(item_count(revision)))
+
+
+def _tail_word(revision=REVISION):
+    return '一' if tail_count(revision) == 1 else '两'
 
 
 def _reference(value):
@@ -148,6 +159,35 @@ def _forms_card_fragment(reference, response, generated, target, deadline, *, re
             '只用最新连续50期前4球；未选位置保留全部数字。封存后号码不变，历史号码保留核对。</div></details></section>\n' + END)
 
 
+def _v7_card_fragment(reference, response, generated, target, deadline):
+    """Byte-stable card for the v7 seven-item rule (one self-chosen tail)."""
+    rows = []
+    for index, (key, number) in enumerate(_numbers(response, revision=V7_REVISION).items(), 1):
+        keep = key in ('he2_keep', 'he3_keep')
+        reverse = key in REVERSE_LABELS
+        color = '#2563eb' if keep else ('#16a34a' if reverse else '#dc2626')
+        rows.append('<div data-six-independent-row="' + key + '" style="padding:10px;min-width:0;border:1px solid #cffafe;border-radius:8px;background:#f8fdff;">'
+                    '<b>' + str(index) + '. ' + escape(METRIC_LABELS[key]) + '：</b> '
+                    '<strong data-six-independent-number="' + key + '" style="font-size:22px;color:' + color + ';letter-spacing:1px;">' + number + '</strong>'
+                    '<div data-six-independent-rate-key="' + key + '" data-penta5-live-derived="1" style="font-size:12px;color:#475569;min-height:1.7em;">今日战绩等待核验</div></div>')
+    return (START + '\n<section id="six-independent-card" data-six-independent-reference="' + reference
+            + '" data-six-independent-target="' + target + '" data-six-independent-deadline="' + deadline.isoformat()
+            + '" data-six-independent-revision="' + V7_REVISION + '" style="' + STYLE + '">'
+            '<h3 style="margin:0 0 5px;color:#0e7490;font-size:20px;">DeepSeek Pro · 七项独立框架</h3>'
+            '<div style="font-size:12px;color:#64748b;">独立请求、独立封存、独立统计；五项自选 + 两项四位形态排除（除）。</div>'
+            '<div style="font-size:12px;color:#64748b;">参考期：' + reference + ' ｜ 目标期：' + target
+            + '<br>计算时间：' + generated.strftime('%Y-%m-%d %H:%M:%S') + '（北京时间）</div>'
+            '<div id="six-independent-validity" data-penta5-live-derived="1" role="status" style="margin:7px 0;padding:5px 8px;border-radius:6px;background:#dcfce7;color:#166534;min-height:1.7em;">已封存 · 目标期 ' + target + '</div>'
+            '<div id="six-independent-summary-slot"></div>'
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:8px;">'
+            + ''.join(rows) + '</div><details style="margin-top:6px;font-size:12px;color:#64748b;">'
+            '<summary>思路与规则</summary><div>' + escape(response['reason']) + '</div>'
+            '<div>自主选两位置与一合尾各排1码；二数合从02468留4码；三数合留5码且固定2奇3偶或3奇2偶。'
+            '单双/大小反向形态为四位完整形态（千百十个）：被排除定位的字符取排除码反面，其余位置按五段minimax自选；'
+            '两项为反向排除项，攻击语用「除」排除该形态，实际形态不等于它才算命中。整组七项全部通过才计入。'
+            '只用最新连续50期前4球；未选位置保留全部数字。封存后号码不变，历史号码保留核对。</div></details></section>\n' + END)
+
+
 def card_fragment(reference, response, generated_at, *, revision=REVISION):
     if revision not in SUPPORTED_REVISIONS:
         raise ValueError('unknown-independent-six-revision')
@@ -156,6 +196,8 @@ def card_fragment(reference, response, generated_at, *, revision=REVISION):
     target, deadline = next_period(reference), period_slot(next_period(reference))
     if not period_slot(reference) <= generated < deadline:
         raise ValueError('independent-six-generation-outside-window')
+    if single_tail(revision):
+        return _v7_card_fragment(reference, response, generated, target, deadline)
     if revision in FORM_REVISIONS:
         return _forms_card_fragment(reference, response, generated, target, deadline, revision=revision)
     if revision == V3_REVISION:
@@ -167,7 +209,7 @@ def _placeholder(reference):
     label = reference if isinstance(reference, str) and parse_period(reference) else '--'
     return (START + '\n<section style="' + STYLE + '"><h3 style="margin:0;color:#0e7490;">DeepSeek Pro · 八项独立框架</h3>'
             '<p>当前参考期：' + escape(label) + '；等待首次独立事前封存。</p>'
-            '<div>六项自选与两项反向形态从本次上线后的真实发布开始累计。</div></section>\n' + END)
+            '<div>' + _ITEM_NUM[2 + tail_count(REVISION) + 2] + '项自选与两项反向形态从本次上线后的真实发布开始累计。</div></section>\n' + END)
 
 
 def build_attack(response, *, revision=REVISION):
@@ -188,7 +230,7 @@ def build_attack(response, *, revision=REVISION):
     parts.append('四定')
     parts.extend(tails[k] + remaining(response['selected_tails'][k]) for k in TAIL_POSITIONS if k in response['selected_tails'])
     text = ''.join(parts)
-    if revision == REVISION:
+    if revision in FORM_REVISIONS:
         # v4: the two four-position forms are excluded explicitly in the attack.
         text += '除' + response['reverse_parity'] + '除' + response['reverse_size']
     return text + '二数合' + response['he2_keep'] + '三数合' + response['he3_keep'] + '各'
@@ -214,8 +256,8 @@ def render_attack_block(proof):
             'target_period': target, 'published_at': published.isoformat(),
             'deadline': period_slot(target).isoformat(), 'numbers': _numbers(response, revision=REVISION), 'attack': text}
     return (ATTACK_START + '\n<section id="six-independent-attack" style="' + STYLE + 'border-width:1px;">'
-            '<b>八项独立框架攻击语</b><div id="six-independent-attack-validity" style="font-size:12px;color:#64748b;min-height:1.7em;">目标期：' + target + '；等待页面核对。</div>'
-            '<textarea id="six-independent-attack-text" readonly rows="3" aria-label="八项独立框架攻击语" '
+            '<b>' + _item_label(REVISION) + '项独立框架攻击语</b><div id="six-independent-attack-validity" style="font-size:12px;color:#64748b;min-height:1.7em;">目标期：' + target + '；等待页面核对。</div>'
+            '<textarea id="six-independent-attack-text" readonly rows="3" aria-label="' + _item_label(REVISION) + '项独立框架攻击语" '
             'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;border:1px solid #bae6fd;border-radius:7px;background:#f8fdff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
             + escape(text) + '</textarea><button id="six-independent-attack-copy" type="button" disabled '
             'style="padding:7px 15px;border:0;border-radius:7px;background:#0891b2;color:#fff;">复制攻击语</button>'
@@ -247,7 +289,9 @@ def _previous_rules(raw):
     """Validate preserved previous-rule cumulative lines for display only."""
     rules = raw if isinstance(raw, dict) else {}
     result = []
-    for revision, label in ((V3_REVISION, '旧八项规则（v3·两位反向）'),
+    for revision, label in ((V6_REVISION, '旧八项规则（v6·面板上下文）'),
+                            (V4_REVISION, '旧八项规则（v4·形态选择）'),
+                            (V3_REVISION, '旧八项规则（v3·两位反向）'),
                             (V2_REVISION, '旧六项规则')):
         item = rules.get(revision)
         if not isinstance(item, dict) or item.get('rule_revision') != revision:
@@ -283,14 +327,16 @@ def _summary(raw):
                  or any(metrics[k]['total'] != n for k in ('he2_keep', 'he3_keep', 'reverse_parity', 'reverse_size'))
                  or any(metrics[k]['hits'] < h for k in ('he2_keep', 'he3_keep', 'reverse_parity', 'reverse_size'))
                  or sum(metrics['position_'+k]['total'] for k in POSITION_KEYS) != 2*n
-                 or sum(metrics['tail_'+k]['total'] for k in TAIL_POSITIONS) != 2*n)
+                 or sum(metrics['tail_'+k]['total'] for k in TAIL_POSITIONS) != tail_count(REVISION)*n)
     return {'rule_revision': REVISION, 'biz_date': day, 'stats_error': bool(error),
             'overall': None if error else overall, 'metrics': {} if error else metrics,
             'previous_rules': _previous_rules(raw.get('historical_rules')),
             'latest_settled_period': latest, **counters}
 
 
-def _rate(item, error=False, prefix='整组8项全部命中率'):
+def _rate(item, error=False, prefix=None):
+    prefix = (prefix if prefix is not None
+              else '整组' + str(item_count(REVISION)) + '项全部命中率')
     if error or item is None:
         return '统计核验失败，暂停显示'
     return (prefix + ' %.2f%%（%d/%d期）' % (100*item['hits']/item['total'], item['hits'], item['total'])
@@ -336,13 +382,13 @@ SCRIPT = r'''<script id="selected-six-independent-control">
     if(!d||d.rule_revision!==rule||d.stats_error!==false||typeof d.biz_date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(d.biz_date)||!metric(d.overall)||!d.metrics)return false;
     if(!keys.every(function(k){return metric(d.metrics[k]);})||!['pending_count','overdue_count','conflict_count','rejected_count'].every(function(k){return Number.isSafeInteger(d[k])&&d[k]>=0;})||d.overdue_count>d.pending_count)return false;
     var n=d.overall.total,h=d.overall.hits;
-    return keys.every(function(k){var v=d.metrics[k];return v.total<=n&&v.total-v.hits<=n-h;})&&d.metrics.he2_keep.total===n&&d.metrics.he3_keep.total===n&&d.metrics.reverse_parity.total===n&&d.metrics.reverse_size.total===n&&d.metrics.he2_keep.hits>=h&&d.metrics.he3_keep.hits>=h&&d.metrics.reverse_parity.hits>=h&&d.metrics.reverse_size.hits>=h&&keys.slice(0,4).reduce(function(v,k){return v+d.metrics[k].total;},0)===2*n&&keys.slice(4,9).reduce(function(v,k){return v+d.metrics[k].total;},0)===2*n;
+    return keys.every(function(k){var v=d.metrics[k];return v.total<=n&&v.total-v.hits<=n-h;})&&d.metrics.he2_keep.total===n&&d.metrics.he3_keep.total===n&&d.metrics.reverse_parity.total===n&&d.metrics.reverse_size.total===n&&d.metrics.he2_keep.hits>=h&&d.metrics.he3_keep.hits>=h&&d.metrics.reverse_parity.hits>=h&&d.metrics.reverse_size.hits>=h&&keys.slice(0,4).reduce(function(v,k){return v+d.metrics[k].total;},0)===2*n&&keys.slice(4,9).reduce(function(v,k){return v+d.metrics[k].total;},0)===__TAILS__*n;
   }
   function attackState(){
     var d=json('six-independent-attack-data'),c=one('six-independent-card'),box=one('six-independent-attack-text'),cur=one('disp_period'),now=Date.now(),i=d&&identity(d.reference_period);
     var numbers=d&&d.numbers,names=numbers&&typeof numbers==='object'&&!Array.isArray(numbers)?Object.keys(numbers):[];
-    var good=!!d&&!!c&&!!box&&!!cur&&d.version===1&&d.rule_revision===rule&&i&&d.target_period===i.target&&aware(d.deadline)===i.deadline&&c.getAttribute('data-six-independent-revision')===rule&&c.getAttribute('data-six-independent-reference')===d.reference_period&&c.getAttribute('data-six-independent-target')===i.target&&aware(c.getAttribute('data-six-independent-deadline'))===i.deadline&&typeof d.attack==='string'&&d.attack.length>0&&d.attack.length<=512&&box.defaultValue===d.attack&&Number.isFinite(aware(d.published_at))&&aware(d.published_at)>=i.deadline-300000&&aware(d.published_at)<=now&&aware(d.published_at)<i.deadline-70000&&names.length===8;
-    if(good)good=names.every(function(k){return keys.indexOf(k)>=0&&typeof numbers[k]==='string';})&&names.filter(function(k){return k.indexOf('position_')===0;}).length===2&&names.filter(function(k){return k.indexOf('tail_')===0;}).length===2&&names.filter(function(k){return k==='reverse_parity'||k==='reverse_size';}).length===2&&/^[02468]{4}$/.test(numbers.he2_keep)&&new Set(numbers.he2_keep).size===4&&/^[0-9]{5}$/.test(numbers.he3_keep)&&new Set(numbers.he3_keep).size===5&&/^[单双]{4}$/.test(numbers.reverse_parity)&&/^[大小]{4}$/.test(numbers.reverse_size)&&names.filter(function(k){return k!=='he2_keep'&&k!=='he3_keep'&&k!=='reverse_parity'&&k!=='reverse_size';}).every(function(k){return /^[0-9]$/.test(numbers[k]);})&&c.querySelectorAll('[data-six-independent-number]').length===8&&names.every(function(k){var a=c.querySelectorAll('[data-six-independent-number="'+k+'"]');return a.length===1&&a[0].textContent.trim()===numbers[k];});
+    var good=!!d&&!!c&&!!box&&!!cur&&d.version===1&&d.rule_revision===rule&&i&&d.target_period===i.target&&aware(d.deadline)===i.deadline&&c.getAttribute('data-six-independent-revision')===rule&&c.getAttribute('data-six-independent-reference')===d.reference_period&&c.getAttribute('data-six-independent-target')===i.target&&aware(c.getAttribute('data-six-independent-deadline'))===i.deadline&&typeof d.attack==='string'&&d.attack.length>0&&d.attack.length<=512&&box.defaultValue===d.attack&&Number.isFinite(aware(d.published_at))&&aware(d.published_at)>=i.deadline-300000&&aware(d.published_at)<=now&&aware(d.published_at)<i.deadline-70000&&names.length===__ITEMS__;
+    if(good)good=names.every(function(k){return keys.indexOf(k)>=0&&typeof numbers[k]==='string';})&&names.filter(function(k){return k.indexOf('position_')===0;}).length===2&&names.filter(function(k){return k.indexOf('tail_')===0;}).length===__TAILS__&&names.filter(function(k){return k==='reverse_parity'||k==='reverse_size';}).length===2&&/^[02468]{4}$/.test(numbers.he2_keep)&&new Set(numbers.he2_keep).size===4&&/^[0-9]{5}$/.test(numbers.he3_keep)&&new Set(numbers.he3_keep).size===5&&/^[单双]{4}$/.test(numbers.reverse_parity)&&/^[大小]{4}$/.test(numbers.reverse_size)&&names.filter(function(k){return k!=='he2_keep'&&k!=='he3_keep'&&k!=='reverse_parity'&&k!=='reverse_size';}).every(function(k){return /^[0-9]$/.test(numbers[k]);})&&c.querySelectorAll('[data-six-independent-number]').length===__ITEMS__&&names.every(function(k){var a=c.querySelectorAll('[data-six-independent-number="'+k+'"]');return a.length===1&&a[0].textContent.trim()===numbers[k];});
     var text=box&&typeof box.value==='string'?box.value:'',custom=!!d&&typeof d.attack==='string'&&text!==d.attack;
     var originalGood=!!good&&String(cur.textContent||'').trim()===d.reference_period;
     var originalCopy=originalGood&&Number.isFinite(now)&&now<i.deadline-70000;
@@ -355,7 +401,7 @@ SCRIPT = r'''<script id="selected-six-independent-control">
     function streak(m,current){if(!good)return '统计核验失败，暂停显示';if(!today)return '北京时间05:00已切换，等待本周期数据';var a=current?'当前':'最高';if(!m.total)return a+'连中：— ｜ '+a+'连败：—（暂无样本）';return a+'连中：'+m[current?'current_win_streak':'max_win_streak']+'手 ｜ '+a+'连败：'+m[current?'current_loss_streak':'max_loss_streak']+'手'+(current&&m.current_streak_interrupted?'（连续记录已中断）':'');}
     var summary=one('six-independent-overall-summary'),slot=one('six-independent-summary-slot');
     if(summary&&slot&&summary.parentNode!==slot)slot.appendChild(summary);
-    put(one('six-independent-overall-rate'),rate(good&&data.overall,'整组8项全部命中率'));
+    put(one('six-independent-overall-rate'),rate(good&&data.overall,'整组__ITEM_CN__项全部命中率'));
     put(one('six-independent-overall-max'),streak(good&&data.overall,false));put(one('six-independent-overall-current'),streak(good&&data.overall,true));
     document.querySelectorAll('[data-six-independent-rate-key]').forEach(function(n){var k=n.getAttribute('data-six-independent-rate-key');put(n,keys.indexOf(k)<0?'统计项目不匹配':rate(good&&data.metrics[k],k==='he2_keep'||k==='he3_keep'?'命中率':'排除成功率'));});
     var c=one('six-independent-card'),ref=c&&c.getAttribute('data-six-independent-reference'),id=identity(ref),cur=one('disp_period'),valid=!!c&&c.getAttribute('data-six-independent-revision')===rule&&!!id&&c.getAttribute('data-six-independent-target')===id.target&&aware(c.getAttribute('data-six-independent-deadline'))===id.deadline&&cur&&String(cur.textContent||'').trim()===ref&&now>=id.deadline-300000&&now<id.deadline;
@@ -387,6 +433,16 @@ if SCRIPT.count("rule='__REVISION__'") != 1:
     raise ValueError('selected-six-view-rule-placeholder-mismatch')
 SCRIPT = SCRIPT.replace("rule='__REVISION__'", "rule='" + REVISION + "'", 1)
 
+# Item/tail counts are baked into the browser-side validator; keep them in sync
+# with the live contract revision so a 7-item rule cannot inherit 8-item gates.
+_SCRIPT_COUNTS = (('__ITEMS__', str(item_count(REVISION)), 2),
+                  ('__TAILS__', str(tail_count(REVISION)), 2),
+                  ('__ITEM_CN__', str(item_count(REVISION)), 1))
+for _placeholder, _value, _expected in _SCRIPT_COUNTS:
+    if SCRIPT.count(_placeholder) != _expected:
+        raise ValueError('selected-six-view-script-placeholder-mismatch')
+    SCRIPT = SCRIPT.replace(_placeholder, _value)
+
 
 def render_stats_block(summary, job_status=None, *, reference=None, now=None, coverage=None):
     data = _summary(summary)
@@ -401,12 +457,12 @@ def render_stats_block(summary, job_status=None, *, reference=None, now=None, co
         for rule in previous_rules) or '<div>旧规则历史（独立保留）：暂无已验证数据。</div>'
     return (STATS_START + '\n<section id="six-independent-stats" style="' + STYLE + 'border-width:1px;background:#f8fdff;">'
             '<div id="six-independent-overall-summary" data-penta5-live-derived="1" style="margin:8px 0;padding:10px;border:1px solid #a5f3fc;border-radius:8px;background:#ecfeff;min-height:114px;box-sizing:border-box;font-variant-numeric:tabular-nums;">'
-            '<div style="font-size:12px;color:#64748b;">八项独立 · 今日整组战绩 · ' + escape(data['biz_date']) + ' 05:00起</div>'
+            '<div style="font-size:12px;color:#64748b;">' + _item_label(REVISION) + '项独立 · 今日整组战绩 · ' + escape(data['biz_date']) + ' 05:00起</div>'
             '<div id="six-independent-overall-rate" style="font-size:18px;font-weight:bold;color:#0e7490;min-height:1.7em;">' + escape(_rate(data['overall'], error)) + '</div>'
             '<div id="six-independent-overall-max" style="min-height:1.7em;">' + escape(_streak(data['overall'], error)) + '</div>'
             '<div id="six-independent-overall-current" style="font-size:16px;font-weight:bold;min-height:1.7em;">' + escape(_streak(data['overall'], error, True)) + '</div></div>'
-            '<details><summary>八项独立统计规则与明细</summary><div style="font-size:12px;color:#64748b;">'
-            '整组必须八项同时通过：两项定位排除、两项合尾排除、二数合保留4码、三数合保留5码，'
+            '<details><summary>' + _item_label(REVISION) + '项独立统计规则与明细</summary><div style="font-size:12px;color:#64748b;">'
+            '整组必须' + _item_label(REVISION) + '项同时通过：两项定位排除、' + _tail_word(REVISION) + '项合尾排除、二数合保留4码、三数合保留5码，'
             '以及两项四位反向形态排除。'
             '仅按真实开奖核验。北京时间05:00划分统计日；'
             '未选类型、缺预测、冲突都会打断连续记录，不补造胜负；零样本不显示百分比。'

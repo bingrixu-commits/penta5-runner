@@ -11,8 +11,10 @@ import json
 import random
 
 from ai_verified_stats import next_period
-from selected_six_contract import (REVISION, V3_REVISION, V4_REVISION, FORM_REVISIONS, SUPPORTED_REVISIONS,
-                                   build_input_doc, reverse_attributes, validate_response)
+from selected_six_contract import (REVISION, V3_REVISION, V4_REVISION, V6_REVISION, V7_REVISION,
+                                   FORM_REVISIONS, SUPPORTED_REVISIONS, build_input_doc,
+                                   reverse_attributes, single_tail, validate_response)
+from strategy_features import SINGLE_TAIL_SIX_STRATEGY
 from selected_strategy_validation import (POSITION_KEYS, TAIL_POSITIONS, SIX_RETRY_ADDITION,
     _failure_maps, _score, selected_validator, validation_report)
 
@@ -116,6 +118,39 @@ WIRE_PREFIX_FORMS = (
     '禁止补位、默认凑数或为凑形态改选码；首答优先照抄一个option的response。\n'
     '【独立八项冻结输入与minimax候选context】\n')
 
+INSTRUCTION_FORMS_SINGLE = (
+    '独立七项按固定五个10期区块比较每个单项：(最大单段失败次数,方差分子/25,总失败)词典序最小。'
+    '不使用八项失败并集、近期权重、相邻转移或任何其他模型结果。以下候选供AI自主比较；'
+    '可输出其中任意方案，也可自主输出任何通过同一原始七项校验的其他完整JSON，程序不补号。'
+    'he3_keep必须2奇3偶或3奇2偶。第6、7项为四位单双/大小形态，已在被选定位上与排除码反面一致，'
+    '其余位置在给定形态分数中按同一词典序取最小；形态为“反向排除”项，目标期实际形态不等于它才成功。'
+    '单项样本内稳定性不是未来命中率保证。' + SIX_RETRY_ADDITION)
+WIRE_PREFIX_FORMS_SINGLE = (
+    '你是独立七项Pro（五项自选+两项四位形态排除）。只预测context.target_period，参考context.reference_period。\n'
+    'history_codes为旧到新连续50期的千百十个，前导0有效，第五球不参与。'
+    '严格固定分为五段各10期；score=[最大单段失败,方差分子,总失败]，方差=分子/25。'
+    '按score词典序选每项，必须考虑未选物理项；position_pairs为合法定位对，tail_choices为合法单合尾键，'
+    '各key的digits为本key同分最小排除码。保留集候选与形态候选也按相同五段失败规则比较。\n'
+    'options.scores按选中定位、选中合尾、二数合、三数合、单双形态、大小形态顺序列同一score三元组。\n'
+    '【首答硬性要求】options中每一项都已独立通过同一原始七项校验；请直接从中任选一项，'
+    '原样输出其response的七个字段（selected_positions、selected_tails、he2_keep、he3_keep、'
+    'reverse_parity、reverse_size、reason，reason可改写）。若选择自选，必须同时满足：'
+    '两个定位键互异、合尾恰好一个键、he3_keep恰好5个数字且2奇3偶或3奇2偶、'
+    'reverse_parity/reverse_size各4字符且在被选定位上分别等于排除码的单双/大小反面、'
+    '其余位取对应形态分数表中的最小形态。任一项不满足会被本地校验拒绝并重答。\n'
+    '输出恰好七字段严格JSON：selected_positions从q/b/s/g选2个不同键、各整数排1码；'
+    'selected_tails从all/qbs/qbg/qsg/bsg恰好选1个键、整数排1码。'
+    'all是四位和%10，qbs/qbg/qsg/bsg分别是对应三位和%10；不等于排除码才成功。\n'
+    'he2_keep从02468选4个不同数字字符串，任意两位六组合的任一合尾落入即命中；'
+    'he3_keep从0123456789选5个不同数字字符串，必须2奇3偶或3奇2偶，任意三位四组合的任一合尾落入即命中。\n'
+    'reverse_parity为按千百十个顺序的四位单双形态，reverse_size为四位大小形态；'
+    '两个已选定位的对应字符必须等于排除码形态的反面（百排9→百位=双/小；个排6→个位=单/小），'
+    '其余位置在candidates.reverse_parity/candidates.reverse_size的分数表中按同一词典序取最小。'
+    '这两项是反向排除项：目标期实际四位形态不等于该形态才算命中，攻击语会以「除」加入该形态。\n'
+    '整组七项必须全部成功。reason用60字内简短中文，只输出完整JSON，不输出思考过程。'
+    '禁止补位、默认凑数或为凑形态改选码；首答优先照抄一个option的response。\n'
+    '【独立七项冻结输入与minimax候选context】\n')
+
 def _canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
 
@@ -135,6 +170,7 @@ def _report_scores(report):
 
 def _tables(frozen, masks):
     candidates, pairs, domains = {}, {}, {}
+    single = single_tail(frozen['revision'])
     for field, keys in (('selected_positions', POSITION_KEYS), ('selected_tails', tuple(TAIL_POSITIONS))):
         rows = []
         best = {}
@@ -144,15 +180,23 @@ def _tables(frozen, masks):
             best[key] = minimum
             rows.append({'key': key, 'digits': [digit for digit, score in scores.items() if score == minimum],
                          'score': list(minimum)})
-        legal_pairs = [list(pair) for pair in combinations(keys, 2)
-                       if max(best[key] for key in pair) <= min(best[key] for key in keys if key not in pair)]
-        candidates[field], pairs[field] = rows, legal_pairs
+        if field == 'selected_tails' and single:
+            # v7: one self-chosen tail; every minimax-tied key is a legal single candidate.
+            legal = [[key] for key in keys if best[key] == min(best.values())]
+        else:
+            legal = [list(pair) for pair in combinations(keys, 2)
+                     if max(best[key] for key in pair) <= min(best[key] for key in keys if key not in pair)]
+        candidates[field], pairs[field] = rows, legal
         digits = {row['key']: row['digits'] for row in rows}
-        domains[field] = [{a: da, b: db} for a, b in legal_pairs
-                          for da, db in product(digits[a], digits[b])]
+        if field == 'selected_tails' and single:
+            domains[field] = [{key: digit} for (key,) in legal for digit in digits[key]]
+        else:
+            domains[field] = [{a: da, b: db} for a, b in legal
+                              for da, db in product(digits[a], digits[b])]
     for field in ('he2_keep', 'he3_keep'):
         allowed = list(masks[(field, None)])
-        if field == 'he3_keep' and frozen['revision'] in (V3_REVISION, V4_REVISION, REVISION):
+        if field == 'he3_keep' and frozen['revision'] in (V3_REVISION, V4_REVISION, V6_REVISION,
+                                                          V7_REVISION):
             # Current rules: only 2:3 balanced keep sets are legal candidates.
             allowed = [keep for keep in allowed if 2 <= sum(int(digit) % 2 for digit in keep) <= 3]
         scores = {keep: _score(masks[(field, None)][keep]) for keep in allowed}
@@ -186,17 +230,24 @@ def _frozen(input_doc, *, rebuild):
 
 
 def _base_context(frozen, candidates, pairs):
-    return {'version': VERSION, 'method': METHOD, 'strategy_id': 'block-stability-v2',
+    single = single_tail(frozen['revision'])
+    context = {'version': VERSION, 'method': METHOD,
+               'strategy_id': (SINGLE_TAIL_SIX_STRATEGY if single else 'block-stability-v2'),
             'reference_period': frozen['reference_period'], 'target_period': frozen['target_period'],
             'history_sha256': frozen['strategy']['history_sha256'], 'input_sha256': _hash(frozen),
             'history_codes': [''.join(map(str, row['numbers'])) for row in frozen['history']],
             'block_size': 10, 'block_count': 5, 'variance_denominator': 25,
             'validation_scope': SCOPE,
-            'instruction': (INSTRUCTION_FORMS if frozen['revision'] in FORM_REVISIONS else
-                            INSTRUCTION_REVERSE if frozen['revision'] == V3_REVISION else INSTRUCTION),
-            **({'panel_context': frozen['panel_context']} if frozen.get('panel_context') is not None else {}),
-            'candidates': candidates, 'position_pairs': pairs['selected_positions'],
-            'tail_pairs': pairs['selected_tails']}
+               'instruction': (INSTRUCTION_FORMS_SINGLE if single else
+                               INSTRUCTION_FORMS if frozen['revision'] in FORM_REVISIONS else
+                               INSTRUCTION_REVERSE if frozen['revision'] == V3_REVISION else INSTRUCTION),
+               **({'panel_context': frozen['panel_context']} if frozen.get('panel_context') is not None else {}),
+               'candidates': candidates, 'position_pairs': pairs['selected_positions']}
+    if single:
+        context['tail_choices'] = pairs['selected_tails']
+    else:
+        context['tail_pairs'] = pairs['selected_tails']
+    return context
 
 
 def build_request_options(input_doc, *, max_options=8):
@@ -286,6 +337,8 @@ def validate_request_context(input_doc, context):
 
 
 def wire_prompt(context, *, revision=None):
+    if revision == V7_REVISION:
+        return WIRE_PREFIX_FORMS_SINGLE + _canonical(context)
     if revision in FORM_REVISIONS:
         return WIRE_PREFIX_FORMS + _canonical(context)
     if revision == V3_REVISION:
@@ -295,6 +348,8 @@ def wire_prompt(context, *, revision=None):
 
 def wire_prompt_legacy(context, *, revision=None):
     """Validation-only prefix for pre-2026-10-31 v1 transport evidence."""
+    if revision == V7_REVISION:
+        return WIRE_PREFIX_FORMS_SINGLE + _canonical(context)
     if revision in FORM_REVISIONS:
         return WIRE_PREFIX_FORMS_V1 + _canonical(context)
     return wire_prompt(context, revision=revision)
