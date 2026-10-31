@@ -6,7 +6,7 @@
 - 位置命中 = 该位置实际开奖号 != 杀码；
 - 合尾命中 = 该合尾实际和值个位 != 排除码；
 - 反向形态命中 = 目标期实际四位单双/大小形态 != 封存形态（反向排除项）；
-- 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态同时命中（共 5 项）；
+- 整组命中 = 3 个位置 + 1 个合尾 + 2 项反向形态同时命中（共 6 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
@@ -92,9 +92,9 @@ def _stats_html(stats):
         parity = patterns.get('reverse_parity') or {}
         size = patterns.get('reverse_size') or {}
         join = ' · '.join([
-            f'整组命中率（5 项全中：2 位置 + 合尾 + 2 形态） <b>{_pct(stats.get("group_rate"))}</b>'
+            f'整组命中率（6 项全中：3 位置 + 合尾 + 2 形态） <b>{_pct(stats.get("group_rate"))}</b>'
             f'（{stats.get("group_hits")}/{total} 期）',
-            f'位置杀码（2 注/期，随机基线90%） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
+            f'位置杀码（3 注/期，随机基线90%） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
             f'（{stats.get("positions", {}).get("hits")}/{stats.get("positions", {}).get("bets")} 注）',
             f'合尾杀码（随机基线90%） <b>{_pct(tail_stats.get("rate"))}</b>'
             f'（{tail_stats.get("hits")}/{tail_stats.get("bets")} 期{tail_ci_text}）',
@@ -109,7 +109,7 @@ def _stats_html(stats):
         join += f' · 未计入（发布晚于开奖）{late} 期'
     legacy = stats.get('legacy') or {}
     if legacy.get('total'):
-        join += (f' · 旧口径（v1–v6）{legacy.get("total")} 期'
+        join += (f' · 旧口径（v1–v5、v7）{legacy.get("total")} 期'
                  f'（整组 {legacy.get("group_hits")} 中）已归档不计入')
     win, loss = stats.get('current_win_streak') or 0, stats.get('current_loss_streak') or 0
     if win:
@@ -168,7 +168,7 @@ def _form_derivation(seal):
     if not parts:
         return ''
     dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
-    return ('形态取反（按 3 个被杀位置，含仅展示位）：' + ' · '.join(parts)
+    return ('形态取反（按 3 个被杀位置）：' + ' · '.join(parts)
             + f'；弃位{dropped}字符自选')
 
 
@@ -312,16 +312,16 @@ def _attack_html(seal):
 def _foot_html():
     return ('<div class="k3-foot">'
             '由 DeepSeek 决定：从千/百/十/个中选 3 个位置各排除 1 码、放弃 1 个位置；'
-            '3 个位置中只有 2 个计入整组与攻击语，第 3 个仅展示、不计入；'
+            '3 个位置全部计入整组与攻击语；'
             '合尾从 5 种中选 1 种排除 1 个和尾数字（每期与上一期不同），并给出两项四位反向形态。<br>'
             '同一位置杀码最多连用 3 期（中间放弃该位不清零）、同一放弃位置最多连用 3 期，'
             '满后下一期必须更换。<br>'
-            '命中 = 该位置实际开奖号<b>不在</b>杀码上（只统计 2 个计入位置）；'
+            '命中 = 该位置实际开奖号<b>不在</b>杀码上（3 个位置全部计入）；'
             '合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态'
-            '（3 个被杀位置都取杀码形态反面，含仅展示位置；弃位字符自选）。<br>'
-            '2 个计入位置 + 1 个合尾 + 2 项反向形态共 5 项同时命中才算整组命中；'
-            '旧口径（v1–v6）的封存记录保留但不计入本统计；'
+            '（3 个被杀位置都取杀码形态反面；弃位字符自选）。<br>'
+            '3 个位置 + 1 个合尾 + 2 项反向形态共 6 项同时命中才算整组命中；'
+            '旧口径（v1–v5、v7）的封存记录保留但不计入本统计；'
             '只统计开奖前发布、开奖后核验的记录；北京时间 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与；'
             '平台提前 70 秒关盘。'
             '</div>')
