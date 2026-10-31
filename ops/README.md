@@ -672,3 +672,33 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   crontab 删除 kill2p 行后 bash scripts/crontab_tool.sh install；/etc/logrotate.d/penta5 删除 kill2p 行（回拷备份）；
   data/kill2p_tail/ 历史封存/结算保留（回滚后不再写入）；面板下一轮重建自动移除 KILL_TWO_P 块。
 - **成本提示**：每期 1 次 DeepSeek 请求（288 次/日）；04:05 余额 31.22 元，余额守护会在低余额时自动停 AI 总闸。
+
+## 2026-11-01 04:41 kill2p 升 v2：扩 AI 输入（冷码统计 + 其它 AI 框架实值），选码与口径不变
+
+用户 04:41 指令：对 kill2p（AI 二位置杀码 + 一合尾 + 两反向形态）「扩 AI 输入（把面板全量上下文喂进 prompt）」。
+核查发现 kill2p v1 已内建面板上下文（frameworks / panel_hitrate_10p / panel_cumulative / model_tiers / kill2p_self），
+故本次为在该上下文上再扩两段；用户确认**只扩输入、不改选码/计入口径**。
+
+- **新增输入（commit 7f7b45e）**：
+  - `cold_stats`：冷码观察近 30 期各位置冷码（top1 数字/次数/遗漏）+ 五种合尾冷码 + 单双/大小形态冷码；
+    位置冷码近 30/20 期 Top-N（window/rank/line）；冷码杀号战绩 windows（Top1/2/3 的 rate/baseline/连中连败）。
+  - `other_ai_self`：kill3（v9）与 kill1（v1）各自最近已发布封存（ref/target/rule/positions/tail/形态）+ 近 10 期
+    已核验整组成绩（n/hits/rate/latest_target）。
+  - 实现：`lib/panel_context.py` 新增可选 `extra_panel_input=False`（默认 False，kill3/kill1 行为逐字节不变），
+    富上下文独立上限 `MAX_JSON_CHARS_RICH=12000`（普通路径仍 9000）；`lib/kill2p_tail.py` RULE_VERSION →
+    `kill2p-tail-v2-panel-context-rich`；提示词版本与上下文段标题同步；`scripts/run_kill2p_tail.py` 传
+    `extra_panel_input=True` 并打印 sha/bytes；hitrate_baseline / framework_hitrate_cumulative 登记 v2 基线 (5, 0.6203)。
+- **A/B 证明（旧调用逐字节不变）**：固定 fixture 下 kill3 `72cc24ca…`、kill1 `feb6b4c8…`、kill2p v1 模式
+  `61f31de0…` 与改前完全相同；rich 模式 payload 9430B ≤ 12000（离线）/ 实测 9672B，prompt 11296B。
+- **首期真实封存（v2 生效）**：ref **20261101057** → target 20261101058，published **2026-11-01T04:45:53+08:00**，
+  rule_version `kill2p-tail-v2-panel-context-rich`，`panel_context_sha256=63def709664bd6d1…`，
+  panel_context 键含 `cold_stats`/`other_ai_self`（cron 日志：kill2p panel context sha=63def709664bd6d1 bytes=9672；
+  prompt_tokens 4983 / completion_tokens 1655 / 10.36s / deepseek-flash）。旧 6 条 v1 封存 records sha256 未变
+  （`0c7f28ae…`）。面板 panel.html 已出现 `kill2p-tail-v2-panel-context-rich`（口径追溯行）。
+- **衍生统计**：hitrate/cumulative 已登记 v2 行；v2 首期结算（target 20261101058 开奖后）起自动出现 kill2p 行。
+- **冻结守卫**：lib/panel_context.py 变更按 kill3 冻结门禁更新 hash（commit **dfdb5a7**，hash_updates 记录 A/B 证据）。
+- **验证脚本**：/tmp/test_kill2p_v2.py（A/B、rich 内容、模块版本、封存字段、旧封存不变、无面板兜底）全部 PASS；
+  黄金基线 /root/ops/kill2p-v2-044339/golden-v1.json、golden-v2.json。
+- **回滚**：`git revert 7f7b45e dfdb5a7 <本提交>`；回拷 /root/ops/kill2p-v2-044339/ 下 5 个 .py 与 kill3-freeze.json；
+  下一期起按 v1 口径封存，v2 已产生的封存保留（统计按 rule_version 分组，互不混算）。
+
