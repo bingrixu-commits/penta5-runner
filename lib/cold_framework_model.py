@@ -340,11 +340,18 @@ def run_once(*, root=ROOT, reference=None, post=None, api_key=None, loader=None,
             completed_at = _now(generated_at)
             if completed_at < requested_at or completed_at > _now(clock()):
                 raise PublicationRejected('cold-model-invalid-completion-time')
-            metadata = {'requested_model': MODEL, 'returned_model': accepted['returned_model'],
-                    'panel_context_sha256': _panel_sha,
-                        'requested_at': requested_at.isoformat(), 'completed_at': completed_at.isoformat(),
-                        'input_sha256': context['input_sha256'], 'finish_reason': 'stop',
-                        'reason': response['reason'], 'selection_policy': core.HE3_PARITY_POLICY}
+            metadata = {
+                'requested_model': MODEL,
+                'returned_model': accepted['returned_model'],
+                'panel_context_sha256': _panel_sha,
+                'panel_context': _panel_snapshot,
+                'requested_at': requested_at.isoformat(),
+                'completed_at': completed_at.isoformat(),
+                'input_sha256': context['input_sha256'],
+                'finish_reason': 'stop',
+                'reason': response['reason'],
+                'selection_policy': core.HE3_PARITY_POLICY,
+            }
             selection = {key: response[key] for key in ('selected_positions', 'selected_tails', *core.KEEP_KEYS)}
             ledger['attempts'][reference].update(state='response-received', selection=selection, metadata=metadata)
             core._write(path, ledger)
