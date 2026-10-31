@@ -18,7 +18,6 @@
 - n < 200 判定「样本不足」，不做优劣结论；p 为双侧二项检验（方差用 p0(1-p0)/n）。
 
 数据源：data/r1_stats.json、r1_framework_hit_stats.json、selected_six_hit_stats.json、
-he3_refine_hit_stats.json、cold_framework_*.json、
 kill3_tail/settlements.json+seals.json、strategy_comparison_stats.json、*_status.json。
 只读；产物 data/framework_hitrate_cumulative.json，由 crontab 每 15 分钟刷新。
 """
@@ -46,7 +45,6 @@ RULE_BASELINE = {
     ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
     ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),
     ('selected_six', 'selected-six-independent-v7-single-tail'): (7, 0.5726),
-    ('cold_framework', 'cold-framework-v3-30-pos3-tail2-he2x4-he3x5'): (7, 0.5427),
     ('he3_refine', 'he3-refine-v2-balanced'): (1, 0.9375),
     ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
     ('kill3_tail', 'kill3-tail-v4'): (5, 0.6191),
@@ -62,7 +60,6 @@ LABELS = {
     'killer': '智能深排 killer（9 项）',
     'framework': '固定八码框架（8 项）',
     'selected_six': '七项独立框架 selected_six（7 项）',
-    'cold_framework': '冷码七项框架',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
     'kill2_tail': 'AI 二位置杀码（7 项）',
@@ -72,7 +69,6 @@ WINDOWS = {
     'killer': '自账本首期累计',
     'framework': '自账本首期累计',
     'selected_six': '当前规则版本累计',
-    'cold_framework': '当前规则版本累计',
     'he3_refine': '当前规则版本累计',
     'kill3_tail': '当前规则版本累计',
     'kill2_tail': '当前规则版本累计',
@@ -92,11 +88,6 @@ COVERAGE_NOTE = (
     'AI 总闸关闭（并非现行掉链），13:15 恢复后主链未再连续掉期（此后仅个别单期偶发缺口）；'
     '另各框架「引入前」期数（如 kill2_tail 自 20261031272 起）也不属于掉链。'
     '现行水平请看 coverage_24h / coverage_7d / plan_hit_rate_24h / plan_hit_rate_7d。')
-POS = {'q': 0, 'b': 1, 's': 2, 'g': 3}
-TAIL_INDEXES = {'all': (0, 1, 2, 3), 'qbs': (0, 1, 2), 'qbg': (0, 1, 3),
-                'qsg': (0, 2, 3), 'bsg': (1, 2, 3)}
-PAIRS = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
-TRIPLES = ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))
 
 
 def _read(path):
@@ -783,84 +774,6 @@ def cum_he3():
     return row
 
 
-def _cold_outcome(pred, numbers):
-    positions = pred.get('selected_positions') or {}
-    tails = pred.get('selected_tails') or {}
-    he2 = pred.get('he2_keep')
-    he3 = pred.get('he3_keep')
-    if len(positions) != 3 or len(tails) != 2 or not he2 or not he3:
-        return None
-    for key, kill in positions.items():
-        if key not in POS or numbers[POS[key]] == int(kill):
-            return False
-    for key, kill in tails.items():
-        indexes = TAIL_INDEXES.get(key)
-        if indexes is None:
-            return None
-        if sum(numbers[i] for i in indexes) % 10 == int(kill):
-            return False
-    pair_sums = {sum(numbers[i] for i in pair) % 10 for pair in PAIRS}
-    if not pair_sums.intersection(int(digit) for digit in he2):
-        return False
-    triple_sums = {sum(numbers[i] for i in triple) % 10 for triple in TRIPLES}
-    if not triple_sums.intersection(int(digit) for digit in he3):
-        return False
-    return True
-
-
-def cum_cold(key, prefix):
-    pattern = prefix + '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].json'
-    files = sorted(path for path in DATA.glob(prefix + '*.json')
-                   if path.name[len(prefix):].startswith(tuple('0123456789'))
-                   and path.name.count('-') == 2)
-    records, history, latest_revision, dropped_legacy = [], {}, None, {}
-    rolling, launch = [], []
-    for path in files:
-        doc = _read(path) or {}
-        revision = doc.get('revision')
-        if revision:
-            latest_revision = revision
-        predictions = doc.get('predictions') or {}
-        actuals = doc.get('actuals') or {}
-        for target in predictions:
-            launch.append(target)
-        for target, pred in predictions.items():
-            actual = actuals.get(target)
-            if not isinstance(pred, dict) or not isinstance(actual, dict):
-                continue
-            numbers = actual.get('numbers')
-            if not isinstance(numbers, list) or len(numbers) < 4:
-                continue
-            outcome = _cold_outcome(pred, [int(value) for value in numbers[:4]])
-            if outcome is None:
-                legacy_key = revision or '(未标注)'
-                dropped_legacy[legacy_key] = dropped_legacy.get(legacy_key, 0) + 1
-                continue
-            rolling.append((target, outcome))
-            if revision and revision == latest_revision:
-                records.append((target, outcome, None))
-            else:
-                bucket = history.setdefault(revision or '(未标注)', [0, 0])
-                bucket[0] += 1
-                bucket[1] += 1 if outcome else 0
-    rule = latest_revision or ''
-    row = _build(key, rule, records, 'data/' + prefix + 'YYYY-MM-DD.json',
-                 rolling=rolling, launch=launch)
-    row['history'] = [{'revision': revision, 'n': value[0], 'hits': value[1],
-                       'rate': round(value[1] / value[0], 6) if value[0] else None}
-                      for revision, value in sorted(history.items())]
-    dropped_count = sum(dropped_legacy.values())
-    row['dropped_legacy'] = {'count': dropped_count,
-                             'revisions': dict(sorted(dropped_legacy.items()))}
-    if dropped_count:
-        detail = '、'.join('%s=%d' % (name, count)
-                          for name, count in sorted(dropped_legacy.items()))
-        suffix = ('另有 %d 条旧口径记录（形状不符合现行 7 项：%s）未计入且未单列，属已知披露缺口'
-                  % (dropped_count, detail))
-        row['note'] = (row['note'] + '；' + suffix) if row.get('note') else suffix
-    return row
-
-
 def cum_kill3():
     settlements = _read(DATA / 'kill3_tail' / 'settlements.json') or {}
     seals = _read(DATA / 'kill3_tail' / 'seals.json') or {}
@@ -964,7 +877,6 @@ def build():
     promoted_at, promoted_moment = _joint_form_boundary()
     for name, func in (('killer', cum_killer), ('framework', cum_framework),
                        ('selected_six', cum_selected_six), ('he3_refine', cum_he3),
-                       ('cold_framework', lambda: cum_cold('cold_framework', 'cold_framework_')),
                        ('kill3_tail', cum_kill3),
                        ('kill2_tail', cum_kill2),
                        ('kill1_tail', cum_kill1)):

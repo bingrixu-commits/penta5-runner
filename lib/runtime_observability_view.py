@@ -16,7 +16,6 @@ MODELS = (
     ('killer', 'Flash 杀码'), ('framework', 'Flash 框架'),
     ('pro4', 'Pro 四定位'),
     ('selected6', 'Pro 八项'), ('he3_refine', '三合五尾'),
-    ('cold', 'Pro 冷码框架'),
     ('cold50', 'Pro 50期冷码'),
     ('cold50_fixed', 'Pro 50期固定冷码'),
 )

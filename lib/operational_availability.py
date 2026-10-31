@@ -8,7 +8,7 @@ from stats_history import TZ, parse_period, period_slot
 
 KINDS = {'killer': 'killer', 'framework': 'framework', 'pro4': 'pro4',
          'selected': 'selected7', 'selected7': 'selected7',
-         'six': 'selected6', 'selected6': 'selected6', 'he3_refine': 'he3_refine', 'cold': 'cold',
+         'six': 'selected6', 'selected6': 'selected6', 'he3_refine': 'he3_refine',
          'cold50': 'cold50', 'cold50_fixed': 'cold50_fixed'}
 
 
@@ -25,7 +25,7 @@ def stamp(value):
 def seal_identity(model, seal):
     """Derive exactly the original source card and attack, never an edited DOM."""
     kind = KINDS.get(model)
-    if kind in ('cold', 'cold50', 'cold50_fixed'):
+    if kind in ('cold50', 'cold50_fixed'):
         try:
             from panel_delivery_timing import cold_seal_identity
             return cold_seal_identity(seal, model=kind)

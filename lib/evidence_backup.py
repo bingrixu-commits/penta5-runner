@@ -33,7 +33,7 @@ REQUIRED_DATA = frozenset('data/' + name for name in (
     'ai_api_control.json', 'ai_api_control_audit.jsonl', 'state.json', 'stats_draw_history.json',
     'r1_stats.json', 'r1_framework_seals.json',
     'selected_six_seals.json', 'he3_refine_seals.json',
-    'cold_framework_ledger.json', 'r1_framework_hit_stats.json',
+    'r1_framework_hit_stats.json',
     'selected_six_hit_stats.json', 'he3_refine_hit_stats.json'))
 LEGACY_DATA = frozenset()
 RDS_TABLES = ('official_draws', 'model_predictions', 'model_evaluations',
@@ -175,8 +175,7 @@ def discover(root):
 def _required_members(names, *, legacy=()):
     names = set(names)
     required = REQUIRED_DATA | set(legacy)
-    if (not required <= names or not any(name.startswith('data/ai_model_inputs/') and name.endswith('.json') for name in names)
-            or not any(re.fullmatch(r'data/cold_framework_[0-9]{4}-[0-9]{2}-[0-9]{2}\.json', name) for name in names)):
+    if (not required <= names or not any(name.startswith('data/ai_model_inputs/') and name.endswith('.json') for name in names)):
         raise ValueError('required-evidence-members-missing')
     return sorted(required)
 

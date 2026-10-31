@@ -1,7 +1,6 @@
 
 """合尾稳定化转正后复盘（只读）：逐框架统计沿用率/换码率/尾项命中率与 95%CI。"""
 from pathlib import Path
-import glob
 import json
 import math
 import sys
@@ -69,16 +68,6 @@ def _actual_map_six():
     return mapping
 
 
-def _actual_map_cold():
-    mapping = {}
-    for path in glob.glob(str(DATA / 'cold_framework_20*.json')):
-        for target, actual in (_read(path, {}) or {}).get('actuals', {}).items():
-            nums = actual.get('numbers') if isinstance(actual, dict) else None
-            if isinstance(nums, list) and len(nums) >= 4:
-                mapping[str(target)] = [int(x) for x in nums[:4]]
-    return mapping
-
-
 def _framework_entries():
     seals = (_read(DATA / 'r1_framework_seals.json', {}) or {}).get('prediction_seals', {})
     actuals = _actual_map_framework()
@@ -135,27 +124,6 @@ def _six_entries():
             continue
         key, kill = next(iter(tails.items()))
         rows.append((str(ref), policy.get('reused_previous') is True, [_tv(nums, key) != int(kill) % 10]))
-    return rows
-
-
-def _cold_entries():
-    actuals = _actual_map_cold()
-    rows = []
-    for path in sorted(glob.glob(str(DATA / 'cold_framework_20*.json'))):
-        preds = (_read(path, {}) or {}).get('predictions', {})
-        for target, pred in preds.items():
-            metadata = pred.get('selection_metadata') or {}
-            hold = metadata.get('tail_hold3') if isinstance(metadata, dict) else None
-            if not isinstance(hold, dict):
-                continue
-            nums = actuals.get(str(target))
-            tails = pred.get('selected_tails')
-            if nums is None or not isinstance(tails, dict):
-                continue
-            rows.append((str(hold.get('previous_target_period') or target),
-                         hold.get('reused_previous') is True,
-                         [_tv(nums, key) != int(value) % 10 for key, value in tails.items()]))
-    rows.sort(key=lambda row: row[0])
     return rows
 
 
@@ -239,7 +207,6 @@ FRAMEWORKS = (
     ('AI单位置+一合尾+一形态', _kill1_entries),
     ('固定八码', _framework_entries),
     ('七项独立v7', _six_entries),
-    ('冷码七项', _cold_entries),
     ('killer九项', _killer_entries),
 )
 

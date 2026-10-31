@@ -34,7 +34,6 @@ RULE_BASELINE = {
     ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
     ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),
     ('selected_six', 'selected-six-independent-v7-single-tail'): (7, 0.5726),
-    ('cold_framework', 'cold-framework-v3-30-pos3-tail2-he2x4-he3x5'): (7, 0.5427),
     ('he3_refine', 'he3-refine-v2-balanced'): (1, 0.9375),
     ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
     ('kill3_tail', 'kill3-tail-v4'): (5, 0.6191),
@@ -50,7 +49,6 @@ LABELS = {
     'killer': '智能深排 killer（9 项）',
     'framework': '固定八码框架（8 项）',
     'selected_six': '七项独立框架 selected_six（7 项）',
-    'cold_framework': '冷码七项框架',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
     'kill2_tail': 'AI 二位置杀码（7 项）',
@@ -63,11 +61,6 @@ SINGLE_BASELINES = (
     ('三数合留 5 码', 0.9375),
     ('三数合留 6 码', 0.9744),
 )
-POS = {'q': 0, 'b': 1, 's': 2, 'g': 3}
-TAIL_INDEXES = {'all': (0, 1, 2, 3), 'qbs': (0, 1, 2), 'qbg': (0, 1, 3),
-                'qsg': (0, 2, 3), 'bsg': (1, 2, 3)}
-PAIRS = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
-TRIPLES = ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))
 
 
 def _read(path):
@@ -164,67 +157,6 @@ def _he3_row():
     if not isinstance(n, int) or not isinstance(hits, int) or not rule:
         return []
     return [_row('he3_refine', rule, n, hits, 'data/he3_refine_stats.json')]
-
-
-def _cold_day_file(prefix):
-    import re
-    files = [path for path in DATA.glob(prefix + '*.json')
-             if re.fullmatch(re.escape(prefix) + r'\d{4}-\d{2}-\d{2}\.json', path.name)]
-    return sorted(files)[-1] if files else None
-
-
-def _cold_outcome(pred, numbers):
-    positions = pred.get('selected_positions') or {}
-    tails = pred.get('selected_tails') or {}
-    he2 = pred.get('he2_keep')
-    he3 = pred.get('he3_keep')
-    if len(positions) != 3 or len(tails) != 2 or not he2 or not he3:
-        return None
-    for key, kill in positions.items():
-        if key not in POS or numbers[POS[key]] == int(kill):
-            return False
-    for key, kill in tails.items():
-        idx = TAIL_INDEXES.get(key)
-        if idx is None:
-            return None
-        if sum(numbers[i] for i in idx) % 10 == int(kill):
-            return False
-    pair_sums = {sum(numbers[i] for i in pair) % 10 for pair in PAIRS}
-    if not pair_sums.intersection(int(digit) for digit in he2):
-        return False
-    triple_sums = {sum(numbers[i] for i in triple) % 10 for triple in TRIPLES}
-    if not triple_sums.intersection(int(digit) for digit in he3):
-        return False
-    return True
-
-
-def _cold_row(key, prefix):
-    path = _cold_day_file(prefix)
-    if path is None:
-        return []
-    doc = _read(path)
-    if not isinstance(doc, dict):
-        return []
-    preds = doc.get('predictions') or {}
-    actuals = doc.get('actuals') or {}
-    revision = doc.get('revision')
-    hits = 0
-    total = 0
-    for target, pred in preds.items():
-        actual = actuals.get(target)
-        if not isinstance(pred, dict) or not isinstance(actual, dict):
-            continue
-        numbers = actual.get('numbers')
-        if not isinstance(numbers, list) or len(numbers) < 4:
-            continue
-        outcome = _cold_outcome(pred, [int(value) for value in numbers[:4]])
-        if outcome is None:
-            continue
-        total += 1
-        hits += int(outcome)
-    if not total or not revision:
-        return []
-    return [_row(key, revision, total, hits, 'data/' + path.name)]
 
 
 def _kill3_rows():
@@ -347,7 +279,6 @@ def build():
     rows = []
     rows.extend(_strategy_rows())
     rows.extend(_selected_six_row())
-    rows.extend(_cold_row('cold_framework', 'cold_framework_'))
     rows.extend(_he3_row())
     rows.extend(_kill3_rows())
     rows.extend(_kill2_rows())

@@ -31,7 +31,6 @@ MODELS = {
     'framework': ('Flash 框架', 'r1_framework_seals.json', 'ai_job_status.json', 'ai_job_framework.log', 'R1_FRAMEWORK'),
     'selected6': ('Pro 七项', 'selected_six_seals.json', 'selected_six_status.json', 'selected_six_cron.log', 'SELECTED_SIX_INDEPENDENT'),
     'he3_refine': ('三合五尾', 'he3_refine_seals.json', 'he3_refine_status.json', 'he3_refine_cron.log', 'HE3_REFINE'),
-    'cold': ('Pro 冷码框架', None, 'cold_framework_status.json', 'cold_framework_cron.log', 'COLD_FRAMEWORK'),
 }
 _MODEL_ENV_KEYS = {'killer': 'PENTA5_MODEL_KILLER', 'framework': 'PENTA5_MODEL_FRAMEWORK'}
 _TIER_PREFIX = {'deepseek-flash': 'Flash', 'deepseek-v4-flash': 'Flash', 'deepseek-v4-pro': 'Pro'}
@@ -58,11 +57,7 @@ def _model_tiers(root):
         result[job] = _TIER_PREFIX.get(model, '')
     return result
 
-COLD_FAMILIES = {
-    'cold': ('cold_framework', ('cold-framework-v1-30-pos3-tail3',
-                               'cold-framework-v2-30-pos3-tail2',
-                               'cold-framework-v3-30-pos3-tail2-he2x4-he3x5')),
-}
+COLD_FAMILIES = {}
 STATUS_VALUES = frozenset(('current', 'pending', 'await_rule_start', 'manual_off', 'historical', 'late', 'missing', 'failed', 'unknown'))
 
 
@@ -400,7 +395,7 @@ def _panel_targets(html):
     parser.feed(html)
     result = {}
     for model, identity in (('selected6', 'six-independent-attack-data'),
-                             ('he3_refine', 'he3-retained-data'), ('cold', 'cold-framework-data')):
+                             ('he3_refine', 'he3-retained-data')):
         values = parser.scripts.get(identity, [])
         data = values[0] if len(values) == 1 and isinstance(values[0], dict) else {}
         if model in COLD_FAMILIES:

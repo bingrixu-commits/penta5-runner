@@ -1,6 +1,8 @@
 """Explicit user-requested retirement; historical validators remain usable."""
 RETIRED_MODELS = frozenset(('selected7', 'selected'))
 SELECTED_MARKERS = ('SELECTED_FRAMEWORK', 'SELECTED_FRAMEWORK_ATTACK', 'SELECTED_FRAMEWORK_STATS')
+# 2026-11-01: AI 冷码七项框架（Pro 冷码 30 期七项）按用户要求整体退役；其面板块在每次重建时被剥除。
+COLD_MARKERS = ('COLD_FRAMEWORK',)
 
 
 def is_retired(model):
@@ -10,7 +12,7 @@ def is_retired(model):
 def strip_retired_panels(page):
     if not isinstance(page,str):raise TypeError('retirement-panel-must-be-text')
     ranges=[]
-    for marker in SELECTED_MARKERS:
+    for marker in SELECTED_MARKERS + COLD_MARKERS:
         start,end='<!-- '+marker+'_START -->','<!-- '+marker+'_END -->'
         counts=page.count(start),page.count(end)
         if counts==(0,0):continue

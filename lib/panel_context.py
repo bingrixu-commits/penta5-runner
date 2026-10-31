@@ -92,26 +92,6 @@ def _framework_from_strategy(key, label, models):
     }
 
 
-def _cold_frame(key, prefix):
-    path = _latest_daily(prefix)
-    if path is None:
-        return None
-    document = _read(path, {}) or {}
-    predictions = document.get('predictions') if isinstance(document.get('predictions'), dict) else {}
-    entries = sorted((str(target), pred) for target, pred in predictions.items()
-                     if isinstance(pred, dict))
-    if not entries:
-        return None
-    target, prediction = entries[-1]
-    return {
-        'revision': document.get('revision'),
-        'target': target,
-        'prediction': _pick(prediction, ('selected_positions', 'selected_tails',
-                                         'he2_keep', 'he3_keep',
-                                         'publication_state', 'published_at')),
-    }
-
-
 def _he3_frame():
     stats = _read(DATA / 'he3_refine_stats.json', {}) or {}
     comparison = stats.get('comparison') if isinstance(stats.get('comparison'), dict) else {}
@@ -272,9 +252,6 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
             'latest_settled_period': six_stats.get('latest_settled_period'),
             'pending_count': six_stats.get('pending_count'),
         }
-    cold = _cold_frame('cold_framework', 'cold_framework_')
-    if cold:
-        snapshot['frameworks']['cold_framework'] = cold
     he3 = _he3_frame()
     if he3:
         snapshot['frameworks']['he3_refine'] = he3

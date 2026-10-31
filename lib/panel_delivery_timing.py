@@ -25,13 +25,8 @@ MODELS = {
     'selected7': ('SELECTED_FRAMEWORK', 'selected6-attack-text', 'selected6-attack-data'),
     'selected6': ('SELECTED_SIX_INDEPENDENT', 'six-independent-attack-text', 'six-independent-attack-data'),
     'he3_refine': ('HE3_REFINE', None, 'he3-refine-active'),
-    'cold': ('COLD_FRAMEWORK', 'cold-framework-attack', 'cold-framework-data'),
 }
-COLD_FAMILIES = {
-    'cold': ('cold-framework', {'cold-framework-v1-30-pos3-tail3': 3,
-                              'cold-framework-v2-30-pos3-tail2': 2,
-                              'cold-framework-v3-30-pos3-tail2-he2x4-he3x5': 2}),
-}
+COLD_FAMILIES = {}
 FIELDS = ('model','reference_period','target_period','source_card_sha256','attack_sha256','scope')
 MAX_EVENTS = 4096
 
@@ -111,8 +106,7 @@ def _cold_public_identity(prediction, revision, model='cold'):
                    for key,label in zip(position_keys,('千','百','十','个')))+'四定'
     attack+=''.join(label+remaining(tails[key]) for key,label in tail_labels.items() if key in tails)
     keeps={}
-    if revision in ('cold-framework-v3-30-pos3-tail2-he2x4-he3x5',
-                    'cold50-fixed-framework-v1-50-fixed-qbs-all-qbs-he2x4-he3x5',
+    if revision in ('cold50-fixed-framework-v1-50-fixed-qbs-all-qbs-he2x4-he3x5',
                     'cold50-fixed-framework-v2-50-fixed-qbg-qbg-bsg-he2x4-he3x5'):
         for key,label,count,allowed in (('he2_keep','二数合',4,'02468'),('he3_keep','三数合',5,'0123456789')):
             value=prediction.get(key)
