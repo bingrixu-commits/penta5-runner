@@ -10,7 +10,7 @@
 - n < 200 判定「样本不足」，不做优劣结论；p 为双侧二项检验（方差用 p0(1-p0)/n）。
 
 数据源：data/r1_stats.json、r1_framework_hit_stats.json、selected_six_hit_stats.json、
-he3_refine_hit_stats.json、cold_framework_*.json、cold_fixed_framework_*.json、
+he3_refine_hit_stats.json、cold_framework_*.json、
 kill3_tail/settlements.json+seals.json、strategy_comparison_stats.json、*_status.json。
 只读；产物 data/framework_hitrate_cumulative.json，由 crontab 每 15 分钟刷新。
 """
@@ -34,7 +34,6 @@ RULE_BASELINE = {
     ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
     ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),
     ('cold_framework', 'cold-framework-v3-30-pos3-tail2-he2x4-he3x5'): (7, 0.5427),
-    ('cold_fixed_framework', 'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5'): (7, 0.5436),
     ('he3_refine', 'he3-refine-v2-balanced'): (1, 0.9375),
     ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
     ('kill3_tail', 'kill3-tail-v4'): (5, 0.6191),
@@ -45,7 +44,6 @@ LABELS = {
     'framework': '固定八码框架（8 项）',
     'selected_six': '八项独立框架 selected_six（8 项）',
     'cold_framework': '冷码七项框架',
-    'cold_fixed_framework': '30 期固定冷码七项',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
 }
@@ -54,7 +52,6 @@ WINDOWS = {
     'framework': '自账本首期累计',
     'selected_six': '当前规则版本累计',
     'cold_framework': '当前规则版本累计',
-    'cold_fixed_framework': '当前规则版本累计',
     'he3_refine': '当前规则版本累计',
     'kill3_tail': '当前规则版本累计',
 }
@@ -357,7 +354,6 @@ def build():
     for name, func in (('killer', cum_killer), ('framework', cum_framework),
                        ('selected_six', cum_selected_six), ('he3_refine', cum_he3),
                        ('cold_framework', lambda: cum_cold('cold_framework', 'cold_framework_')),
-                       ('cold_fixed_framework', lambda: cum_cold('cold_fixed_framework', 'cold_fixed_framework_')),
                        ('kill3_tail', cum_kill3)):
         try:
             row = func()

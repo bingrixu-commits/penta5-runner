@@ -15,7 +15,7 @@ REFRESH_SCRIPT = r'''<script id="penta5-refresh-control">
   if(old&&old.timer)clearInterval(old.timer);
   if(old&&old.availabilityTimer)clearInterval(old.availabilityTimer);
   var he3AvailabilitySource=__LOCAL_HE3_AVAILABILITY_SOURCE__;
-  var names=['R1_KILLER','R1_KILLER_STATS','R1_FRAMEWORK','R1_FRAMEWORK_STATS','HE3_REFINE','HE3_REFINE_STATS','STAT50_COMPARE_STATS','PENTA5_STATS_PANEL','COLD_OBSERVATION','COLD_FRAMEWORK','COLD_FIXED_FRAMEWORK','AI_API_CONTROL','RUNTIME_OBSERVABILITY','AI_JOB_STATUS','R1_PRO_COMPARE','STAT50_PREDICTION','STAT50_POSITION_STATS','SELECTED_FRAMEWORK','SELECTED_FRAMEWORK_STATS','SELECTED_FRAMEWORK_ATTACK','SELECTED_SIX_INDEPENDENT','SELECTED_SIX_INDEPENDENT_STATS','SELECTED_SIX_INDEPENDENT_ATTACK','KILL_THREE','COLD_HIT_STATS','POSITION_COLD','MODEL_SIGNI','REAL_HIT','STRATEGY_BOARD_DERIVED'];
+  var names=['R1_KILLER','R1_KILLER_STATS','R1_FRAMEWORK','R1_FRAMEWORK_STATS','HE3_REFINE','HE3_REFINE_STATS','STAT50_COMPARE_STATS','PENTA5_STATS_PANEL','COLD_OBSERVATION','COLD_FRAMEWORK','AI_API_CONTROL','RUNTIME_OBSERVABILITY','AI_JOB_STATUS','R1_PRO_COMPARE','STAT50_PREDICTION','STAT50_POSITION_STATS','SELECTED_FRAMEWORK','SELECTED_FRAMEWORK_STATS','SELECTED_FRAMEWORK_ATTACK','SELECTED_SIX_INDEPENDENT','SELECTED_SIX_INDEPENDENT_STATS','SELECTED_SIX_INDEPENDENT_ATTACK','KILL_THREE','COLD_HIT_STATS','POSITION_COLD','MODEL_SIGNI','REAL_HIT','STRATEGY_BOARD_DERIVED'];
   var headers=['disp_period','disp_numbers','disp_hewei','disp_time'],cache={},busy=false,started=false;
   function unique(doc,id){var nodes=doc.querySelectorAll('[id="'+id+'"]');return nodes.length===1?nodes[0]:null;}
   function ranges(doc){
@@ -84,7 +84,7 @@ REFRESH_SCRIPT = r'''<script id="penta5-refresh-control">
   function controls(){
     checkHe3Availability();
     ['__PENTA5_REFRESH_R1_KILLER__','__PENTA5_REFRESH_R1_FRAMEWORK__','__PENTA5_CHECK_STATS_DAY__'].forEach(function(k){if(typeof window[k]==='function')window[k]();});
-    ['__PENTA5_AI_COPY_CONTROL__','__PENTA5_AI_TARGET_PERIOD__','__PENTA5_HE3_FIVE_STATS__','__PENTA5_HE3_PAIRED_VIEW__','__PENTA5_PRO_FOUR__','__PENTA5_STAT50_POSITION_STATS__','__PENTA5_SELECTED_SIX__','__PENTA5_SELECTED_ATTACK__','__PENTA5_SELECTED_SIX_INDEPENDENT__','__PENTA5_AI_API_CONTROL__','__PENTA5_COLD_FRAMEWORK__','__PENTA5_COLD_FIXED_FRAMEWORK__','__PENTA5_ATTACK_EDITOR__','__PENTA5_RUNTIME_OBSERVABILITY__'].forEach(function(k){if(window[k]&&typeof window[k].check==='function')window[k].check();});
+    ['__PENTA5_AI_COPY_CONTROL__','__PENTA5_AI_TARGET_PERIOD__','__PENTA5_HE3_FIVE_STATS__','__PENTA5_HE3_PAIRED_VIEW__','__PENTA5_PRO_FOUR__','__PENTA5_STAT50_POSITION_STATS__','__PENTA5_SELECTED_SIX__','__PENTA5_SELECTED_ATTACK__','__PENTA5_SELECTED_SIX_INDEPENDENT__','__PENTA5_AI_API_CONTROL__','__PENTA5_COLD_FRAMEWORK__','__PENTA5_ATTACK_EDITOR__','__PENTA5_RUNTIME_OBSERVABILITY__'].forEach(function(k){if(window[k]&&typeof window[k].check==='function')window[k].check();});
     document.dispatchEvent(new CustomEvent('penta5:panel-updated',{bubbles:true}));
   }
   function checkHe3Availability(){
@@ -114,9 +114,9 @@ REFRESH_SCRIPT = r'''<script id="penta5-refresh-control">
     var raw=unique(document,'runtime-observability-data'),data=null;
     try{data=raw?JSON.parse(raw.textContent):null;}catch(error){return;}
     if(!data||data.version!==1||!data.models||typeof data.models!=='object')return;
-    var selectors={killer:'#ai_job_status .ai-job-row[data-ai-kind="killer"]',framework:'#ai_job_status .ai-job-row[data-ai-kind="framework"]',pro4:'#pro4-active',selected7:'#selected6-card',selected6:'#six-independent-card',he3_refine:'#he3-refine-active',cold:'#cold-framework-card',cold50:'#cold50-framework-card',cold_fixed:'#cold-fixed-framework-card',cold50_fixed:'#cold50-fixed-framework-card'};
-    var attributes={killer:'data-ai-ref',framework:'data-ai-ref',pro4:'data-reference',selected7:'data-selected6-reference',selected6:'data-six-independent-reference',he3_refine:'data-reference',cold:'data-cold-framework-reference',cold50:'data-cold50-framework-reference',cold_fixed:'data-cold-fixed-framework-reference',cold50_fixed:'data-cold50-fixed-framework-reference'};
-    var targets={killer:'data-ai-target',framework:'data-ai-target',selected7:'data-selected6-target',selected6:'data-six-independent-target',cold:'data-cold-framework-target',cold50:'data-cold50-framework-target',cold_fixed:'data-cold-fixed-framework-target',cold50_fixed:'data-cold50-fixed-framework-target'};
+    var selectors={killer:'#ai_job_status .ai-job-row[data-ai-kind="killer"]',framework:'#ai_job_status .ai-job-row[data-ai-kind="framework"]',pro4:'#pro4-active',selected7:'#selected6-card',selected6:'#six-independent-card',he3_refine:'#he3-refine-active',cold:'#cold-framework-card',cold50:'#cold50-framework-card',cold50_fixed:'#cold50-fixed-framework-card'};
+    var attributes={killer:'data-ai-ref',framework:'data-ai-ref',pro4:'data-reference',selected7:'data-selected6-reference',selected6:'data-six-independent-reference',he3_refine:'data-reference',cold:'data-cold-framework-reference',cold50:'data-cold50-framework-reference',cold50_fixed:'data-cold50-fixed-framework-reference'};
+    var targets={killer:'data-ai-target',framework:'data-ai-target',selected7:'data-selected6-target',selected6:'data-six-independent-target',cold:'data-cold-framework-target',cold50:'data-cold50-framework-target',cold50_fixed:'data-cold50-fixed-framework-target'};
     var current=String((unique(document,'disp_period')||{}).textContent||'').trim(),models={};
     function next(reference){
       if(!/^\d{11}$/.test(reference))return '';

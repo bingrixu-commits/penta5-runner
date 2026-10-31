@@ -34,7 +34,6 @@ RULE_BASELINE = {
     ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
     ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),
     ('cold_framework', 'cold-framework-v3-30-pos3-tail2-he2x4-he3x5'): (7, 0.5427),
-    ('cold_fixed_framework', 'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5'): (7, 0.5436),
     ('he3_refine', 'he3-refine-v2-balanced'): (1, 0.9375),
     ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
     ('kill3_tail', 'kill3-tail-v4'): (5, 0.6191),
@@ -45,7 +44,6 @@ LABELS = {
     'framework': '固定八码框架（8 项）',
     'selected_six': '八项独立框架 selected_six（8 项）',
     'cold_framework': '冷码七项框架',
-    'cold_fixed_framework': '30 期固定冷码七项',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
 }
@@ -268,7 +266,6 @@ def build():
     rows.extend(_strategy_rows())
     rows.extend(_selected_six_row())
     rows.extend(_cold_row('cold_framework', 'cold_framework_'))
-    rows.extend(_cold_row('cold_fixed_framework', 'cold_fixed_framework_'))
     rows.extend(_he3_row())
     rows.extend(_kill3_rows())
     now = datetime.now(TZ)

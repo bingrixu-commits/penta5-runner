@@ -35,7 +35,6 @@ SOURCE_LOGS = (
     ('he3', 'data/he3_refine_cron.log'),
     ('kill3', 'data/kill3_tail_cron.log'),
     ('cold', 'data/cold_framework_cron.log'),
-    ('cold_fixed', 'data/cold_fixed_framework_cron.log'),
 )
 
 MAX_READ_BYTES = 4 * 1024 * 1024
@@ -510,6 +509,8 @@ def _merge_row(target, source):
 
 
 def _aggregate(events, ref_times, now):
+    known_sources = frozenset(source for source, _ in SOURCE_LOGS)
+    events = [event for event in events if event.get('source') in known_sources]
     starts, records = {}, {}
     for event in events:
         kind = event.get('kind')

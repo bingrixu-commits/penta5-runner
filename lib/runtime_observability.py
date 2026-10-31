@@ -32,7 +32,6 @@ MODELS = {
     'selected6': ('Pro 八项', 'selected_six_seals.json', 'selected_six_status.json', 'selected_six_cron.log', 'SELECTED_SIX_INDEPENDENT'),
     'he3_refine': ('三合五尾', 'he3_refine_seals.json', 'he3_refine_status.json', 'he3_refine_cron.log', 'HE3_REFINE'),
     'cold': ('Pro 冷码框架', None, 'cold_framework_status.json', 'cold_framework_cron.log', 'COLD_FRAMEWORK'),
-    'cold_fixed': ('Pro 30期固定冷码', None, 'cold_fixed_framework_status.json', 'cold_fixed_framework_cron.log', 'COLD_FIXED_FRAMEWORK'),
 }
 _MODEL_ENV_KEYS = {'killer': 'PENTA5_MODEL_KILLER', 'framework': 'PENTA5_MODEL_FRAMEWORK'}
 _TIER_PREFIX = {'deepseek-flash': 'Flash', 'deepseek-v4-flash': 'Flash', 'deepseek-v4-pro': 'Pro'}
@@ -63,10 +62,6 @@ COLD_FAMILIES = {
     'cold': ('cold_framework', ('cold-framework-v1-30-pos3-tail3',
                                'cold-framework-v2-30-pos3-tail2',
                                'cold-framework-v3-30-pos3-tail2-he2x4-he3x5')),
-    'cold_fixed': ('cold_fixed_framework', ('cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5',)),
-}
-FIXED_COLD_SPECS = {
-    'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5': (frozenset(('q','b','s')),frozenset(('all','qbs'))),
 }
 STATUS_VALUES = frozenset(('current', 'pending', 'await_rule_start', 'manual_off', 'historical', 'late', 'missing', 'failed', 'unknown'))
 
@@ -279,27 +274,14 @@ def _model_evidence(document, model=None):
 def _cold_evidence(documents, attempts, model='cold'):
     if model not in COLD_FAMILIES:
         raise ValueError('runtime-invalid-cold-family')
-    allowed=COLD_FAMILIES[model][1]
     result = {}
     for document in documents:
         if not isinstance(document, dict) or not isinstance(document.get('predictions'), dict):
             raise ValueError('runtime-invalid-cold-ledger')
-        if model in ('cold_fixed',) and (type(document.get('version')) is not int or document['version']!=1
-                                or document.get('revision') not in allowed):
-            raise ValueError('runtime-invalid-'+model+'-family')
         body = {key: value for key, value in document.items() if key != 'checksum'}
         if document.get('checksum') != sha256(json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest():
             raise ValueError('runtime-invalid-cold-checksum')
         for raw in document['predictions'].values():
-            if model in ('cold_fixed',) and (not isinstance(raw,dict) or raw.get('revision') not in allowed):
-                raise ValueError('runtime-invalid-'+model+'-family')
-            if model in ('cold_fixed',):
-                positions,tails=FIXED_COLD_SPECS[raw['revision']]
-                for field,keys in (('selected_positions',positions),('selected_tails',tails)):
-                    values=raw.get(field)
-                    if (not isinstance(values,dict) or set(values)!=keys
-                            or any(type(value) is not int or not 0<=value<=9 for value in values.values())):
-                        raise ValueError('runtime-invalid-cold-fixed-selection')
             reference = raw.get('reference_period') if isinstance(raw, dict) else None
             seal = _compact_seal(raw, reference, model=model)
             if seal is not None:
@@ -307,18 +289,12 @@ def _cold_evidence(documents, attempts, model='cold'):
     for document in attempts:
         if not isinstance(document, dict) or not isinstance(document.get('attempts'), dict):
             raise ValueError('runtime-invalid-cold-attempts')
-        if model in ('cold_fixed',) and (type(document.get('version')) is not int or document['version']!=1
-                                or document.get('revision') not in allowed):
-            raise ValueError('runtime-invalid-'+model+'-family')
         body = {key: value for key, value in document.items() if key != 'checksum'}
         if document.get('checksum') != sha256(json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest():
             raise ValueError('runtime-invalid-cold-checksum')
         for reference, attempt in document['attempts'].items():
             if not _period(reference) or not isinstance(attempt, dict):
                 continue
-            if model in ('cold_fixed',) and (attempt.get('revision') not in allowed
-                    or attempt.get('reference_period')!=reference or attempt.get('target_period')!=_target(reference)):
-                raise ValueError('runtime-invalid-'+model+'-attempt')
             record = result.setdefault(reference, {'reference_period': reference, 'target_period': _target(reference)})
             record['registered'], record['request_registered_at'] = True, attempt.get('started_at')
             metadata = attempt.get('metadata')
@@ -424,8 +400,7 @@ def _panel_targets(html):
     parser.feed(html)
     result = {}
     for model, identity in (('selected6', 'six-independent-attack-data'),
-                             ('he3_refine', 'he3-retained-data'), ('cold', 'cold-framework-data'),
-                             ('cold_fixed', 'cold-fixed-framework-data')):
+                             ('he3_refine', 'he3-retained-data'), ('cold', 'cold-framework-data')):
         values = parser.scripts.get(identity, [])
         data = values[0] if len(values) == 1 and isinstance(values[0], dict) else {}
         if model in COLD_FAMILIES:

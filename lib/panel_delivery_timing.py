@@ -26,16 +26,11 @@ MODELS = {
     'selected6': ('SELECTED_SIX_INDEPENDENT', 'six-independent-attack-text', 'six-independent-attack-data'),
     'he3_refine': ('HE3_REFINE', None, 'he3-refine-active'),
     'cold': ('COLD_FRAMEWORK', 'cold-framework-attack', 'cold-framework-data'),
-    'cold_fixed': ('COLD_FIXED_FRAMEWORK', 'cold-fixed-framework-attack', 'cold-fixed-framework-data'),
 }
 COLD_FAMILIES = {
     'cold': ('cold-framework', {'cold-framework-v1-30-pos3-tail3': 3,
                               'cold-framework-v2-30-pos3-tail2': 2,
                               'cold-framework-v3-30-pos3-tail2-he2x4-he3x5': 2}),
-    'cold_fixed': ('cold-fixed-framework', {'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5': 2}),
-}
-FIXED_COLD_SPECS = {
-    'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5': (frozenset(('q','b','s')),frozenset(('all','qbs'))),
 }
 FIELDS = ('model','reference_period','target_period','source_card_sha256','attack_sha256','scope')
 MAX_EVENTS = 4096
@@ -110,8 +105,6 @@ def _cold_public_identity(prediction, revision, model='cold'):
         if (not isinstance(values,dict) or len(values)!=count or not set(values)<=set(allowed)
                 or any(type(value) is not int or not 0<=value<=9 for value in values.values())):
             return None
-    if model in ('cold_fixed',) and (frozenset(positions),frozenset(tails))!=FIXED_COLD_SPECS[revision]:
-        return None
     digits='1234567890'
     remaining=lambda value: ''.join(digit for digit in digits if digit!=str(value))
     attack=''.join(label+(remaining(positions[key]) if key in positions else digits)
@@ -119,7 +112,6 @@ def _cold_public_identity(prediction, revision, model='cold'):
     attack+=''.join(label+remaining(tails[key]) for key,label in tail_labels.items() if key in tails)
     keeps={}
     if revision in ('cold-framework-v3-30-pos3-tail2-he2x4-he3x5',
-                    'cold-fixed-framework-v1-30-fixed-qbs-all-qbs-he2x4-he3x5',
                     'cold50-fixed-framework-v1-50-fixed-qbs-all-qbs-he2x4-he3x5',
                     'cold50-fixed-framework-v2-50-fixed-qbg-qbg-bsg-he2x4-he3x5'):
         for key,label,count,allowed in (('he2_keep','二数合',4,'02468'),('he3_keep','三数合',5,'0123456789')):

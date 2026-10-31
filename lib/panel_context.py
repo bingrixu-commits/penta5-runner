@@ -67,7 +67,7 @@ def _model_tiers():
             env[key.strip()] = value.strip()
     for key in ('PENTA5_DEEPSEEK_MODEL', 'PENTA5_MODEL_KILLER', 'PENTA5_MODEL_FRAMEWORK',
                 'PENTA5_MODEL_HE3', 'PENTA5_MODEL_KILL3', 'PENTA5_MODEL_SIX',
-                'PENTA5_MODEL_COLD', 'PENTA5_MODEL_COLD_FIXED'):
+                'PENTA5_MODEL_COLD'):
         if env.get(key):
             tiers[key.replace('PENTA5_MODEL_', '').replace('PENTA5_DEEPSEEK_MODEL', 'global').lower()] = env[key]
     return tiers
@@ -229,9 +229,6 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None, now=None)
     cold = _cold_frame('cold_framework', 'cold_framework_')
     if cold:
         snapshot['frameworks']['cold_framework'] = cold
-    cold_fixed = _cold_frame('cold_fixed_framework', 'cold_fixed_framework_')
-    if cold_fixed:
-        snapshot['frameworks']['cold_fixed_framework'] = cold_fixed
     he3 = _he3_frame()
     if he3:
         snapshot['frameworks']['he3_refine'] = he3
