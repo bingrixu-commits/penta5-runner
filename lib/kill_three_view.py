@@ -109,7 +109,7 @@ def _stats_html(stats):
         join += f' · 未计入（发布晚于开奖）{late} 期'
     legacy = stats.get('legacy') or {}
     if legacy.get('total'):
-        join += (f' · 旧口径（v1–v5、v7）{legacy.get("total")} 期'
+        join += (f' · 旧口径（v1–v6、v7）{legacy.get("total")} 期'
                  f'（整组 {legacy.get("group_hits")} 中）已归档不计入')
     win, loss = stats.get('current_win_streak') or 0, stats.get('current_loss_streak') or 0
     if win:
@@ -215,15 +215,25 @@ def render_block():
                     f'<div class="k3-sub">排除该四位形态</div></div>')
         dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
         reason = escape(str(seal.get('reason') or '')) or '（无）'
+        seal_tail_policy = seal.get('tail_policy') or {}
+        if (seal_tail_policy.get('reused_previous') is True
+                and '尾码按稳定化沿用上期' not in str(seal.get('reason') or '')):
+            reason += ('<span style="color:#92400e;">（尾码已按稳定化沿用上期，'
+                       '模型理由中的合尾为换码候选）</span>')
         derivation = _form_derivation(seal)
         derive_html = (f'<div class="k3-drop">{escape(derivation)}</div>'
                        if derivation else '')
-        restriction = seal.get('tail_restriction') or {}
+        tail_policy = seal.get('tail_policy') or {}
         restrict_html = ''
-        if restriction.get('previous_tail_label'):
-            restrict_html = (
-                f'<div class="k3-drop">合尾限制：上一期是'
-                f'{escape(str(restriction.get("previous_tail_label")))}，本期从其余四种合尾中选</div>')
+        if tail_policy.get('policy'):
+            note = tail_policy.get('note') or ''
+            model_tail = tail_policy.get('model_tail') or {}
+            candidate = ''
+            if model_tail.get('key') in kill3_tail.TAILS:
+                candidate = ('（AI 候选：' + escape(kill3_tail.TAILS[model_tail['key']]['label'])
+                             + ' 杀 ' + escape(str(model_tail.get('kill'))) + '）')
+            restrict_html = (f'<div class="k3-drop">尾码稳定化：{escape(str(note))}'
+                             f'{candidate}</div>')
         position_limit = seal.get('position_restriction') or {}
         position_parts = []
         for key, digit in (position_limit.get('blocked_digits') or {}).items():
@@ -313,7 +323,7 @@ def _foot_html():
     return ('<div class="k3-foot">'
             '由 DeepSeek 决定：从千/百/十/个中选 3 个位置各排除 1 码、放弃 1 个位置；'
             '3 个位置全部计入整组与攻击语；'
-            '合尾从 5 种中选 1 种排除 1 个和尾数字（每期与上一期不同），并给出两项四位反向形态。<br>'
+            '合尾从 5 种中选 1 种排除 1 个和尾数字（稳定化：命中沿用、最多连用 3 期，失手换码；AI 尾项为换码候选），并给出两项四位反向形态。<br>'
             '同一位置杀码最多连用 3 期（中间放弃该位不清零）、同一放弃位置最多连用 3 期，'
             '满后下一期必须更换。<br>'
             '命中 = 该位置实际开奖号<b>不在</b>杀码上（3 个位置全部计入）；'
@@ -321,7 +331,7 @@ def _foot_html():
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态'
             '（3 个被杀位置都取杀码形态反面；弃位字符自选）。<br>'
             '3 个位置 + 1 个合尾 + 2 项反向形态共 6 项同时命中才算整组命中；'
-            '旧口径（v1–v5、v7）的封存记录保留但不计入本统计；'
+            '旧口径（v1–v6、v7）的封存记录保留但不计入本统计；'
             '只统计开奖前发布、开奖后核验的记录；北京时间 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与；'
             '平台提前 70 秒关盘。'
             '</div>')

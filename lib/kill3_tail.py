@@ -5,6 +5,8 @@
   剩余的 1 个位置为「放弃」；
 - 3 个被杀位置全部计入整组与攻击语（counted），不再有 display_only 仅展示位；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
+- 尾码稳定化（v8 起）：上期尾码命中且连用未满 3 期时沿用上期尾码；失手或连用满 3 期后
+  改由模型本期新选；模型尾项在封存里记为换码候选（tail_policy.model_tail）；
 - 另输出两项反向形态（与八项独立框架同口径）：
   四位单双形态 reverse_parity、四位大小形态 reverse_size；
   被杀的 3 个位置取杀码单双/大小的反面，放弃位置的字符由 AI 自选；
@@ -15,6 +17,7 @@
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 同一位置杀码最多连用 3 期（中间放弃该位置不清零）、同一放弃位置最多连用 3 期，
   满后下一期必须更换；
+- 尾码不再要求"不得与上一期同类"，改为上述稳定化口径，并在封存写 tail_policy 追溯；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -68,9 +71,11 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill3-tail-v6-three-positions'
+RULE_VERSION = 'kill3-tail-v8-three-positions-hold3'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 3
+TAIL_HOLD_MAX = 3
+TAIL_POLICY = 'hold3-until-miss'
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
@@ -80,7 +85,7 @@ RETRY_INSTRUCTION = (
     'reverse_parity 为四个单/双字符，reverse_size 为四个大/小字符，'
     '3 个被杀位置都必须取杀码形态的反面'
     '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
-    '放弃位置的字符自选；合尾不得与上一期相同（若因合尾限制被拒，请改选其余四种之一）；'
+    '放弃位置的字符自选；合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
     '被限制的位置不得继续使用该位置连用满3期的杀码，被限制的放弃位置必须换；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
@@ -342,7 +347,7 @@ def _cold_line(ranks, limit=3):
                      for number, count, omission in ranks[:limit])
 
 
-def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tail_label=None,
+def build_prompt(reference, target, rows, *, previous_tail=None,
                  position_limit=None, panel_snapshot=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
@@ -366,11 +371,14 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         f'· {label}：候选 {kill}（近50期出{count}次/当前遗漏{omission}期），'
         f'近50期该尾候选杀号命中 {hit50:.2%}，近30期 {hit30:.2%}'
         for _key, label, kill, count, omission, hit50, hit30 in tail_rows]
-    if blocked_tail_key and previous_tail_label:
-        restriction = (f'上一期合尾：{previous_tail_label}；本期不得选择「{previous_tail_label}」，'
-                       '必须从其余四种合尾中选。')
+    if isinstance(previous_tail, dict) and previous_tail.get('key') in TAILS:
+        prev_label = TAILS[previous_tail['key']]['label']
+        prev_kill = str(previous_tail.get('kill', '-'))
+        restriction = (f'上一期合尾：{prev_label} 杀 {prev_kill}。'
+                       '稳定化规则：上期该尾码命中且连用未满 3 期时，系统直接沿用上期尾码；'
+                       '否则采用你本期新选。你的尾项仍会记为换码候选，可正常自主选择。')
     else:
-        restriction = '本期无合尾限制。'
+        restriction = '本期无上一期尾码，按你本期自主选择封存。'
     limit = position_limit if isinstance(position_limit, dict) else {}
     limit_lines = []
     previous_positions = limit.get('previous_positions') or {}
@@ -413,12 +421,13 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         '【五种合尾候选对比（合尾 = 对应位置数字之和的个位；'
         '按该尾候选码近50期真实杀号命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(tail_lines) + '\n\n'
-        '【合尾选择限制】\n' + restriction + '\n\n'
+        '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【位置与弃位使用限制】\n' + position_limit_text + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；'
         '3 个位置全部计入整组与攻击语；\n'
-        '2. 从上述 5 种合尾中挑 1 种（本期不得与上一期相同），排除 1 个和尾数字（0-9）；\n'
+        '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；'
+        '系统按稳定化规则决定最终封存尾码；\n'
         '3. 给出两项四位反向排除形态：reverse_parity 为按千百十个顺序的四位单双形态，'
         'reverse_size 为四位大小形态；被杀的 3 个位置'
         '都必须取杀码形态的反面'
@@ -442,7 +451,7 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill3-tail-prompt-v6-three-positions',
+        'version': 'kill3-tail-prompt-v8-three-positions-hold3',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -451,8 +460,9 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         'tail_comparison': [{'key': key, 'label': label, 'candidate': str(kill),
                              'hit50': round(hit50, 6), 'hit30': round(hit30, 6)}
                             for key, label, kill, _count, _omission, hit50, hit30 in tail_rows],
-        'blocked_tail': blocked_tail_key,
-        'previous_tail_label': previous_tail_label,
+        'previous_tail': previous_tail,
+        'tail_policy': TAIL_POLICY,
+        'tail_hold_max': TAIL_HOLD_MAX,
         'position_limit': limit,
         'panel_context_sha256': panel_context_sha,
         'panel_context': panel_snapshot if isinstance(panel_snapshot, dict) else None,
@@ -559,6 +569,96 @@ def validate_position_choice(prediction, position_limit=None):
         label = POSITION_LABELS.get(blocked_drop, blocked_drop)
         raise ValueError(f'放弃位置已连续{limit}期放弃{label}，本期必须换放弃位置')
     return prediction
+
+
+def _trailing_tail_streak(seals):
+    """Trailing consecutive seals sharing one tail key+kill."""
+    key = kill = None
+    count = 0
+    for seal in reversed(seals):
+        tail = seal.get('tail') if isinstance(seal, dict) else None
+        if not isinstance(tail, dict):
+            break
+        tail_key = tail.get('key')
+        tail_kill = tail.get('kill')
+        if tail_key not in TAILS or tail_kill is None:
+            break
+        if key is None:
+            key, kill, count = tail_key, str(tail_kill), 1
+        elif tail_key == key and str(tail_kill) == kill:
+            count += 1
+        else:
+            break
+    previous = None
+    if key is not None:
+        previous = {'key': key, 'label': TAILS[key]['label'], 'kill': kill}
+    return previous, count
+
+
+def tail_hold_state(seals, settlements):
+    """State used by the tail-hold policy; read-only."""
+    seals = [item for item in (seals or []) if isinstance(item, dict)]
+    settlements = [item for item in (settlements or []) if isinstance(item, dict)]
+    previous, streak = _trailing_tail_streak(seals)
+    previous_ref = str(seals[-1].get('ref_period') or '') if seals else ''
+    previous_target = str(seals[-1].get('target_period') or '') if seals else ''
+    previous_hit = None
+    if previous_target:
+        for item in reversed(settlements):
+            if str(item.get('target_period') or '') == previous_target:
+                previous_hit = (item.get('tail') or {}).get('hit') is True
+                break
+    return {'policy': TAIL_POLICY, 'hold_max': TAIL_HOLD_MAX,
+            'previous_tail': previous, 'previous_streak': streak,
+            'previous_hit': previous_hit,
+            'previous_ref_period': previous_ref or None,
+            'previous_target_period': previous_target or None}
+
+
+def apply_tail_policy(prediction, seals, settlements):
+    """Return a copy whose sealed tail follows the stability policy."""
+    if not isinstance(prediction, dict):
+        raise ValueError('prediction must be an object')
+    state = tail_hold_state(seals, settlements)
+    model_tail = dict(prediction.get('tail') or {})
+    previous = state.get('previous_tail')
+    reused = False
+    if (previous and state.get('previous_hit') is True
+            and int(state.get('previous_streak') or 0) < TAIL_HOLD_MAX):
+        final = {'key': previous['key'], 'label': TAILS[previous['key']]['label'],
+                 'kill': str(previous['kill'])}
+        reused = True
+        note = '沿用上期尾码（第%s期，上期命中）' % state.get('previous_streak')
+    elif previous and state.get('previous_hit') is True:
+        final = model_tail
+        note = '换码（上期命中但已连用%s期满%s期）' % (state.get('previous_streak'), TAIL_HOLD_MAX)
+    elif previous and state.get('previous_hit') is False:
+        final = model_tail
+        note = '换码（上期未命中）'
+    elif previous:
+        final = model_tail
+        note = '换码（上一期尚未结算，无法沿用）'
+    else:
+        final = model_tail
+        note = '新选（无上一期尾码）'
+    result = dict(prediction)
+    result['tail'] = final
+    result['tail_policy'] = {
+        'policy': TAIL_POLICY, 'hold_max': TAIL_HOLD_MAX,
+        'model_tail': {'key': model_tail.get('key'), 'kill': model_tail.get('kill')},
+        'reused_previous': reused, 'note': note,
+        'previous_tail': previous,
+        'previous_streak': state.get('previous_streak'),
+        'previous_hit': state.get('previous_hit'),
+        'previous_ref_period': state.get('previous_ref_period'),
+    }
+    if reused:
+        model_label = TAILS.get(model_tail.get('key'), {}).get('label', str(model_tail.get('key')))
+        original = str(result.get('reason') or '')
+        result['reason'] = ('尾码按稳定化沿用上期 %s 杀%s（AI 候选 %s 杀%s）。模型原话：%s' % (
+            TAILS[previous['key']]['label'], previous['kill'], model_label,
+            model_tail.get('kill'), original))[:200]
+    return result
 
 
 def resolve_model():
@@ -765,6 +865,7 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'counted': prediction.get('counted') or [],
         'dropped': prediction['dropped'],
         'tail': prediction['tail'],
+        'tail_policy': prediction.get('tail_policy'),
         'reverse_parity': prediction['reverse_parity'],
         'reverse_size': prediction['reverse_size'],
         'reason': prediction['reason'],

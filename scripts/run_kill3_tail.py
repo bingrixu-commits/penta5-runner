@@ -87,8 +87,6 @@ def main():
     rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
     previous_seal = seals[-1] if seals else None
     previous_tail = (previous_seal.get('tail') or {}) if isinstance(previous_seal, dict) else {}
-    previous_tail_key = previous_tail.get('key') or None
-    previous_tail_label = previous_tail.get('label') or None
     position_limit = kill3_tail.position_restrictions(seals)
     panel_snapshot = panel_context.build(
         reference, target,
@@ -98,12 +96,10 @@ def main():
     print('kill3 panel context sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
     prompt, audit = kill3_tail.build_prompt(
         reference, target, rows,
-        blocked_tail_key=previous_tail_key,
-        previous_tail_label=previous_tail_label,
+        previous_tail=previous_tail if isinstance(previous_tail, dict) else None,
         position_limit=position_limit, panel_snapshot=panel_snapshot)
 
     def _value_check(item):
-        kill3_tail.validate_tail_choice(item, previous_tail_key)
         kill3_tail.validate_position_choice(item, position_limit)
 
     try:
@@ -117,12 +113,11 @@ def main():
     if rejection:
         print(f'kill3 publication rejected after inference: {rejection}; ref={reference}')
         return 0
+    settlements = kill3_tail.load_settlements()
+    prediction = kill3_tail.apply_tail_policy(prediction, seals, settlements)
     seal = kill3_tail.create_seal(reference, target, latest.get('opentime'), prediction,
                                   prompt, audit, generated_at, meta,
-                                  extra={'tail_restriction': {
-                                      'previous_tail_key': previous_tail_key,
-                                      'previous_tail_label': previous_tail_label},
-                                         'position_restriction': position_limit})
+                                  extra={'position_restriction': position_limit})
     kill3_tail.save_seal(seal)
     kill3_tail.mark_published(reference)
     try:
@@ -146,6 +141,13 @@ def main():
         limited.append(f'{kill3_tail.POSITION_LABELS.get(drop_key, drop_key)}换弃位')
     if limited:
         print('kill3 position limits enforced: ' + ', '.join(limited))
+    tail_policy = prediction.get('tail_policy') or {}
+    if tail_policy:
+        print('kill3 tail policy: ' + str(tail_policy.get('note'))
+              + ' · sealed=' + str(prediction['tail'].get('key')) + '/'
+              + str(prediction['tail'].get('kill'))
+              + ' · model=' + str((tail_policy.get('model_tail') or {}).get('key')) + '/'
+              + str((tail_policy.get('model_tail') or {}).get('kill')))
     return 0
 
 

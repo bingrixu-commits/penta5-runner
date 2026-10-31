@@ -108,20 +108,7 @@ def _collect():
                 cold[str(target)] = (str(target), [int(x) for x in nums[:4]], items)
     if cold:
         result['冷码七项'] = [cold[key] for key in sorted(cold)]
-    kill3 = []
-    doc = _read(DATA / 'kill3_tail' / 'settlements.json', {}) or {}
-    for entry in doc.get('records') or []:
-        if not str(entry.get('rule_version') or '').startswith('kill3-tail-v7'):
-            continue
-        tail = entry.get('tail') or {}
-        key = str(tail.get('key') or '').replace('tail_', '')
-        kill = tail.get('kill')
-        nums = entry.get('actual')
-        target = entry.get('target_period')
-        if key in TAIL and kill is not None and isinstance(nums, list) and len(nums) >= 4 and target:
-            kill3.append((str(target), [int(x) for x in nums[:4]], [(key, int(kill))]))
-    if kill3:
-        result['AI三位置v7'] = sorted(kill3, key=lambda row: row[0])
+    # AI 三位置 已于 2026-10-31 21:10 转正 v8（hold3-until-miss），不再列入影子对照。
     return result
 
 
@@ -261,8 +248,9 @@ def render_block(data):
         '<table><thead><tr><th>框架</th><th>现行命中率(回放)</th><th>稳定化命中率(回放)</th>'
         '<th>现行换码</th><th>稳定化换码</th><th>上线后前瞻 n（现行→稳定化）</th></tr></thead><tbody>'
         + ''.join(rows) + '</tbody></table>'
-        '<div class="ts-foot">单尾杀1码随机基线90%。稳定化不会提高命中率（数学上限），只降低换码频率；'
-        '上线需各框架新增 revision，旧封存保留。</div>'
+        '<div class="ts-foot">单尾杀1码随机基线90%。稳定化不会提高命中率（数学上限），只降低换码频率。'
+        'AI 三位置已于 2026-10-31 21:10 转正 v8（hold3-until-miss），不再列入本影子；'
+        '其余框架待逐项转正，旧封存保留。</div>'
         '</section>\n' + END)
 
 
