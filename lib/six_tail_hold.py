@@ -53,7 +53,8 @@ def apply_six_tail_hold(response, seals, reference, numbers):
                 'previous_hit': None, 'previous_streak': 0,
                 'previous_ref_period': None}
     previous_ref = refs[-1]
-    previous_tail = _single_tail(seals.get(previous_ref))
+    previous_seal = seals.get(previous_ref)
+    previous_tail = _single_tail(previous_seal)
     if previous_tail is None:
         return {'policy': TAIL_HOLD_POLICY, 'hold_max': TAIL_HOLD_MAX,
                 'reused_previous': False, 'note': '新选（上一期非单尾口径，无法沿用）',
@@ -66,8 +67,10 @@ def apply_six_tail_hold(response, seals, reference, numbers):
         if candidate is None or candidate != previous_tail:
             break
         streak += 1
-    previous_hit = tail_value(numbers, previous_tail['key']) != previous_tail['kill']
-    reused = bool(previous_hit and streak < TAIL_HOLD_MAX)
+    contiguous = str((previous_seal or {}).get('target_period') or '') == str(reference)
+    previous_hit = (tail_value(numbers, previous_tail['key']) != previous_tail['kill']
+                    if contiguous else None)
+    reused = bool(previous_hit is True and streak < TAIL_HOLD_MAX)
     if reused:
         response['selected_tails'] = {previous_tail['key']: previous_tail['kill']}
         note = '沿用上期尾码（%s 杀%s，第%s期，上期命中）' % (
@@ -78,7 +81,9 @@ def apply_six_tail_hold(response, seals, reference, numbers):
         response['reason'] = ('尾码按稳定化沿用上期（AI 候选 %s）。模型原话：%s'
                               % (candidate_text, original))[:200]
     else:
-        if not previous_hit:
+        if previous_hit is None:
+            note = '换码（上一期封存与当前参考期不连续，无法核对上期命中）'
+        elif not previous_hit:
             note = '换码（上期未命中）'
         else:
             note = '换码（自动沿用已满%s期，改由模型重选）' % TAIL_HOLD_MAX

@@ -234,7 +234,18 @@ with reserve_request('framework', period, post=requests.post,
         operation_window=operation_window, validator=response_validator,
         retry_instruction=(FRAMEWORK_RETRY_INSTRUCTION if hasattr(response_validator, 'strategy_validation') else None))
 
+tail_hold = None
+try:
+    tail_hold = apply_framework_tail_hold(r, seals, period, latest_numbers)
+    if tail_hold is not None:
+        print('TAIL_HOLD3 kind=framework ref=%s reused=%s note=%s' % (
+            period, tail_hold.get('reused_previous'), tail_hold.get('note')))
+except Exception as _tail_hold_error:
+    print('TAIL_HOLD3_SKIPPED kind=framework reason=%s' % type(_tail_hold_error).__name__)
+
 # A0: joint-form optimization (dormant until the auto-promotion gate enables it)
+# 顺序修正（2026-11-01）：必须在 tail-hold 之后执行。tail-hold 会改写 he_q3_kill/he_h3_kill，
+# 若先优化形态再改合尾，封存形态对最终合尾不是最优，按最终封存重算的审计期望会系统性高于实盘。
 joint_form_applied = False
 try:
     from joint_form_optimizer import optimize_framework_response
@@ -247,15 +258,6 @@ try:
                  _joint_form['expected_ai'], _joint_form['expected_opt']))
 except Exception as _joint_form_error:
     print('JOINT_FORM_OPTIMIZER_SKIPPED kind=framework reason=%s' % type(_joint_form_error).__name__)
-
-tail_hold = None
-try:
-    tail_hold = apply_framework_tail_hold(r, seals, period, latest_numbers)
-    if tail_hold is not None:
-        print('TAIL_HOLD3 kind=framework ref=%s reused=%s note=%s' % (
-            period, tail_hold.get('reused_previous'), tail_hold.get('note')))
-except Exception as _tail_hold_error:
-    print('TAIL_HOLD3_SKIPPED kind=framework reason=%s' % type(_tail_hold_error).__name__)
 
 # 兜底默认值
 def get_keep_digits(kill_list):

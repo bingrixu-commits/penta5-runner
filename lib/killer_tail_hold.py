@@ -47,10 +47,17 @@ def apply_killer_tail_hold(response, seals, period, numbers):
             streak += 1
         else:
             break
-    hits = {field: tail_value(numbers, key) != previous_tails[field]
-            for field, key in TAIL_FIELDS}
-    both_hit = all(hits.values())
-    reused = bool(both_hit and streak < TAIL_HOLD_MAX)
+    if str(previous.get('target_period') or '') != str(period):
+        # 上一封存期与当前参考期不连续（漏发/重发）：numbers 是当前参考期开奖，不等于上一封存的
+        # 目标期开奖，无法核对上期是否命中；不沿用，避免用错期开奖号决定沿用/换码。
+        hits = None
+        both_hit = False
+        reused = False
+    else:
+        hits = {field: tail_value(numbers, key) != previous_tails[field]
+                for field, key in TAIL_FIELDS}
+        both_hit = all(hits.values())
+        reused = bool(both_hit and streak < TAIL_HOLD_MAX)
     model_tails = {}
     for field, _key in TAIL_FIELDS:
         try:
@@ -66,7 +73,8 @@ def apply_killer_tail_hold(response, seals, period, numbers):
         response['reason'] = ('尾码按稳定化沿用上期（AI 候选 %s）。模型原话：%s'
                               % (candidate_text, original))[:200]
     else:
-        note = ('换码（自动沿用已满%s期，改由模型重选）' % TAIL_HOLD_MAX
+        note = ('换码（上一期封存与当前参考期不连续，无法核对上期命中）' if hits is None
+                else '换码（自动沿用已满%s期，改由模型重选）' % TAIL_HOLD_MAX
                 if both_hit else '换码（上期至少一项未命中）')
         if model_tails == previous_tails:
             note += '（模型本次仍选同码）'
