@@ -794,3 +794,11 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - **注意**：`.env` 由 `scripts/model_tier_guard.py`（cron 每 10 分钟）按余额自动全量切
   flash/pro 并可能增删 PENTA5_MODEL_* 行；推荐块按各任务回退链解析，missing 时回退
   KILLER→DEEPSEEK_MODEL，与各 task 脚本的真实回退一致。
+
+## 2026-11-01 三数共现块升级三组合并（commit 待补号，见上）
+
+- 面板「三数共现」块 v2：三组号码（避开1/2/3组）同屏显示（下一期待核验 + 最新一期逐组 ✓/✗）；
+  核验表改为「三组合并（1+2+3 全避开）」口径：同一期三组全部避开成功才记命中，
+  合并基线 = 每期按该期三组号码 10^4 精确枚举（1 - P(至少一组共现)）按期平均。
+  实测：上一业务日合并 273/288=94.79% vs 基线 94.06%（+0.73pp 贴合随机）。
+  历史文件 data/three_avoid2_history.json 升级为 merged + single 双口径并存。
