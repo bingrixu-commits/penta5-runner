@@ -310,7 +310,7 @@ def _streak(item, error=False, current=False):
 
 SCRIPT = r'''<script id="selected-six-independent-control">
 (function(){
-  var version='eight-independent-view-v2-forms',rule='selected-six-independent-v4-minimax-forms';
+  var version='eight-independent-view-v2-forms',rule='__REVISION__';
   var keys=['position_q','position_b','position_s','position_g','tail_all','tail_qbs','tail_qbg','tail_qsg','tail_bsg','he2_keep','he3_keep','reverse_parity','reverse_size'];
   function one(id){var a=document.querySelectorAll('[id="'+id+'"]');return a.length===1?a[0]:null;}
   function put(n,v){if(n&&n.textContent!==v)n.textContent=v;}
@@ -378,6 +378,14 @@ SCRIPT = r'''<script id="selected-six-independent-control">
   var state={version:version,check:check,copy:copy,input:input,timer:setInterval(check,1000)};window.__PENTA5_SELECTED_SIX_INDEPENDENT__=state;window.addEventListener('pageshow',check);document.addEventListener('visibilitychange',check);document.addEventListener('penta5:panel-updated',check);document.addEventListener('click',copy);document.addEventListener('input',input);check();
 })();
 </script>'''
+
+
+# The browser-side validator must gate on the live contract revision.
+# A revision bump that leaves this literal stale freezes the card at
+# waiting-for-this-period and pauses all client-side statistics.
+if SCRIPT.count("rule='__REVISION__'") != 1:
+    raise ValueError('selected-six-view-rule-placeholder-mismatch')
+SCRIPT = SCRIPT.replace("rule='__REVISION__'", "rule='" + REVISION + "'", 1)
 
 
 def render_stats_block(summary, job_status=None, *, reference=None, now=None, coverage=None):
