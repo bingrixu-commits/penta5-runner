@@ -231,6 +231,17 @@ prompt = f"""以下是真实的最近开奖历史前四位走势数据（按时�
 
 prompt, model_context_audit = prepare_model_request(prompt, snapshot, 'killer', stats,
                                                    data_dir=os.path.dirname(STATS_PATH))
+from panel_context import build as _panel_build_context, prompt_text as _panel_prompt_text
+from hashlib import sha256 as _panel_sha256
+_panel_snapshot = _panel_build_context(period, next_period(period))
+_panel_text, _panel_sha = _panel_prompt_text(_panel_snapshot)
+prompt = (prompt + '\n\n【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带'
+          ' reference/target；仅供自主决策参考，不是未来概率保证）】\n' + _panel_text + '\n')
+model_context_audit = dict(model_context_audit,
+                           panel_context=_panel_snapshot,
+                           panel_context_sha256=_panel_sha,
+                           sent_prompt_sha256=_panel_sha256(prompt.encode('utf-8')).hexdigest())
+print('PANEL_CONTEXT kind=%s sha=%s bytes=%d' % ('killer', _panel_sha[:16], len(_panel_text)))
 response_validator = classic_killer_validator(model_context_audit)
 print("🤖 正在连接 DeepSeek 开放平台推导【杀码框架与攻击语】...")
 import requests

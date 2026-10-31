@@ -175,6 +175,17 @@ if os.path.exists(lock_file):
 print(f'Framework inference starting; ref={period}; publication pending.')
 prompt, model_context_audit = prepare_model_request(prompt, snapshot, 'framework', seals,
                                                    data_dir=os.path.dirname(SEALS_PATH))
+from panel_context import build as _panel_build_context, prompt_text as _panel_prompt_text
+from hashlib import sha256 as _panel_sha256
+_panel_snapshot = _panel_build_context(period, next_period(period))
+_panel_text, _panel_sha = _panel_prompt_text(_panel_snapshot)
+prompt = (prompt + '\n\n【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带'
+          ' reference/target；仅供自主决策参考，不是未来概率保证）】\n' + _panel_text + '\n')
+model_context_audit = dict(model_context_audit,
+                           panel_context=_panel_snapshot,
+                           panel_context_sha256=_panel_sha,
+                           sent_prompt_sha256=_panel_sha256(prompt.encode('utf-8')).hexdigest())
+print('PANEL_CONTEXT kind=%s sha=%s bytes=%d' % ('framework', _panel_sha[:16], len(_panel_text)))
 response_validator = classic_framework_validator(model_context_audit)
 import requests
 framework_response_metadata = []
