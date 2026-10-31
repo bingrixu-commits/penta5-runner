@@ -12,6 +12,7 @@
 标记缺失时回退插入到 <!-- HITRATE_BASE_END --> 之后；任何异常原样返回 html。
 """
 import json
+from html import escape as _esc
 from pathlib import Path
 
 import three_avoid2_stats as stats
@@ -38,6 +39,14 @@ STYLE = """
 #three-avoid2 .t3-badge{display:inline-block;margin-left:6px;padding:1px 7px;border:1px solid #f59e0b;
   border-radius:999px;font-size:11px;color:#92400e;background:#fffbeb;vertical-align:2px}
 #three-avoid2 .t3-foot{font-size:11.5px;color:#64748b;line-height:1.55;margin-top:8px}
+#three-avoid2 .t3-codes{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:8px 0}
+#three-avoid2 .t3-code-label{font-size:12.5px;color:#64748b;font-weight:700}
+#three-avoid2 .t3-code{font-size:26px;font-weight:900;letter-spacing:6px;color:#1e3a8a;background:#eef2ff;
+  border:1px solid #c7d2fe;border-radius:10px;padding:4px 14px;font-variant-numeric:tabular-nums}
+#three-avoid2 .t3-code.ok{border-color:#86efac;background:#f0fdf4;color:#166534}
+#three-avoid2 .t3-code.miss{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
+#three-avoid2 .t3-code.pending{border-style:dashed}
+#three-avoid2 .t3-code-note{font-size:12.5px;color:#475569}
 """
 
 
@@ -77,6 +86,20 @@ def render_block(report=None):
     current = report.get('current') or {}
     previous = report.get('previous') or {}
     sealed_text = '已封盘' if previous.get('sealed') else '已结束'
+    codes = ''
+    latest = report.get('latest_value') or {}
+    pending = report.get('pending_value') or {}
+    if isinstance(pending, dict) and pending.get('value'):
+        codes += ('<div class="t3-codes"><span class="t3-code-label">下一期 %s · 待开奖核验</span>'
+                  '<span class="t3-code pending">%s</span></div>'
+                  % (pending.get('period') or '—', _esc(pending['value'])))
+    if isinstance(latest, dict) and latest.get('value'):
+        outcome = '避开成功 ✓' if latest.get('success') else '未避开 ✗'
+        actual = ' · '.join(str(item) for item in (latest.get('actual') or [])[:4])
+        codes += ('<div class="t3-codes"><span class="t3-code-label">最新一期 %s · 已核验</span>'
+                  '<span class="t3-code %s">%s</span><span class="t3-code-note">开奖 %s · %s</span></div>'
+                  % (latest.get('period') or '—', 'ok' if latest.get('success') else 'miss',
+                     _esc(latest['value']), actual, outcome))
     rows = _row('本业务日 %s（进行中）' % report['business_day'], current, None)
     rows += _row('上一业务日 %s（%s）' % (previous.get('business_day') or '—', sealed_text),
                  previous, None)
@@ -87,6 +110,7 @@ def render_block(report=None):
         f'<h3>🧪 三数共现避开3组 · 业务日核验<span class="t3-badge">高基线过滤项</span></h3>'
         f'<div class="t3-meta">命中口径：模型给出的 3 个数字未在 4 球开奖号中全部出现'
         f'（避开成功）· 随机基线 97.96%（10^4 精确枚举）· 高基线通过率 ≠ 预测能力</div>'
+        f'{codes}'
         f'<table><thead><tr><th>口径</th><th>命中率</th><th>命中/样本</th><th>与基线差</th>'
         f'<th>说明</th></tr></thead><tbody>{rows}</tbody></table>'
         f'<div class="t3-foot">数据截至期号 {report.get("as_of_period") or "—"}'

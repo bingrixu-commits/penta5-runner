@@ -299,6 +299,29 @@ def compute(now=None, write=True):
     previous = history.get(previous_day) or {}
     as_of_period = current.get('last_period') or previous.get('last_period')
     as_of_time = current.get('last_open_time') or previous.get('last_open_time')
+    latest_value = None
+    pending_value = None
+    for pred in rows:
+        ev = pred.get('evaluation') or {}
+        extras = (ev.get('independentExtras') or {}).get(KEY) or {}
+        if isinstance(extras.get('success'), bool):
+            latest_value = {
+                'period': (ev.get('targetPeriod') or ev.get('targetUid') or '').replace('period:', '', 1).strip(),
+                'value': extras.get('value'),
+                'success': extras.get('success'),
+                'actual': ev.get('actualNumbers'),
+            }
+            break
+    current_prediction = (doc or {}).get('currentPrediction')
+    if isinstance(current_prediction, dict) and current_prediction.get('evaluated') is not True:
+        extra = (current_prediction.get('extraKills') or {}).get(KEY)
+        if isinstance(extra, dict) and extra.get('value'):
+            pending_value = {
+                'period': (current_prediction.get('targetPeriod') or current_prediction.get('targetUid') or '').replace('period:', '', 1).strip(),
+                'value': extra['value'],
+            }
+    if pending_value and latest_value and pending_value['period'] <= latest_value['period']:
+        pending_value = None  # 磁盘快照滞后：该期已核验，不显示重复待核验
     report = {
         'version': 'three-avoid2-daily-v1',
         'key': KEY,
@@ -313,6 +336,8 @@ def compute(now=None, write=True):
         'as_of_period': as_of_period,
         'as_of_time': as_of_time,
         'min_sample': MIN_SAMPLE,
+        'latest_value': latest_value,
+        'pending_value': pending_value,
         'current': current,
         'previous': {
             'business_day': previous_day,
