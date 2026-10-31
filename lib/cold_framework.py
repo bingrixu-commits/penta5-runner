@@ -251,7 +251,7 @@ def _metadata(metadata, context, now, required=False):
     required_fields = {'requested_model', 'returned_model', 'requested_at',
                        'completed_at', 'input_sha256', 'finish_reason'}
     if (not required_fields.issubset(metadata)
-            or not set(metadata).issubset(required_fields | {'request_id', 'reason', 'reference_period', 'selection_policy'})
+            or not set(metadata).issubset(required_fields | {'request_id', 'reason', 'reference_period', 'selection_policy', 'panel_context_sha256'})
             or _model_family(metadata['requested_model']) is None
             or not isinstance(metadata['returned_model'], str)
             or _model_family(metadata['returned_model']) != _model_family(metadata['requested_model'])

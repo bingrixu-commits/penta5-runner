@@ -166,8 +166,14 @@ def _archive(root, kind, reference, audit, history, generated, now):
             or observed is None or not parse_time(history[-1]['opentime']) <= observed <= generated <= now
             or observed >= period_slot(next_period(reference))
             or inner.get('initial_request_prompt_sha256') != sha256(prompt.encode('utf-8')).hexdigest()
-            or inner.get('context_sha256') != _digest(inner.get('body'))
-            or audit != dict(inner, input_archive=relative, input_archive_sha256=sha256(encoded).hexdigest())):
+            or inner.get('context_sha256') != _digest(inner.get('body'))):
+        raise ValueError('invalid-ai-original-input-evidence')
+    expected_audit = dict(inner, input_archive=relative,
+                          input_archive_sha256=sha256(encoded).hexdigest())
+    for extra_key in ('panel_context', 'panel_context_sha256', 'sent_prompt_sha256'):
+        if extra_key in audit:
+            expected_audit[extra_key] = audit[extra_key]
+    if audit != expected_audit:
         raise ValueError('invalid-ai-original-input-evidence')
     lines = prompt.splitlines()
     expected = ', '.join(''.join(map(str, item['numbers'])) for item in history)
