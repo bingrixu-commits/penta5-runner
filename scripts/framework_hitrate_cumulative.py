@@ -379,9 +379,12 @@ def _joint_expected(promoted_moment):
         if not isinstance(records, dict):
             records = {}
         per_target = {}
-        for target, record in records.items():
+        for key, record in records.items():
             if not isinstance(record, dict):
                 continue
+            # shadow records 以 ref_period 为键，但评估/期望属于自身的 target_period；
+            # 账本按 target_period 关联，必须用 record['target_period'] 映射，不能把 ref 键当 target。
+            target = str(record.get('target_period') or key)
             value = None
             if promoted_moment is not None:
                 slot = _period_slot(target)
@@ -393,7 +396,7 @@ def _joint_expected(promoted_moment):
                 value = fallback if (isinstance(fallback, (int, float))
                                      and 0.0 < float(fallback) < 1.0) else None
             if value is not None:
-                per_target[str(target)] = float(value)
+                per_target[target] = float(value)
         mapping[name] = per_target
         shadow = model.get('summary') or {}
         summary[name] = {'before': shadow.get('expected_ai_avg'),
