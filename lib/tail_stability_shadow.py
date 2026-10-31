@@ -53,7 +53,7 @@ def _collect():
     # killer 已于 2026-10-31 22:15 启用 triple-hold3；至此五项框架全部转正，影子不再纳入。
     # 固定八码 已于 2026-10-31 22:00 启用 pair-hold3 稳定化，不再列入影子对照。
     # 七项独立 已于 2026-10-31 22:05 启用单尾 hold3 稳定化，不再列入影子对照。
-    # 七项独立 v7（22:05）与冷码七项（22:10）均已转正，影子不再纳入。
+    # 七项独立 v7（22:05）已转正，影子不再纳入；已退役框架不留对照项。
     # AI 三位置 已于 2026-10-31 21:10 转正 v8（hold3-until-miss），不再列入影子对照。
     return result
 
@@ -159,7 +159,7 @@ def _pct(value):
 def render_block(data):
     rows = []
     frameworks = data.get('frameworks') or {}
-    order = [name for name in ('killer九项', '固定八码', '七项独立v7', '冷码七项', 'AI三位置v7')
+    order = [name for name in ('killer九项', '固定八码', '七项独立v7', 'AI三位置v7')
              if name in frameworks]
     order += [name for name in sorted(frameworks) if name not in order]
     for name in order:
@@ -196,7 +196,7 @@ def render_block(data):
         + ''.join(rows) + '</tbody></table>'
         '<div class="ts-foot">单尾杀1码随机基线90%。稳定化不会提高命中率（数学上限），只降低换码频率。'
         'AI 三位置（21:10，v8）、固定八码（22:00，pair-hold3）、七项独立 v7（22:05，hold3）、'
-        '冷码七项（22:10，pair-hold3）、killer（22:15，triple-hold3）已全部转正；'
+        'killer（22:15，triple-hold3）已全部转正；'
         '本影子停止对照，保留只读历史。旧封存一律保留。</div>'
         '</section>\n' + END)
 
