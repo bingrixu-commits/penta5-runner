@@ -434,3 +434,16 @@
 - 回滚：git revert 本提交；下一期起按 v1 口径封存，v2 封存保留。
 - **v2 首期正式封存与结算（2026-11-01 00:05 起）**：ref 20261101001 → target 20261101002，published 00:05:54，positions q1/b8/s6，display_only=s，counted q/b，dropped=g；攻击语 `千234567890百123456790十1234567890个1234567890四定百十个合123456890除双单单双除大小小大二数合0268三数合34689各`（display_only 与放弃位置均保留 10 码）。target 002 结算：display_only=s、counted q/b、7 项整组命中（verified）。面板 KILL_TWO 已显示 8 卡（3 张位置卡中 1 张标注「仅展示，不计入整组」）、统计行「7 项全中：2 位置计入 + 合尾 + 二数合 + 三数合 + 2 形态」、旧 v1 17 期（整组 8 中）归档不计入；hitrate/cumulative 已切 v2 规则行（expected 57.26%）。
 - **过渡期 1 期（ref 20261031288→20261101001）**：该期封存在 00:00:57 热更新窗口内由旧版 create_seal 写入，rule 已标 v2 但缺 display_only/dropped 字段（counted q/b 正常，按 counted 结算 group=False），其攻击语按当时旧口径生成。属 1 期过渡记录，封存不改写、不补写；其后封存字段完整。整组机械基线仍 57.26%（7 项构成未变，display_only 不影响概率）；若要把整组拉回旧 5 项那版的 ~61.9%，需另立 revision 把二数合/三数合移出整组。
+
+## 2026-11-01 00:35–01:00 真实命中率口径升级 + kill2 v3 五项目径只读影子
+
+用户目标「提高真实命中率、扛住压力」。先做只读审计再只增不改地落地：
+
+**① 覆盖率审计（只读）**：按 24h 窗口（288 期）复算各框架覆盖率，缺口段全部命中 2026-10-31 AI 总闸关闭区间（control audit：02:23–03:06 / 07:31–10:40 / 11:06–11:53），与缺失期 01030..01038、01091..01128、01135..01143 逐段对应；**11:53 恢复后主链未再连续掉期**。累计覆盖率低还包含各框架「引入前」期数，不代表现行掉链。
+**② 口径升级（commit 1b691b8）**：
+- framework_hitrate_cumulative.py 每行新增 coverage_24h/7d、plan_hit_rate_24h/7d 与 rolling 明细（窗口锚点、已上线期数、漏期、last_missed、最近24期）；最新一期待结算记 pending_period，不计入分母/漏期；分母 = 窗口内该框架已上线期数，计划命中率 = 命中数/分母（漏期按 0 命中）；旧字段零变化。
+- ops_health 新增 check_coverage（23→24 项）：coverage_24h<95% WARN；<80% 仅当缺口延续到最近 24 期（仍漏≥3期）才 FAIL，已恢复历史缺口只 WARN。
+- 面板「整组命中率 vs 随机期望」表新增「覆盖率(24h)」「计划命中率(24h)」两列 + 发布/计划命中率口径说明（漏期算 0、历史缺口来源）。
+- 实测 as_of 20261101010（pending 20261101011）：kill2 100%（online 27）、killer/framework/cold/kill3 77–80%（全部 recent_missed=0、last_missed 为历史期，缺口随 24h 窗口滚出后自动转 OK）。
+**③ kill2 v3 五项目径只读影子（commit 711ef7b）**：新增 scripts/run_kill2_v35_shadow.py，用同一批封存号码重算「2 counted 位置 + 合尾 + 2 反向形态 = 5 项」（he2/he3 仅展示不计入；机械基线 61.91%），与现行 7 项（57.26%）配对；输出 data/kill2_v35_shadow.json（backfill/forward/gate/periods），不新增 AI 请求、不改现网封存/结算/面板口径；cron 每 5 分钟（sleep 45，flock penta5-kill2v35）已安装，logrotate 已加日志。首跑：backfill n=24 五项 12/24=50.00% vs 七项 11/24=45.83%（Δ+4.17pp，机械预期 +4.65pp 量级）；forward 自 20261101008 起累计 n=4（5/7 项均 2/4）。面板 KILL_TWO 区块已显示只读「影子对照 v3」行与门禁状态（burn-in，需 forward n≥100 才进入转正评审；脚本绝不自动切换现网）。
+**备注**：并行 DSH 窗口正在开发 kill1_tail（未提交），本批 commit 只含本任务文件；ops_health 的 kill3_freeze WARN 来自该并行窗口对 lib/panel_context.py 的未提交改动，非本批引入。
