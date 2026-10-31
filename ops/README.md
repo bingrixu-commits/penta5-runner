@@ -527,3 +527,12 @@
   `tar -xzf /root/archive/retired-20261101-cold-family/cold-family-data.tar.gz -C /root/penta5-runner/`；
   systemd：unit 文件在备份目录，拷回后 daemon-reload + enable --now；crontab/logrotate 行按备份恢复后 install。
 
+
+## 2026-11-01 03:05 收尾：面板影子脚注清零
+复核 02:08 退役结果时发现 `lib/tail_stability_shadow.py` 的只读影子脚注仍列「冷码七项（22:10，pair-hold3）」，
+`_collect()` 排序元组也仍含该键（已无数据，不渲染行）。已删除两处键/字样并同步注释；重新生成
+TAIL_STABILITY_SHADOW 区块后 panel.html 中「冷码七项」「冷码七项框架」「COLD_FRAMEWORK」均为 0。
+改前备份：/root/ops/cold-retire-final-20261101-030538/（panel.html、tail_stability_shadow.py、README、
+import_from_state.js 及 SHA256SUMS.before）。
+`api/import_from_state.js` 的 cold_framework_json / cold_framework_success 是 RDS 落库列，已无生产方
+（预测对象不再有 coldFramework 字段，写入恒为 NULL），不展示、不进统计，随 schema 保留。
