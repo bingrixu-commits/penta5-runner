@@ -29,6 +29,8 @@ MISSING_LOOKBACK = 100
 PENDING_GRACE_MINUTES = 20
 FALLBACK_WINDOW_HOURS = 24
 FAILURE_WINDOW_HOURS = 2
+DRIFT_STALE_MINUTES = 45
+DRIFT_PATH = 'data/framework_hitrate_cumulative.json'
 
 
 def _read_json(path, default=None):
@@ -51,6 +53,18 @@ def _atomic_json(path, value):
         handle.close()
     os.chmod(temporary, 0o644)
     os.replace(temporary, path)
+
+
+def _age_minutes(value, now):
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    if moment.tzinfo is None and now.tzinfo is not None:
+        moment = moment.replace(tzinfo=now.tzinfo)
+    elif moment.tzinfo is not None and now.tzinfo is None:
+        now = now.replace(tzinfo=moment.tzinfo)
+    return round((now - moment).total_seconds() / 60.0, 1)
 
 
 def _period(value):
@@ -282,6 +296,43 @@ def main(argv=None):
     for row in rows:
         raise_status(row['status'])
 
+    drift = {'status': 'unknown', 'generated_at': None, 'age_minutes': None,
+             'stale': None, 'rows': []}
+    cumulative = _read_json(root / DRIFT_PATH, {}) or {}
+    drift_payload = cumulative.get('drift') if isinstance(cumulative, dict) else None
+    if isinstance(drift_payload, dict) and isinstance(drift_payload.get('rows'), list):
+        drift_rows = []
+        for row in drift_payload['rows']:
+            if not isinstance(row, dict):
+                continue
+            windows = row.get('windows') or {}
+            cusum = row.get('cusum') or {}
+            item = {'key': row.get('key'), 'label': row.get('label'), 'n': row.get('n'),
+                    'status': str(row.get('status') or 'unknown'),
+                    'verdict': row.get('verdict'),
+                    'z200': (windows.get(200) or windows.get('200') or {}).get('z'),
+                    'z300': (windows.get(300) or windows.get('300') or {}).get('z'),
+                    'z500': (windows.get(500) or windows.get('500') or {}).get('z'),
+                    'cusum_peak': cusum.get('z_peak')}
+            drift_rows.append(item)
+            if item['status'] == 'fail':
+                raise_status('fail')
+            elif item['status'] == 'warn':
+                raise_status('warn')
+        generated = drift_payload.get('generated_at') or cumulative.get('generated_at')
+        age = _age_minutes(generated, checked_at)
+        stale = age is None or age > DRIFT_STALE_MINUTES
+        row_statuses = [row['status'] for row in drift_rows]
+        if 'fail' in row_statuses:
+            aggregate = 'fail'
+        elif 'warn' in row_statuses or stale:
+            aggregate = 'warn'
+        else:
+            aggregate = 'ok'
+        drift = {'status': aggregate, 'generated_at': generated,
+                 'age_minutes': age, 'stale': stale, 'rows': drift_rows}
+        raise_status(aggregate)
+
     state_path = root / 'data' / STATE_NAME
     previous = _read_json(state_path, {}) or {}
     watermark = previous.get('watermark')
@@ -306,6 +357,7 @@ def main(argv=None):
     state = {'version': 1, 'checked_at': checked_at.isoformat(), 'watermark': watermark,
              'status': overall,
              'latest_reference': baseline.get('as_of_period'),
+             'drift': drift,
              'hitrate': rows, 'six': six, 'missing': missing,
              'balance': {'last_balance': last_balance, 'status': balance_status}}
     _atomic_json(state_path, state)
@@ -313,6 +365,9 @@ def main(argv=None):
         with (root / 'data' / LOG_NAME).open('a', encoding='utf-8') as stream:
             stream.write(json.dumps(state, ensure_ascii=False) + '\n')
     print(json.dumps({'status': overall, 'checked_at': state['checked_at'],
+                      'drift': {'status': drift['status'], 'age_minutes': drift['age_minutes'],
+                                'non_ok': [row['key'] for row in drift['rows']
+                                           if row['status'] not in ('ok', 'insufficient', 'high', 'unknown')]},
                       'hitrate_non_ok': [row['key'] for row in rows if row['status'] not in ('ok', 'insufficient', 'unknown')],
                       'six': {'fallbacks_24h': six['fallbacks_24h'], 'failures_2h': six['final_failures_2h']},
                       'missing_alert': {key: value['alert_count'] for key, value in (missing.get('models') or {}).items()},
