@@ -20,6 +20,7 @@
 - 任何异常原样返回 html，绝不影响整页刷新。
 """
 from datetime import datetime
+from pathlib import Path
 from html import escape
 import json
 import math
@@ -315,6 +316,41 @@ def _form_derivation(seal):
     return ('形态取反（按 ' + str(len(parts)) + ' 个被杀位置）：' + ' · '.join(parts)
             + f'；放弃位置{dropped_text}字符自选')
 
+SHADOW_PATH = '/root/penta5-runner/data/kill2_v35_shadow.json'
+
+
+def _shadow_html():
+    """只读影子对照：v3 五项口径（2 位置计入+合尾+2 形态）vs 现行 7 项。"""
+    try:
+        import json as _json
+        doc = _json.loads(Path(SHADOW_PATH).read_text(encoding='utf-8'))
+    except Exception:
+        return ''
+    try:
+        if not isinstance(doc, dict):
+            return ''
+        baseline = doc.get('baseline_5') or [5, 0.6191]
+        parts = ['影子对照 v3：5 项口径（2 位置计入 + 合尾 + 2 形态，基线 %.2f%%）'
+                 % (float(baseline[1]) * 100.0)]
+        back = doc.get('backfill') or {}
+        if int(back.get('n') or 0):
+            parts.append('回放 n=%d 5项 %.2f%% / 现行7项 %.2f%%（Δ%+.1fpp）'
+                         % (int(back['n']), 100.0 * float(back.get('rate5') or 0),
+                            100.0 * float(back.get('rate7') or 0),
+                            float(back.get('delta_pp') or 0)))
+        fwd = doc.get('forward') or {}
+        if int(fwd.get('n') or 0):
+            parts.append('forward n=%d 5项 %.2f%% / 7项 %.2f%%'
+                         % (int(fwd['n']), 100.0 * float(fwd.get('rate5') or 0),
+                            100.0 * float(fwd.get('rate7') or 0)))
+        gate = doc.get('gate') or {}
+        if gate.get('status'):
+            parts.append('门禁 %s（需 n≥%s）' % (gate.get('status'), gate.get('min_n', 100)))
+        return '<div class="k2-drop">' + ' · '.join(escape(str(item)) for item in parts) + '</div>'
+    except Exception:
+        return ''
+
+
 def _version_html():
     """口径追溯行：当前 revision、自哪期起、本版期数、精确基线（只读）。"""
     try:
@@ -391,7 +427,7 @@ def render_block():
                 body += (f'<div class="k2-meta">最近一次：参考期 {escape(str(previous.get("ref_period", "")))}'
                          f' · 目标期 {escape(str(previous.get("target_period", "")))}</div>')
             return (f'{START}<section id="kill-two-ai"><style>{STYLE}</style>'
-                    f'<h3>{TITLE}</h3>{body}{_stats_html(stats)}{_version_html()}'
+                    f'<h3>{TITLE}</h3>{body}{_stats_html(stats)}{_version_html()}{_shadow_html()}'
                     f'{_foot_html()}</section>{END}')
         positions = seal.get('positions') or {}
         display_only = seal.get('display_only')
@@ -464,7 +500,7 @@ def render_block():
                 f'<div class="k2-drop">{position_note}</div>'
                 f'{_policy_html(seal)}{derive_html}'
                 f'<div class="k2-reason">理由：{reason}</div>'
-                f'{_stats_html(stats)}{_version_html()}'
+                f'{_stats_html(stats)}{_version_html()}{_shadow_html()}'
                 f'<div class="k2-verify">{verify}</div>'
                 f'{_attack_html(seal)}'
                 f'{_foot_html()}</section>{END}')
