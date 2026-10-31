@@ -2,7 +2,7 @@
   "format": "mnemonpack",
   "version": 1,
   "scope": "full",
-  "exportedAt": "2026-10-30T21:08:25.377Z",
+  "exportedAt": "2026-10-31T00:07:10.841Z",
   "source": {
     "plugin": "dsh-mnemon",
     "pluginVersion": "0.5.37"
@@ -16,8 +16,8 @@
     {
       "component": "runtime",
       "files": 3,
-      "bytes": 25460,
-      "items": 17
+      "bytes": 25714,
+      "items": 16
     },
     {
       "component": "documents",
@@ -36,7 +36,7 @@
     "channel": "git",
     "branch": "mnemon-sync",
     "subdir": "mnemon/",
-    "pushedAt": "2026-10-30T21:08:25.377Z",
+    "pushedAt": "2026-10-31T00:07:10.841Z",
     "machine": {
       "id": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
       "label": "PC-20260622JLQP",
@@ -95,6 +95,24 @@
         "target": "memory",
         "contentHash": "b9ce43e6394460f0baac8d455f3b40f6ae63f26ffffa1b117f8f1019c48f2427",
         "deletedAt": "2026-10-30T21:08:25.290Z",
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
+      },
+      {
+        "target": "memory",
+        "contentHash": "ed5ff9e696c123e294c08083a229bb94658d01925182674199a3f837a0000255",
+        "deletedAt": "2026-10-31T00:07:10.752Z",
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
+      },
+      {
+        "target": "memory",
+        "contentHash": "6e3aaf9ddba44d8d86d89201a4d3d43b46c7202c37cca8cb114b44b35ad9bb9c",
+        "deletedAt": "2026-10-31T00:07:10.752Z",
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
+      },
+      {
+        "target": "memory",
+        "contentHash": "cdb4abdc2948a0f9e2057142b0744e10e7bcaeca9b201c09eae705c605d5bde3",
+        "deletedAt": "2026-10-31T00:07:10.752Z",
         "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
       }
     ]

@@ -6,8 +6,6 @@ DSH 桌面版（profile desktop）安装「链接目录」本地 bundle 的怪�
 §
 penta5-runner 的面板 panel.html 是运行时动态重生成的：多个视图模块（lib/panel_live_refresh.py、selected_single_view.py、selected_framework_view.py、selected_six_view.py、stat50_position_view.py）各自带一份 `var names=[...]` JS 模板和各自的区块 START/END 标记，sync_state_to_panel.py 每轮调用 /root/run_stats.py 重写面板。因此只改 panel.html 无效，必须同时改这些模板；删除功能时还要注意删除前已在跑的 run_stats.py 进程会用旧代码把区块再写回去，需等其结束后再清理一次。
 §
-penta5-runner 2026-10-30 02:57 的「108 个模块迁入 lib/」重构把若干 lib 模块写成 ROOT=Path(__file__).resolve().parent（实际变成 lib/），导致 AI 任务读 lib/data 下不存在的 ai_api_control.json 而静默 paused：杀码框架/智能排除自 02:51 起停更，冷码框架/固定框架停在 ref 20261030034。修复=ROOT 改 parents[1]，并把 lib/ai_job_status.py 的 JOBS 脚本路径改为 lib/auto_r1_killer.py / lib/auto_r1_framework.py（根目录同名入口已被移走）。
-§
 penta5-runner 面板统计刷新（2026-10-30 起）：sync_state_to_panel.py 改为「每期开奖结算后一次」——主触发=data/state.json 的 latestRecord.period 变化、开奖后 180s 结算点执行 /root/run_stats.py；10min 心跳 / 05:00 业务日 / 失败 120s 重试兜底；实测单轮 91s、一期只刷一次（旧实现按分钟 key 触发，等于连续满载 80-258s/轮）。预测卡片由各任务自己写 panel，不依赖该进程。
 §
 penta5-runner 的 operation window 硬约束：lib/ai_operation_window.py 里 PLATFORM_CLOSE_SECONDS=70，即某期预测必须在开奖后 230s 内发布，否则报 operation-window-insufficient-budget / operation-window-closed。因此 he3/cold_fixed 等任务不能错峰到「开奖+3min」之后（2026-10-30 07:08 实测 he3 因错峰到 +3min 被拒）；只有 stat50/selected_six 可以移到 +1~+2min。
@@ -26,6 +24,6 @@ DSH 技能配置最终状态（2026-10-31 04:3x）：注入模型时 description
 §
 penta5-runner 2026-10-31 提示词部署：selected_six 首答硬性要求已上线 9939126（transport v2 兼容 v1 历史，ref 051-055 attempt=1）；framework/killer 自检 94c5000 破坏 stat50_archive 的历史 prompt 复渲染校验，已 revert d94dc1b，看板恢复；pro 切档后看板 _metadata 只认 flash 族会拒新封存。
 §
-penta5-runner 模型档位（2026-10-31 05:0x）：PENTA5_MODEL_FRAMEWORK/KILLER 已回退 deepseek-flash（04:54，备份 .env.bak-20261031-045426-flashrollback；pro 期 054-058 封存会被策略板 _metadata 判 rejected 不再增长，看板文案恢复 Flash）；PENTA5_MODEL_HE3=deepseek-v4-pro；PENTA5_MODEL_KILL3=deepseek-flash；全局 deepseek-flash；selected_six/cold 硬编码 pro。pro 实测 framework 20.3s、killer 44.1s；flash 回退后 ref 059/060 首答发布。低余额 04:50 触发 402 与 ref 058 全任务漏期（充值后 059 恢复）。
+penta5-runner 2026-10-31 06:51 状态：服务器全自动、本机关机不影响。A0：影子任务 68bb193、门禁 070c48a、自动解除/转正 135f17a（门禁 ready 自动写 data/joint_form_auto_promote.json enabled；framework/killer 下一期起仅把两个排除形态换成 10^4 精确联合最优，AI 杀码/合尾/保留集不变；旧封存保留；回滚=该文件 manual_disable=true）。历史 2100 期 framework 55.98→58.55(+2.57pp)、killer 39.97→42.78(+2.80pp)；优化响应通过发布校验；门禁 ready 临时根测试通过。当前 burn-in 2/72（面板底 #joint-form-shadow 实时显示）。余额 10.6 CNY 仅约1h，跑满72期需充值约40-50 CNY，否则 AI 停摆无法自动解除门禁。ops_health ok。
 §
-21
+penta5-runner 2026-10-31 上线「模型运行观测层」：lib/model_usage.py + lib/model_usage_view.py + scripts/run_model_usage.py（每分钟 cron，flock penta5-model-usage，日志 data/model_usage_cron.log 已入 logrotate）；只读 7 个 AI 任务日志的 AI_* 观测行 → data/model_usage/ledger-YYYYMM.jsonl + summary.json；面板 #model-usage 区块（MODEL_USAGE_START/END，在 RUNTIME_OBSERVABILITY_END 后，run_stats 重生成不覆盖）；ops_health 新增 model_usage 项。首轮回填 8715 事件，402=619/429=7 与原始日志 grep 一致。commits 1bb95cf/270817a；备份 /root/ops/model-usage-20261031/。
