@@ -2,7 +2,7 @@
   "files": {
     "lib/kill3_tail.py": "496dd526701731d9e97bc0d48e685ef181899d29b625caa96d3266ad1fd5f00a",
     "lib/kill_three_view.py": "097ec649819f90641f1495e5d832f3b9de1da64e9c713b7d4d4eb484092ae260",
-    "lib/panel_context.py": "95aa4cd808c87a3ce789cc0707895019cac92035b19b24ec0c68eb9ff14a6991",
+    "lib/panel_context.py": "11f6d164239e57f4333e0d9114b4b5a7f8439f64a8527490762d59049dd0df70",
     "scripts/run_kill3_tail.py": "28d043701f9168cea8e44eefb2d13952af52cef946fe37bba3962736bd9e262d"
   },
   "freeze_hours": 72,
@@ -25,6 +25,14 @@
       "new_sha256": "95aa4cd808c87a3ce789cc0707895019cac92035b19b24ec0c68eb9ff14a6991",
       "old_sha256": "0791a310ddd402a74da375050253ecf3657a219cd9d5080a32f916c4c8150028",
       "reason": "kill2_tail 升 v2（三选二：3 位置展示、2 个计入整组）后，kill2_self 记录新增 display_only/counted/dropped 字段；kill3 调用路径不传 kill2 参数，固定 fixture 下 kill3 panel_context snapshot/prompt_text sha256 逐字节不变（9d45ac95…）"
+    },
+    {
+      "at": "2026-11-01T01:08:00+08:00",
+      "commit": "1e96ae5",
+      "file": "lib/panel_context.py",
+      "new_sha256": "11f6d164239e57f4333e0d9114b4b5a7f8439f64a8527490762d59049dd0df70",
+      "old_sha256": "95aa4cd808c87a3ce789cc0707895019cac92035b19b24ec0c68eb9ff14a6991",
+      "reason": "为新增 kill1_tail 框架在面板上下文新增可选 kill1_stats/kill1_previous 入参与 kill1_self 键；kill3/kill2 调用路径不传 kill1 参数，固定 fixture 下 A/B 两版模块 build()+prompt_text() 的 snapshot/prompt_text sha256 逐字节相同（kill3 2492ed52b8f5a36d…、kill2 65cb1b363cf79a81…），仅 kill1 调用新增 kill1_self，不改变 kill3/kill2 口径"
     }
   ],
   "min_periods": 100,
