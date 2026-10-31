@@ -85,7 +85,7 @@ SCRIPT = r"""<script id="r1-killer-hit-script">
     span.style.cssText+=';display:inline-block;max-width:100%;white-space:normal;overflow-wrap:anywhere;vertical-align:middle;';
     var valid=sameDay&&metric&&Number.isSafeInteger(metric.hits)&&Number.isSafeInteger(metric.total)&&metric.total>0&&metric.hits>=0&&metric.hits<=metric.total;
     span.textContent=data.stats_error===true?'统计核验失败，暂停显示命中率':!sameDay?'北京时间05:00已清零，等待本周期数据':valid?'排除成功率 '+(metric.hits/metric.total*100).toFixed(2)+'%（'+metric.hits+'/'+metric.total+'期）':'暂无今日已验证数据';
-    span.title=data.stats_error===true?'统计核验失败，暂停显示命中率':'北京时间05:00起，仅统计开奖前发布且开奖后核验的前4球；不含历史未核验数据。';
+    span.title=data.stats_error===true?'统计核验失败，暂停显示命中率':'排除类随机基线：杀1码90%（位置/三合尾同）；四位形态93.75%。北京时间05:00起只统计开奖前发布且开奖后核验的前4球；单日n小波动大，以累计为准。';
   });
 })();
 </script>"""
@@ -102,6 +102,7 @@ def render_killer_stats_block(summary):
               'border:1px solid #bfdbfe;border-radius:6px;background:#f8fbff;color:#475569;font:12px/1.7 sans-serif;overflow-wrap:anywhere;">'
               '<b>智能排除9项本版今日已验证战绩</b> ｜ ' + escape(data['biz_date']) + ' 05:00起（北京时间）'
               '<br>只使用前4球，按实际开奖时间归入当日；旧策略证据保留，不并入本版。0样本不显示命中百分比。'
+              '<br>排除类随机基线：位置杀1码/三合尾杀1码均为 90%；四位形态排除为 93.75%；单日 n<30 波动大。'
               '<br>最近核验期：' + escape(data['latest_settled_period'])
               + ' ｜ 待核验：' + str(data['pending_count']) + '期'
               + ('<br><b style="color:#b45309;">有' + str(data['conflict_count']) + '期开奖号码存在冲突，未计入命中率，等待复核。</b>' if data['conflict_count'] else '')

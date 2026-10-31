@@ -397,13 +397,13 @@ SCRIPT = r'''<script id="selected-six-independent-control">
   }
   function check(){
     var data=json('six-independent-stats-data'),good=validStats(data),now=Date.now(),day=Number.isFinite(now)?new Date(now+10800000).toISOString().slice(0,10):null,today=good&&day===data.biz_date;
-    function rate(m,p){return !good?'统计核验失败，暂停显示':!today?'北京时间05:00已切换，等待本周期数据':!m.total?p+'：暂无已验证数据':p+' '+(100*m.hits/m.total).toFixed(2)+'%（'+m.hits+'/'+m.total+'期）';}
+    function rate(m,p,base){return !good?'统计核验失败，暂停显示':!today?'北京时间05:00已切换，等待本周期数据':!m.total?p+'：暂无已验证数据':p+' '+(100*m.hits/m.total).toFixed(2)+'%（'+m.hits+'/'+m.total+'期）'+(base?' · 随机基线'+base:'');}
     function streak(m,current){if(!good)return '统计核验失败，暂停显示';if(!today)return '北京时间05:00已切换，等待本周期数据';var a=current?'当前':'最高';if(!m.total)return a+'连中：— ｜ '+a+'连败：—（暂无样本）';return a+'连中：'+m[current?'current_win_streak':'max_win_streak']+'手 ｜ '+a+'连败：'+m[current?'current_loss_streak':'max_loss_streak']+'手'+(current&&m.current_streak_interrupted?'（连续记录已中断）':'');}
     var summary=one('six-independent-overall-summary'),slot=one('six-independent-summary-slot');
     if(summary&&slot&&summary.parentNode!==slot)slot.appendChild(summary);
     put(one('six-independent-overall-rate'),rate(good&&data.overall,'整组__ITEM_CN__项全部命中率'));
     put(one('six-independent-overall-max'),streak(good&&data.overall,false));put(one('six-independent-overall-current'),streak(good&&data.overall,true));
-    document.querySelectorAll('[data-six-independent-rate-key]').forEach(function(n){var k=n.getAttribute('data-six-independent-rate-key');put(n,keys.indexOf(k)<0?'统计项目不匹配':rate(good&&data.metrics[k],k==='he2_keep'||k==='he3_keep'?'命中率':'排除成功率'));});
+    var RATE_BASE={position_q:'90%',position_b:'90%',position_s:'90%',position_g:'90%',tail_all:'90%',tail_qbs:'90%',tail_qbg:'90%',tail_qsg:'90%',tail_bsg:'90%',he2_keep:'98.08%',he3_keep:'93.75%',reverse_parity:'93.75%',reverse_size:'93.75%'};document.querySelectorAll('[data-six-independent-rate-key]').forEach(function(n){var k=n.getAttribute('data-six-independent-rate-key');put(n,keys.indexOf(k)<0?'统计项目不匹配':rate(good&&data.metrics[k],k==='he2_keep'||k==='he3_keep'?'命中率':'排除成功率',RATE_BASE[k]));});
     var c=one('six-independent-card'),ref=c&&c.getAttribute('data-six-independent-reference'),id=identity(ref),cur=one('disp_period'),valid=!!c&&c.getAttribute('data-six-independent-revision')===rule&&!!id&&c.getAttribute('data-six-independent-target')===id.target&&aware(c.getAttribute('data-six-independent-deadline'))===id.deadline&&cur&&String(cur.textContent||'').trim()===ref&&now>=id.deadline-300000&&now<id.deadline;
     put(one('six-independent-validity'),valid?'已封存 · 目标期 '+id.target:'历史封存 · 目标期 '+(c?c.getAttribute('data-six-independent-target'):'—')+'（等待本期更新）');
     var box=one('six-independent-attack-text');if(box&&box.readOnly)box.readOnly=false;

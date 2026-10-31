@@ -319,13 +319,14 @@ check();
 </script>'''
 
 
-def _rate(metric, *, keep=False):
+def _rate(metric, *, keep=False, baseline=None):
     if metric is None:
         return '战绩核验暂不可用'
     if not metric['settled_count']:
         return '暂无已验证数据'
     return (('命中率 ' if keep else '排除成功率 ') + format(metric['hit_rate'], '.2f') + '%（' + str(metric['win_count'])
-            + '/' + str(metric['settled_count']) + '期）')
+            + '/' + str(metric['settled_count']) + '期）'
+            + (('，随机基线' + baseline) if baseline else ''))
 
 
 def _stats_html(data, header, *, prefix='cold-framework'):
@@ -379,7 +380,9 @@ def _cards_html(prediction, data, header, *, history=None):
             cards.append('<article class="cf-item"><b>' + str(len(cards) + 1) + '. ' + label
                          + '排除：</b> <strong class="cf-number" ' + attribute + '="' + metric + '">'
                          + str(chosen[key]) + '</strong><div class="cf-item-rate" data-stats-business-date="'
-                         + header['biz_date'] + '">' + _rate(data['metrics'][metric] if data else None)
+                         + header['biz_date'] + '">'
+                         + _rate(data['metrics'][metric] if data else None,
+                                 baseline=('90%' if header['revision'] == REVISION else None))
                          + '</div></article>')
     if header['revision'] == REVISION:
         for key, label, length, _ in KEEP_SPECS:
@@ -387,7 +390,8 @@ def _cards_html(prediction, data, header, *, history=None):
                          + '保留：</b> <strong class="cf-number" data-cold-framework-keep="' + key + '">'
                          + prediction[key] + '</strong><div class="cf-note">保留' + str(length) + '码</div>'
                          + '<div class="cf-item-rate" data-stats-business-date="' + header['biz_date'] + '">'
-                         + _rate(data['metrics'][key] if data else None, keep=True) + '</div></article>')
+                         + _rate(data['metrics'][key] if data else None, keep=True,
+                                 baseline=('98.08%' if key == 'he2_keep' else '93.75%')) + '</div></article>')
     return ''.join(cards)
 
 

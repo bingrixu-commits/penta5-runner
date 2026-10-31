@@ -132,7 +132,7 @@ SCRIPT = """<script id="r1-framework-hit-script">
     badge.setAttribute('data-stats-business-date',data.biz_date);
     var valid=metric&&Number.isSafeInteger(metric.hits)&&Number.isSafeInteger(metric.total)&&metric.total>0&&metric.hits>=0&&metric.hits<=metric.total;
     badge.textContent=data.stats_error===true?'统计核验失败，暂停显示命中率':valid?label+' '+(metric.hits/metric.total*100).toFixed(2)+'%（'+metric.hits+'/'+metric.total+'期）':'暂无已验证数据';
-    badge.title=data.stats_error===true?'统计核验失败，暂停显示命中率':(index===2||index===3?'此合尾项统计排除成功率：实际合尾不等于排除码。':index===6?'二数合保留4码随机基线98.08%；任一两位合尾落入保留集即命中。':index===7?'三数合保留6码随机基线97.44%；任一三位合尾落入保留集即命中。':'')+'仅计入开奖前发布、开奖后核验的前4球记录。';
+    badge.title=data.stats_error===true?'统计核验失败，暂停显示命中率':(index===2||index===3?'此合尾项统计排除成功率：实际合尾不等于排除码，随机基线90%。':index<2?'定位杀码随机基线90%（实际数字不等于杀码即成功）。':index===4||index===5?'四位反向形态随机基线93.75%（实际形态不等于排除形态即成功）。':index===6?'二数合保留4码随机基线98.08%；任一两位合尾落入保留集即命中。':index===7?'三数合保留6码随机基线97.44%；任一三位合尾落入保留集即命中。':'')+'仅计入开奖前发布、开奖后核验的前4球记录。';
   });
   var overall=card.querySelector('[data-r1-framework-overall]');
   if(!overall){
@@ -171,6 +171,7 @@ def render_stats_block(summary):
         '<b>框架8项本版已验证战绩</b> ｜ ' + escape(data['biz_date']) + ' 05:00起（北京时间）'
         '<br>仅统计本版开奖前已发布、开奖后完成核验的记录；旧策略证据保留，不并入本版。只使用前4球。'
         '前6项显示排除成功率，后二项显示保留集命中率（二数合保留4码、三数合保留6码）。'
+        '前6项随机基线均为90%（10选1杀1码，单尾项同样90%）；单日n<30的小格波动大，请以累计样本判断。'
         '整组战绩以同一期8项全部通过为准；缺期或冲突期中断连续。'
         '当前连续段按最新已开奖期核验；未开奖不计，已开奖缺期、冲突或未核验会中断，不计作失手。'
         '<br>最近核验期：' + escape(data['latest_settled_period'])

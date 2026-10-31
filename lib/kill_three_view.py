@@ -74,12 +74,12 @@ def _stats_html(stats):
         join = ' · '.join([
             f'整组命中率（5 项全中：2 位置 + 合尾 + 2 形态） <b>{_pct(stats.get("group_rate"))}</b>'
             f'（{stats.get("group_hits")}/{total} 期）',
-            f'位置杀码（2 注/期） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
+            f'位置杀码（2 注/期，随机基线90%） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
             f'（{stats.get("positions", {}).get("hits")}/{stats.get("positions", {}).get("bets")} 注）',
-            f'合尾杀码 <b>{_pct(stats.get("tail", {}).get("rate"))}</b>'
+            f'合尾杀码（随机基线90%） <b>{_pct(stats.get("tail", {}).get("rate"))}</b>'
             f'（{stats.get("tail", {}).get("hits")}/{stats.get("tail", {}).get("bets")} 期）',
-            f'单双反向 <b>{_pct(parity.get("rate"))}</b>（{parity.get("hits")}/{total} 期）',
-            f'大小反向 <b>{_pct(size.get("rate"))}</b>（{size.get("hits")}/{total} 期）',
+            f'单双反向（随机基线93.75%） <b>{_pct(parity.get("rate"))}</b>（{parity.get("hits")}/{total} 期）',
+            f'大小反向（随机基线93.75%） <b>{_pct(size.get("rate"))}</b>（{size.get("hits")}/{total} 期）',
             f'待核验 <b>{pending}</b> 期',
         ])
     else:
