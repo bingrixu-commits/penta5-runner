@@ -46,6 +46,7 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v6-three-positions'): (6, 0.5478),
     ('kill3_tail', 'kill3-tail-v7-two-counted'): (5, 0.6191),
     ('kill3_tail', 'kill3-tail-v8-three-positions-hold3'): (6, 0.5478),
+    ('kill2_tail', 'kill2-tail-v1-two-positions-he2he3'): (7, 0.5726),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -54,6 +55,7 @@ LABELS = {
     'cold_framework': '冷码七项框架',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
+    'kill2_tail': 'AI 二位置杀码（7 项）',
 }
 WINDOWS = {
     'killer': '自账本首期累计',
@@ -62,6 +64,7 @@ WINDOWS = {
     'cold_framework': '当前规则版本累计',
     'he3_refine': '当前规则版本累计',
     'kill3_tail': '当前规则版本累计',
+    'kill2_tail': '当前规则版本累计',
 }
 POS = {'q': 0, 'b': 1, 's': 2, 'g': 3}
 TAIL_INDEXES = {'all': (0, 1, 2, 3), 'qbs': (0, 1, 2), 'qbg': (0, 1, 3),
@@ -654,6 +657,28 @@ def cum_kill3():
     return _build('kill3_tail', rule, records, 'data/kill3_tail/settlements.json')
 
 
+def cum_kill2():
+    settlements = _read(DATA / 'kill2_tail' / 'settlements.json') or {}
+    seals = _read(DATA / 'kill2_tail' / 'seals.json') or {}
+    seal_records = seals.get('records') or []
+    rule = 'kill2-tail-v1-two-positions-he2he3'
+    if seal_records and isinstance(seal_records[-1], dict):
+        rule = seal_records[-1].get('rule_version') or rule
+    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
+                 for record in seal_records if isinstance(record, dict)}
+    records = []
+    for row in settlements.get('records') or []:
+        if not isinstance(row, dict) or not row.get('verified'):
+            continue
+        if 'counted' not in row:
+            continue
+        if (row.get('rule_version') != rule
+                and seal_rule.get(str(row.get('ref_period'))) != rule):
+            continue
+        records.append((row.get('target_period'), bool(row.get('group_hit')), None))
+    return _build('kill2_tail', rule, records, 'data/kill2_tail/settlements.json')
+
+
 def build():
     rows = []
     errors = []
@@ -661,7 +686,8 @@ def build():
     for name, func in (('killer', cum_killer), ('framework', cum_framework),
                        ('selected_six', cum_selected_six), ('he3_refine', cum_he3),
                        ('cold_framework', lambda: cum_cold('cold_framework', 'cold_framework_')),
-                       ('kill3_tail', cum_kill3)):
+                       ('kill3_tail', cum_kill3),
+                       ('kill2_tail', cum_kill2)):
         try:
             row = func()
             if row and row.get('n'):

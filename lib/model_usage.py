@@ -34,6 +34,7 @@ SOURCE_LOGS = (
     ('six', 'data/selected_six_cron.log'),
     ('he3', 'data/he3_refine_cron.log'),
     ('kill3', 'data/kill3_tail_cron.log'),
+    ('kill2', 'data/kill2_tail_cron.log'),
     ('cold', 'data/cold_framework_cron.log'),
 )
 

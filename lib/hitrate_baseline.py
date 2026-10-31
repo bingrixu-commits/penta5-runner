@@ -42,6 +42,7 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v6-three-positions'): (6, 0.5478),
     ('kill3_tail', 'kill3-tail-v7-two-counted'): (5, 0.6191),
     ('kill3_tail', 'kill3-tail-v8-three-positions-hold3'): (6, 0.5478),
+    ('kill2_tail', 'kill2-tail-v1-two-positions-he2he3'): (7, 0.5726),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -50,6 +51,7 @@ LABELS = {
     'cold_framework': '冷码七项框架',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
+    'kill2_tail': 'AI 二位置杀码（7 项）',
 }
 SINGLE_BASELINES = (
     ('杀 1 码', 0.9),
@@ -256,6 +258,40 @@ def _kill3_rows():
     return [_row('kill3_tail', rule, total, hits, 'data/kill3_tail/settlements.json')]
 
 
+def _kill2_rows():
+    seals = _read(DATA / 'kill2_tail' / 'seals.json') or {}
+    settlements = _read(DATA / 'kill2_tail' / 'settlements.json') or {}
+    records = seals.get('records') if isinstance(seals, dict) else None
+    rows = settlements.get('records') if isinstance(settlements, dict) else None
+    if not records or not rows:
+        return []
+    rule = records[-1].get('rule_version')
+    if not rule:
+        return []
+    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
+                 for record in records if isinstance(record, dict)}
+    now = datetime.now(TZ)
+    business_day = _business_start(now)
+    hits = 0
+    total = 0
+    for record in rows:
+        if not isinstance(record, dict) or not record.get('verified'):
+            continue
+        if 'counted' not in record:
+            continue
+        if (record.get('rule_version') != rule
+                and seal_rule.get(str(record.get('ref_period'))) != rule):
+            continue
+        day = _period_business_day(record.get('target_period'))
+        if day != business_day:
+            continue
+        total += 1
+        hits += int(bool(record.get('group_hit')))
+    if not total:
+        return []
+    return [_row('kill2_tail', rule, total, hits, 'data/kill2_tail/settlements.json')]
+
+
 def _as_of(rows):
     candidates = []
     six = _read(DATA / 'selected_six_stats.json') or {}
@@ -277,6 +313,7 @@ def build():
     rows.extend(_cold_row('cold_framework', 'cold_framework_'))
     rows.extend(_he3_row())
     rows.extend(_kill3_rows())
+    rows.extend(_kill2_rows())
     now = datetime.now(TZ)
     return {
         'version': 1,
