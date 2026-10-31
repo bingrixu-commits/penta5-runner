@@ -375,3 +375,34 @@
   固定八码 4 期 87.50%、七项 v7 3 期 100%、冷码 2 期 75%、killer 1 期 66.67%
   （样本尚小，3 日复盘再看）。备份：/root/ops/tail-markers-222012/（3 个 view 原文件）。
   回滚：git revert；cron 回滚 = 删除 ops/crontab.txt 该行并 crontab_tool.sh install。
+
+## 2026-10-31 22:28–22:50 新增独立框架：AI 二位置杀码 + 一合尾 + 二数合/三数合（kill2_tail）
+
+用户要求「增加一个同样框架，位置就选择俩个，其他一样，加二数合跟三数合」。按与线上「AI 三位置杀码 + 一合尾」同款机制（独立 DeepSeek 请求、独立封存/结算/今日战绩/攻击语/面板卡、不读写其他框架预测）实现，整组 **7 项**：
+
+- **2 个位置杀码**：AI 从千/百/十/个中选恰好 2 个，各排除 1 码；其余 2 位不参与定位项（攻击语保留 10 码）。同一位置同杀码最多连用 3 期，中间未选该位置不清零；满 3 期下一期必须换码。
+- **1 个合尾杀码**：5 种合尾 5 选 1、排除 1 个和尾；尾码 hold3-until-miss 稳定化（上期命中且自动沿用未满 3 期则沿用，失手或满 3 期由模型重选；与 kill3 v8 同口径，封存写 tail_policy）。
+- **二数合保留 4 码**：从 02468 留 4 码；前 4 球任取 2 位 6 种组合和值个位任一落入保留集即命中（保留集语义，基线 98.08%）。
+- **三数合保留 5 码**：从 0-9 留 5 码且必须 2 奇 3 偶或 3 奇 2 偶；任取 3 位 4 种组合和值个位任一落入即命中（基线 93.75%）。
+- **2 项四位反向形态**：被杀 2 位取杀码单双/大小反面、未选 2 位字符 AI 自选；实际四位形态不等于封存形态即命中（基线 93.75%）。
+- 整组命中 = 7 项同时命中；**整组精确基线沿用同构的 selected-six v7 的 10^4 精确枚举值 57.26%（7 项）**，独立验证员已从零复算确认。
+
+落点与改动（commit 见文末）：
+- 新增 `lib/kill2_tail.py`（RULE_VERSION `kill2-tail-v1-two-positions-he2he3`，封存/结算/今日战绩/攻击语/尾码稳定化/位置连用限制）、`scripts/run_kill2_tail.py`（每期任务，源就绪等待 + 发布窗口 + 面板发布）、`lib/kill_two_view.py`（面板 `KILL_TWO` 区块：2 位置卡 + 合尾 + 二数合 + 三数合 + 2 形态 = 7 卡，含 7 项统计行、口径追溯行、攻击语与复制按钮）。
+- 数据：`data/kill2_tail/{seals,settlements}.json`；日志 `data/kill2_tail_cron.log`；任务锁 `data/.kill2_tail_job.lock`。
+- 面板/攻击语接入：`lib/attack_editor_view.py`（v7，新增 kill2 攻击语定义）、`lib/panel_live_refresh.py`（v20，names 注册 `KILL_TWO`）、`lib/panel_context.py`（新增可选 `kill2_stats/kill2_previous`，kill3 输出经固定 fixture 对比逐字节不变）、`/root/run_stats.py`（early/final 面板链接入 `apply_kill_two_block`，备份 `/root/ops/kill2-framework-20261031/run_stats.py.bak`）。
+- 统计/监控/备份/用量增量：`lib/hitrate_baseline.py`（(7, 0.5726)、label、今日行）、`scripts/framework_hitrate_cumulative.py`（版本锁定行 + drift）、`scripts/ops_health_check.py`（check_kill2，22→23 项，402 日志）、`lib/evidence_backup.py`（JSON_DIRS + kill2_tail）、`lib/model_usage.py`（SOURCE_LOGS + kill2）。
+- cron：`*/5 ... flock -n /var/lock/penta5-kill2t.lock bash -c 'sleep 30 && ... run_kill2_tail.py >> data/kill2_tail_cron.log 2>&1'`，已写入 `ops/crontab.txt` 并 `scripts/crontab_tool.sh install`（29→30 jobs，diff 干净）；logrotate 已加 `data/kill2_tail_cron.log`（备份 `/root/ops/kill2-framework-20261031/penta5.logrotate.bak`）。
+
+上线证据（2026-10-31 22:35 起）：
+- 首期封存 ref 20261031271 → target 20261031272，published_at **22:35:55**（开奖 22:40:12 前，operation window 内），攻击语 `千123457890百123567890十1234567890个1234567890四定千百十个合123456790除单单双单除小大小大二数合0268三数合03578各`，与 `kill2_tail.build_attack` 逐字节一致。
+- 首期结算 target 272 开奖 **1972**：位置 2/2 命中、合尾命中、二数合命中、三数合命中、两形态命中 → **整组 7 项命中，verified=true**（独立验证员用独立实现逐字段对账 0 差异）。
+- :22:41:11 第二期封存 ref 272（tail_policy=沿用上期第 1 期，hold3 生效）；:22:45 第三期 ref 273 正常发布。
+- 面板 `panel.html` 含 `KILL_TWO_START/END` 各 1、section `kill-two-ai`、7 张卡与攻击语输入框；live refresh v20 / attack editor v7 已随 `/root/run_stats.py` 重建生效。
+- `ops_health` 23 项：kill2_tail=OK（published）；hitrate_baseline 行 n=1/hits=1/expected 57.26%；framework_hitrate_cumulative 行 n=1/coverage 100%；crontab_drift=OK。
+
+部署期副作用（已恢复，非代码回归）：
+- 22:28–22:41 本机部署过程中一个补丁脚本（`/tmp/patch_runstats.py` 的 while 循环 bug）残留并满核空转；22:41 另有外部排障进程（`timeout 600 ... selected_six_stats.refresh_selected_stats`，RSS≈1.2GB，/tmp/six_warm.out）叠加。4 核机器上 CPU 争用导致 **selected_six 在 ref 270/271/272 连续 3 期错过 operation window**（封存标记 expired-unpublished，历史逐字节保留，未回填）。清理这两个进程后 load 3.8→2.7，selected_six 在 ref 20261031273 于 22:46:47 恢复 published=True。教训：部署/诊断脚本必须加循环上限与 nice/单进程约束，不要在每 5 分钟开奖窗口跑重计算。
+- 后续（未做）：`evidence_backup REQUIRED_DATA` 暂不加 `data/kill2_tail/seals.json`，待首个完整 evidence verify 通过后再加（避免 preflight 立刻 required-evidence-members-missing）。
+
+回滚：`git revert <本批 commit>`；`/root/run_stats.py` 回拷 `/root/ops/kill2-framework-20261031/run_stats.py.bak`；logrotate 回拷 `/root/ops/kill2-framework-20261031/penta5.logrotate.bak`；crontab 删除 kill2 行后 `scripts/crontab_tool.sh install`；`data/kill2_tail/` 历史证据保留不动。
