@@ -6,6 +6,7 @@ Collects a fixed set of probes into one JSON report plus a human table:
   latest_draw        newest draw period and age of its opentime (warn > 8 min)
   job:framework      data/ai_job_status.json status + last_success_ref lag (>=2 fail)
   job:killer         same for the killer job
+  kill3_stability    24h rule_version switches / missing ref slots / publish latency p50
   stat50_seal        max prediction_seals key in data/stat50_compare_seals.json
   he3_refine         reference_period lag + status
   cold_framework     reference_period lag + status
@@ -46,7 +47,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -108,6 +109,13 @@ HITRATE_CUMULATIVE_JSON = 'framework_hitrate_cumulative.json'
 HITRATE_CUMULATIVE_WARN_SECONDS = 30 * 60
 HITRATE_CUMULATIVE_FAIL_SECONDS = 90 * 60
 HITRATE_CUMULATIVE_MIN_ROWS = 6
+KILL3_STABILITY_WINDOW_SECONDS = 24 * 3600
+KILL3_STABILITY_LATENCY_SAMPLE = 20
+KILL3_VERSION_WARN_CHANGES = 2
+KILL3_MISSING_WARN_SLOTS = 1
+KILL3_MISSING_FAIL_SLOTS = 2
+KILL3_LATENCY_WARN_SECONDS = 180
+KILL3_LATENCY_FAIL_SECONDS = 300
 
 
 def _one_line(text):
@@ -408,6 +416,112 @@ def check_kill3(ctx):
     return _entry('kill3_tail', FAIL,
                   'missing seal for latest=%s seal_ref=%s age=%s'
                   % (ref, seal_ref or '-', age_text), {'ref': ref})
+
+
+def check_kill3_stability(ctx):
+    """AI 三位置杀码稳定性：24h 规则版本切换 / 缺期槽数 / 最近 20 期发布延迟中位数。"""
+    path = ctx['root'] / 'data' / 'kill3_tail' / 'seals.json'
+    payload, error = _load_json(path)
+    records = payload.get('records') if isinstance(payload, dict) else None
+    if not isinstance(records, list) or not records:
+        return _entry('kill3_stability', FAIL,
+                      'missing/unreadable seals.json records: %s'
+                      % (error or 'no records list'),
+                      {'error': error or 'no records list'})
+    now = ctx['now']
+    cutoff = now - timedelta(seconds=KILL3_STABILITY_WINDOW_SECONDS)
+    published_all, published_24h, sealed_24h = [], [], []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        ref = record.get('ref_period')
+        slots = _period_slots(ref)
+        if slots is None:
+            continue
+        version = str(record.get('rule_version') or 'unknown')
+        published_at = _parse_time(record.get('published_at'))
+        sealed_at = published_at or _parse_time(record.get('generated_at'))
+        if sealed_at is not None and cutoff <= sealed_at <= now:
+            sealed_24h.append((ref, slots, sealed_at))
+        if str(record.get('publication_state') or '') != 'published' or published_at is None:
+            continue
+        opened = _parse_time(record.get('reference_open_time'))
+        latency_ms = None if opened is None else (published_at - opened).total_seconds() * 1000.0
+        published_all.append((ref, slots, version, published_at, latency_ms))
+        if cutoff <= published_at <= now:
+            published_24h.append((ref, slots, version, published_at))
+    published_all.sort(key=lambda item: (item[1], item[3]))
+    published_24h.sort(key=lambda item: (item[1], item[3]))
+
+    version_changes, previous_version = 0, None
+    for _ref, _slots, version, _published_at in published_24h:
+        if previous_version is not None and version != previous_version:
+            version_changes += 1
+        previous_version = version
+    version_status = WARN if version_changes >= KILL3_VERSION_WARN_CHANGES else OK
+
+    day_slots = {}
+    for ref, _slots, _sealed_at in sealed_24h:
+        match = PERIOD_RE.match(ref)
+        if match:
+            day_slots.setdefault(match.group(1), set()).add(int(match.group(2)))
+    missing_slots = 0
+    for day in sorted(day_slots):
+        ordered = sorted(day_slots[day])
+        missing_slots += sum(next_slot - slot - 1
+                             for slot, next_slot in zip(ordered, ordered[1:])
+                             if next_slot - slot > 1)
+    # 历史缺期（如 AI 总闸关闭时段）只作 WARN；最近 6 个应封存槽位（不含当前槽）缺期才升级 FAIL。
+    today_key = now.strftime('%Y%m%d')
+    current_slot = ((now.hour * 60 + now.minute) // 5)
+    have_today = day_slots.get(today_key, set())
+    recent_missing = [slot for slot in range(max(1, current_slot - 6), current_slot)
+                      if slot not in have_today]
+    if len(recent_missing) >= 2:
+        missing_status = FAIL
+    elif missing_slots > 0 or recent_missing:
+        missing_status = WARN
+    else:
+        missing_status = OK
+
+    latencies_ms = [item[4] for item in
+                    published_all[-KILL3_STABILITY_LATENCY_SAMPLE:]
+                    if item[4] is not None]
+    p50_latency = None
+    if latencies_ms:
+        ordered = sorted(latencies_ms)
+        middle = len(ordered) // 2
+        p50_latency = (ordered[middle] if len(ordered) % 2
+                       else (ordered[middle - 1] + ordered[middle]) / 2.0) / 1000.0
+    if p50_latency is None:
+        latency_status = WARN
+    elif p50_latency > KILL3_LATENCY_FAIL_SECONDS:
+        latency_status = FAIL
+    elif p50_latency > KILL3_LATENCY_WARN_SECONDS:
+        latency_status = WARN
+    else:
+        latency_status = OK
+
+    status = _max_status(version_status, missing_status, latency_status)
+    if not sealed_24h:
+        status = _max_status(status, WARN)
+    current_version = published_all[-1][2] if published_all else '-'
+    latency_text = 'n/a' if p50_latency is None else '%.0fs' % p50_latency
+    detail = ('24h: version_changes=%d missing_slots=%d recent_missing=%d '
+              'p50_latency=%s rule_version=%s'
+              % (version_changes, missing_slots, len(recent_missing),
+                 latency_text, current_version))
+    return _entry('kill3_stability', status, detail,
+                  {'window_hours': KILL3_STABILITY_WINDOW_SECONDS // 3600,
+                   'version_changes_24h': version_changes,
+                   'missing_slots_24h': missing_slots,
+                   'recent_missing_6slots': len(recent_missing),
+                   'p50_latency_seconds':
+                       None if p50_latency is None else round(p50_latency, 1),
+                   'published_24h': len(published_24h),
+                   'sealed_24h': len(sealed_24h),
+                   'latency_samples': len(latencies_ms),
+                   'current_rule_version': current_version})
 
 
 def check_stat50(ctx):
@@ -1112,6 +1226,7 @@ CHECK_FUNCS = (
     check_latest_draw,
     check_ai_jobs,
     check_kill3,
+    check_kill3_stability,
     check_stat50,
     check_reference_statuses,
     check_panel,
@@ -1134,6 +1249,7 @@ FALLBACK_NAMES = {
     'check_latest_draw': ('latest_draw',),
     'check_ai_jobs': ('job:framework', 'job:killer'),
     'check_kill3': ('kill3_tail',),
+    'check_kill3_stability': ('kill3_stability',),
     'check_stat50': ('stat50_seal',),
     'check_reference_statuses': tuple(name for name, _ in REFERENCE_STATUS_FILES),
     'check_panel': ('panel_html',),
