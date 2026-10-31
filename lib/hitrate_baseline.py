@@ -41,6 +41,7 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v6-three-positions'): (6, 0.5478),
     ('kill3_tail', 'kill3-tail-v7-two-counted'): (5, 0.6191),
     ('kill3_tail', 'kill3-tail-v8-three-positions-hold3'): (6, 0.5478),
+    ('kill3_tail', 'kill3-tail-v9-two-counted-hold3'): (5, 0.6191),
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
 }
 LABELS = {
