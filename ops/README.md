@@ -565,3 +565,41 @@ cold_framework 及其面板区块仍保持退役。
   systemctl disable --now + 删 unit（备份在 `/root/ops/cold-family-20261031183554/`）；crontab/logrotate 按备份回退；
   数据无需处理（已解档回 data/）。
 
+
+## 2026-11-01 03:45 彻底退役 kill2_tail（AI 二位置杀码 + 一合尾 + 二数合/三数合）
+
+用户发图指令「把这个模型彻底清理了」。图中卡片 = 面板区块「🤖 AI 二位置杀码 + 一合尾 + 二数合/三数合建议」=
+kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5 五项影子 `kill2-tail-v3-five-item-2pos-tail-2pattern` 同批退役），
+按 cold_framework / cold_fixed 退役同规格执行；其余框架（killer / framework / selected_six / he3 / kill1 / kill3 / stat50 等）不动。
+
+- **关停运行**：`ops/crontab.txt` 删除 `run_kill2_tail.py` 与 `run_kill2_v35_shadow.py` 两行（34→32 行），
+  `scripts/crontab_tool.sh install` 后 `diff <(crontab -l) ops/crontab.txt` 无差异；`/etc/logrotate.d/penta5` 删除
+  `data/kill2_tail_cron.log`、`data/kill2_v35_shadow_cron.log` 两行（103→101 行，`logrotate -d` 干跑通过）；systemd 无 kill2 unit、无 kill2 进程。
+  `/root/run_stats.py`（repo 外）去掉 `kill_two_view` import 与 2 处 `apply_kill_two_block` 调用链；该文件当前 sha256 `d37c72a9…`，
+  系并行窗口恢复冷码统计时保留 kill2 退役（本批未回退冷码恢复）。
+- **面板**：`lib/panel_live_refresh.py` names 去 `KILL_TWO`；`lib/attack_editor_view.py` 删除 kill2 攻击语定义并升版本
+  `all-attack-editor-v11-retire-kill2`；`panel.html` 一次性剥除 `<!-- KILL_TWO_START -->…<!-- KILL_TWO_END -->` 区块
+  （重新生成后 `KILL_TWO`/「AI 二位置杀码」计数 0，KILL_THREE/KILL_ONE 各 1）。
+  `lib/kill_one_view.py` 面板脚注去掉 kill1 区块里对 kill2 的引用与 KILL_TWO_END 插入锚。
+- **派生统计逐项减一**：hitrate_baseline rows **7→6**、framework_hitrate_cumulative rows **7→6**（as_of 20261101048）、
+  tail_hold_review 框架 **6→5**、model_usage 日志源 **7→6**（`data/model_usage/state.json` 位点同步裁剪；历史 ledger 不删）、
+  ops_health 检查项 **29→28**（去 kill2_tail；FAIL 项与撤除前相同：coverage / kill3_stability）、evidence_backup `JSON_DIRS` **5→4**。
+  `data/hitrate_baseline.json`、`framework_hitrate_cumulative.json`、`tail_hold_review.json`、`hitrate_guard.json` 已重生成，其余框架行逐行相同。
+- **面板上下文（冻结受控）**：`lib/panel_context.py` 删除 `_kill2_self`、`kill2_stats/kill2_previous` 入参与 `kill2_self` 键；
+  A/B 证明：kill1/kill3 固定 fixture 下新版 `build()+prompt_text()` snapshot sha256 与旧版逐字节相同（kill3 `4108cc37…`、kill1 `326a9146…`），
+  kill3 RULE_VERSION / 选码口径未变。`ops/kill3-freeze.json` 已按门禁更新 hash（commit `6238ba0`）。
+- **代码删除**：commit `0f2df82` git rm `lib/kill2_tail.py`、`lib/kill_two_view.py`、`scripts/run_kill2_tail.py`、`scripts/run_kill2_v35_shadow.py`
+  （全仓 .py 业务引用清零，仅 attack_editor 版本串 `v11-retire-kill2` 与历史台账保留该字样）。
+- **数据归档**：`/root/archive/retired-20261101-kill2/kill2-data.tar.gz`（8 条目：`data/kill2_tail/{seals,settlements}.json`、
+  `kill2_tail_cron.log(.1)`、`kill2_v35_shadow.json`、`kill2_v35_shadow_cron.log`、`.kill2_tail_job.lock`；
+  sha256 `739742b69600e82dbe7f0ea5fbdf8204ee78026b5772e9188c41d42131bc3f34`），原文件已删除；同目录 `README.md` 记录回滚步骤。
+  改前备份 `/root/ops/kill2-retire-20261101-034721/`（panel_context.py、run_stats.py、run_stats.rollback.py、panel.before.html、
+  before_hitrate.json、before_cumulative.json、ops_health.json、ab_behavior.json、crontab.txt、penta5.logrotate 等）。
+- **并行窗口**：03:59 另一 DSH 窗口按用户要求恢复冷码统计模块（commit `5c62a34`），已保留 kill2 退役、未恢复 kill2；本批不涉及冷码恢复。
+- **验证**：撤除后真实期 ref `20261101049`（04:05 开奖后）kill3 / kill1 均照常 **published**
+  （kill3 04:06:14、kill1 04:05:59，target 20261101050）；`panel.html` KILL_TWO/「AI 二位置杀码」=0、KILL_THREE/KILL_ONE=1；
+  `ops_health` 检查项 29→28 且 FAIL 项不变；manifest status=no-drift；`data/` 下仅历史 ledger 与 kill1/kill3 不可变封存快照内还留有 kill2 字样（历史记录，不回写）。
+- **commit**：`0f2df82`（退役主体）、`6238ba0`（kill3 冻结 hash）、本批（台账）。
+- **回滚**：`git revert 6238ba0 0f2df82 <本批>`；回拷 `/root/run_stats.py`（用 `/root/ops/kill2-retire-20261101-034721/run_stats.rollback.py`）、
+  `/etc/logrotate.d/penta5` 加回两条日志行；`crontab` 加回两行后 `scripts/crontab_tool.sh install`；
+  `tar -xzf /root/archive/retired-20261101-kill2/kill2-data.tar.gz -C /root/penta5-runner/`；面板与派生 JSON 由下一轮 run_stats / 各路脚本重生成。
