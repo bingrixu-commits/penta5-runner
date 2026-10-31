@@ -218,3 +218,21 @@
   提交 e20b9e1；备份 /root/ops/kill3-v6-121237/（含 golden.json 与回滚 README）；首个 v6 封存
   ref 20261031147。回滚：`git revert e20b9e1`，并把 /root/ops/kill3-v6-121237/ 下 5 个 .py 回拷原路径。
 
+- **2026-10-31 15:50 二数合/三数合全链路审计 + 面板口径与冷码修正追溯修复**：用户要求检查服务器
+  「二数合(he2_keep)/三数合(he3_keep)」并修复问题。只读审计结论：三项框架（固定八码/七项独立 v7/
+  冷码七项）he2 与 he3 的封存→结算独立重算 0 处不一致（r1 2156 期、selected_six 1146 期、
+  cold 933 期、he3_refine 1570 期），10^4 枚举复核基线（he2 留4码 98.08%、he3 留5码 93.75%、
+  留6码 97.44%）精确；提示词/校验/结算/回放口径一致；历史封存（无 parity 约束的 v1/v2）用现行
+  代码全部可回放。**he3_refine 当前 revision 88~89%（对 93.75%）为单日统计波动**（全量 1472/1570
+  =93.758%，p=1.0；v3-only 45/50=90.0%，p=0.24），无选择/结算 bug。实际修复 3 处展示/追溯缺陷
+  （commit 6fb3825）：① 面板 r1 第7/8项徽章改为「4码命中率 / 6码命中率」并在 tooltip 标注随机
+  基线，避免把 98%/97% 的保留集项误读；② he3_refine 行内注入的剩余5码统计在 ready 状态也加
+  「剩余5码独立参考（不计入原8项）」前缀，消除同一行 6码≈97% 与 5码≈88% 两口径并排的歧义；
+  ③ 冷码框架 repair_he3_keep 修正时把模型原值写入封存 selection_metadata
+  （he3_keep_raw/he3_parity_repaired/he3_repair_policy）并把 reason 改写为含原值→修正值，
+  旧封存无该字段仍可回放（当日 80 个旧封存 _validate_seal 全 PASS）。仍建议（未改）：hitrate_guard
+  对单日窗口 n≥30 且 p<0.05 即报「偏离随机基线」假阳性偏高（本日 he3_refine 随样本在 0.036↔0.061
+  间穿越阈值），可考虑 n≥100 + p<0.01 或累计窗口；he3_refine 日统计混 v2+v3 两 revision（5码基线
+  恒 93.75%，无数值影响，仅口径不纯）。历史 22 次 repair 已回填到 data/cold_he3_repair_audit.jsonl
+  （ref/target/raw/repaired，原始 cron 日志行无时间戳）；今后新封存的 raw 值以 selection_metadata 为准。
+  回滚：git revert 6fb3825 + 备份 /root/ops/he2he3-fix-20261031-154056/ 回拷 4 个文件。
