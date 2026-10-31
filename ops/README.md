@@ -489,3 +489,41 @@
   - **真周期证据**：ref 20261101031（02:35 开奖后）日志顺序为 `TAIL_HOLD3` → `JOINT_FORM_OPTIMIZED`（修复前相反），framework 封存形态 `双双单双/小小大大`、killer `双双双双/小小小小` 均等于当次日志 opt；累计报告重跑后 7 行正常、as_of 20261101030。
   - **回滚**：`cp -a /root/ops/fix-20261101-0233/backups/lib/auto_r1_killer.py /root/penta5-runner/lib/auto_r1_killer.py`（framework 同）；`cp -a /root/ops/fix-20261101-0233/backups/scripts/framework_hitrate_cumulative.py /root/penta5-runner/scripts/framework_hitrate_cumulative.py`；`cp -a /root/ops/fix-20261101-0235/backups/lib/{killer_tail_hold,framework_tail_hold,six_tail_hold}.py /root/penta5-runner/lib/`。代码回滚后不重启（每期新进程加载），下一期生效。
   - **遗留（未改，供下版决策）**：① kill3 settlements 150/320 无 rule_version、54/320 无 counted（旧口径，当前 v8 不受影响，累计报告 fallback 用封存 rule_version）；② killer/framework 账本无 revision 字段，规则名靠 strategy_comparison_stats 推断；③ kill3 v8 position_q 45/59=76.27%（p=0.0004）是唯一 p<0.001 单项，但整组 p=0.80、hold3 使 46% 相邻期同码重复计数，需 ≥200 独立期复核；④ selected_six 尾码 hold 在 validator 之后改写（marginal 无偏，但 strategy_validation 描述的不是最终尾码）。
+
+## 2026-11-01 02:38 彻底清理冷码家族（cold family）
+
+用户 02:38 指令「彻底清理」。在 02:08 已退役 cold_framework（冷码七项 AI 框架）之后，把剩余所有冷码相关
+面板块、派生任务、守护进程、代码、数据与 cold50/cold50_fixed 休眠残留全部清掉；**证据归档与 git 历史保留**，
+其它框架（killer/framework/selected_six/kill1-3/he3/stat50/位置/显著性/真实命中率等）不动。
+
+- **停服务/任务**：systemd `penta5-position-cold.service`（scripts/position_cold_daemon.py，enabled+active）stop + disable +
+  删除 unit + daemon-reload（现 inactive/无 unit/无进程）；cron 冷码回测（10 */6，cold_backtest.py）删除并
+  `scripts/crontab_tool.sh install`（31→30 行，diff 一致）；`/etc/logrotate.d/penta5` 删除 cold_backtest/cold_hit_stats 两条日志行。
+- **面板移除**：COLD_OBSERVATION（冷码观察 · 近30期每项第1名）、COLD_HIT_STATS（冷码杀号战绩）、
+  POSITION_COLD（位置冷码）三块移除（一次性剥除 + `model_retirement.COLD_MARKERS` 每次重建兜底剥除）；
+  panel_live_refresh names/hook 与 cold50/cold50_fixed 选择器、attack_editor 的 cold50 攻击语定义
+  （版本升 v10-clean-cold-family）一并清理。
+- **代码删除**：commit **b0319a5** git rm 10 文件：lib/cold_observation.py、cold_observation_view.py、
+  cold_hit_stats_view.py、position_cold_view.py、cold50_observation.py；scripts/cold_backtest.py、cold_hit_stats.py、
+  position_cold_daemon.py、position_cold_report.py、kill_three_pick.py。通用面板标记解析抽到新
+  `lib/panel_markers.py`（ai_control_view / runtime_observability_view 继续使用，行为差分 11 组用例一致）。
+- **共享模块**：`/root/run_stats.py`（repo 外，备份 `/root/ops/cold-family-20261031183554/run_stats.py`）删除
+  position_cold/cold_hit_stats/cold_observation 三个 import、cold_observation 阶段与面板链两个调用；
+  runtime_observability(_view)、panel_delivery_timing、operational_availability 删除 cold50 家族死代码
+  （-227/+14 行，固定 clock 旧/新模块 collect() 对 killer/framework/selected6/he3 等价）；
+  5 个非冻结 view（kill_two/kill_one/hitrate_baseline/real_hitrate/model_signi）删除已失效的
+  COLD_HIT_STATS_END/POSITION_COLD_END 回退锚点。**冻结文件 lib/kill_three_view.py 按冻结纪律未动**
+  （其中 2 处死锚点字符串仅在标记缺失时才尝试、当前永不命中）；model_retirement 的 COLD_MARKERS 保留作退役兜底。
+- **数据归档**（不入 git）：`/root/archive/retired-20261101-cold-family/cold-family-data.tar.gz`
+  （19 文件：cold_backtest*、cold_hit_stats*、cold_observation.json、position_cold_report.*、kill_three_pick.json、
+  cold_he3_repair_audit.jsonl、lib/data/cold50* 采集残留；sha256 3d1b84de…，原 ~100KB→12KB），同目录 README 记录回滚；
+  改前备份：`/root/ops/cold-family-20261101-023634`（10 被删文件）、`/root/ops/cold-family-20261101-024106`（7 共享文件）。
+- **验证**：panel.html 三块标记与「冷码观察/冷码杀号战绩/位置冷码」标题均为 0，KILL_ONE/KILL_TWO/KILL_THREE/
+  MODEL_SIGNI/REAL_HIT 等块各 1；全仓 `python3 -m compileall lib scripts` 通过；import smoke 通过；
+  panel 变换链 dry-run 幂等且 0 冷码 token；hitrate/cumulative 重生成 rows=7（kill1 20 期 15 中 75.00% vs 期望 75.38%）；
+  runtime_observability cron 自 02:41 起每分钟 success、panel-sync 无新报错。
+- **回滚**：git revert b0319a5（+ 若需一并回滚 7ce1814/a950546/79fb363 见前两节）；代码回拷
+  `/root/ops/cold-family-20261101-023634/` 与 `/root/ops/cold-family-20261031183554/`；数据解档
+  `tar -xzf /root/archive/retired-20261101-cold-family/cold-family-data.tar.gz -C /root/penta5-runner/`；
+  systemd：unit 文件在备份目录，拷回后 daemon-reload + enable --now；crontab/logrotate 行按备份恢复后 install。
+
