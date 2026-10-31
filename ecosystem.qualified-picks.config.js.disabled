@@ -1,4 +1,10 @@
 /**
+ * RETIRED 2026-10-31（F2 配置治理）：审计确认 pm2 中无此进程（未运行）。
+ * 保留作应急启用；启用方法见 ops/README.md（将本文件改回 .js 后缀后 pm2 start，人工复核后再启用）。
+ * 本文件仅配置归档，不在常规运行范围内。
+ */
+
+/**
  * qualified-picks 旁路：RDS+runner 交叉验真，sticky 单码 + dual 双位杀码，达标写 sealed output
  * 用法: pm2 start ecosystem.qualified-picks.config.js
  *
