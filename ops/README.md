@@ -705,3 +705,38 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - **回滚**：`git revert 7f7b45e dfdb5a7 <本提交>`；回拷 /root/ops/kill2p-v2-044339/ 下 5 个 .py 与 kill3-freeze.json；
   下一期起按 v1 口径封存，v2 已产生的封存保留（统计按 rule_version 分组，互不混算）。
 
+
+## 2026-11-01 04:33 主面板隐藏「整组命中率 vs 随机期望」大表 + 独立统计页 /hitrate（598000f）
+
+用户 04:33 指令「把统一给我隐藏了。要另外设置把这些拉到一起」，截图对象是主面板
+「整组命中率 vs 随机期望（累计·版本锁定）」区块；ask_user_question 钉死口径为「这一整块累计表」：
+**把整块从主面板隐藏**，另做独立统计页把所有框架命中率集中展示。
+
+- **独立页**：新增 `lib/hitrate_page_view.py`，直接复用 `hitrate_baseline_view.render_block()`
+  （累计表 + 滚动漂移监控 + 口径脚注，内容与原面板区块逐字一致），原子写
+  `/root/penta5-runner/hitrate.html`；页面带「← 返回面板」「逐日明细看板」导航与数据截至/生成时间。
+- **主面板只留入口**：`lib/hitrate_baseline_view.py` 新增 `render_entry()` / `apply_hitrate_entry_block()`，
+  面板内只剩一行 `🗂 整组命中率 vs 随机期望（累计·版本锁定）已移到独立统计页 → 打开命中率统计页`
+  （section id=`hitrate-base-entry`、`data-hitrate-entry="1"`）；保留 `HITRATE_BASE_START/END` 标记与
+  `<!-- HITRATE_BASE_END -->` 锚点，`lib/tail_stability_shadow.py` 的插入逻辑与 `panel_markers` 校验不受影响。
+- **生成链**：`scripts/framework_hitrate_cumulative.py` 在写 `data/framework_hitrate_cumulative.json` 后调用
+  `hitrate_page_view.write_page()`；页面异常只打印 `hitrate page write deferred`，不影响 JSON 产物。
+  cron `7,22,37,52 * * * *`（每 15 分钟）自动重写页面；页面与 JSON 同时刷新。
+- **HTTP 路由**：`penta5_backend_runner.js` 新增 `isHitratePath()` / `sendHitrateHtml()`，路由 `/hitrate` 与
+  `/hitrate.html`；未登录跳登录页并回跳 `/hitrate`（`safeLoginNextPath`），viewer 角色允许访问
+  （`isViewerAllowedRequest`），404 endpoints 列表补 `GET /hitrate`。
+- **repo 外改动**：`/root/run_stats.py` 两处 `update_panel` 链由 `apply_hitrate_baseline_block` 改为
+  `apply_hitrate_entry_block`（import 同步改）；备份 `/root/ops/hitrate-page-20261101-044355/`
+  （panel.html、penta5_backend_runner.js、hitrate_baseline_view.py、framework_hitrate_cumulative.py、run_stats.py + BACKUP.sha256）。
+- **验证（真周期）**：面板重建后 `hitrate-base-entry=1`、`滚动漂移监控=0`、`HITRATE_BASE_START/END=1/1`、
+  `TAIL_STABILITY_SHADOW` 标记仍在；`py_compile` 全 PASS、`node --check penta5_backend_runner.js` PASS；
+  `/hitrate` 未登录 200（返回登录页）、admin 与 viewer 均 200；curl 服务端返回与磁盘 `hitrate.html`
+  sha256 完全相同；cron 04:52 日志含 `framework_hitrate_cumulative written ... as_of=20261101058` +
+  `hitrate page written: /root/penta5-runner/hitrate.html`，页面「累计报告生成于」与 JSON `generated_at` 同秒；
+  `pm2 restart penta5-runner`（restart 284→285）后 `/health`、`/panel`、`/accuracy` 均 200；
+  `hitrate.html` 提交后已 `git update-index --skip-worktree`（运行时每 15 分钟覆盖不再污染 git status）。
+- **提交**：`598000f`（lib/hitrate_page_view.py 新增、hitrate_baseline_view.py、framework_hitrate_cumulative.py、
+  penta5_backend_runner.js、hitrate.html 种子），本段台账单独一笔 docs 提交。
+- **回滚**：`git revert 598000f` + 回拷 `/root/ops/hitrate-page-20261101-044355/run_stats.py` 到 `/root/run_stats.py`
+  + `pm2 restart penta5-runner`；回滚后 run_stats 恢复旧链，面板下一轮自动重建回大表。
+  如需彻底移除独立页：再删 `hitrate.html` 并 `git update-index --no-skip-worktree hitrate.html`（路由可保留为 404 兜底前先改回）。
