@@ -608,3 +608,25 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   （`/etc/logrotate.d/penta5` 行 72/73），已再次删除并复验 0 行、`logrotate -d` 通过；该文件其余冷码条目保留。
   另：并行窗口正在开发新框架 `kill2p_tail`（二位置 + 一合尾 + 两反向形态，WIP 未提交），其新文件注释里提到「kill2 已退役」属说明性文字，不是功能引用；
   该窗口的 kill3 v9 / panel_context 在途改动会临时令 ops_health `kill3_freeze` WARN，与本退役无关。
+
+## 2026-11-01 04:10 kill3 升 v9「3 位置展示 / 2 个计入 + 保留尾码 hold3」（用户指令恢复 3 选 2）
+
+用户 2026-11-01 03:39 指令「帮我恢复回前面那一版」，04:0x 明确「恢复希望巅峰那个模型，从三个位置选择俩个」，
+并按澄清选择「保留尾码 hold3，只把计入改成 3 选 2」。执行：RULE_VERSION 升 **kill3-tail-v9-two-counted-hold3**
+（3 个被杀位置全部展示，AI 用 display_only 指定 1 个仅展示，另外 2 个计入整组与攻击语；整组 = 2 计入位置 + 1 合尾 + 2 反向形态 = 5 项；
+位置 2 注/期；尾码 hold3-until-miss 不变；旧 v1–v8 封存原样保留、不计入本版统计，新版从 0 累计）。
+
+- 改动文件（commit **2b0e841**）：lib/kill3_tail.py、lib/kill_three_view.py（提示词 / 校验 / display_only 计入 / 封存字段 / 面板文案 / 统计口径）。
+- 备份与回滚：/root/ops/kill3-ai-v9-040704/（6 文件 + seals/settlements 快照 + ROLLBACK.md）。
+- 精确基线：5 项 61.91%（沿用 v7 同口径登记值；用 74 条 v8 已发布封存做 10^4 逐条枚举复核均值 62.08%，差 0.17pp 属配置抽样误差）。
+- 合成用例：/tmp/kill3v9/test_kill3_v9_repo.py 36 项 PASS（display_only 合法/缺失/越界三分支、counted 恰为另外 2 个、攻击语 2x9码+2x10码、sandbox 结算 display_only 失手不影响整组、5 项渲染文案、旧封存兼容）。
+- 真实周期证据：ref 20261101050 -> 20261101051 于 04:10:43 published（display_only=g、counted=[q,b]）；
+  ref 20261101051 -> 20261101052 于 04:15:59 published（display_only=s、counted=[q,b]）；
+  首个 v9 结算 target 20261101051（实际 6835）2 个计入位置 + 合尾 + 两形态全中、group_hit=True，
+  面板显示「整组命中率（5 项全中：2 位置 + 合尾 + 2 形态）100.00%（1/1 期）· 位置杀码（2 注/期）2/2」。
+- 冻结守卫：ops/kill3-freeze.json 已把 rule_version 改为 v9、重置冻结戳（frozen_at 04:10:43、freeze_ref_period 20261101050、commit 2b0e841）
+  并重算受控文件 hash；panel_context.py 的 kill2p 在途改动由并行窗口 A/B 登记（其 commit 后更新该 sha）。
+- 回滚：cp -f /root/ops/kill3-ai-v9-040704/kill3_tail.py lib/、kill_three_view.py lib/、hitrate_baseline.py lib/、
+  framework_hitrate_cumulative.py scripts/、kill3-freeze.json ops/，再 python3 -m py_compile；无需重启服务（cron 每轮新解释器加载，面板每轮重建）。
+- 注意：hitrate_baseline.py / framework_hitrate_cumulative.py 中的 v9 基线登记（5, 0.6191）已写入线上并在本轮统计生效，
+  但这两个文件同时被并行窗口（kill2p 新框架）改动，其提交会一并带上本登记。

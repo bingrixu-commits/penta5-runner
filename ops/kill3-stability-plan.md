@@ -4,9 +4,10 @@
 
 ## 0. 冻结声明
 
-- 冻结点：kill3-tail-v8-three-positions-hold3（3 个被杀位置全部计入整组；整组 6 项 = 3 位置 + 1 合尾 + 2 反向形态；位置 3 注/期；尾码 hold3-until-miss）。
-- 冻结期：72 小时或 ≥100 期，先到为准（自 2026-10-31 21:00 起算）。
+- 冻结点：kill3-tail-v9-two-counted-hold3（3 个被杀位置全部展示、其中 2 个计入整组与攻击语、1 个 display_only 仅展示；整组 5 项 = 2 位置 + 1 合尾 + 2 反向形态；位置 2 注/期；尾码 hold3-until-miss 保留）。
+- 冻结期：72 小时或 ≥100 期，先到为准（自 2026-11-01 04:10:43 起算；2026-10-31 21:00–2026-11-01 04:10 的 v8 冻结期因用户指令变更提前结束，v8 封存只读保留）。
 - 冻结期内禁止任何影响选码 / 计数口径 / 尾码策略 / 统计口径的改动；只允许不改变输出分布的 bug 修复与文案修正，且必须登记「不改变封存内容」的验证。
+- **2026-11-01 04:10 用户指令变更（冻结期内例外）**：用户明确要求恢复「从三个位置选两个计入」并保留尾码 hold3 稳定化，经用户批准直接升 v9（kill3-tail-v9-two-counted-hold3），未走影子门禁（用户指令优先，已在 ops/README.md 留档）；冻结戳按 v9 重置，旧 v1–v8 封存只读保留。
 
 ## 1. 变更门禁（冻结期结束后才允许）
 
@@ -55,7 +56,7 @@
 
 ## 8. 冻结守卫（机器强制，2026-10-31 22:14 起）
 
-- 冻结戳：ops/kill3-freeze.json，记录 rule_version、frozen_at（21:41:42）、freeze_ref_period（20261031254）、min_periods=100、freeze_hours=72，以及 4 个受控源码 sha256（lib/kill3_tail.py、lib/kill_three_view.py、scripts/run_kill3_tail.py、lib/panel_context.py）。
+- 冻结戳：ops/kill3-freeze.json，记录 rule_version（当前 kill3-tail-v9-two-counted-hold3）、frozen_at（2026-11-01 04:10:43）、freeze_ref_period（20261101050）、min_periods=100、freeze_hours=72，以及 4 个受控源码 sha256（lib/kill3_tail.py、lib/kill_three_view.py、scripts/run_kill3_tail.py、lib/panel_context.py）。
 - ops_health 新增探针 kill3_freeze：口径版本与受控源码 hash 不变 → OK，并显示进度（N/100 期、已冻结 h/72h）；任一变化 → WARN，detail 列出变更文件或口径差异。其他框架（framework/six/cold/killer 等）的稳定化改动不在此守卫范围。
 - 经批准的变更（冻结期满走门禁，或冻结期内允许的 bug 修复）完成后，必须重算受控文件 hash、更新冻结戳并记录原因与 commit；否则监控会持续 WARN。
 - 冻结期结束条件：≥100 期 或 满 72 小时，先到为准；当前进度见 ops_health 的 kill3_freeze 行。
