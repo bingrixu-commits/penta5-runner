@@ -405,6 +405,9 @@
 - 22:28–22:41 本机部署过程中一个补丁脚本（`/tmp/patch_runstats.py` 的 while 循环 bug）残留并满核空转；22:41 另有外部排障进程（`timeout 600 ... selected_six_stats.refresh_selected_stats`，RSS≈1.2GB，/tmp/six_warm.out）叠加。4 核机器上 CPU 争用导致 **selected_six 在 ref 270/271/272 连续 3 期错过 operation window**（封存标记 expired-unpublished，历史逐字节保留，未回填）。清理这两个进程后 load 3.8→2.7，selected_six 在 ref 20261031273 于 22:46:47 恢复 published=True。教训：部署/诊断脚本必须加循环上限与 nice/单进程约束，不要在每 5 分钟开奖窗口跑重计算。
 - 后续（未做）：`evidence_backup REQUIRED_DATA` 暂不加 `data/kill2_tail/seals.json`，待首个完整 evidence verify 通过后再加（避免 preflight 立刻 required-evidence-members-missing）。
 
+- 二期结算（2026-10-31 22:45 起）：ref 20261031272 → target 273 开奖 4453，7 项再次全部命中，verified；今日 kill2 为 2/2 期（位置 4/4 注、合尾/二数合/三数合/两形态均 2/2），面板统计行已自动显示「整组 100.00%（2/2 期）· 精确基线 57.26%（7 项）」。
+- kill3 冻结守卫：因本次在共享模块 lib/panel_context.py 增加可选 kill2 参数，按 ops/kill3-stability-plan.md「经批准变更后重算 hash 并更新本文件」更新 ops/kill3-freeze.json 的 panel_context.py sha256（818f6f1），并在 hash_updates 记录 kill3 固定 fixture snapshot/prompt sha 逐字节不变的证据；kill3 RULE_VERSION/口径/封存未动。ops_health 当前仅剩 kill3_stability（历史版本切换提示）与 model_usage（历史 402）两条已知 WARN，无 FAIL。
+
 回滚：`git revert <本批 commit>`；`/root/run_stats.py` 回拷 `/root/ops/kill2-framework-20261031/run_stats.py.bak`；logrotate 回拷 `/root/ops/kill2-framework-20261031/penta5.logrotate.bak`；crontab 删除 kill2 行后 `scripts/crontab_tool.sh install`；`data/kill2_tail/` 历史证据保留不动。
 
 - **2026-10-31 22:30–22:48 七项独立 v7 发布/显示短暂异常（3 期 expired-unpublished，已恢复）**：
