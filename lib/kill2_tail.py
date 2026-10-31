@@ -1,9 +1,9 @@
-"""AI 二位置杀码 + 一合尾 + 二数合/三数合建议（独立框架，数据独立封存/统计）。
+"""AI 三位置展示 + 二位置计入杀码 + 一合尾 + 二数合/三数合建议（独立框架，数据独立封存/统计）。
 
 口径（面板、封存与统计都按此写死）：
-- 由 DeepSeek 从 千/百/十/个 四个位置中选恰好 2 个位置，每个位置排除 1 个数字（杀码），
-  其余 2 个位置不参与定位项（攻击语保留全部 10 码）；
-- 2 个被杀位置全部计入整组与攻击语（counted）；
+- 由 DeepSeek 从 千/百/十/个 四个位置中选 3 个位置，每个位置排除 1 个数字（杀码）；
+  3 个被杀位置全部展示，其中恰好 2 个计入整组与攻击语（counted），
+  第 3 个用 display_only 标明，只展示、不计入整组；剩下 1 个位置为「放弃」；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
 - 尾码稳定化 hold3-until-miss：上期尾码命中且自动沿用未满 3 期时沿用上期尾码；失手或自动沿用
   满 3 期后由模型本期重选（重选可与上期同码）；封存写 tail_policy 追溯；
@@ -12,13 +12,17 @@
 - 三数合：he3_keep 从 0-9 恰好保留 5 个不同数字且 2 奇 3 偶或 3 奇 2 偶；任取 3 位 4 种组合
   和值个位，任一落入保留集即命中；
 - 另输出两项反向形态（与七项独立框架同口径）：四位单双形态 reverse_parity、四位大小形态
-  reverse_size；被杀的 2 个位置取杀码单双/大小的反面，未选 2 个位置的字符由 AI 自选；
-- 位置命中 = 该位置实际开奖号 != 杀码；合尾命中 = 该合尾实际和值个位 != 排除码；
+  reverse_size；被杀 3 个位置（含 display_only 仅展示位）取杀码单双/大小的反面，
+  放弃位置的字符由 AI 自选；
+- 位置命中 = 该位置实际开奖号 != 杀码（只统计 2 个计入位置）；
+- 合尾命中 = 该合尾实际和值个位 != 排除码；
 - 二数合/三数合命中 = 任一组合和值个位落入保留集；
 - 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
-- 整组命中 = 2 个位置 + 1 个合尾 + 二数合 + 三数合 + 2 项反向形态同时命中（共 7 项）；
+- 整组命中 = 2 个计入位置 + 1 个合尾 + 二数合 + 三数合 + 2 项反向形态同时命中（共 7 项）；
+  display_only 位置只展示、不参与整组/攻击语/位置注数；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
-- 同一位置杀码最多连用 3 期（中间未选该位置不清零），满后下一期必须更换；
+- 同一位置杀码最多连用 3 期（中间放弃该位置不清零）、同一放弃位置最多连用 3 期，
+  满后下一期必须更换；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -72,9 +76,10 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill2-tail-v1-two-positions-he2he3'
+RULE_VERSION = 'kill2-tail-v2-three-select-two-counted'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 2
+SELECTED_POSITIONS = 3
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
 HE2_SOURCE_DIGITS = '02468'
@@ -85,16 +90,17 @@ HE3_TRIPLES = ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
-    'positions 恰好 2 个键，键名只能从 q/b/s/g 中选择；每个值为 0 至 9 的整数；'
-    '2 个位置全部计入整组；'
+    'positions 恰好 3 个键，键名只能从 q/b/s/g 中选择；每个值为 0 至 9 的整数；'
+    'display_only 必须是 positions 的 3 个键之一（该位置仅展示、不计入整组与攻击语），'
+    '另外 2 个位置计入整组；'
     'tail 为 {{"key": 五种之一, "kill": 0 至 9 的整数}}；'
     'he2_keep 为 02468 中 4 个不同数字组成的字符串；'
     'he3_keep 为 0123456789 中 5 个不同数字组成的字符串且必须 2 奇 3 偶或 3 奇 2 偶；'
     'reverse_parity 为四个单/双字符，reverse_size 为四个大/小字符，'
-    '2 个被杀位置都必须取杀码形态的反面'
-    '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
-    '未选 2 个位置的字符自选；合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
-    '被限制的位置不得继续使用该位置连用满3期的杀码；'
+    '3 个被杀位置（含 display_only）都必须取杀码形态的反面'
+    '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），放弃位置字符自选；'
+    '合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
+    '被限制的位置不得继续使用该位置连用满3期的杀码，被限制的放弃位置必须更换；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
 
@@ -254,8 +260,8 @@ ATTACK_TAIL_LABELS = {'tail_all': '千百十个合', 'tail_qbs': '千百十合',
 def build_attack(seal):
     """与七项独立框架同格式的攻击语。
 
-    位置保留码（被杀位置为去掉杀码的 9 码，未选位置保留 10 码）→ 四定 →
-    合尾保留码（去掉排除码）→ 除<四位单双形态>除<四位大小形态> →
+    位置保留码（2 个计入位置为去掉杀码的 9 码；display_only 仅展示位置与放弃位置保留 10 码）
+    → 四定 → 合尾保留码（去掉排除码）→ 除<四位单双形态>除<四位大小形态> →
     二数合<4码>三数合<5码>各。
     """
     if not isinstance(seal, dict):
@@ -269,9 +275,10 @@ def build_attack(seal):
         return ''.join(char for char in order if char != text)
 
     positions = seal.get('positions') or {}
+    display_only = seal.get('display_only')
     parts = []
     for key, label in (('q', '千'), ('b', '百'), ('s', '十'), ('g', '个')):
-        killed = key in positions
+        killed = key in positions and key != display_only
         parts.append(ATTACK_POSITION_LABELS[key] +
                      (remaining(positions[key]) if killed else order))
     parts.append('四定')
@@ -330,12 +337,20 @@ def normalize_response(response):
         if number is None:
             raise ValueError('位置杀码必须是 0 至 9 的整数')
         kills[key] = str(number)
-    if len(kills) != COUNTED_POSITIONS:
-        raise ValueError('必须恰好选择 2 个位置')
-    counted = [key for key, _label, _index in POSITIONS if key in kills]
-    unselected = [key for key, _label, _index in POSITIONS if key not in kills]
-    if len(counted) != COUNTED_POSITIONS or len(unselected) != len(POSITIONS) - COUNTED_POSITIONS:
-        raise ValueError('必须恰好选择 2 个位置')
+    if len(kills) != SELECTED_POSITIONS:
+        raise ValueError('必须恰好选择 3 个位置')
+    dropped = [key for key, _label, _index in POSITIONS if key not in kills]
+    if len(dropped) != len(POSITIONS) - SELECTED_POSITIONS:
+        raise ValueError('必须恰好放弃 1 个位置')
+    if response.get('display_only') is None:
+        raise ValueError('display_only 必须指定 1 个仅展示位置')
+    display_only = _position_key(response.get('display_only'))
+    if display_only not in kills:
+        raise ValueError('display_only 必须是所选 3 个位置之一')
+    counted = [key for key, _label, _index in POSITIONS
+               if key in kills and key != display_only]
+    if len(counted) != COUNTED_POSITIONS:
+        raise ValueError('必须恰好 2 个位置计入整组')
     tail = response.get('tail')
     if not isinstance(tail, dict):
         raise ValueError('tail 必须是对象')
@@ -372,8 +387,9 @@ def normalize_response(response):
             raise ValueError('大小反向形态在%s位置必须取杀码形态的反面' % position_key)
     return {
         'positions': kills,
+        'display_only': display_only,
         'counted': counted,
-        'unselected': unselected,
+        'dropped': dropped[0],
         'tail': {'key': tail_key, 'label': TAILS[tail_key]['label'], 'kill': str(number)},
         'he2_keep': he2_keep,
         'he3_keep': he3_keep,
@@ -458,18 +474,29 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
     limit = position_limit if isinstance(position_limit, dict) else {}
     limit_lines = []
     previous_positions = limit.get('previous_positions') or {}
+    previous_display_only = limit.get('previous_display_only')
+    previous_dropped = limit.get('previous_dropped')
     previous_ref = limit.get('previous_ref_period') or reference
-    if previous_positions:
+    if previous_positions or previous_dropped:
         picked = '\u3001'.join('%s杀%s' % (POSITION_LABELS[key], previous_positions[key])
                                for key, _label, _index in POSITIONS if key in previous_positions)
-        limit_lines.append('上一封存（%s）：%s。' % (previous_ref, picked))
+        shown = ('（仅展示%s）' % POSITION_LABELS.get(previous_display_only, previous_display_only)
+                 if previous_display_only else '')
+        dropped_label = (POSITION_LABELS.get(previous_dropped, previous_dropped)
+                         if previous_dropped else '-')
+        limit_lines.append('上一封存（%s）：%s%s，放弃%s。'
+                           % (previous_ref, picked, shown, dropped_label))
     blocked_digits = limit.get('blocked_digits') or {}
-    if blocked_digits:
+    blocked_drop = limit.get('blocked_drop')
+    if blocked_digits or blocked_drop:
         forced = ['%s不得再杀 %s' % (POSITION_LABELS.get(key, key), value)
                   for key, value in blocked_digits.items()]
+        if blocked_drop:
+            forced.append('放弃位置不得继续放弃 %s' % POSITION_LABELS.get(blocked_drop, blocked_drop))
         limit_lines.append('本期强制更换：' + '\uff1b'.join(forced) + '\u3002')
-    limit_lines.append('（同一位置杀码最多连用 %d 期，中间未选该位置不清零）'
-                       % MAX_CONSECUTIVE_PERIODS)
+    limit_lines.append('（同一位置杀码最多连用 %d 期，中间放弃该位置不清零；'
+                       '同一放弃位置最多连用 %d 期，满后下一期必须更换）'
+                       % (MAX_CONSECUTIVE_PERIODS, MAX_CONSECUTIVE_PERIODS))
     position_limit_text = '\n'.join(limit_lines)
     panel_section = ''
     panel_context_text = None
@@ -492,10 +519,11 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '【三数合保留5码候选 Top10（任意三位四组和值个位任一落入保留集即命中；'
         '必须 2 奇 3 偶或 3 奇 2 偶；按近50期命中率排序，仅供参考）】\n%s\n\n'
         '【合尾稳定化规则】\n%s\n\n'
-        '【位置使用限制】\n%s\n\n'
+        '【位置与弃位使用限制】\n%s\n\n'
         '【任务】\n'
-        '1. 从 千/百/十/个 四个位置中挑 2 个（恰好 2 个），每个选中位置排除 1 个数字（0-9）；'
-        '2 个位置全部计入整组与攻击语；未选中的 2 个位置不参与定位项（攻击语保留全部 10 码）；\n'
+        '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；'
+        '3 个位置全部展示，其中恰好 2 个计入整组与攻击语（攻击语只按这 2 个位置排除），'
+        '第 3 个位置用 display_only 标明，只展示、不计入整组与攻击语；\n'
         '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；'
         '系统按稳定化规则决定最终封存尾码；\n'
         '3. he2_keep：从 02468 中恰好保留 4 个不同数字（字符串），'
@@ -503,24 +531,26 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '4. he3_keep：从 0123456789 中恰好保留 5 个不同数字（字符串），'
         '且必须 2 奇 3 偶或 3 奇 2 偶，目标期任取三位的 4 种和值个位任一落入即命中；\n'
         '5. 给出两项四位反向排除形态：reverse_parity 为按千百十个顺序的四位单双形态，'
-        'reverse_size 为四位大小形态；被杀的 2 个位置必须取杀码形态的反面'
-        '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
-        '未选 2 个位置的字符自选；\n'
-        '6. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码（2 个位置全部计入）；'
+        'reverse_size 为四位大小形态；被杀的 3 个位置（含 display_only 仅展示位置）'
+        '都必须取杀码形态的反面'
+        '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），放弃位置的字符自选；\n'
+        '6. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码（只算 2 个计入位置）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
         '二数合/三数合 = 任一组合和值个位落入保留集；'
         '反向形态 = 目标期实际四位形态不等于这两个封存形态（反向排除项）；'
-        '以上 2 个位置 + 1 个合尾 + 二数合 + 三数合 + 2 项形态共 7 项同时命中才算整组命中；\n'
+        '以上 2 个计入位置 + 1 个合尾 + 二数合 + 三数合 + 2 项形态共 7 项同时命中才算整组命中；'
+        'display_only 位置只展示、不参与整组/攻击语/位置注数；\n'
         '7. 冷热、遗漏、重码只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '8. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄或为避开同号强行换码，'
         '也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
-        '{"positions":{"q":<0-9整数>,"b":<0-9整数>},'
+        '{"positions":{"q":<0-9整数>,"b":<0-9整数>,"s":<0-9整数>},'
+        '"display_only":"q|b|s|g",'
         '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
         '"he2_keep":"<4位数字>","he3_keep":"<5位数字>",'
         '"reverse_parity":"<四个单/双字符>","reverse_size":"<四个大/小字符>",'
         '"reason":"40字以内"}\n'
-        '注意：positions 必须恰好 2 个键（从 q/b/s/g 中选），'
+        '注意：positions 必须恰好 3 个键（从 q/b/s/g 中选），display_only 必须是 positions 的 3 个键之一；'
         'he2_keep 必须是 02468 里的 4 个不同数字，'
         'he3_keep 必须是 5 个不同数字且 2 奇 3 偶或 3 奇 2 偶；'
         '两个形态字符串都必须是 4 个字符。'
@@ -534,7 +564,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill2-tail-prompt-v1-two-positions-he2he3',
+        'version': 'kill2-tail-prompt-v2-three-select-two-counted',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -568,10 +598,10 @@ def validate_tail_choice(prediction, blocked_tail_key=None):
 
 
 def _trailing_digit_streaks(seals):
-    """Same-kill-digit streak per position; seals not choosing it are skipped.
+    """Same-kill-digit streak per position; seals abandoning the position are skipped.
 
     A gap must not reset the counter, otherwise the AI can dodge the three-period
-    limit by leaving the position unselected for one period and reusing the digit.
+    limit by abandoning the position for one period and reusing the same digit.
     """
     streaks = {}
     for key, _label, _index in POSITIONS:
@@ -594,10 +624,31 @@ def _trailing_digit_streaks(seals):
     return streaks
 
 
+def _trailing_drop_streak(seals):
+    """Trailing consecutive seals that abandoned the same position."""
+    drop = None
+    count = 0
+    for seal in reversed(seals):
+        if not isinstance(seal, dict):
+            break
+        value = seal.get('dropped')
+        if value is None:
+            break
+        value = str(value)
+        if drop is None:
+            drop, count = value, 1
+        elif value == drop:
+            count += 1
+        else:
+            break
+    return drop, count
+
+
 def position_restrictions(seals):
-    """Consecutive-use limits for position kills."""
+    """Consecutive-use limits for position kills and the abandoned position."""
     seals = [item for item in (seals or []) if isinstance(item, dict)]
     digit_streaks = _trailing_digit_streaks(seals)
+    drop, drop_count = _trailing_drop_streak(seals)
     previous = seals[-1] if seals else {}
     blocked_digits = {}
     for key, (digit, count) in digit_streaks.items():
@@ -608,15 +659,20 @@ def position_restrictions(seals):
         'previous_ref_period': previous.get('ref_period'),
         'previous_target_period': previous.get('target_period'),
         'previous_positions': dict(previous.get('positions') or {}),
-        'previous_unselected': list(previous.get('unselected') or []),
+        'previous_display_only': previous.get('display_only'),
+        'previous_dropped': previous.get('dropped'),
         'digit_streaks': {key: {'digit': digit, 'periods': count}
                           for key, (digit, count) in digit_streaks.items() if digit is not None},
+        'dropped_streak': ({'dropped': drop, 'periods': drop_count}
+                           if drop is not None else None),
         'blocked_digits': blocked_digits,
+        'blocked_drop': (drop if (drop is not None and drop_count >= MAX_CONSECUTIVE_PERIODS)
+                        else None),
     }
 
 
 def validate_position_choice(prediction, position_limit=None):
-    """Reject over-limit kill codes."""
+    """Reject over-limit kill codes or a repeatedly abandoned position."""
     if not isinstance(position_limit, dict):
         return prediction
     limit = position_limit.get('max_consecutive') or MAX_CONSECUTIVE_PERIODS
@@ -625,6 +681,10 @@ def validate_position_choice(prediction, position_limit=None):
         if key in positions and str(positions[key]) == str(value):
             label = POSITION_LABELS.get(key, key)
             raise ValueError('%s已连续%d期使用杀码%s，本期必须换码' % (label, limit, value))
+    blocked_drop = position_limit.get('blocked_drop')
+    if blocked_drop and prediction.get('dropped') == blocked_drop:
+        label = POSITION_LABELS.get(blocked_drop, blocked_drop)
+        raise ValueError('放弃位置已连续%d期放弃%s，本期必须换放弃位置' % (limit, label))
     return prediction
 
 def _trailing_tail_streak(seals):
@@ -920,8 +980,9 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'published_at': None,
         'publication_state': 'prepared',
         'positions': prediction['positions'],
+        'display_only': prediction.get('display_only'),
         'counted': prediction.get('counted') or [],
-        'unselected': prediction.get('unselected') or [],
+        'dropped': prediction.get('dropped'),
         'tail': prediction['tail'],
         'tail_policy': prediction.get('tail_policy'),
         'he2_keep': prediction['he2_keep'],
@@ -1005,6 +1066,9 @@ def settle_pending(snapshot=None, now=None):
             kill_number = digit(kill)
             positions[key] = {'kill': str(kill_number), 'actual': str(actual[index]),
                               'hit': kill_number is not None and actual[index] != kill_number}
+        display_only = seal.get('display_only')
+        if display_only not in positions:
+            display_only = None
         tail = seal.get('tail') or {}
         tail_key = tail.get('key')
         tail_kill = digit(tail.get('kill'))
@@ -1034,7 +1098,8 @@ def settle_pending(snapshot=None, now=None):
                    and all(char in palette for char in sealed_form)
                    and actual_form != sealed_form)
             patterns[field] = {'form': sealed_form, 'actual': actual_form, 'hit': bool(hit)}
-        counted = seal.get('counted') or [key for key in positions]
+        counted = seal.get('counted') or [key for key in positions if key != display_only]
+        counted = [key for key in counted if key in positions]
         group_hit = (all(positions[key]['hit'] for key in counted if key in positions)
                      and tail_entry['hit']
                      and keep_entries['he2_keep']['hit']
@@ -1055,8 +1120,9 @@ def settle_pending(snapshot=None, now=None):
             'settled_at': now.isoformat(),
             'actual': [str(value) for value in actual],
             'positions': positions,
+            'display_only': display_only,
             'counted': list(counted),
-            'unselected': list(seal.get('unselected') or []),
+            'dropped': seal.get('dropped'),
             'tail': tail_entry,
             'he2_keep': keep_entries['he2_keep'],
             'he3_keep': keep_entries['he3_keep'],

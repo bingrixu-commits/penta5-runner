@@ -1,14 +1,15 @@
-"""AI 二位置杀码 + 一合尾 + 二数合/三数合建议面板区块。
+"""AI 三位置展示（2 个计入）+ 一合尾 + 二数合/三数合建议面板区块。
 
 数据源 data/kill2_tail/{seals,settlements}.json，由 scripts/run_kill2_tail.py 每期生成。
 
 命中口径（写死，面板脚注同步展示）：
-- 位置命中 = 该位置实际开奖号 != 杀码（2 个位置全部计入，其余 2 个位置不参与定位项）；
+- 位置：AI 选 3 个位置，其中恰好 2 个计入整组与攻击语，第 3 个 display_only 仅展示；
+  位置命中 = 该位置实际开奖号 != 杀码（只统计 2 个计入位置）；
 - 合尾命中 = 该合尾实际和值个位 != 排除码；
-- 二数合命中 = 前 4 球任取 2 位的 6 种组合求和取个位，任一落入保留 4 码即命中（保留集语义，非杀码）；
+- 二数合命中 = 前 4 球任取 2 位的 6 种组合求和取个位，任一落入保留 4 码即命中；
 - 三数合命中 = 前 4 球任取 3 位的 4 种组合求和取个位，任一落入保留 5 码即命中；
-- 反向形态命中 = 目标期实际四位单双/大小形态 != 封存形态（反向排除项，被杀 2 位取反、未选 2 位字符自选）；
-- 整组命中 = 2 位置 + 1 合尾 + 二数合 + 三数合 + 2 项反向形态同时命中（共 7 项）；
+- 反向形态命中 = 目标期实际四位单双/大小形态 != 封存形态（被杀 3 位含仅展示位取反、放弃位字符自选）；
+- 整组命中 = 2 个计入位置 + 1 个合尾 + 二数合 + 三数合 + 2 项反向形态同时命中（共 7 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
@@ -174,15 +175,17 @@ def _counted_keys(seal, positions):
     raw = seal.get('counted')
     if isinstance(raw, (list, tuple)):
         return [str(key) for key in raw if str(key) in positions]
-    return [key for key, _label, _index in _positions() if key in positions]
+    display_only = seal.get('display_only')
+    return [key for key, _label, _index in _positions()
+            if key in positions and key != display_only]
 
 
-def _unselected_keys(seal, counted_keys):
-    raw = seal.get('unselected')
-    if isinstance(raw, (list, tuple)) and raw:
-        return [str(key) for key in raw]
-    used = set(counted_keys)
-    return [key for key, _label, _index in _positions() if key not in used]
+def _dropped_key(seal, positions):
+    raw = seal.get('dropped')
+    if isinstance(raw, str) and raw:
+        return raw
+    leftover = [key for key, _label, _index in _positions() if key not in positions]
+    return leftover[0] if len(leftover) == 1 else None
 
 
 def _stats_html(stats):
@@ -204,7 +207,7 @@ def _stats_html(stats):
         base = _rule_baseline()
         base_text = ('，精确基线 %s（%d 项）' % (_pct(base[1]), base[0]) if base else '')
         join = ' · '.join([
-            f'整组命中率（7 项全中：2 位置 + 合尾 + 二数合 + 三数合 + 2 形态{base_text}） '
+            f'整组命中率（7 项全中：2 位置计入 + 合尾 + 二数合 + 三数合 + 2 形态{base_text}） '
             f'<b>{_pct(stats.get("group_rate"))}</b>'
             f'（{stats.get("group_hits")}/{total} 期）',
             f'位置杀码（{counted_positions} 注/期，随机基线90%） '
@@ -248,7 +251,9 @@ def _settlement_line(settlement):
     if not isinstance(settlement, dict):
         return '已发布，等待目标期开奖核验。'
     positions = settlement.get('positions') or {}
-    counted = settlement.get('counted') or list(positions)
+    display_only = settlement.get('display_only')
+    counted = settlement.get('counted') or [key for key in positions if key != display_only]
+    counted = [key for key in counted if key in positions]
     hit_positions = sum(1 for key in counted
                         if (positions.get(key) or {}).get('hit') is True)
     tail = settlement.get('tail') or {}
@@ -256,8 +261,9 @@ def _settlement_line(settlement):
     tail_label = tail.get('label') or _tail_label_by_key(tail.get('key'))
     group = settlement.get('group_hit') is True
     actual = settlement.get('actual') or []
+    counted_note = '（另 1 个仅展示位置不计入）' if display_only else ''
     parts = ['目标期已开奖：' + ''.join(str(value) for value in actual),
-             f'位置 {hit_positions}/{len(counted)} 命中',
+             f'位置 {hit_positions}/{len(counted)} 命中{counted_note}',
              f'{tail_label}合尾 {"命中" if tail_hit else "未中"}（实际 {tail.get("actual", "-")}）']
     for field, label in (('he2_keep', '二数合'), ('he3_keep', '三数合')):
         entry = settlement.get(field) or {}
@@ -270,12 +276,14 @@ def _settlement_line(settlement):
         entry = patterns.get(field) or {}
         if entry:
             parts.append(f'{label}{"命中" if entry.get("hit") else "未中"}（实际 {entry.get("actual", "-")}）')
+    if display_only and isinstance(positions.get(display_only), dict):
+        shown = positions[display_only]
+        parts.append(f'仅展示位置{"命中" if shown.get("hit") else "未中"}（不计入）')
     if settlement.get('verified') is not True:
         parts.append('发布晚于开奖，未计入统计')
     else:
         parts.append('整组 ' + ('<b style="color:#15803d">命中</b>' if group else '<b style="color:#b91c1c">未中</b>'))
     return '；'.join(parts) + '。'
-
 
 def _reverse_attributes(digit):
     """杀码的单双/大小反面，与七项独立框架同口径。"""
@@ -283,14 +291,14 @@ def _reverse_attributes(digit):
 
 
 def _form_derivation(seal):
-    """展示两项反向形态如何由被杀码取反（未选位置字符自选）。"""
+    """展示两项反向形态如何由被杀码取反（display_only 也取反，放弃位置字符自选）。"""
     positions = seal.get('positions') or {}
     if not isinstance(positions, dict):
         return ''
-    counted = _counted_keys(seal, positions)
     labels = {key: label for key, label, _index in _positions()}
+    display_only = seal.get('display_only')
     parts = []
-    for key in counted:
+    for key, label, _index in _positions():
         if key not in positions:
             continue
         try:
@@ -298,14 +306,14 @@ def _form_derivation(seal):
         except (TypeError, ValueError):
             return ''
         parity, size = _reverse_attributes(digit)
-        parts.append(f'{labels.get(key, key)}{positions[key]}→{parity}/{size}')
+        tag = '（仅展示）' if key == display_only else ''
+        parts.append(f'{label}{positions[key]}→{parity}/{size}{tag}')
     if not parts:
         return ''
-    unselected = _unselected_keys(seal, counted)
-    unselected_text = '、'.join(labels.get(key, key) for key in unselected) or '-'
+    dropped = _dropped_key(seal, positions)
+    dropped_text = labels.get(dropped, dropped) if dropped else '-'
     return ('形态取反（按 ' + str(len(parts)) + ' 个被杀位置）：' + ' · '.join(parts)
-            + f'；未选位置{unselected_text}字符自选')
-
+            + f'；放弃位置{dropped_text}字符自选')
 
 def _version_html():
     """口径追溯行：当前 revision、自哪期起、本版期数、精确基线（只读）。"""
@@ -361,16 +369,15 @@ def _policy_html(seal):
         for key, digit in (position_limit.get('blocked_digits') or {}).items():
             parts.append(
                 f'{labels.get(key, key)}杀码 {digit} 已连用 {limit} 期'
-                f'（含中间未选该位置）→ 本期不得再用')
+                f'（含中间放弃该位置）→ 本期不得再用')
         blocked_drop = position_limit.get('blocked_drop')
         if blocked_drop:
             parts.append(
-                f'未选位置限制：{labels.get(blocked_drop, blocked_drop)} '
-                f'已连用 {limit} 期 → 本期必须更换')
+                f'放弃位置 {labels.get(blocked_drop, blocked_drop)} '
+                f'已连用 {limit} 期 → 本期必须换放弃位置')
         if parts:
             notes.append('位置限制：' + escape('；'.join(parts)))
     return ''.join(f'<div class="k2-drop">{note}</div>' for note in notes)
-
 
 def render_block():
     try:
@@ -387,14 +394,17 @@ def render_block():
                     f'<h3>{TITLE}</h3>{body}{_stats_html(stats)}{_version_html()}'
                     f'{_foot_html()}</section>{END}')
         positions = seal.get('positions') or {}
-        rows = _positions()
+        display_only = seal.get('display_only')
         counted_keys = _counted_keys(seal, positions)
         counted_set = set(counted_keys)
         cards = []
-        for key, label, _index in rows:
-            if key not in positions or key not in counted_set:
+        for key, label, _index in _positions():
+            if key not in positions:
                 continue
-            cards.append(_card('', label, positions.get(key), '排除 1 码（计入整组）'))
+            if key in counted_set:
+                cards.append(_card('', label, positions.get(key), '排除 1 码（计入整组）'))
+            elif key == display_only:
+                cards.append(_card('', label, positions.get(key), '排除 1 码（仅展示，不计入整组）'))
         tail = seal.get('tail') or {}
         if isinstance(tail, dict) and tail:
             cards.append(_card('k2-tail', _tail_label(tail) + '合尾',
@@ -410,8 +420,17 @@ def render_block():
             if isinstance(form, str) and len(form) == 4:
                 cards.append(_form_card(label, form, '排除该四位形态（被杀位取反）'))
         labels = {key: label for key, label, _index in _positions()}
-        unselected = _unselected_keys(seal, counted_keys)
-        unselected_text = '、'.join(labels.get(key, key) for key in unselected) or '-'
+        dropped = _dropped_key(seal, positions)
+        dropped_label = labels.get(dropped, dropped) if dropped else '-'
+        if display_only:
+            position_note = (f'放弃位置：{escape(str(dropped_label))}'
+                             f'（AI 选 3 个位置，其中 2 个计入整组与攻击语，'
+                             f'1 个仅展示不计入整组）')
+        else:
+            unselected = [key for key, _label, _index in _positions() if key not in positions]
+            unselected_text = '、'.join(labels.get(key, key) for key in unselected) or '-'
+            position_note = (f'未选位置：{escape(unselected_text)}'
+                             f'（不参与定位项，攻击语保留 10 码；2 个被杀位置全部计入整组）')
         reason = escape(str(seal.get('reason') or '')) or '（无）'
         seal_tail_policy = seal.get('tail_policy') or {}
         if (isinstance(seal_tail_policy, dict)
@@ -442,8 +461,7 @@ def render_block():
                 f'<h3>{TITLE}</h3>'
                 f'<div class="k2-meta">{meta}</div>'
                 f'<div class="k2-grid">{"".join(cards)}</div>'
-                f'<div class="k2-drop">未选位置：{escape(unselected_text)}'
-                f'（不参与定位项，攻击语保留 10 码；{len(counted_keys)} 个被杀位置全部计入整组）</div>'
+                f'<div class="k2-drop">{position_note}</div>'
                 f'{_policy_html(seal)}{derive_html}'
                 f'<div class="k2-reason">理由：{reason}</div>'
                 f'{_stats_html(stats)}{_version_html()}'
@@ -452,7 +470,6 @@ def render_block():
                 f'{_foot_html()}</section>{END}')
     except Exception:
         return ''
-
 
 def _attack_html(seal):
     """与七项独立框架同格式的攻击语 + 复制按钮（可被全局攻击语编辑框接管）。"""
@@ -499,26 +516,28 @@ def _attack_html(seal):
 def _foot_html():
     hold = getattr(kill2_tail, 'TAIL_HOLD_MAX', 3)
     limit = getattr(kill2_tail, 'MAX_CONSECUTIVE_PERIODS', 3)
+    selected = getattr(kill2_tail, 'SELECTED_POSITIONS', 3)
     counted = getattr(kill2_tail, 'COUNTED_POSITIONS', 2)
     return ('<div class="k2-foot">'
-            f'由 DeepSeek 决定：从千/百/十/个中选 {counted} 个位置各排除 1 码，其余位置不参与定位项'
-            '（攻击语保留 10 码）；'
+            f'由 DeepSeek 决定：从千/百/十/个中选 {selected} 个位置各排除 1 码，'
+            f'其中恰好 {counted} 个计入整组与攻击语，第 {selected - counted} 个用 display_only 标明仅展示；'
+            '放弃 1 个位置（攻击语保留 10 码）。'
             '合尾从 5 种中选 1 种排除 1 个和尾数字（稳定化：命中自动沿用、最多自动沿用 '
             + str(hold) + ' 期；失手或满 ' + str(hold) + ' 期后由模型重选，重选可与上期同码；'
             'AI 尾项为换码候选），并给出二数合保留 4 码、三数合保留 5 码与两项四位反向形态。<br>'
-            '同一位置同一杀码最多连用 ' + str(limit) + ' 期（中间未选该位置不清零），满后下一期必须更换。<br>'
-            '命中 = 该位置实际开奖号<b>不在</b>杀码上（2 个位置全部计入）；'
+            '同一位置同一杀码最多连用 ' + str(limit) + ' 期（中间放弃该位置不清零）、'
+            '同一放弃位置最多连用 ' + str(limit) + ' 期，满后下一期必须更换。<br>'
+            f'命中 = 该位置实际开奖号<b>不在</b>杀码上（只算 {counted} 个计入位置）；'
             '合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
             '二数合命中 = 前 4 球任取 2 位的 6 种组合求和取个位，任一落在保留 4 码内；'
             '三数合命中 = 前 4 球任取 3 位的 4 种组合求和取个位，任一落在保留 5 码内；'
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态'
-            '（2 个被杀位置都取杀码形态反面；未选 2 位字符自选）。<br>'
-            '2 个位置 + 1 个合尾 + 二数合 + 三数合 + 2 项反向形态共 7 项同时命中才算整组命中'
-            '（整组精确基线 57.26%，与 selected-six v7 同构）；'
+            '（被杀 3 位含仅展示位都取杀码形态反面；放弃位字符自选）。<br>'
+            '2 个计入位置 + 1 个合尾 + 二数合 + 三数合 + 2 项反向形态共 7 项同时命中才算整组命中'
+            '（display_only 只展示、不计入整组/攻击语/位置注数；整组精确基线 57.26%）；'
             '只统计开奖前发布、开奖后核验的记录；北京时间 05:00 清零；只使用前 4 球（千/百/十/个），'
             '第 5 球不参与；平台提前 70 秒关盘。'
             '</div>')
-
 
 def apply_kill_two_block(content, report=None):
     """原地替换/插入 AI 二位置+二数合/三数合区块；任何异常原样返回 content。"""

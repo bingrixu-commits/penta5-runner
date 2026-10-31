@@ -126,15 +126,16 @@ def main():
         kill2_tail.mark_publication_failed(reference, f'panel-write-{type(error).__name__}')
         print(f'kill2 panel publication failed: {type(error).__name__}')
         return 1
+    display_only = prediction.get('display_only')
     picked = ' · '.join(
-        '%s 杀%s' % (kill2_tail.POSITION_LABELS[key], prediction['positions'][key])
+        '%s 杀%s%s' % (kill2_tail.POSITION_LABELS[key], prediction['positions'][key],
+                       '(仅展示)' if key == display_only else '')
         for key, _label, _index in kill2_tail.POSITIONS if key in prediction['positions'])
-    unselected = '、'.join(kill2_tail.POSITION_LABELS.get(key, key)
-                          for key in (prediction.get('unselected') or []))
-    print('kill2 published: ref=%s target=%s %s · %s合尾 杀%s · 二数合%s 三数合%s · 未选:%s'
+    dropped = kill2_tail.POSITION_LABELS.get(prediction.get('dropped'), prediction.get('dropped'))
+    print('kill2 published: ref=%s target=%s %s · %s合尾 杀%s · 二数合%s 三数合%s · 放弃:%s'
           % (reference, target, picked, prediction['tail']['label'],
              prediction['tail']['kill'], prediction['he2_keep'],
-             prediction['he3_keep'], unselected))
+             prediction['he3_keep'], dropped))
     limited = [f'{kill2_tail.POSITION_LABELS.get(key, key)}换码'
                for key in (position_limit.get('blocked_digits') or {})]
     if limited:

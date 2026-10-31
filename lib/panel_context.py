@@ -200,7 +200,8 @@ def _kill2_self(reference, kill2_stats, kill2_previous):
     previous = None
     if isinstance(kill2_previous, dict):
         previous = _pick(kill2_previous, ('ref_period', 'target_period', 'rule_version',
-                                          'positions', 'unselected', 'tail', 'he2_keep',
+                                          'positions', 'display_only', 'counted', 'dropped',
+                                          'unselected', 'tail', 'he2_keep',
                                           'he3_keep', 'reverse_parity', 'reverse_size',
                                           'generated_at', 'published_at'))
     stats = None
