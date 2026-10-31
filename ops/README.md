@@ -760,3 +760,37 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   logrotate 回拷 `logrotate-penta5.bak`；`.env` 从 `/root/ops/model-tier-guard/<ts>/.env.bak` 或
   `/root/ops/model-pro-050545/.env.before-pro` 恢复。
 
+
+## 2026-11-01 面板新增两区块：三数共现避开3组核验 + AI 模型调用推荐（6704846）
+
+**需求**：①把 /accuracy「今日过滤与参考项」里的「三数共现避开3组」单项调到主面板显示；
+②新增「AI 模型调用推荐」区块（按任务建议调用 flash / pro，只读不切换）。
+
+- **三数共现块**：`lib/three_avoid2_stats.py` 从 `data/state.json` 已校验预测按后端
+  `filterDailyDisplayPredictions` 同口径结算（evaluated/truthEligible/immediate 过渡/
+  开奖分钟一致/先于目标生成/前4球合法/按 targetPeriod 去重），命中口径＝该组 3 个数字
+  未在 4 球开奖号中全部出现（避开成功），基线 97.96%（10^4 精确枚举，与 /accuracy
+  `EXACT_BASELINES.threeDigitAvoid2` 同值）；写 `data/three_avoid2_daily.json`
+  （本业务日 + 上一业务日）+ `data/three_avoid2_history.json`（按日单调 max(total)，
+  预测滚动窗口 400 期滚掉后仍保留已封盘日）。CLI：`scripts/three_avoid2_daily.py --now … --dry`。
+  回放核验：`--now '2026-11-01 04:52:00'` 得 284/287=98.95%，与用户截图一致；
+  实时 `/state` `counters.threeDigitAvoid2` 与派生 JSON 逐字段 MATCH。
+- **模型调用推荐块**：`lib/model_call_rec.py` 读 `framework_hitrate_cumulative.json`
+  的 `model_split`（按封存 requested_model 分档）+ `model_usage/summary.json`（余额/燃耗/
+  延迟/错误）+ `ai_balance_guard.json` + `.env`（按各任务真实回退链解析现行档），规则写死：
+  「两档累计样本均≥200 且替代档高≥2pp、双侧 z 检验 p<0.05 才建议换档，否则维持现档/观察」；
+  写 `data/model_call_rec.json`；**只读，不改 .env、不重启任务**。
+- **视图/挂载**：`lib/three_avoid2_view.py`（THREE_AVOID2_START/END）、
+  `lib/model_call_rec_view.py`（MODEL_CALL_REC_START/END）自包含 section + 内联 style，
+  异常原样返回；`lib/panel_live_refresh.py` 的 names 列表加入两个标记纳入 8s 实时刷新；
+  repo 外 `/root/run_stats.py` 两处 `update_panel` 收尾链最外层挂
+  `apply_model_call_rec_block(apply_three_avoid2_block(...))`（import 同步加），
+  备份 `/root/ops/panel-two-blocks-20261101/`。
+- **验证（真周期）**：面板重建后两区块各 1、既有块标记全部 1/1、
+  `data-as-of` 066→067 跨轮推进；`py_compile` 全 PASS。
+- **回滚**：`git revert 6704846` + 回拷 `/root/ops/panel-two-blocks-20261101/run_stats.py.bak-before-avoid2-modelrec`
+  到 `/root/run_stats.py`（面板下一轮自动重建即移除两区块）；数据文件
+  `data/three_avoid2_*.json` / `data/model_call_rec.json` 未跟踪，可留可删。
+- **注意**：`.env` 由 `scripts/model_tier_guard.py`（cron 每 10 分钟）按余额自动全量切
+  flash/pro 并可能增删 PENTA5_MODEL_* 行；推荐块按各任务回退链解析，missing 时回退
+  KILLER→DEEPSEEK_MODEL，与各 task 脚本的真实回退一致。
