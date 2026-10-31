@@ -1,7 +1,7 @@
 """Manual API controls, independent of immutable model cards and statistics."""
 import re
 
-from cold_observation_view import _inspect
+from panel_markers import _inspect
 
 MARKER = 'AI_API_CONTROL'
 START, END = '<!-- AI_API_CONTROL_START -->', '<!-- AI_API_CONTROL_END -->'

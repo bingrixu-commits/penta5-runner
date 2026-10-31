@@ -374,7 +374,7 @@ def apply_hitrate_baseline_block(content, report=None):
         if start != -1 and end != -1 and end > start:
             return content[:start] + fragment + content[end + len(END):]
         for anchor in ('<!-- REAL_HIT_END -->', '<!-- MODEL_SIGNI_END -->',
-                       '<!-- KILL_THREE_END -->', '<!-- COLD_HIT_STATS_END -->'):
+                       '<!-- KILL_THREE_END -->'):
             position = content.find(anchor)
             if position != -1:
                 position += len(anchor)

@@ -5,7 +5,7 @@ import json
 import math
 import re
 
-from cold_observation_view import _inspect
+from panel_markers import _inspect
 
 ROOT = Path('/root/penta5-runner')
 REVISION = 'runtime-observability-v1'
@@ -16,8 +16,6 @@ MODELS = (
     ('killer', 'Flash 杀码'), ('framework', 'Flash 框架'),
     ('pro4', 'Pro 四定位'),
     ('selected6', 'Pro 八项'), ('he3_refine', '三合五尾'),
-    ('cold50', 'Pro 50期冷码'),
-    ('cold50_fixed', 'Pro 50期固定冷码'),
 )
 STATUSES = {
     'current': '本轮已完成', 'pending': '本轮进行中', 'manual_off': '手动停止',

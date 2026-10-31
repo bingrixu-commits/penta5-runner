@@ -4,7 +4,7 @@
 所有数字标注来源账本;并与账本自身的 outcomes 字段交叉验证,不一致即为数据问题。
 
 产物:data/real_hitrate.json
-调度:由 penta5-position-cold 常驻服务每期开奖后重算。
+调度:由面板统计刷新流程每期开奖后重算。
 """
 import json
 import os

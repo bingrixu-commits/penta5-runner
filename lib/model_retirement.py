@@ -1,8 +1,9 @@
 """Explicit user-requested retirement; historical validators remain usable."""
 RETIRED_MODELS = frozenset(('selected7', 'selected'))
 SELECTED_MARKERS = ('SELECTED_FRAMEWORK', 'SELECTED_FRAMEWORK_ATTACK', 'SELECTED_FRAMEWORK_STATS')
-# 2026-11-01: AI 冷码七项框架（Pro 冷码 30 期七项）按用户要求整体退役；其面板块在每次重建时被剥除。
-COLD_MARKERS = ('COLD_FRAMEWORK',)
+# 2026-11-01: 冷码家族（AI 冷码七项框架 + 冷码观察/冷码杀号战绩/位置冷码）按用户要求整体退役；
+# 其面板块在每次重建时被剥除。
+COLD_MARKERS = ('COLD_FRAMEWORK', 'COLD_OBSERVATION', 'COLD_HIT_STATS', 'POSITION_COLD')
 
 
 def is_retired(model):

@@ -14,7 +14,7 @@
 设计要点：
 - 自包含 section（id 见 _section_open）+ 内联样式，不依赖面板已有 CSS 类；
 - 用 START / END 起止注释标记原地替换；
-- 标记缺失时按 KILL_TWO_END -> KILL_THREE_END -> COLD_HIT_STATS_END -> POSITION_COLD_END -> </body> 顺序插入；
+- 标记缺失时按 KILL_TWO_END -> KILL_THREE_END -> </body> 顺序插入；
 - 任何异常原样返回 html，绝不影响整页刷新。
 """
 from datetime import datetime
@@ -386,8 +386,7 @@ def apply_kill_one_block(content, report=None):
         end = content.find(END)
         if start != -1 and end != -1 and end > start:
             return content[:start] + fragment + content[end + len(END):]
-        for anchor in ('<!-- KILL_TWO_END -->', '<!-- KILL_THREE_END -->',
-                       '<!-- COLD_HIT_STATS_END -->', '<!-- POSITION_COLD_END -->'):
+        for anchor in ('<!-- KILL_TWO_END -->', '<!-- KILL_THREE_END -->'):
             position = content.find(anchor)
             if position != -1:
                 position += len(anchor)

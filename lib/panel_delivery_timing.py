@@ -26,7 +26,6 @@ MODELS = {
     'selected6': ('SELECTED_SIX_INDEPENDENT', 'six-independent-attack-text', 'six-independent-attack-data'),
     'he3_refine': ('HE3_REFINE', None, 'he3-refine-active'),
 }
-COLD_FAMILIES = {}
 FIELDS = ('model','reference_period','target_period','source_card_sha256','attack_sha256','scope')
 MAX_EVENTS = 4096
 
@@ -44,18 +43,15 @@ def _at(value):
 class _Nodes(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.nodes={}; self.stack=[]; self.job_rows=[]; self.cold_numbers=[]
+        self.nodes={}; self.stack=[]; self.job_rows=[]
     def handle_starttag(self,tag,attrs):
         attributes=dict(attrs); key=attributes.get('id')
         names=[name for name,_ in attrs]
         if 'ai-job-row' in str(attributes.get('class') or '').split():
             self.job_rows.append({'attrs':attributes,'ambiguous_attributes':len(names)!=len(set(names))})
-        cold_number=any('data-'+prefix+'-number' in attributes or 'data-'+prefix+'-keep' in attributes
-                        for prefix,_ in COLD_FAMILIES.values())
         node={'attrs':attributes,'tag':tag,'text':[],
-              'ambiguous_attributes':len(names)!=len(set(names))} if key or cold_number else None
+              'ambiguous_attributes':len(names)!=len(set(names))} if key else None
         if key: self.nodes.setdefault(key,[]).append(node)
-        if cold_number: self.cold_numbers.append(node)
         self.stack.append((tag,node))
         if tag in ('br','img','input','meta','link','hr','source','wbr','area','base','embed','param','track','col'):
             self.stack.pop()
@@ -69,114 +65,6 @@ class _Nodes(HTMLParser):
     def one(self,key):
         values=self.nodes.get(key,[])
         return values[0] if len(values)==1 and not values[0]['ambiguous_attributes'] else None
-
-
-def _cold_public_identity(prediction, revision, model='cold'):
-    """Bind cold delivery to its immutable seal hash, never refreshed stats HTML."""
-    family = COLD_FAMILIES.get(model)
-    if family is None:
-        return None
-    _, revisions = family
-    if (not isinstance(prediction,dict) or not isinstance(revision,str) or revision not in revisions
-            or prediction.get('publication_state')!='published'):
-        return None
-    reference,target=prediction.get('reference_period'),prediction.get('target_period')
-    if (not isinstance(reference,str) or not parse_period(reference) or parse_period(reference)[0]!=reference
-            or target!=next_period(reference)):
-        return None
-    try:
-        sealed,published,deadline=(_at(prediction.get(key)) for key in ('sealed_at','published_at','deadline'))
-    except (ValueError,TypeError,OverflowError):
-        return None
-    if not period_slot(reference)<=sealed<=published<deadline or deadline!=period_slot(target)-timedelta(seconds=70):
-        return None
-    if any(not isinstance(prediction.get(key),str) or not re.fullmatch('[0-9a-f]{64}',prediction[key])
-           for key in ('seal_sha256','history_sha256','input_sha256')):
-        return None
-    positions,tails=prediction.get('selected_positions'),prediction.get('selected_tails')
-    position_keys=('q','b','s','g')
-    tail_labels={'all':'千百十个合','qbs':'千百十合','qbg':'千百个合','qsg':'千十个合','bsg':'百十个合'}
-    for values,allowed,count in ((positions,position_keys,3),(tails,tail_labels,revisions[revision])):
-        if (not isinstance(values,dict) or len(values)!=count or not set(values)<=set(allowed)
-                or any(type(value) is not int or not 0<=value<=9 for value in values.values())):
-            return None
-    digits='1234567890'
-    remaining=lambda value: ''.join(digit for digit in digits if digit!=str(value))
-    attack=''.join(label+(remaining(positions[key]) if key in positions else digits)
-                   for key,label in zip(position_keys,('千','百','十','个')))+'四定'
-    attack+=''.join(label+remaining(tails[key]) for key,label in tail_labels.items() if key in tails)
-    keeps={}
-    if revision in ('cold50-fixed-framework-v1-50-fixed-qbs-all-qbs-he2x4-he3x5',
-                    'cold50-fixed-framework-v2-50-fixed-qbg-qbg-bsg-he2x4-he3x5'):
-        for key,label,count,allowed in (('he2_keep','二数合',4,'02468'),('he3_keep','三数合',5,'0123456789')):
-            value=prediction.get(key)
-            if not isinstance(value,str) or len(value)!=count or len(set(value))!=count or not set(value)<=set(allowed):
-                return None
-            keeps[key]=value
-            attack+=label+value
-    attack+='各'
-    identity={'model':model,'reference_period':reference,'target_period':target,
-              'source_card_sha256':prediction['seal_sha256'],
-              'attack_sha256':_hash(attack.encode()),'scope':'attack'}
-    identity['event_id']=_hash(_packed(identity))
-    numbers={'position_'+key:value for key,value in positions.items()}
-    numbers.update({'tail_'+key:value for key,value in tails.items()})
-    return identity,attack,numbers,keeps,published
-
-
-def cold_seal_identity(seal, model='cold'):
-    """Public cold projection identity without modifying its publication evidence."""
-    result=_cold_public_identity(seal,seal.get('revision') if isinstance(seal,dict) else None,model=model)
-    return result[0] if result else None
-
-
-def _cold_panel_identity(parser, *, model='cold', require_available=False, observed_at=None):
-    prefix=COLD_FAMILIES[model][0]
-    data,card,attack=(parser.one(prefix+suffix) for suffix in ('-data','-card','-attack'))
-    try:
-        payload=json.loads(''.join(data['text'])) if data else None
-    except (ValueError,TypeError):
-        return None
-    if not isinstance(payload,dict) or type(payload.get('version')) is not int or payload['version']!=1:
-        return None
-    revision=payload.get('revision')
-    if payload.get('prediction_revision',revision)!=revision:
-        return None
-    result=_cold_public_identity(payload.get('prediction'),revision,model=model)
-    if result is None or card is None or attack is None:
-        return None
-    identity,expected,numbers,keeps,published=result
-    if (payload.get('attack')!=expected or ''.join(attack['text'])!=expected
-            or card['attrs'].get('data-'+prefix+'-reference')!=identity['reference_period']
-            or card['attrs'].get('data-'+prefix+'-target')!=identity['target_period']
-            or card['attrs'].get('data-'+prefix+'-seal')!=identity['source_card_sha256']):
-        return None
-    observed_numbers,observed_keeps={},{}
-    for node in parser.cold_numbers:
-        attributes=node['attrs']
-        if not any('data-'+prefix+suffix in attributes for suffix in ('-number','-keep')):
-            continue
-        if any('data-'+other+suffix in attributes for other,_ in COLD_FAMILIES.values()
-               if other!=prefix for suffix in ('-number','-keep')):
-            return None
-        if node['ambiguous_attributes']:
-            return None
-        number,keep=attributes.get('data-'+prefix+'-number'),attributes.get('data-'+prefix+'-keep')
-        if (number is not None)==(keep is not None):
-            return None
-        destination,key=(observed_numbers,number) if number is not None else (observed_keeps,keep)
-        if key in destination:
-            return None
-        destination[key]=''.join(node['text']).strip()
-    if observed_numbers!={key:str(value) for key,value in numbers.items()} or observed_keeps!=keeps:
-        return None
-    if require_available:
-        current=parser.one('disp_period')
-        if current is None or ''.join(current['text']).strip()!=identity['reference_period']:
-            return None
-    if observed_at is not None and _at(observed_at)<published:
-        return None
-    return identity
 
 
 def extract_identity(model, html, *, _parsed=None, _require_available=False, _observed_at=None):
@@ -195,8 +83,6 @@ def extract_identity(model, html, *, _parsed=None, _require_available=False, _ob
     parser=_parsed
     if parser is None:
         parser=_Nodes();parser.feed(html)
-    if model in COLD_FAMILIES:
-        return _cold_panel_identity(parser,model=model,require_available=_require_available,observed_at=_observed_at)
     if model in ('killer','framework'):
         native=_Nodes();native.feed(card)
         match=re.search(r'(?:最新)?参考期号\s*[:：]\s*([0-9]{11})',' '.join(

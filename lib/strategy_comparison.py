@@ -365,7 +365,7 @@ def build_comparison(snapshot,*,root=ROOT,ledgers=None,delivery=None):
     # to all older evidence. observation() enforces ready <= frozen now per row.
     delivery=index_delivery(load_delivery(Path(root),None) if delivery is None else delivery)
     version_comparison={'version':1,'updated_at':now.isoformat(),'biz_date':day,
-        'scope':'five-validated-position-strategies; HE3 and cold are different tasks',
+        'scope':'five-validated-position-strategies; HE3 is a different task',
         'cohorts':{name:_version_cohorts(publications,cohort,actuals,conflicts,delivery,now)
                    for name,cohort in (('six_seven',('six','selected')),('flash',('killer','framework')),
                                        ('original_four',ORIGINAL_MODELS))}}

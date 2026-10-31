@@ -57,7 +57,6 @@ def _model_tiers(root):
         result[job] = _TIER_PREFIX.get(model, '')
     return result
 
-COLD_FAMILIES = {}
 STATUS_VALUES = frozenset(('current', 'pending', 'await_rule_start', 'manual_off', 'historical', 'late', 'missing', 'failed', 'unknown'))
 
 
@@ -266,42 +265,6 @@ def _model_evidence(document, model=None):
     return result
 
 
-def _cold_evidence(documents, attempts, model='cold'):
-    if model not in COLD_FAMILIES:
-        raise ValueError('runtime-invalid-cold-family')
-    result = {}
-    for document in documents:
-        if not isinstance(document, dict) or not isinstance(document.get('predictions'), dict):
-            raise ValueError('runtime-invalid-cold-ledger')
-        body = {key: value for key, value in document.items() if key != 'checksum'}
-        if document.get('checksum') != sha256(json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest():
-            raise ValueError('runtime-invalid-cold-checksum')
-        for raw in document['predictions'].values():
-            reference = raw.get('reference_period') if isinstance(raw, dict) else None
-            seal = _compact_seal(raw, reference, model=model)
-            if seal is not None:
-                result[reference] = seal
-    for document in attempts:
-        if not isinstance(document, dict) or not isinstance(document.get('attempts'), dict):
-            raise ValueError('runtime-invalid-cold-attempts')
-        body = {key: value for key, value in document.items() if key != 'checksum'}
-        if document.get('checksum') != sha256(json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest():
-            raise ValueError('runtime-invalid-cold-checksum')
-        for reference, attempt in document['attempts'].items():
-            if not _period(reference) or not isinstance(attempt, dict):
-                continue
-            record = result.setdefault(reference, {'reference_period': reference, 'target_period': _target(reference)})
-            record['registered'], record['request_registered_at'] = True, attempt.get('started_at')
-            metadata = attempt.get('metadata')
-            if isinstance(metadata, dict):
-                if _stamp(metadata.get('requested_at')):
-                    record['request_registered_at'] = metadata['requested_at']
-                record['response_completed_at'] = metadata.get('completed_at')
-            if attempt.get('state') in ('failed', 'rejected'):
-                record['failure_code'] = _error_kind(attempt.get('error_code')) or 'job-failed'
-    return {key: result[key] for key in sorted(result)[-MAX_RECORDS:]}
-
-
 def parse_log(text):
     """Keep only fixed numeric/ref diagnostics, never provider bodies/reasons."""
     result, active, attempt = {}, None, None
@@ -398,8 +361,6 @@ def _panel_targets(html):
                              ('he3_refine', 'he3-retained-data')):
         values = parser.scripts.get(identity, [])
         data = values[0] if len(values) == 1 and isinstance(values[0], dict) else {}
-        if model in COLD_FAMILIES:
-            data = data.get('prediction') if isinstance(data.get('prediction'), dict) else {}
         result[model] = _period(data.get('target_period'))
     for model, identity in (('pro4', 'pro4-active'),):
         values = parser.ids.get(identity, [])
@@ -574,26 +535,15 @@ def build_summary(bundle, now):
         target = _target(reference)
         panel_target = targets.get(key)
         matches = panel_target == target if panel_target is not None else None
-        active_start = _period(bundle.get('active_rule_starts', {}).get(key)) if key=='cold50_fixed' else None
-        awaiting_rule = (active_start is not None and period_slot(target)<period_slot(active_start)
-                         and current['status'] not in ('manual_off','unknown')
-                         and key not in bundle.get('unavailable_models', ()))
         if current['status'] == 'current' and matches is not True:
             current['status'] = 'pending' if not current['closed'] else 'failed'
             current['error_code'] = 'panel-mismatch' if current['closed'] else None
         if key in bundle.get('unavailable_models', ()):
             current['status'], current['error_code'] = 'unknown', 'evidence-unavailable'
-        if awaiting_rule:
-            # Keep original period rows for historical quality. Only the active
-            # display waits for its prospective rule span instead of treating
-            # the prior version's still-current sealed target as a new failure.
-            current['status'], current['error_code'], matches = 'await_rule_start', None, None
         phase = next((phase for name, phase in reversed(tuple(zip(STAGE_KEYS, ('source', 'input', 'request', 'response', 'published'))))
                       if current['stages'][name] is not None), 'expected')
         if current['status'] == 'current' and matches is True:
             phase = 'panel'
-        if awaiting_rule:
-            phase = 'rule_start'
         today = [row for row in rows if business_start(period_slot(row['target_period'])) == start]
         recent = [row for row in rows if row['eligible'] is True][-50:]
         published_refs = [ref for ref, event in evidence.items() if event.get('publication_state') == 'published']
@@ -606,7 +556,6 @@ def build_summary(bundle, now):
                               'durations_seconds', 'close_remaining_seconds', 'error_code', 'request_registered_at')},
                            'label': label, 'phase': phase, 'server_panel_target_period': panel_target,
                            'panel_matches': matches,
-                           **({'active_rule_start_target': active_start} if key=='cold50_fixed' else {}),
                            'availability': current.get('availability',observation(key,{},None,now)),
                            'latest_published_reference': last, 'latest_published_target': _target(last),
                            'quality': {'today': _quality(today), 'recent50': _quality(recent)},
@@ -681,10 +630,8 @@ def collect(*, root=ROOT, clock=beijing_now):
     loaded.pop('data/stats_draw_history.json', None)
     del state, cache
     shared_status = read('data/ai_job_status.json', optional=True)
-    evidence, statuses, diagnostics, starts, active_rule_starts, unavailable = {}, {}, {}, {}, {}, []
+    evidence, statuses, diagnostics, starts, unavailable = {}, {}, {}, {}, []
     for key, (_, filename, status_file, logfile, _) in MODELS.items():
-        if key in COLD_FAMILIES:
-            continue
         document = read('data/' + filename, optional=True)
         try:
             evidence[key] = _model_evidence(document or {},model=key)
@@ -699,49 +646,6 @@ def collect(*, root=ROOT, clock=beijing_now):
             statuses[key] = shared_status.get('jobs', {}).get(key, {}) if isinstance(shared_status, dict) else {}
         else:
             statuses[key] = read('data/' + status_file, optional=True) or {}
-    # Each cold family owns its index, daily seals, attempts, status and log.
-    # No fallback to another family's ledgers when the new model has no history.
-    for key, (prefix, revisions) in COLD_FAMILIES.items():
-        index_name = 'data/' + prefix + '_ledger.json'
-        index = read(index_name, optional=True)
-        cold_days, cold_attempts = [], []
-        if index_name in failed_reads:
-            unavailable.append(key)
-        if isinstance(index, dict):
-            body = {name: value for name, value in index.items() if name != 'checksum'}
-            valid_index = (type(index.get('version')) is int and index['version'] == 1
-                           and index.get('revision') in revisions
-                           and index.get('checksum') == sha256(json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
-                           and isinstance(index.get('days'), list)
-                           and all(isinstance(day, str) for day in index['days'])
-                           and sorted(set(index['days'])) == index['days'])
-            if not valid_index:
-                index = None
-                unavailable.append(key)
-                errors.append({'source': 'model', 'code': 'invalid-' + key + '-index'})
-        if isinstance(index, dict):
-            starts[key] = index.get('tracking_start_target')
-            if key=='cold50_fixed':
-                tracking=index.get('rule_tracking')
-                active=tracking.get(revisions[-1]) if isinstance(tracking,dict) else None
-                if isinstance(active,dict) and _period(active.get('start_target')):
-                    active_rule_starts[key]=active['start_target']
-            for day in index['days'][-4:]:
-                if re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', day):
-                    for suffix, destination in (('_', cold_days), ('_attempts_', cold_attempts)):
-                        name = 'data/' + prefix + suffix + day + '.json'
-                        value = read(name, optional=True)
-                        if value is not None:
-                            destination.append(value)
-                        if name in failed_reads:
-                            unavailable.append(key)
-        try:
-            evidence[key] = _cold_evidence(cold_days, cold_attempts, model=key)
-        except (ValueError, TypeError, KeyError):
-            evidence[key] = {}
-            unavailable.append(key)
-            errors.append({'source': 'model', 'code': 'invalid-' + key + '-evidence'})
-        statuses[key] = read('data/' + prefix + '_status.json', optional=True) or {}
     for key, (_, _, _, logfile, _) in MODELS.items():
         diagnostics[key] = _log_history(data / logfile)
     # Two classic input archives have explicit freeze timestamps. Read only the
@@ -758,7 +662,7 @@ def collect(*, root=ROOT, clock=beijing_now):
     version_comparison=comparison.get('version_comparison') if isinstance(comparison,dict) else None
     bundle = {'control': {} if 'data/ai_api_control.json' in failed_reads else control, 'records': records, 'conflicts': sorted(conflicts), 'evidence': evidence,
               'statuses': statuses, 'diagnostics': diagnostics, 'panel_html': panel, 'errors': errors,
-              'model_starts': starts, 'active_rule_starts': active_rule_starts, 'model_tiers': model_tiers,
+              'model_starts': starts, 'model_tiers': model_tiers,
               'unavailable_models': unavailable,'delivery':delivery}
     result=build_summary(bundle, _now(clock()))
     # This separately validated strategy appendix is optional. Never reinterpret
