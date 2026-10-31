@@ -27,6 +27,8 @@ Collects a fixed set of probes into one JSON report plus a human table:
   deepseek_balance   DeepSeek key total_balance (>=8 CNY ok, 3-8 warn, <3 fail)
   provider_402       recent provider HTTP 402 in the AI job logs (<30 min -> warn)
   model_usage        derived token/cache/latency/402 summary (stale > 30 min -> warn)
+  coverage           滚动发布覆盖率 coverage_24h（分母=窗口内该框架已上线期数；<95% warn；
+                     <80% 且缺口延续到窗口尾部（最近 24 期仍漏 >=3 期）才 fail，已恢复的历史缺口只 warn）
 
 Writes (atomic) data/ops_health.json, data/ops_health_state.json and appends
 data/ops_alerts.log only for *transitions* (a check newly entering warn/fail,
@@ -112,6 +114,11 @@ HITRATE_CUMULATIVE_JSON = 'framework_hitrate_cumulative.json'
 HITRATE_CUMULATIVE_WARN_SECONDS = 30 * 60
 HITRATE_CUMULATIVE_FAIL_SECONDS = 90 * 60
 HITRATE_CUMULATIVE_MIN_ROWS = 6
+COVERAGE_WARN = 0.95
+COVERAGE_FAIL = 0.80
+COVERAGE_MIN_ONLINE = 100
+COVERAGE_RECENT_PERIODS = 24
+COVERAGE_RECENT_FAIL_MISSES = 3
 KILL3_STABILITY_WINDOW_SECONDS = 24 * 3600
 KILL3_STABILITY_LATENCY_SAMPLE = 20
 KILL3_VERSION_WARN_CHANGES = 2
@@ -1319,6 +1326,85 @@ def check_hitrate_cumulative(ctx):
                    'as_of_period': document.get('as_of_period')})
 
 
+def check_coverage(ctx):
+    """滚动发布覆盖率（现行水平），读 framework_hitrate_cumulative.json 的 coverage_24h。
+
+    分母 = 窗口内该框架「已上线」期数（framework_hitrate_cumulative.py 从首条 verified/seal 的
+    target_period 起算、窗口起点取 max(上线期, window_start)），因此框架「引入前」与 24h 窗口外的
+    历史缺口不会被算成现行掉链。
+    24h 窗口内仍含历史缺口（如 2026-10-31 01091..01128 段余额停跑/总闸关闭）但已恢复时只报 WARN；
+    只有缺口延续到窗口尾部（最近 COVERAGE_RECENT_PERIODS 期内仍漏 >= COVERAGE_RECENT_FAIL_MISSES 期）
+    才判 FAIL——既不会对已恢复的历史缺口长期 FAIL，也能在真掉链时从 WARN 升级到 FAIL。
+    """
+    path = ctx['root'] / 'data' / HITRATE_CUMULATIVE_JSON
+    document, error = _load_json(path)
+    if not isinstance(document, dict):
+        return _entry('coverage', WARN,
+                      '累计命中率报告不可用，无法评估滚动覆盖率: %s' % (error or 'invalid shape'))
+    rows = document.get('rows')
+    if not isinstance(rows, list) or not rows:
+        return _entry('coverage', WARN, '累计命中率报告没有 rows，无法评估滚动覆盖率')
+    window = document.get('rolling_window')
+    window = window if isinstance(window, dict) else {}
+    status = OK
+    details, values = [], {}
+    applicable = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get('key') or '?')
+        coverage = row.get('coverage_24h')
+        if not isinstance(coverage, (int, float)) or isinstance(coverage, bool):
+            continue
+        rolling = row.get('rolling')
+        windows = rolling.get('windows') if isinstance(rolling, dict) else None
+        window_24h = windows.get('24h') if isinstance(windows, dict) else None
+        online = window_24h.get('online') if isinstance(window_24h, dict) else None
+        if not isinstance(online, int) or isinstance(online, bool) or online < COVERAGE_MIN_ONLINE:
+            continue
+        applicable += 1
+        last_missed = window_24h.get('last_missed_period') if isinstance(window_24h, dict) else None
+        recent = window_24h.get('recent') if isinstance(window_24h, dict) else None
+        recent = recent if isinstance(recent, dict) else {}
+        recent_missed = recent.get('missed')
+        if not isinstance(recent_missed, int) or isinstance(recent_missed, bool):
+            recent_missed = None
+        if coverage < COVERAGE_FAIL:
+            if recent_missed is None:
+                row_status = WARN
+                note = '缺近%d期明细，按历史缺口处理(最后漏期 %s)' % (COVERAGE_RECENT_PERIODS,
+                                                                    last_missed or '-')
+            elif recent_missed < COVERAGE_RECENT_FAIL_MISSES:
+                row_status = WARN
+                note = '历史缺口已恢复(近%d期漏%d期，最后漏期 %s)' % (
+                    COVERAGE_RECENT_PERIODS, recent_missed, last_missed or '-')
+            else:
+                row_status = FAIL
+                note = '缺口延续到窗口尾部(近%d期仍漏%d期，最后漏期 %s)' % (
+                    COVERAGE_RECENT_PERIODS, recent_missed, last_missed or '-')
+        elif coverage < COVERAGE_WARN:
+            row_status = WARN
+            note = '低于 95%%(最后漏期 %s)' % (last_missed or '-')
+        else:
+            row_status = OK
+            note = ''
+        status = _max_status(status, row_status)
+        values[key] = {'coverage_24h': coverage, 'online': online,
+                       'last_missed_period': last_missed,
+                       'recent_missed': recent_missed, 'status': row_status}
+        details.append('%s=%.2f%%(%d期%s)' % (key, coverage * 100, online,
+                                              '，' + note if note else ''))
+    if not applicable:
+        return _entry('coverage', OK,
+                      '窗口内已上线期数>=%d 的框架为 0，暂不判定滚动覆盖率' % COVERAGE_MIN_ONLINE,
+                      {'applicable': 0, 'window_end': window.get('end_period')})
+    detail = '24h覆盖率(分母=窗口内已上线期数，window_end=%s): %s' % (
+        window.get('end_period') or '-', '; '.join(details))
+    return _entry('coverage', status, detail,
+                  {'applicable': applicable, 'window_end': window.get('end_period'),
+                   'rows': values})
+
+
 AI_CONTROL_JSON = 'ai_api_control.json'
 AI_GUARD_JSON = 'ai_balance_guard.json'
 AI_GUARD_STALE_SECONDS = 10 * 60
@@ -1372,6 +1458,7 @@ CHECK_FUNCS = (
     check_deepseek_balance,
     check_provider_402,
     check_hitrate_cumulative,
+    check_coverage,
     check_ai_control,
     check_model_usage,
 )
@@ -1397,6 +1484,7 @@ FALLBACK_NAMES = {
     'check_deepseek_balance': ('deepseek_balance',),
     'check_provider_402': ('provider_402',),
     'check_hitrate_cumulative': ('hitrate_cumulative',),
+    'check_coverage': ('coverage',),
     'check_ai_control': ('ai_control',),
     'check_model_usage': ('model_usage',),
 }

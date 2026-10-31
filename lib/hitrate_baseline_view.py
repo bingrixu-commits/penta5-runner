@@ -3,6 +3,7 @@
 数据源：
 - data/framework_hitrate_cumulative.json（scripts/framework_hitrate_cumulative.py 每 15 分钟生成）：
   版本锁定累计、精确枚举基线、Wilson 95% 区间、双侧 p、发布覆盖率、计划期命中率、按模型分档；
+  另有 24h 滚动覆盖率 coverage_24h / 计划命中率 plan_hit_rate_24h（现行水平，分母=窗口内已上线期数）；
 - data/hitrate_baseline.json（lib/hitrate_baseline.py 每轮重算）：用于「今日 10 期」参考列与单项基线。
 
 口径：整组命中 = 一期全部项目同时命中；随机期望 = 现行规则 10^4 组合精确枚举校准
@@ -164,9 +165,52 @@ def _render_drift(cumulative):
               'n&lt;100 样本不足。多窗口多重比较下 |z|≈2 属正常，本表只作漂移提示，不作模型优劣结论。</div>')
 
 
+def _coverage_map(cumulative):
+    """框架 key -> 累计报告行（用于把滚动覆盖率/计划命中率按 key join 进表格）。"""
+    mapping = {}
+    for item in (cumulative or {}).get('rows') or ():
+        if isinstance(item, dict) and item.get('key'):
+            mapping[str(item.get('key'))] = item
+    return mapping
+
+
+def _coverage_24h_cell(row):
+    if not isinstance(row, dict):
+        return '<span class="hb-foot">-</span>'
+    coverage = row.get('coverage_24h')
+    if not isinstance(coverage, (int, float)) or isinstance(coverage, bool):
+        return '<span class="hb-foot">-</span>'
+    if coverage >= 0.95:
+        cls = 'hb-good'
+    elif coverage >= 0.80:
+        cls = 'hb-warn'
+    else:
+        cls = 'hb-bad'
+    rolling = row.get('rolling') if isinstance(row.get('rolling'), dict) else {}
+    windows = rolling.get('windows') if isinstance(rolling.get('windows'), dict) else {}
+    window = windows.get('24h') if isinstance(windows.get('24h'), dict) else {}
+    parts = []
+    online = window.get('online')
+    if isinstance(online, int) and not isinstance(online, bool):
+        parts.append('在线%d期' % online)
+    missed = window.get('missed')
+    if isinstance(missed, int) and not isinstance(missed, bool) and missed > 0:
+        parts.append('漏%d期' % missed)
+    return '<span class="%s">%s</span><div class="hb-sub">%s</div>' % (
+        cls, _pct(coverage), ' · '.join(parts))
+
+
+def _plan_rate_24h_cell(row):
+    rate = row.get('plan_hit_rate_24h') if isinstance(row, dict) else None
+    if not isinstance(rate, (int, float)) or isinstance(rate, bool):
+        return '<span class="hb-foot">-</span>'
+    return '<span>%s</span><div class="hb-sub">漏期算0命中</div>' % _pct(rate)
+
+
 def _render_cumulative(cumulative, baseline):
     rows = []
     today = _today_map(baseline)
+    coverage_map = _coverage_map(cumulative)
     for item in cumulative.get('rows') or ():
         key = item.get('key')
         rule = escape(str(item.get('rule') or ''))
@@ -194,6 +238,11 @@ def _render_cumulative(cumulative, baseline):
         coverage = item.get('coverage')
         coverage_text = _pct(coverage) if coverage is not None else '-'
         planned_text = "<div class=\"hb-foot\">计划期命中 " + _pct(planned_rate) + "</div>" if planned_rate is not None else ""
+        joined = coverage_map.get(str(key)) if key else None
+        if not isinstance(joined, dict):
+            joined = item
+        coverage_24h_text = _coverage_24h_cell(joined)
+        plan_rate_24h_text = _plan_rate_24h_cell(joined)
         today_row = today.get(key) or {}
         today_rate = today_row.get('rate')
         today_n = today_row.get('n')
@@ -210,6 +259,8 @@ def _render_cumulative(cumulative, baseline):
             f"<td>{_delta(item.get('delta'))}</td>"
             f"<td>{_p(item.get('p'))}</td>"
             f"<td class=\"{_verdict_class(verdict)}\">{escape(verdict)}</td>"
+            f"<td>{coverage_24h_text}</td>"
+            f"<td>{plan_rate_24h_text}</td>"
             f"<td>{coverage_text}{planned_text}</td>"
             f"<td>{today_text}</td></tr>")
     singles = ' · '.join(f"{escape(str(row['label']))} {_pct(row['baseline'])}"
@@ -226,6 +277,13 @@ def _render_cumulative(cumulative, baseline):
                          % escape(str(boundary.get('promoted_at'))))
     as_of = escape(str(cumulative.get('as_of_period') or (baseline or {}).get('as_of_period') or ''))
     basis = escape(str(cumulative.get('basis') or (baseline or {}).get('basis') or ''))
+    rolling_window = cumulative.get('rolling_window') if isinstance(cumulative.get('rolling_window'), dict) else {}
+    rolling_note = ('<div class="hb-note">发布命中率 vs 计划命中率：发布命中率 = 已发布并核验期里的整组命中占比；'
+                    '计划命中率 = 命中数 / 计划期数，<b>把漏发期按 0 命中计入</b>。'
+                    '覆盖率(24h) / 计划命中率(24h) 用最近 288 期（约 24h）滚动窗口（结束于 %s），'
+                    '分母 = 窗口内该框架已上线期数（从首条 verified/seal 的 target_period 起算），'
+                    '因此框架引入前与窗口外的历史缺口不算现行掉链；累计覆盖率不是现行覆盖率。</div>'
+                    % escape(str(rolling_window.get('end_period') or '-')))
     drift_html = _render_drift(cumulative)
     return (
         f'{START}<section id="hitrate-base" data-as-of="{as_of}">'
@@ -233,15 +291,19 @@ def _render_cumulative(cumulative, baseline):
         f'<h3>整组命中率 vs 随机期望（累计·版本锁定）</h3>'
         f'<div class="hb-meta">累计更新 {escape(str(cumulative.get("generated_at") or "-"))} · '
         f'数据截至 {as_of} · 只统计已核验样本 · 随机期望：{basis}</div>'
-        f'{stale_warning}{boundary_note}'
+        f'{stale_warning}{boundary_note}{rolling_note}'
         f'<table><thead><tr><th>框架 / 规则</th><th>项数</th><th>累计样本</th>'
         f'<th>累计命中率(95%CI)</th><th>随机期望</th><th>偏差</th><th>p</th><th>判定</th>'
-        f'<th>覆盖率</th><th>今日(参考)</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
+        f'<th>覆盖率(24h)</th><th>计划命中率(24h)</th>'
+        f'<th>覆盖率(累计)</th><th>今日(参考)</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
         f'{drift_html}'
         f'<div class="hb-note">整组命中率是「一期 N 项全部命中」的联合概率，不是单项准确率；'
         f'7~9 项框架的随机期望本来就只有 41%~62%。累计样本 n&lt;200 时只报数字、不下结论。'
-        f'覆盖率 = 当前版本已核验期数 / 首期到末期计划期数；计划期命中率把漏发期按 0 命中计入，'
+        f'覆盖率(累计) = 当前版本已核验期数 / 首期到末期计划期数；计划期命中率把漏发期按 0 命中计入，'
         f'用于暴露 402/停机造成的真实损失——稳定性问题会直接压低这个值，而不是提高命中率数字。</div>'
+        f'<div class="hb-foot">覆盖率(24h) 分母 = 窗口内该框架已上线期数；计划命中率(24h) = 24h 窗口内命中数 / 分母'
+        f'（漏期按 0 命中，即发布命中率之外的真实计划达成率）。历史缺口'
+        f'（2026-10-31 01091..01128 等余额停跑/总闸关闭段，13:15 后恢复）与框架引入前均不计入现行掉链判定。</div>'
         f'<div class="hb-foot">单项随机基线：{singles}。</div>'
         f'<div class="hb-foot">单尾杀 1 码的 90% 是数学上限（10 选 1 杀 1 码）；单日 n&lt;200 一律标「样本不足」，只做波动参考，请以累计样本为准。</div>'
         f'<div class="hb-foot">随机期望按现行规则用 10^4 种开奖组合精确枚举校准（已计入合尾/形态/保留码共享同一组开奖号的相关性，'

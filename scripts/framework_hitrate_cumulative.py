@@ -5,8 +5,16 @@
 - 整组命中 = 一期要求全部项目同时命中；随机期望 = 现行规则用 10^4 开奖组合精确枚举校准值。
 - 只统计已结算/已核验记录；缺预测、待核验、冲突期不进分母。
 - 逐框架按「当前规则版本」锁定样本；旧版本单独列出，不混算。
-- 覆盖率 = 当前版本已核验期数 / 首期到末期之间的计划期数；
+- 覆盖率 = 当前版本已核验期数 / 首期到末期之间的计划期数（累计口径，含历史缺口）；
   计划期命中率 = 命中数 / 计划期数（把漏发期按 0 命中计入，用于暴露 402/停机造成的真实损失）。
+- 滚动口径 coverage_24h / coverage_7d / plan_hit_rate_24h / plan_hit_rate_7d（现行水平，看这几个，
+  不要拿累计覆盖率当现行覆盖率）：窗口结束于「上一个已结算期」= 最新已开奖期 - 1 期
+  （最新一期刚开奖、各框架尚未结算，属在途期，记在 rolling.pending_period 且不计入分母/漏期），
+  向前 288 期（24h）/ 2016 期（7d）；
+  分母 = 窗口内该框架「已上线」期数（从该框架第一条 verified/seal 的 target_period 起算，
+  窗口起点取 max(上线期, window_start)）；分子 = 窗口内 verified 且计入的 target_period 数；
+  plan_hit_rate_* = 窗口内命中数 / 分母（漏期按 0 命中）。
+  顶层 coverage_note 说明累计覆盖率的缺口来源（余额停跑/引入前），避免把历史缺口误判成现行掉链。
 - n < 200 判定「样本不足」，不做优劣结论；p 为双侧二项检验（方差用 p0(1-p0)/n）。
 
 数据源：data/r1_stats.json、r1_framework_hit_stats.json、selected_six_hit_stats.json、
@@ -67,6 +75,20 @@ WINDOWS = {
     'kill3_tail': '当前规则版本累计',
     'kill2_tail': '当前规则版本累计',
 }
+ROLLING_WINDOWS = (('24h', 288), ('7d', 2016))
+ROLLING_RECENT_PERIODS = 24
+ROLLING_DEFINITION = (
+    '滚动覆盖率 coverage_24h/coverage_7d = 窗口内 verified 且计入的 target_period 数 / 窗口内该框架已上线期数；'
+    'plan_hit_rate_24h/plan_hit_rate_7d = 窗口内命中数 / 窗口内已上线期数（漏期按 0 命中计入）。'
+    '窗口结束于上一个已结算期（最新已开奖期 - 1 期；最新一期在途待结算，记 pending_period，'
+    '不计入分母/漏期），向前 288 期(24h) / 2016 期(7d)；分母从该框架第一条 verified/seal 的 target_period 起算，'
+    '窗口起点取 max(上线期, window_start)，因此「引入前」与窗口外期数不算掉链。')
+COVERAGE_NOTE = (
+    '累计覆盖率 coverage 是「当前规则版本首期→末期」的累计口径，含历史缺口，不能当现行覆盖率：'
+    '2026-10-31 01030..01038 / 01059 / 01085 / 01091..01128 / 01135..01143 等连续段为账户余额停跑、'
+    'AI 总闸关闭（并非现行掉链），13:15 恢复后主链未再连续掉期（此后仅个别单期偶发缺口）；'
+    '另各框架「引入前」期数（如 kill2_tail 自 20261031272 起）也不属于掉链。'
+    '现行水平请看 coverage_24h / coverage_7d / plan_hit_rate_24h / plan_hit_rate_7d。')
 POS = {'q': 0, 'b': 1, 's': 2, 'g': 3}
 TAIL_INDEXES = {'all': (0, 1, 2, 3), 'qbs': (0, 1, 2), 'qbg': (0, 1, 3),
                 'qsg': (0, 2, 3), 'bsg': (1, 2, 3)}
@@ -119,6 +141,37 @@ def _period_index(period):
         return None
 
 
+def _draw_index(value):
+    """官方期号 YYYYMMDD001..288 的连续槽位索引（288 期/日；slot288 = 次日 00:00）。
+
+    滚动窗口按此索引对齐（1..288 全部有效）；_period_index 是旧「计划期数」口径，
+    只认 0..287，两者用途不同，不要互相替代。
+    """
+    try:
+        text = str(value)
+        if len(text) < 11:
+            return None
+        day = date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+        index = int(text[8:11])
+        if index < 1 or index > 288:
+            return None
+        return day.toordinal() * 288 + index - 1
+    except (TypeError, ValueError):
+        return None
+
+
+def _period_from_index(index):
+    """_draw_index 的逆映射，用于在报告里写回期号。"""
+    if not isinstance(index, int) or isinstance(index, bool):
+        return None
+    day, slot = divmod(index, 288)
+    try:
+        moment = date.fromordinal(day)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return '%04d%02d%02d%03d' % (moment.year, moment.month, moment.day, slot + 1)
+
+
 def _planned(periods):
     indexes = [_period_index(p) for p in periods]
     indexes = [i for i in indexes if i is not None]
@@ -137,6 +190,143 @@ def _expected(key, rule):
 def _items(key, rule):
     item = RULE_BASELINE.get((key, rule))
     return item[0] if item else None
+
+
+_LATEST_DRAW = []
+_WINDOW_END = []
+
+
+def _latest_draw_period():
+    """最新已开奖期（滚动窗口锚点）：data/state.json latestRecord，回退 stats_draw_history.json。"""
+    if _LATEST_DRAW:
+        return _LATEST_DRAW[0]
+    period = None
+    document = _read(DATA / 'state.json')
+    record = document.get('latestRecord') if isinstance(document, dict) else None
+    if isinstance(record, dict) and _draw_index(record.get('period')) is not None:
+        period = str(record.get('period'))
+    if period is None:
+        document = _read(DATA / 'stats_draw_history.json')
+        records = document.get('records') if isinstance(document, dict) else None
+        if isinstance(records, list) and records and isinstance(records[-1], dict):
+            if _draw_index(records[-1].get('period')) is not None:
+                period = str(records[-1]['period'])
+    _LATEST_DRAW.append(period)
+    return period
+
+
+def _window_end_index():
+    if not _WINDOW_END:
+        _WINDOW_END.append(_draw_index(_latest_draw_period()))
+    return _WINDOW_END[0]
+
+
+def _settled_end_index():
+    """已结算窗口结束索引 = 最新已开奖期 - 1。
+
+    最新一期刚开奖、各框架可能尚未结算（在途期），不能算成漏发：
+    窗口结束于上一个已结算期，在途期只记在 rolling.pending_period。
+    """
+    latest = _window_end_index()
+    return None if latest is None else latest - 1
+
+
+def _reset_rolling_cache():
+    _LATEST_DRAW.clear()
+    _WINDOW_END.clear()
+
+
+def _rolling_points(records):
+    """[(target, hit)] -> {期号: (index, hit)}；同一期多条记录按「任一条命中即命中」去重。"""
+    entries = {}
+    for target, hit in records or ():
+        index = _draw_index(target)
+        if index is None:
+            continue
+        text = str(target)
+        previous = entries.get(text)
+        entries[text] = (index, bool(hit) or (previous[1] if previous else False))
+    return entries
+
+
+def _rolling_fields(points, launch_periods, end_index):
+    """滚动覆盖率 / 计划命中率（现行水平）；锚点不可用时全部返回 None。"""
+    result = {'coverage_24h': None, 'coverage_7d': None,
+              'plan_hit_rate_24h': None, 'plan_hit_rate_7d': None,
+              'rolling': {'window_end': None, 'pending_period': None, 'launch_period': None,
+                          'windows': {},
+                          'note': '最新已开奖期不可用，无法计算滚动窗口'}}
+    if end_index is None:
+        return result
+    pending_index = end_index + 1
+    entries = points or {}
+    launches = []
+    for value in launch_periods or ():
+        index = _draw_index(value)
+        if index is not None:
+            launches.append(index)
+    launches.extend(index for index, _ in entries.values())
+    first_index = min(launches) if launches else None
+    result['rolling']['window_end'] = _period_from_index(end_index)
+    result['rolling']['pending_period'] = _period_from_index(pending_index)
+    result['rolling']['launch_period'] = _period_from_index(first_index)
+    result['rolling']['note'] = ('窗口结束于上一个已结算期；最新一期(pending_period)在途待结算，不计入分母/漏期')
+    for label, size in ROLLING_WINDOWS:
+        start_index = end_index - size + 1
+        if first_index is None:
+            low, online = start_index, 0
+        else:
+            low = max(start_index, first_index)
+            online = end_index - low + 1 if low <= end_index else 0
+        window = [(index, hit) for index, hit in entries.values()
+                  if low <= index <= end_index]
+        verified = len(window)
+        hits = sum(1 for _, hit in window if hit)
+        coverage = round(verified / online, 6) if online > 0 else None
+        plan_rate = round(hits / online, 6) if online > 0 else None
+        present = {index for index, _ in window}
+        missed = [index for index in range(low, end_index + 1) if index not in present] if online > 0 else []
+        recent_start = max(low, end_index - ROLLING_RECENT_PERIODS + 1)
+        recent_online = max(0, end_index - recent_start + 1) if online > 0 else 0
+        recent_present = {index for index, _ in window if index >= recent_start}
+        recent_missed = ([index for index in range(recent_start, end_index + 1)
+                          if index not in recent_present] if recent_online > 0 else [])
+        recent_hits = sum(1 for index, hit in window if index >= recent_start and hit)
+        result['coverage_' + label] = coverage
+        result['plan_hit_rate_' + label] = plan_rate
+        result['rolling']['windows'][label] = {
+            'window': size, 'start_period': _period_from_index(low),
+            'launch_period': _period_from_index(first_index),
+            'online': online, 'verified': verified, 'missed': len(missed), 'hits': hits,
+            'coverage': coverage, 'plan_hit_rate': plan_rate,
+            'last_missed_period': _period_from_index(missed[-1]) if missed else None,
+            'recent': {'periods': ROLLING_RECENT_PERIODS, 'online': recent_online,
+                       'verified': recent_online - len(recent_missed),
+                       'missed': len(recent_missed), 'hits': recent_hits,
+                       'coverage': (round((recent_online - len(recent_missed)) / recent_online, 6)
+                                    if recent_online > 0 else None),
+                       'group_rate': (round(recent_hits / recent_online, 6)
+                                      if recent_online > 0 else None),
+                       'last_missed_period': (_period_from_index(recent_missed[-1])
+                                              if recent_missed else None)},
+        }
+    return result
+
+
+def _rolling_window_summary():
+    latest_index = _window_end_index()
+    end_index = None if latest_index is None else latest_index - 1
+    return {'latest_draw_period': _period_from_index(latest_index),
+            'end_period': _period_from_index(end_index),
+            'pending_period': _period_from_index(latest_index),
+            'end_period_source': ('data/state.json#latestRecord；回退 data/stats_draw_history.json#records[-1]'),
+            'note': ('最新已开奖期（pending_period）在途待结算，不计入滚动窗口分母/漏期；'
+                     '滚动窗口结束于上一个已结算期 end_period。'),
+            'windows': [{'label': label, 'size': size,
+                         'start_period': (_period_from_index(end_index - size + 1)
+                                          if end_index is not None else None)}
+                        for label, size in ROLLING_WINDOWS]}
+
 
 SERIES = {}
 DRIFT_WINDOWS = (100, 200, 300, 500)
@@ -390,8 +580,13 @@ def _with_post_optimized(row, records, promoted_at, promoted_moment):
     return row
 
 
-def _build(key, rule, records, source, note='', expected_map=None, promoted_moment=None):
-    """records: [(target_period, joint_hit_bool, model_or_None)]。"""
+def _build(key, rule, records, source, note='', expected_map=None, promoted_moment=None,
+           rolling=None, launch=None):
+    """records: [(target_period, joint_hit_bool, model_or_None)]。
+
+    rolling: 该框架「全部已核验且计入」的 [(target_period, hit)]（可跨规则版本，只用于滚动覆盖率），
+    缺省用 records；launch: 判定「上线期」的期号集合（verified + seal 的 target_period），缺省用 records。
+    """
     n = len(records)
     hits = sum(1 for _, joint, _ in records if joint)
     base_expected = _expected(key, rule)
@@ -421,7 +616,7 @@ def _build(key, rule, records, source, note='', expected_map=None, promoted_mome
                     'rate': round(value[1] / value[0], 6) if value[0] else None}
                    for model, value in sorted(models.items(), key=lambda item: -item[1][0])]
     valid = sorted([str(t) for t in targets if t is not None])
-    return {
+    row = {
         'key': key, 'label': LABELS[key], 'rule': rule,
         'items': _items(key, rule), 'window': WINDOWS[key],
         'n': n, 'hits': hits, 'rate': rate, 'ci95': _wilson(hits, n),
@@ -435,6 +630,13 @@ def _build(key, rule, records, source, note='', expected_map=None, promoted_mome
         'need_n_2pp': _need_n(expected) if expected is not None else None,
         'model_split': model_split, 'note': note, 'source': source,
     }
+    rolling_records = ([(target, joint) for target, joint, _ in records]
+                       if rolling is None else list(rolling))
+    launch_periods = ([target for target, _, _ in records]
+                      if launch is None else list(launch))
+    row.update(_rolling_fields(_rolling_points(rolling_records), launch_periods,
+                               _settled_end_index()))
+    return row
 
 
 def _model_of(publication):
@@ -480,9 +682,14 @@ def cum_killer():
     rule = _rule_from_strategy('killer') or 'conditional-transition-v2'
     promoted_at, promoted_moment = _joint_form_boundary()
     expected_map = _joint_expected_map('killer', promoted_moment)
+    launch = [target for target, _, _ in records]
+    seals = doc.get('prediction_seals') if isinstance(doc, dict) else None
+    for seal in (seals or {}).values():
+        if isinstance(seal, dict) and seal.get('target_period'):
+            launch.append(seal.get('target_period'))
     row = _build('killer', rule, records, 'data/r1_stats.json',
                  '账本未标注规则版本；按现行规则 conditional-transition-v2 复核全部记录',
-                 expected_map=expected_map, promoted_moment=promoted_moment)
+                 expected_map=expected_map, promoted_moment=promoted_moment, launch=launch)
     if promoted_moment is not None:
         row = _with_post_optimized(row, records, promoted_at, promoted_moment)
     return row
@@ -502,9 +709,15 @@ def cum_framework():
     rule = _rule_from_strategy('framework') or 'marginal-frequency-v2'
     promoted_at, promoted_moment = _joint_form_boundary()
     expected_map = _joint_expected_map('framework', promoted_moment)
+    launch = [target for target, _, _ in records]
+    seal_doc = _read(DATA / 'r1_framework_seals.json') or {}
+    seals = seal_doc.get('prediction_seals') if isinstance(seal_doc, dict) else None
+    for seal in (seals or {}).values():
+        if isinstance(seal, dict) and seal.get('target_period'):
+            launch.append(seal.get('target_period'))
     row = _build('framework', rule, records, 'data/r1_framework_hit_stats.json',
                  '账本未标注规则版本；按现行规则 marginal-frequency-v2 复核全部记录',
-                 expected_map=expected_map, promoted_moment=promoted_moment)
+                 expected_map=expected_map, promoted_moment=promoted_moment, launch=launch)
     if promoted_moment is not None:
         row = _with_post_optimized(row, records, promoted_at, promoted_moment)
     return row
@@ -515,7 +728,7 @@ def cum_selected_six():
     verified = list((doc.get('verified') or {}).values())
     stats = _read(DATA / 'selected_six_stats.json') or {}
     rule = stats.get('rule_revision') or 'selected-six-independent-v4-minimax-forms'
-    records, history = [], {}
+    records, history, rolling = [], {}, []
     for row in verified:
         publication = row.get('publication') or {}
         revision = publication.get('revision') or '(未标注)'
@@ -524,13 +737,15 @@ def cum_selected_six():
             continue
         joint = all(bool(v) for v in outcome.values())
         model = _model_of(publication)
+        rolling.append((row.get('target_period'), joint))
         if revision == rule:
             records.append((row.get('target_period'), joint, model))
         else:
             bucket = history.setdefault(revision, [0, 0])
             bucket[0] += 1
             bucket[1] += 1 if joint else 0
-    row = _build('selected_six', rule, records, 'data/selected_six_hit_stats.json')
+    row = _build('selected_six', rule, records, 'data/selected_six_hit_stats.json',
+                 rolling=rolling, launch=[target for target, _ in rolling])
     row['history'] = [{'revision': revision, 'n': value[0], 'hits': value[1],
                        'rate': round(value[1] / value[0], 6) if value[0] else None}
                       for revision, value in sorted(history.items())]
@@ -542,7 +757,7 @@ def cum_he3():
     verified = list((doc.get('verified') or {}).values())
     status = _read(DATA / 'he3_refine_status.json') or {}
     rule = status.get('revision') or 'he3-refine-v2-balanced'
-    records, history = [], {}
+    records, history, rolling = [], {}, []
     for row in verified:
         publication = row.get('publication') or {}
         revision = publication.get('revision') or '(未标注)'
@@ -550,13 +765,15 @@ def cum_he3():
         if not isinstance(hit, bool):
             continue
         model = _model_of(publication)
+        rolling.append((row.get('target_period'), hit))
         if revision == rule:
             records.append((row.get('target_period'), hit, model))
         else:
             bucket = history.setdefault(revision, [0, 0])
             bucket[0] += 1
             bucket[1] += 1 if hit else 0
-    row = _build('he3_refine', rule, records, 'data/he3_refine_hit_stats.json')
+    row = _build('he3_refine', rule, records, 'data/he3_refine_hit_stats.json',
+                 rolling=rolling, launch=[target for target, _ in rolling])
     row['history'] = [{'revision': revision, 'n': value[0], 'hits': value[1],
                        'rate': round(value[1] / value[0], 6) if value[0] else None}
                       for revision, value in sorted(history.items())]
@@ -594,6 +811,7 @@ def cum_cold(key, prefix):
                    if path.name[len(prefix):].startswith(tuple('0123456789'))
                    and path.name.count('-') == 2)
     records, history, latest_revision, dropped_legacy = [], {}, None, {}
+    rolling, launch = [], []
     for path in files:
         doc = _read(path) or {}
         revision = doc.get('revision')
@@ -601,6 +819,8 @@ def cum_cold(key, prefix):
             latest_revision = revision
         predictions = doc.get('predictions') or {}
         actuals = doc.get('actuals') or {}
+        for target in predictions:
+            launch.append(target)
         for target, pred in predictions.items():
             actual = actuals.get(target)
             if not isinstance(pred, dict) or not isinstance(actual, dict):
@@ -613,6 +833,7 @@ def cum_cold(key, prefix):
                 legacy_key = revision or '(未标注)'
                 dropped_legacy[legacy_key] = dropped_legacy.get(legacy_key, 0) + 1
                 continue
+            rolling.append((target, outcome))
             if revision and revision == latest_revision:
                 records.append((target, outcome, None))
             else:
@@ -620,7 +841,8 @@ def cum_cold(key, prefix):
                 bucket[0] += 1
                 bucket[1] += 1 if outcome else 0
     rule = latest_revision or ''
-    row = _build(key, rule, records, 'data/' + prefix + 'YYYY-MM-DD.json')
+    row = _build(key, rule, records, 'data/' + prefix + 'YYYY-MM-DD.json',
+                 rolling=rolling, launch=launch)
     row['history'] = [{'revision': revision, 'n': value[0], 'hits': value[1],
                        'rate': round(value[1] / value[0], 6) if value[0] else None}
                       for revision, value in sorted(history.items())]
@@ -645,17 +867,27 @@ def cum_kill3():
         rule = seal_records[-1].get('rule_version') or rule
     seal_rule = {str(record.get('ref_period')): record.get('rule_version')
                  for record in seal_records if isinstance(record, dict)}
-    records = []
+    records, rolling, launch = [], [], []
+    for record in seal_records:
+        if isinstance(record, dict) and record.get('target_period'):
+            launch.append(record.get('target_period'))
     for row in settlements.get('records') or []:
-        if not isinstance(row, dict) or not row.get('verified'):
+        if not isinstance(row, dict):
+            continue
+        if row.get('target_period'):
+            launch.append(row.get('target_period'))
+        if not row.get('verified'):
             continue
         if 'counted' not in row:
             continue
+        hit = bool(row.get('group_hit'))
+        rolling.append((row.get('target_period'), hit))
         if (row.get('rule_version') != rule
                 and seal_rule.get(str(row.get('ref_period'))) != rule):
             continue
-        records.append((row.get('target_period'), bool(row.get('group_hit')), None))
-    return _build('kill3_tail', rule, records, 'data/kill3_tail/settlements.json')
+        records.append((row.get('target_period'), hit, None))
+    return _build('kill3_tail', rule, records, 'data/kill3_tail/settlements.json',
+                  rolling=rolling, launch=launch)
 
 
 def cum_kill2():
@@ -667,22 +899,33 @@ def cum_kill2():
         rule = seal_records[-1].get('rule_version') or rule
     seal_rule = {str(record.get('ref_period')): record.get('rule_version')
                  for record in seal_records if isinstance(record, dict)}
-    records = []
+    records, rolling, launch = [], [], []
+    for record in seal_records:
+        if isinstance(record, dict) and record.get('target_period'):
+            launch.append(record.get('target_period'))
     for row in settlements.get('records') or []:
-        if not isinstance(row, dict) or not row.get('verified'):
+        if not isinstance(row, dict):
+            continue
+        if row.get('target_period'):
+            launch.append(row.get('target_period'))
+        if not row.get('verified'):
             continue
         if 'counted' not in row:
             continue
+        hit = bool(row.get('group_hit'))
+        rolling.append((row.get('target_period'), hit))
         if (row.get('rule_version') != rule
                 and seal_rule.get(str(row.get('ref_period'))) != rule):
             continue
-        records.append((row.get('target_period'), bool(row.get('group_hit')), None))
-    return _build('kill2_tail', rule, records, 'data/kill2_tail/settlements.json')
+        records.append((row.get('target_period'), hit, None))
+    return _build('kill2_tail', rule, records, 'data/kill2_tail/settlements.json',
+                  rolling=rolling, launch=launch)
 
 
 def build():
     rows = []
     errors = []
+    _reset_rolling_cache()
     promoted_at, promoted_moment = _joint_form_boundary()
     for name, func in (('killer', cum_killer), ('framework', cum_framework),
                        ('selected_six', cum_selected_six), ('he3_refine', cum_he3),
@@ -723,6 +966,9 @@ def build():
         'min_sample': MIN_SAMPLE,
         'definition': '整组命中 = 一期全部项目同时命中；随机期望按现行规则精确枚举；覆盖率=已核验/计划期数',
         'data_lag_note': DATA_LAG_NOTE,
+        'rolling_definition': ROLLING_DEFINITION,
+        'coverage_note': COVERAGE_NOTE,
+        'rolling_window': _rolling_window_summary(),
         'joint_form_boundary': ({
             'promoted_at': promoted_at,
             'affected': ['killer', 'framework'],
@@ -770,6 +1016,27 @@ def main():
                 base=('%.2f%%' % (row['expected'] * 100)) if row['expected'] is not None else '-',
                 p=row['p'], cov=('%.2f%%' % (row['coverage'] * 100)) if row['coverage'] is not None else '-',
                 verdict=row['verdict']), flush=True)
+        window = report.get('rolling_window') or {}
+        starts = {item.get('label'): item.get('start_period')
+                  for item in window.get('windows') or [] if isinstance(item, dict)}
+        print('rolling window end=%s pending=%s start_24h=%s start_7d=%s'
+              % (window.get('end_period'), window.get('pending_period'),
+                 starts.get('24h'), starts.get('7d')), flush=True)
+        for row in report['rows']:
+            rolling = row.get('rolling') or {}
+            windows = rolling.get('windows') or {}
+            parts = []
+            for label, _ in ROLLING_WINDOWS:
+                item = windows.get(label) or {}
+                coverage = item.get('coverage')
+                plan_rate = item.get('plan_hit_rate')
+                parts.append('%s coverage=%s online=%s plan_hit_rate=%s last_missed=%s'
+                             % (label,
+                                ('%.2f%%' % (coverage * 100)) if isinstance(coverage, (int, float)) else '-',
+                                item.get('online'),
+                                ('%.2f%%' % (plan_rate * 100)) if isinstance(plan_rate, (int, float)) else '-',
+                                item.get('last_missed_period')))
+            print('rolling {key} | {parts}'.format(key=row['key'], parts=' | '.join(parts)), flush=True)
         if report['errors']:
             print('errors: ' + ' | '.join(report['errors']), flush=True)
         print('framework_hitrate_cumulative written: %s rows=%d as_of=%s' % (OUT, len(report['rows']), report['as_of_period']), flush=True)
