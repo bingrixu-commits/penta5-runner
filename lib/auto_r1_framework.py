@@ -56,6 +56,8 @@ STATE_PATH = "/root/penta5-runner/data/state.json"
 PANEL_PATH = "/root/penta5-runner/panel.html"
 SEALS_PATH = "/root/penta5-runner/data/r1_framework_seals.json"
 
+from framework_tail_hold import apply_framework_tail_hold
+
 # 1. 提取历史真实开奖数据
 if not os.path.exists(STATE_PATH):
     print(f"❌ 找不到数据文件: {STATE_PATH}")
@@ -246,6 +248,15 @@ try:
 except Exception as _joint_form_error:
     print('JOINT_FORM_OPTIMIZER_SKIPPED kind=framework reason=%s' % type(_joint_form_error).__name__)
 
+tail_hold = None
+try:
+    tail_hold = apply_framework_tail_hold(r, seals, period, latest_numbers)
+    if tail_hold is not None:
+        print('TAIL_HOLD3 kind=framework ref=%s reused=%s note=%s' % (
+            period, tail_hold.get('reused_previous'), tail_hold.get('note')))
+except Exception as _tail_hold_error:
+    print('TAIL_HOLD3_SKIPPED kind=framework reason=%s' % type(_tail_hold_error).__name__)
+
 # 兜底默认值
 def get_keep_digits(kill_list):
     all_d = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
@@ -277,6 +288,11 @@ s_pk = "".join(str(x) for x in pk.get("s", []))
 g_pk = "".join(str(x) for x in pk.get("g", []))
 
 joint_form_note = (' ｜ 形态：本地精确联合优化（AI 定位杀/合尾杀/保留集不变）' if joint_form_applied else '')
+tail_note = ''
+if tail_hold is not None:
+    tail_note = (' ｜ 合尾稳定化：沿用上期（第%s期）' % tail_hold['previous_streak']
+                 if tail_hold.get('reused_previous')
+                 else ' ｜ 合尾稳定化：本期换码')
 
 # 组装标准攻击语
 attack_str = f"千{q_keep}百{b_keep}十{s_keep}个{g_keep}四定千百十合{he_q3_keep}百十个合{he_h3_keep}除{p_ds}除{p_dx}二数合{he2_keep}三数合{he3_keep}各"
@@ -294,7 +310,7 @@ framework_card = f"""<!-- R1_FRAMEWORK_START -->
     <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 12px;">
         <div>
             <span style="font-size: 16px; font-weight: bold; color: #0f172a;">🎯 DeepSeek 杀码框架 (参考期号: {period})</span>
-            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">2个定位排除 + 2个合尾排除 + 2个形态排除 + 二数合保留4码 + 三数合保留6码；开奖前封存{joint_form_note}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">2个定位排除 + 2个合尾排除 + 2个形态排除 + 二数合保留4码 + 三数合保留6码；开奖前封存{joint_form_note}{tail_note}</div>
         </div>
         <span style="font-size: 12px; color: #888;">AI 计算时间: {calc_time}（北京时间）</span>
     </div>
@@ -358,6 +374,9 @@ framework_metadata = accepted_framework_response_metadata(period)
 if joint_form_applied and isinstance(framework_metadata, dict):
     framework_metadata = {key: value for key, value in framework_metadata.items() if key != 'strategy_validation'}
     framework_metadata['joint_form_optimized'] = True
+if tail_hold is not None and isinstance(framework_metadata, dict):
+    framework_metadata = dict(framework_metadata)
+    framework_metadata['tail_hold3'] = tail_hold
 prepared_seal = store_prepared(seals, SEALS_PATH, publication_snapshot,
                {'ref_period': period, 'response': r, 'model_context_audit': model_context_audit,
                 'model_metadata': framework_metadata}, framework_card,

@@ -65,22 +65,7 @@ def _collect():
             killer.append((str(target), [int(x) for x in nums[:4]], sorted(items)))
     if killer:
         result['killer九项'] = killer
-    framework = []
-    doc = _read(DATA / 'r1_framework_hit_stats.json', {}) or {}
-    for entry in (doc.get('verified') or {}).values():
-        publication = entry.get('publication') or {}
-        response = publication.get('response') or {}
-        actual = entry.get('actual') or {}
-        nums, target = actual.get('numbers'), entry.get('target_period')
-        items = []
-        for field, key in (('he_q3_kill', 'qbs'), ('he_h3_kill', 'bsg')):
-            kill = response.get(field)
-            if kill is not None:
-                items.append((key, int(kill)))
-        if isinstance(nums, list) and len(nums) >= 4 and target and items:
-            framework.append((str(target), [int(x) for x in nums[:4]], sorted(items)))
-    if framework:
-        result['固定八码'] = framework
+    # 固定八码 已于 2026-10-31 22:00 启用 pair-hold3 稳定化，不再列入影子对照。
     six = []
     doc = _read(DATA / 'selected_six_hit_stats.json', {}) or {}
     for entry in (doc.get('verified') or {}).values():
@@ -249,8 +234,8 @@ def render_block(data):
         '<th>现行换码</th><th>稳定化换码</th><th>上线后前瞻 n（现行→稳定化）</th></tr></thead><tbody>'
         + ''.join(rows) + '</tbody></table>'
         '<div class="ts-foot">单尾杀1码随机基线90%。稳定化不会提高命中率（数学上限），只降低换码频率。'
-        'AI 三位置已于 2026-10-31 21:10 转正 v8（hold3-until-miss），不再列入本影子；'
-        '其余框架待逐项转正，旧封存保留。</div>'
+        'AI 三位置（2026-10-31 21:10，v8）与固定八码（22:00，pair-hold3）已转正，'
+        '不再列入本影子；七项独立 v7、冷码七项待转正，旧封存保留。</div>'
         '</section>\n' + END)
 
 

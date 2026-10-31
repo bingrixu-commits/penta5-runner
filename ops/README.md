@@ -308,3 +308,19 @@
   3) 监控：ops_health 新增 kill3_stability 探针：24h rule_version 切换次数（≥2 仅 WARN，提示口径churn）、24h 缺期槽数（历史缺期/AI 总闸关闭所致 → WARN）、最近 6 个应封存槽位缺期（≥2 → FAIL，可操作）、最近 20 期发布延迟中位数（>180s WARN、>300s FAIL）。实测 version_changes=8 missing_slots=61 recent_missing=0 p50_latency=40s。提交 dfb5184。
   4) manifest：复核确认此前「每小时 fail」不是误报——是每次源码变更后未刷新基线的预期 drift；新增版本化 .githooks/post-commit（core.hooksPath=.githooks），lib|scripts|ops 变更的 commit 提交后自动 refresh_source_manifest --if-drift；实测提交 dfb5184 后自动写 auto-baseline-20261031-215029，21:50:32 manifest_drift 恢复 OK。
   验证：HEAD dfb5184、git status 干净；ops_health overall=warn，只剩 kill3_stability（口径churn 历史提示）与 model_usage（今日 402 历史 8 次）两项已解释 warn，无 fail；kill3 最新封存 ref 20261031261 正常发布、面板 data-as-of 同步；余额已充值至 21.96 元、余额守护自动恢复（warn→ok）。回滚：git revert dfb5184 99e3f1b，并 git config --unset core.hooksPath（如需移除自动基线 hook）；已封存记录一律不动。
+
+- **2026-10-31 22:00 固定八码框架启用合尾 pair-hold3 稳定化（本地确定性后处理，不升 revision）**：
+  延续影子复核与 kill3 结论，对固定八码框架（marginal-frequency-v2）的两项合尾杀码做本地
+  确定性后处理：上期两项合尾均命中且自动沿用未满 3 期时沿用上期两项尾码；失手/满 3 期改由
+  模型本期重选。新增 lib/framework_tail_hold.py（纯函数、只读），lib/auto_r1_framework.py 在
+  请求校验后、卡片/封存前调用，封存 model_metadata.tail_hold3 留档（policy/hold_max/
+  previous_ref_period/previous_tails/previous_hits/previous_streak/model_tails/reused_previous/note），
+  攻击语与卡片使用最终封存尾码；命中口径与随机基线不变（两项仍各为杀 1 码 90%，整组 8 项
+  精确基线不受影响）；旧封存无 tail_hold3 字段仍可原样回放。面板统计说明补「合尾两项启用
+  稳定化」提示。
+  历史回放（r1_framework_hit_stats 2235 期真实封存 + 开奖，逐期确定性重放）：两项合计命中率
+  90.20%→90.76%（+0.56pp，n=4470，噪声内），尾码对换码次数 1197→637（-47%），沿用占 43.6% 期。
+  首期实盘：ref 20261031264→target 20261031265，tail_hold3 写入（上期 qbs 命中/bsg 未命中 →
+  本期换码；模型本次仍选同码），面板卡片显示「合尾稳定化：本期换码」，framework 任务 success。
+  备份：/root/ops/tail-hold3-framework-215629/（3 个 .py + golden-framework.json）。
+  回滚：git revert <hash>；无需回滚数据（封存仅多 metadata 字段）。
