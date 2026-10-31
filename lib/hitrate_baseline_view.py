@@ -385,3 +385,43 @@ def apply_hitrate_baseline_block(content, report=None):
         return content + fragment
     except Exception:
         return content
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-01 主面板入口：大表已移到独立统计页 /hitrate（用户要求隐藏大表）
+# 面板只保留一行入口；保留 HITRATE_BASE_START/END 标记，
+# 供 lib/tail_stability_shadow.py 的 HITRATE_BASE_END 锚点继续使用。
+ENTRY_TEXT = '整组命中率 vs 随机期望（累计·版本锁定）已移到独立统计页'
+
+
+def render_entry():
+    return (
+        f'{START}<section id="hitrate-base-entry" data-hitrate-entry="1" '
+        f'style="box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;'
+        f'padding:9px 14px;border:1px dashed #a5b4fc;border-radius:12px;background:#f8faff;'
+        f'color:#334155;font:13px/1.55 sans-serif">'
+        f'<b>🗂 {ENTRY_TEXT}</b>：'
+        f'<a href="/hitrate" target="_blank" rel="noopener" style="color:#1d4ed8;font-weight:700">'
+        f'→ 打开命中率统计页</a>'
+        f'<span style="color:#64748b"> · 主面板不再内嵌大表（各框架「整组命中率 vs 随机期望」集中在该页）</span>'
+        f'</section>{END}'
+    )
+
+
+def apply_hitrate_entry_block(content):
+    """把面板里的「整组命中率」大表替换为一行入口链接；任何异常原样返回。"""
+    try:
+        if not isinstance(content, str) or not content:
+            return content
+        start = content.find(START)
+        end = content.find(END)
+        if start != -1 and end != -1 and end > start:
+            return content[:start] + render_entry() + content[end + len(END):]
+        anchor = '<!-- REAL_HIT_END -->'
+        position = content.find(anchor)
+        if position != -1:
+            position += len(anchor)
+            return content[:position] + render_entry() + content[position:]
+        return content
+    except Exception:
+        return content

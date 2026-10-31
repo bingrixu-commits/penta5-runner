@@ -16919,6 +16919,19 @@ function sendAccuracyHtml(req, res) {
   }
 }
 
+function isHitratePath(pathname) {
+  return pathname === "/hitrate" || pathname === "/hitrate.html";
+}
+
+function sendHitrateHtml(req, res) {
+  try {
+    const html = fs.readFileSync(path.join(__dirname, "hitrate.html"), "utf8");
+    sendTextForRequest(req, res, 200, html, "text/html; charset=utf-8");
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: String(error && error.message ? error.message : error) });
+  }
+}
+
 function isViewerAllowedRequest(method, pathname) {
   if (method === "POST" && pathname === "/backdelete-generate") return true;
   if (method !== "GET") return false;
@@ -16937,6 +16950,7 @@ function isViewerAllowedRequest(method, pathname) {
     || pathname === "/panel"
     || isAttackTxtPublicPath(pathname)
     || isAccuracyPath(pathname)
+    || isHitratePath(pathname)
     || pathname === "/converter-history"
     || pathname === "/four-backdelete-opened"
     || pathname === "/backdelete-state"
@@ -17046,7 +17060,7 @@ async function handleClaudeProxyRequest(req, res, pathname) {
 
 function safeLoginNextPath(raw) {
   const text = String(raw || "").trim();
-  if (text === "/attack-txt" || text === "/gongjiyu" || text === "/panel" || isAccuracyPath(text)) return text;
+  if (text === "/attack-txt" || text === "/gongjiyu" || text === "/panel" || isAccuracyPath(text) || isHitratePath(text)) return text;
   return "/panel";
 }
 
@@ -17319,6 +17333,10 @@ async function handleRequest(req, res) {
     }
     if (req.method === "GET" && isAccuracyPath(pathname)) {
       sendPasswordLoginHtml(req, res, "", "/accuracy");
+      return;
+    }
+    if (req.method === "GET" && isHitratePath(pathname)) {
+      sendPasswordLoginHtml(req, res, "", "/hitrate");
       return;
     }
     sendUnauthorized(res);
@@ -17610,11 +17628,15 @@ async function handleRequest(req, res) {
       sendAccuracyHtml(req, res);
       return;
     }
+    if (req.method === "GET" && isHitratePath(pathname)) {
+      sendHitrateHtml(req, res);
+      return;
+    }
     if (req.method === "GET" && isAttackTxtPublicPath(pathname)) {
       sendAttackTxtAsset(req, res, pathname);
       return;
     }
-    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /robot-state", "GET /history", "GET /converter-history", "GET /four-backdelete-opened", "GET /backdelete-state", "POST /backdelete-generate", "GET /stable-math-filter", "GET /adaptive-exclusion", "GET /exclusion-model", "GET /attack-txt", "GET /accuracy", "POST /sync", "POST /force-regenerate-tip", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "POST /backup"] });
+    sendJson(res, 404, { ok: false, error: "Not Found", endpoints: ["GET /health", "GET /state", "GET /robot-state", "GET /history", "GET /converter-history", "GET /four-backdelete-opened", "GET /backdelete-state", "POST /backdelete-generate", "GET /stable-math-filter", "GET /adaptive-exclusion", "GET /exclusion-model", "GET /attack-txt", "GET /accuracy", "GET /hitrate", "POST /sync", "POST /force-regenerate-tip", "POST /daily-streak-ledger", "POST /backfill-kill-framework", "POST /backup"] });
   } catch (err) {
     sendJson(res, 500, { ok: false, error: err.message || String(err) });
   }

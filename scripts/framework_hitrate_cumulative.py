@@ -992,6 +992,17 @@ def main():
         if report['errors']:
             print('errors: ' + ' | '.join(report['errors']), flush=True)
         print('framework_hitrate_cumulative written: %s rows=%d as_of=%s' % (OUT, len(report['rows']), report['as_of_period']), flush=True)
+        # 2026-11-01：主面板隐藏「整组命中率 vs 随机期望」大表后，
+        # 由本脚本每 15 分钟把独立统计页 /hitrate 重写一次（页面异常不影响 JSON 产物）。
+        try:
+            import sys as _sys
+            if str(ROOT) not in _sys.path:
+                _sys.path.insert(0, str(ROOT))
+            import hitrate_page_view
+            page_path = hitrate_page_view.write_page()
+            print('hitrate page written: %s' % page_path, flush=True)
+        except Exception as page_error:
+            print('hitrate page write deferred: %s: %s' % (type(page_error).__name__, page_error), flush=True)
         return 0
     except Exception as error:
         print('framework_hitrate_cumulative failed: %s: %s' % (type(error).__name__, error), flush=True)
