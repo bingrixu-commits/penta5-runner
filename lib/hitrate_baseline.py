@@ -38,6 +38,7 @@ RULE_BASELINE = {
     ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
     ('kill3_tail', 'kill3-tail-v4'): (5, 0.6191),
     ('kill3_tail', 'kill3-tail-v5-panel-context'): (5, 0.6191),
+    ('kill3_tail', 'kill3-tail-v6-three-positions'): (6, 0.5478),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -228,6 +229,8 @@ def _kill3_rows():
     rule = records[-1].get('rule_version')
     if not rule:
         return []
+    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
+                 for record in records if isinstance(record, dict)}
     now = datetime.now(TZ)
     business_day = _business_start(now)
     hits = 0
@@ -236,6 +239,9 @@ def _kill3_rows():
         if not isinstance(record, dict) or not record.get('verified'):
             continue
         if 'counted' not in record:
+            continue
+        if (record.get('rule_version') != rule
+                and seal_rule.get(str(record.get('ref_period'))) != rule):
             continue
         day = _period_business_day(record.get('target_period'))
         if day != business_day:

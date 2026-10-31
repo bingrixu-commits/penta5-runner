@@ -189,6 +189,7 @@ def _kill3_self(reference, kill3_stats, kill3_previous):
         stats = _pick(kill3_stats, ('total', 'group_hits', 'group_rate',
                                     'positions', 'tail', 'patterns',
                                     'current_win_streak', 'current_loss_streak',
+                                    'max_loss_streak', 'four_loss_cycles',
                                     'pending', 'latest_period'))
     if previous is None and stats is None:
         return None

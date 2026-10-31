@@ -38,6 +38,7 @@ RULE_BASELINE = {
     ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
     ('kill3_tail', 'kill3-tail-v4'): (5, 0.6191),
     ('kill3_tail', 'kill3-tail-v5-panel-context'): (5, 0.6191),
+    ('kill3_tail', 'kill3-tail-v6-three-positions'): (6, 0.5478),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -338,11 +339,16 @@ def cum_kill3():
     rule = 'kill3-tail-v4'
     if seal_records and isinstance(seal_records[-1], dict):
         rule = seal_records[-1].get('rule_version') or rule
+    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
+                 for record in seal_records if isinstance(record, dict)}
     records = []
     for row in settlements.get('records') or []:
         if not isinstance(row, dict) or not row.get('verified'):
             continue
         if 'counted' not in row:
+            continue
+        if (row.get('rule_version') != rule
+                and seal_rule.get(str(row.get('ref_period'))) != rule):
             continue
         records.append((row.get('target_period'), bool(row.get('group_hit')), None))
     return _build('kill3_tail', rule, records, 'data/kill3_tail/settlements.json')

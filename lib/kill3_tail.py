@@ -3,8 +3,7 @@
 口径（面板、封存与统计都按此写死）：
 - 由 DeepSeek 从 千/百/十/个 四个位置中选 3 个位置，每个位置排除 1 个数字（杀码），
   剩余的 1 个位置为「放弃」；
-- 3 个被杀位置中恰好 2 个计入整组与攻击语（counted），第 3 个用 display_only 标明，
-  只展示、不计入整组；
+- 3 个被杀位置全部计入整组与攻击语（counted），不再有 display_only 仅展示位；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
 - 另输出两项反向形态（与八项独立框架同口径）：
   四位单双形态 reverse_parity、四位大小形态 reverse_size；
@@ -12,7 +11,7 @@
 - 位置命中 = 该位置实际开奖号 != 杀码；
 - 合尾命中 = 该合尾实际和值个位 != 排除码；
 - 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
-- 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态同时命中（共 5 项）；
+- 整组命中 = 3 个位置 + 1 个合尾 + 2 项反向形态同时命中（共 6 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 同一位置杀码最多连用 3 期（中间放弃该位置不清零）、同一放弃位置最多连用 3 期，
   满后下一期必须更换；
@@ -68,17 +67,17 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill3-tail-v5-panel-context'
+RULE_VERSION = 'kill3-tail-v6-three-positions'
 MAX_CONSECUTIVE_PERIODS = 3
-COUNTED_POSITIONS = 2
+COUNTED_POSITIONS = 3
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
     'positions 恰好 3 个键，键名只能从 q/b/s/g 中选择；每个值为 0 至 9 的整数；'
-    'display_only 必须是 positions 的 3 个键之一（该位置只展示、不计入整组）；'
+    '3 个位置全部计入整组；'
     'tail 为 {{"key": 五种之一, "kill": 0 至 9 的整数}}；'
     'reverse_parity 为四个单/双字符，reverse_size 为四个大/小字符，'
-    '3 个被杀位置（含 display_only 仅展示位置）都必须取杀码形态的反面'
+    '3 个被杀位置都必须取杀码形态的反面'
     '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
     '放弃位置的字符自选；合尾不得与上一期相同（若因合尾限制被拒，请改选其余四种之一）；'
     '被限制的位置不得继续使用该位置连用满3期的杀码，被限制的放弃位置必须换；'
@@ -286,11 +285,7 @@ def normalize_response(response):
     dropped = [key for key, _label, _index in POSITIONS if key not in kills]
     if len(dropped) != 1:
         raise ValueError('必须恰好放弃 1 个位置')
-    display_only = _position_key(response.get('display_only'))
-    if display_only not in kills:
-        raise ValueError('display_only 必须是所选 3 个位置之一')
-    counted = [key for key, _label, _index in POSITIONS
-               if key in kills and key != display_only]
+    counted = [key for key, _label, _index in POSITIONS if key in kills]
     if len(counted) != COUNTED_POSITIONS:
         raise ValueError(f'必须恰好 {COUNTED_POSITIONS} 个位置计入整组')
     tail = response.get('tail')
@@ -322,7 +317,6 @@ def normalize_response(response):
             raise ValueError(f'大小反向形态在{position_key}位置必须取杀码形态的反面')
     return {
         'positions': kills,
-        'display_only': display_only,
         'counted': counted,
         'dropped': dropped[0],
         'tail': {'key': tail_key, 'label': TAILS[tail_key]['label'], 'kill': str(number)},
@@ -422,27 +416,24 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         '【位置与弃位使用限制】\n' + position_limit_text + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；'
-        '其中恰好 2 个位置计入整组（攻击语只按这 2 个位置排除），'
-        '第 3 个位置用 display_only 标明，只展示、不计入整组与攻击语；\n'
+        '3 个位置全部计入整组与攻击语；\n'
         '2. 从上述 5 种合尾中挑 1 种（本期不得与上一期相同），排除 1 个和尾数字（0-9）；\n'
         '3. 给出两项四位反向排除形态：reverse_parity 为按千百十个顺序的四位单双形态，'
-        'reverse_size 为四位大小形态；被杀的 3 个位置（含 display_only 仅展示位置）'
+        'reverse_size 为四位大小形态；被杀的 3 个位置'
         '都必须取杀码形态的反面'
         '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），放弃位置的字符自选；\n'
-        '4. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码（只算 2 个计入位置）；'
+        '4. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码（3 个位置全部计入）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
         '反向形态 = 目标期实际四位形态不等于这两个封存形态（反向排除项）；'
-        '以上 5 项（2 个计入位置 + 1 个合尾 + 2 项形态）同时命中才算整组命中；\n'
+        '以上 6 项（3 个位置 + 1 个合尾 + 2 项形态）同时命中才算整组命中；\n'
         '5. 冷热、遗漏、重码只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄或为避开同号强行换码，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"positions":{"q":<0-9整数>,"b":<0-9整数>,"s":<0-9整数>},'
-        '"display_only":"q|b|s|g",'
         '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
         '"reverse_parity":"<四个单/双字符>","reverse_size":"<四个大/小字符>",'
         '"reason":"40字以内"}\n'
         '注意：positions 必须恰好 3 个键（从 q/b/s/g 中选），键名与数字都必须合法；'
-        'display_only 必须是 positions 的 3 个键之一；'
         '两个形态字符串都必须是 4 个字符。'
     )
     if panel_section:
@@ -450,7 +441,7 @@ def build_prompt(reference, target, rows, *, blocked_tail_key=None, previous_tai
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill3-tail-prompt-v5-panel-context',
+        'version': 'kill3-tail-prompt-v6-three-positions',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -871,6 +862,7 @@ def settle_pending(snapshot=None, now=None):
                     and drawn is not None and published < drawn)
         settlement = {
             'version': 1,
+            'rule_version': seal.get('rule_version'),
             'ref_period': str(seal.get('ref_period') or ''),
             'target_period': target,
             'published_at': seal.get('published_at'),
@@ -911,8 +903,14 @@ def today_stats(now=None):
     verified = [item for item in settlements
                 if item.get('verified') is True
                 and _business_key(item.get('settled_at')) == start]
-    todays = [item for item in verified if item.get('display_only')]
-    legacy = [item for item in verified if not item.get('display_only')]
+    seal_rule = {str(seal.get('ref_period')): seal.get('rule_version')
+                 for seal in seals if isinstance(seal, dict)}
+
+    def _rule_version(item):
+        return item.get('rule_version') or seal_rule.get(str(item.get('ref_period')))
+
+    todays = [item for item in verified if _rule_version(item) == RULE_VERSION]
+    legacy = [item for item in verified if _rule_version(item) != RULE_VERSION]
     total = len(todays)
     group_hits = sum(1 for item in todays if item.get('group_hit') is True)
     position_bets = position_hits = 0
@@ -934,7 +932,7 @@ def today_stats(now=None):
                    if (item.get('patterns') or {}).get(field, {}).get('hit') is True)
         pattern_stats[field] = {'hits': hits, 'bets': total,
                                 'rate': (hits / total) if total else None}
-    win = loss = 0
+    win = loss = max_loss = four_loss = 0
     for item in sorted(todays, key=lambda row: str(row.get('target_period'))):
         if item.get('group_hit') is True:
             win += 1
@@ -942,6 +940,9 @@ def today_stats(now=None):
         else:
             loss += 1
             win = 0
+            max_loss = max(max_loss, loss)
+            if loss % 4 == 0:
+                four_loss += 1
     latest = latest_period()
     settled_targets = {str(item.get('target_period')) for item in settlements}
     pending = 0
@@ -966,6 +967,8 @@ def today_stats(now=None):
         'patterns': pattern_stats,
         'current_win_streak': win,
         'current_loss_streak': loss,
+        'max_loss_streak': max_loss,
+        'four_loss_cycles': four_loss,
         'pending': pending,
         'late': late,
         'legacy': {'total': len(legacy),
