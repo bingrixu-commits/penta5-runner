@@ -133,6 +133,200 @@ def _items(key, rule):
     item = RULE_BASELINE.get((key, rule))
     return item[0] if item else None
 
+SERIES = {}
+DRIFT_WINDOWS = (100, 200, 300, 500)
+DRIFT_MIN_SAMPLE = 100
+DRIFT_CUSUM_N = 500
+JOINT_SHADOW_PATH = DATA / 'joint_form_shadow.json'
+_JOINT_EXPECTED_CACHE = {}
+
+
+def _write_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n'
+    handle = tempfile.NamedTemporaryFile('w', dir=str(path.parent), delete=False,
+                                         encoding='utf-8', prefix='.' + path.name + '.')
+    temporary = handle.name
+    try:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    finally:
+        handle.close()
+    os.replace(temporary, path)
+    return path
+
+
+def _p_two_expected(hits, p0s):
+    """按逐期随机期望混算的二项正态近似检验（分界前后基线不同的记录可合在一起算）。"""
+    if not p0s:
+        return None
+    total = sum(p0s)
+    variance = sum(p0 * (1 - p0) for p0 in p0s)
+    if variance <= 0:
+        return None
+    z = (hits - total) / math.sqrt(variance)
+    return round(math.erfc(abs(z) / math.sqrt(2)), 6)
+
+
+def _joint_expected(promoted_moment):
+    """killer/framework 逐目标期精确随机期望。
+
+    分界前封存的是 AI 形态 -> expected_ai；分界后封存的是联合优化形态 -> expected_opt。
+    两列都来自 data/joint_form_shadow.json（scripts/run_joint_form_shadow.py 每期用 10^4
+    开奖组合精确枚举写入），因此「累计行 expected」可按记录逐期加权，而不是用单一旧基线。
+    """
+    cache_key = promoted_moment.isoformat() if promoted_moment is not None else '(none)'
+    cached = _JOINT_EXPECTED_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    document = _read(JOINT_SHADOW_PATH) or {}
+    models = document.get('models') or {}
+    mapping, summary = {}, {}
+    for name in ('killer', 'framework'):
+        model = models.get(name) or {}
+        records = model.get('records') if isinstance(model, dict) else None
+        if not isinstance(records, dict):
+            records = {}
+        per_target = {}
+        for target, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            value = None
+            if promoted_moment is not None:
+                slot = _period_slot(target)
+                value = record.get('expected_opt') if (slot is not None and slot > promoted_moment) else record.get('expected_ai')
+            else:
+                value = record.get('expected_ai')
+            if not isinstance(value, (int, float)) or not (0.0 < float(value) < 1.0):
+                fallback = record.get('expected_opt')
+                value = fallback if (isinstance(fallback, (int, float))
+                                     and 0.0 < float(fallback) < 1.0) else None
+            if value is not None:
+                per_target[str(target)] = float(value)
+        mapping[name] = per_target
+        shadow = model.get('summary') or {}
+        summary[name] = {'before': shadow.get('expected_ai_avg'),
+                         'after': shadow.get('expected_opt_avg'),
+                         'n': shadow.get('n')}
+    _JOINT_EXPECTED_CACHE[cache_key] = (mapping, summary)
+    return mapping, summary
+
+
+def _joint_expected_map(name, promoted_moment):
+    if promoted_moment is None:
+        return None
+    return _joint_expected(promoted_moment)[0].get(name)
+
+
+def _expected_split(records, p0s, promoted_moment):
+    before, after = [], []
+    for (target, _, _), p0 in zip(records, p0s):
+        if p0 is None:
+            continue
+        slot = _period_slot(target)
+        (after if (slot is not None and slot > promoted_moment) else before).append(p0)
+    def _mean(values):
+        return round(sum(values) / len(values), 6) if values else None
+    return {'before': _mean(before), 'n_before': len(before),
+            'after': _mean(after), 'n_after': len(after)}
+
+
+def _window_row(series, size):
+    rows = series[-size:]
+    n = len(rows)
+    hits = sum(1 for _, joint, _, _ in rows if joint)
+    p0s = [p0 for _, _, _, p0 in rows if p0 is not None]
+    expected = round(sum(p0s) / len(p0s), 6) if p0s else None
+    z = p = None
+    if p0s:
+        variance = sum(p0 * (1 - p0) for p0 in p0s)
+        if variance > 0:
+            z = round((hits - sum(p0s)) / math.sqrt(variance), 3)
+            p = round(math.erfc(abs(z) / math.sqrt(2)), 6)
+    return {'window': size, 'n': n, 'full': n >= size, 'hits': hits,
+            'rate': round(hits / n, 6) if n else None,
+            'expected': expected, 'z': z, 'p_two': p, 'ci95': _wilson(hits, n)}
+
+
+def _cusum_stat(series, limit=DRIFT_CUSUM_N):
+    rows = series[-limit:]
+    c = 0.0
+    peak = 0.0
+    peak_side = 'none'
+    variance = 0.0
+    counted = 0
+    for _, joint, _, p0 in rows:
+        if p0 is None:
+            continue
+        counted += 1
+        variance += p0 * (1 - p0)
+        c += (1.0 if joint else 0.0) - p0
+        if abs(c) > abs(peak):
+            peak = c
+            peak_side = 'down' if c < 0 else 'up'
+    if variance <= 0:
+        return {'n': counted, 'z': None, 'z_peak': None, 'side': peak_side}
+    return {'n': counted, 'z': round(c / math.sqrt(variance), 3),
+            'z_peak': round(peak / math.sqrt(variance), 3), 'side': peak_side}
+
+
+def _drift_verdict(windows, cusum):
+    """滚动窗口 + CUSUM 只查「命中率向下漂移」；多窗口多重比较下 |z|~2 属正常。"""
+    window200 = windows.get(200) or {}
+    window300 = windows.get(300) or {}
+    z200 = window200.get('z') if window200.get('full') else None
+    z300 = window300.get('z') if window300.get('full') else None
+    peak = cusum.get('z_peak')
+    if z200 is None and z300 is None and peak is None:
+        return 'insufficient', '样本不足(滚动窗口无有效样本)'
+    if ((z200 is not None and z200 <= -3.0) or (z300 is not None and z300 <= -3.0)
+            or (peak is not None and peak <= -4.0)):
+        return 'fail', '显著下漂(单窗 z<=-3 或 CUSUM 峰<=-4sigma)'
+    if ((z200 is not None and z200 <= -2.0 and z300 is not None and z300 <= -2.0)
+            or (peak is not None and peak <= -3.0)):
+        return 'warn', '向下漂移预警(近200/300期同向 z<=-2 或 CUSUM 峰<=-3sigma)'
+    if z300 is not None and z300 >= 3.0:
+        return 'high', '显著高于随机期望(仅参考)'
+    return 'ok', '与自身随机期望无法区分'
+
+
+def _drift_row(row):
+    key = row.get('key')
+    series = SERIES.get(key) or []
+    windows = {size: _window_row(series, size) for size in DRIFT_WINDOWS}
+    cusum = _cusum_stat(series)
+    if len(series) < DRIFT_MIN_SAMPLE:
+        status, verdict = 'insufficient', '样本不足(n<%d)' % DRIFT_MIN_SAMPLE
+    else:
+        status, verdict = _drift_verdict(windows, cusum)
+        if status == 'ok' and len(series) < 200:
+            verdict += '(n<200,仅参考)'
+    return {'key': key, 'label': row.get('label'), 'rule': row.get('rule'),
+            'n': len(series), 'windows': windows, 'cusum': cusum,
+            'status': status, 'verdict': verdict}
+
+
+def _drift_report(rows):
+    drift_rows = []
+    for row in rows:
+        try:
+            drift_rows.append(_drift_row(row))
+        except Exception as error:  # never break the cumulative report
+            drift_rows.append({'key': row.get('key'), 'label': row.get('label'),
+                               'status': 'unknown',
+                               'verdict': '计算失败: %s: %s' % (type(error).__name__, error)})
+    return {'version': 1,
+            'generated_at': datetime.now().isoformat(timespec='seconds'),
+            'windows': list(DRIFT_WINDOWS), 'min_sample': DRIFT_MIN_SAMPLE,
+            'cusum_limit': DRIFT_CUSUM_N,
+            'note': ('滚动窗口/CUSUM 只用于发现命中率向下漂移，不作模型优劣结论；'
+                     'killer/framework 的随机期望按逐期精确枚举加权（分界前 AI 形态 / 分界后联合优化形态）。'
+                     '多窗口多重比较下 |z|~2 属正常，预警阈值取 |z|>=2 且两窗同向、显著取 |z|>=3 或 CUSUM 峰>=4sigma。'),
+            'rows': drift_rows}
+
+
 
 def _verdict(n, p):
     if p is None:
@@ -191,14 +385,22 @@ def _with_post_optimized(row, records, promoted_at, promoted_moment):
     return row
 
 
-def _build(key, rule, records, source, note=''):
+def _build(key, rule, records, source, note='', expected_map=None, promoted_moment=None):
     """records: [(target_period, joint_hit_bool, model_or_None)]。"""
     n = len(records)
     hits = sum(1 for _, joint, _ in records if joint)
-    expected = _expected(key, rule)
+    base_expected = _expected(key, rule)
+    p0s = []
+    for target, _, _ in records:
+        value = expected_map.get(str(target)) if expected_map else None
+        p0s.append(value if value is not None else base_expected)
+    resolved = [value for value in p0s if value is not None]
+    expected = round(sum(resolved) / len(resolved), 6) if resolved else None
     rate = round(hits / n, 6) if n else None
     delta = round(rate - expected, 6) if (rate is not None and expected is not None) else None
-    p = _p_two(hits, n, expected)
+    p = _p_two_expected(hits, resolved) if resolved else _p_two(hits, n, base_expected)
+    SERIES[key] = [(str(target), bool(joint), model, p0)
+                   for (target, joint, model), p0 in zip(records, p0s)]
     targets = [target for target, _, _ in records]
     planned = _planned(targets)
     coverage = round(n / planned, 6) if (planned and planned > 0) else None
@@ -219,6 +421,8 @@ def _build(key, rule, records, source, note=''):
         'items': _items(key, rule), 'window': WINDOWS[key],
         'n': n, 'hits': hits, 'rate': rate, 'ci95': _wilson(hits, n),
         'expected': expected, 'delta': delta, 'p': p,
+        'expected_split': _expected_split(records, p0s, promoted_moment) if (expected_map and promoted_moment is not None) else None,
+        'expected_basis': ('per-record-exact' if expected_map else 'rule-constant'),
         'verdict': _verdict(n, p), 'planned': planned, 'coverage': coverage,
         'planned_hit_rate': planned_hit_rate,
         'first_period': valid[0] if valid else None,
@@ -269,9 +473,11 @@ def cum_killer():
         records.append((row.get('target_period'), all(bool(v) for v in outcome.values()),
                         model_by_ref.get(str(row.get('ref_period')))))
     rule = _rule_from_strategy('killer') or 'conditional-transition-v2'
-    row = _build('killer', rule, records, 'data/r1_stats.json',
-                 '账本未标注规则版本；按现行规则 conditional-transition-v2 复核全部记录')
     promoted_at, promoted_moment = _joint_form_boundary()
+    expected_map = _joint_expected_map('killer', promoted_moment)
+    row = _build('killer', rule, records, 'data/r1_stats.json',
+                 '账本未标注规则版本；按现行规则 conditional-transition-v2 复核全部记录',
+                 expected_map=expected_map, promoted_moment=promoted_moment)
     if promoted_moment is not None:
         row = _with_post_optimized(row, records, promoted_at, promoted_moment)
     return row
@@ -289,9 +495,11 @@ def cum_framework():
         model = model_by_ref.get(str(row.get('ref_period'))) or _model_of(row.get('publication'))
         records.append((row.get('target_period'), all(bool(v) for v in outcome.values()), model))
     rule = _rule_from_strategy('framework') or 'marginal-frequency-v2'
-    row = _build('framework', rule, records, 'data/r1_framework_hit_stats.json',
-                 '账本未标注规则版本；按现行规则 marginal-frequency-v2 复核全部记录')
     promoted_at, promoted_moment = _joint_form_boundary()
+    expected_map = _joint_expected_map('framework', promoted_moment)
+    row = _build('framework', rule, records, 'data/r1_framework_hit_stats.json',
+                 '账本未标注规则版本；按现行规则 marginal-frequency-v2 复核全部记录',
+                 expected_map=expected_map, promoted_moment=promoted_moment)
     if promoted_moment is not None:
         row = _with_post_optimized(row, records, promoted_at, promoted_moment)
     return row
@@ -463,6 +671,16 @@ def build():
         if row.get('key') == 'selected_six':
             row['note'] = ((row['note'] + '；' + DATA_LAG_NOTE)
                            if row.get('note') else DATA_LAG_NOTE)
+    drift = _drift_report(rows)
+    joint_baseline = None
+    if promoted_moment is not None:
+        _, joint_summary = _joint_expected(promoted_moment)
+        joint_baseline = {
+            'promoted_at': promoted_at,
+            'source': 'data/joint_form_shadow.json#summary',
+            'basis': '分界前 AI 形态 expected_ai / 分界后联合优化形态 expected_opt，均为逐期 10^4 精确枚举均值',
+            'models': joint_summary,
+        }
     as_of = None
     for row in rows:
         period = row.get('last_period')
@@ -483,6 +701,8 @@ def build():
             'note': JOINT_FORM_BOUNDARY_NOTE,
         } if promoted_moment is not None else None),
         'errors': errors,
+        'drift': drift,
+        'joint_form_baseline': joint_baseline,
         'rows': rows,
     }
 
@@ -503,6 +723,18 @@ def main():
                 os.unlink(temporary)
             except OSError:
                 pass
+        joint_baseline = report.get('joint_form_baseline')
+        if joint_baseline:
+            _write_json(DATA / 'joint_form_baseline.json', joint_baseline)
+        for drift_row in (report.get('drift') or {}).get('rows') or []:
+            windows = drift_row.get('windows') or {}
+            window200 = windows.get(200) or {}
+            window300 = windows.get(300) or {}
+            cusum = drift_row.get('cusum') or {}
+            print('drift {key} status={status} n={n} z200={z200} z300={z300} cusum_peak={peak}'.format(
+                key=drift_row.get('key'), status=drift_row.get('status'),
+                n=drift_row.get('n'), z200=window200.get('z'),
+                z300=window300.get('z'), peak=cusum.get('z_peak')), flush=True)
         for row in report['rows']:
             print('{key} n={n} hits={hits} rate={rate} base={base} p={p} coverage={cov} verdict={verdict}'.format(
                 key=row['key'], n=row['n'], hits=row['hits'],

@@ -92,6 +92,78 @@ def _today_map(baseline):
     return mapping
 
 
+DRIFT_STATUS_LABELS = {
+    'ok': '正常', 'warn': '漂移预警', 'fail': '显著下漂',
+    'insufficient': '样本不足', 'high': '高于基线(参考)', 'unknown': '未知',
+}
+
+
+def _drift_rate_cell(window):
+    if not isinstance(window, dict) or not window.get('n'):
+        return '<span class="hb-foot">-</span>'
+    rate = _pct(window.get('rate'))
+    z = window.get('z')
+    text = ('z=%+.2f' % z) if isinstance(z, (int, float)) else ''
+    if isinstance(z, (int, float)):
+        if z <= -3:
+            cls = 'hb-bad'
+        elif z <= -2:
+            cls = 'hb-warn'
+        elif z >= 2:
+            cls = 'hb-good'
+        else:
+            cls = 'hb-foot'
+    else:
+        cls = 'hb-foot'
+    note = '' if window.get('full', True) else '<span class="hb-sub">(不足)</span>'
+    return '<span class="%s">%s</span><div class="hb-sub">%s %s</div>' % (cls, rate, text, note)
+
+
+def _render_drift(cumulative):
+    drift = cumulative.get('drift') or {}
+    drift_rows = drift.get('rows') or []
+    if not drift_rows:
+        return ''
+    jb = cumulative.get('joint_form_baseline') or {}
+    models = jb.get('models') or {}
+    parts = []
+    for name in ('killer', 'framework'):
+        value = models.get(name)
+        if not isinstance(value, dict):
+            continue
+        parts.append('%s %s → %s（n=%s）' % (name, _pct(value.get('before')),
+                                            _pct(value.get('after')), value.get('n')))
+    baseline_note = ''
+    if parts:
+        baseline_note = ('<div class="hb-note">版本化基线：口径分界前 AI 形态 / 分界后联合优化形态，'
+                         '逐期 10^4 精确枚举均值 —— ' + '；'.join(parts) + '。'
+                         '累计行的随机期望已按记录逐期加权（不是单一旧基线）。</div>')
+    body = []
+    for item in drift_rows:
+        windows = item.get('windows') or {}
+        cells = ''.join('<td>%s</td>' % _drift_rate_cell(windows.get(size) or windows.get(str(size)))
+                        for size in (100, 200, 300, 500))
+        cusum = item.get('cusum') or {}
+        peak = cusum.get('z_peak')
+        peak_text = ('%+.2fσ' % peak) if isinstance(peak, (int, float)) else '-'
+        if cusum.get('side') == 'down' and isinstance(peak, (int, float)):
+            peak_text += ' ↓'
+        status = str(item.get('status') or 'unknown')
+        label = DRIFT_STATUS_LABELS.get(status, status)
+        cls = {'fail': 'hb-bad', 'warn': 'hb-warn', 'high': 'hb-good'}.get(status, 'hb-foot')
+        body.append('<tr><td><b>%s</b><div class="hb-foot">n=%s · %s</div></td>%s'
+                    '<td>%s</td><td class="%s">%s</td></tr>'
+                    % (escape(str(item.get('label') or item.get('key'))), item.get('n'),
+                       escape(str(item.get('verdict') or '')), cells, peak_text, cls, label))
+    return ('<h4 style="font-size:14px;color:#1e3a8a;margin:14px 0 4px">滚动漂移监控（最近 100/200/300/500 期 · CUSUM）</h4>'
+            + baseline_note
+            + '<table><thead><tr><th>框架</th><th>近100</th><th>近200</th><th>近300</th><th>近500</th>'
+              '<th>CUSUM 峰</th><th>状态</th></tr></thead><tbody>' + ''.join(body) + '</tbody></table>'
+            + '<div class="hb-foot">漂移监控口径：z 相对该框架自身的逐期精确随机期望；'
+              '预警 = 近200/300期同向 z≤-2 或 CUSUM峰≤-3σ；显著下漂 = 单窗 z≤-3 或 CUSUM峰≤-4σ；'
+              'n&lt;100 样本不足。多窗口多重比较下 |z|≈2 属正常，本表只作漂移提示，不作模型优劣结论。</div>')
+
+
 def _render_cumulative(cumulative, baseline):
     rows = []
     today = _today_map(baseline)
@@ -154,6 +226,7 @@ def _render_cumulative(cumulative, baseline):
                          % escape(str(boundary.get('promoted_at'))))
     as_of = escape(str(cumulative.get('as_of_period') or (baseline or {}).get('as_of_period') or ''))
     basis = escape(str(cumulative.get('basis') or (baseline or {}).get('basis') or ''))
+    drift_html = _render_drift(cumulative)
     return (
         f'{START}<section id="hitrate-base" data-as-of="{as_of}">'
         f'<style>{STYLE}</style>'
@@ -164,6 +237,7 @@ def _render_cumulative(cumulative, baseline):
         f'<table><thead><tr><th>框架 / 规则</th><th>项数</th><th>累计样本</th>'
         f'<th>累计命中率(95%CI)</th><th>随机期望</th><th>偏差</th><th>p</th><th>判定</th>'
         f'<th>覆盖率</th><th>今日(参考)</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
+        f'{drift_html}'
         f'<div class="hb-note">整组命中率是「一期 N 项全部命中」的联合概率，不是单项准确率；'
         f'7~9 项框架的随机期望本来就只有 41%~62%。累计样本 n&lt;200 时只报数字、不下结论。'
         f'覆盖率 = 当前版本已核验期数 / 首期到末期计划期数；计划期命中率把漏发期按 0 命中计入，'
