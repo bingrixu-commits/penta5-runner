@@ -802,3 +802,17 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   合并基线 = 每期按该期三组号码 10^4 精确枚举（1 - P(至少一组共现)）按期平均。
   实测：上一业务日合并 273/288=94.79% vs 基线 94.06%（+0.73pp 贴合随机）。
   历史文件 data/three_avoid2_history.json 升级为 merged + single 双口径并存。
+
+## 2026-11-01 三数共现参考加入 AI 模型 panel_context（3bc709a）
+
+- `lib/panel_context.py` 新增 `_three_avoid2()`：三组号码（避开1/2/3组当前值 + 最新一期逐组
+  成功/失败与合并结论）+ 本/上一业务日合并核验率与 10^4 精确枚举基线，数据源
+  `data/three_avoid2_daily.json`（面板核验块同源，只读），缺失时值为 null。
+- 生效：kill1/kill2p/kill3 提示词（封存 `panel_context`/`panel_context_sha256`）、six/he3
+  输入文档、killer/framework 归档侧快照。killer/framework 的**模型提示词**是独立策略
+  （`cross_model_advice=disabled`、不混用其它模型口径），按设计不注入三数共现参考。
+- 冻结守卫：`ops/kill3-freeze.json` 更新 `lib/panel_context.py` sha256 并追加 hash_updates
+  记录；A/B：同 fixture 除新增键外逐字节相同、数据缺失=null、kill3 RULE_VERSION 未变。
+- 验证：ref 20261101075 的 kill3/kill1/kill2p/six/he3 封存均含 three_avoid2 段；
+  ops_health kill3_freeze=OK、manifest_drift 已按 --if-drift 重建基线（overall=WARN 仅余
+  coverage/model_usage/data_tmp 业务告警）。
