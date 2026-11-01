@@ -1,4 +1,4 @@
-"""Compact panel-wide context for the AI kill3 / kill1 / kill2p / kill2 / kill4 / kill6 / kill7 decision (read-only, no provider calls).
+"""Compact panel-wide context for the AI kill3 / kill1 / kill2p / kill2 / kill4 / kill5 decision (read-only, no provider calls).
 
 Collects the data the operator sees on the panel — other frameworks' latest
 published decisions, today's hit rates, version-locked cumulative rates,
@@ -253,44 +253,6 @@ def _kill4_self(reference, kill4_stats, kill4_previous):
     return {'previous': previous, 'today': stats, 'reference': reference}
 
 
-def _kill6_self(reference, kill6_stats, kill6_previous):
-    previous = None
-    if isinstance(kill6_previous, dict):
-        previous = _pick(kill6_previous, ('ref_period', 'target_period', 'rule_version',
-                                          'positions', 'unselected', 'tail', 'he2_keep',
-                                          'he3_keep', 'reverse_parity', 'reverse_size',
-                                          'generated_at', 'published_at'))
-    stats = None
-    if isinstance(kill6_stats, dict):
-        stats = _pick(kill6_stats, ('total', 'group_hits', 'group_rate',
-                                    'positions', 'tail', 'he2_keep', 'he3_keep', 'patterns',
-                                    'current_win_streak', 'current_loss_streak',
-                                    'max_loss_streak', 'four_loss_cycles',
-                                    'pending', 'latest_period'))
-    if previous is None and stats is None:
-        return None
-    return {'previous': previous, 'today': stats, 'reference': reference}
-
-
-def _kill7_self(reference, kill7_stats, kill7_previous):
-    previous = None
-    if isinstance(kill7_previous, dict):
-        previous = _pick(kill7_previous, ('ref_period', 'target_period', 'rule_version',
-                                          'positions', 'unselected', 'tail', 'he2_keep',
-                                          'he3_keep', 'reverse_parity', 'reverse_size',
-                                          'generated_at', 'published_at'))
-    stats = None
-    if isinstance(kill7_stats, dict):
-        stats = _pick(kill7_stats, ('total', 'group_hits', 'group_rate',
-                                    'positions', 'tail', 'he2_keep', 'he3_keep', 'patterns',
-                                    'current_win_streak', 'current_loss_streak',
-                                    'max_loss_streak', 'four_loss_cycles',
-                                    'pending', 'latest_period'))
-    if previous is None and stats is None:
-        return None
-    return {'previous': previous, 'today': stats, 'reference': reference}
-
-
 def _kill5_self(reference, kill5_stats, kill5_previous):
     previous = None
     if isinstance(kill5_previous, dict):
@@ -424,8 +386,6 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
           kill2p_previous=None, kill2_stats=None, kill2_previous=None,
           kill4_stats=None, kill4_previous=None,
           kill5_stats=None, kill5_previous=None,
-          kill6_stats=None, kill6_previous=None,
-          kill7_stats=None, kill7_previous=None,
           extra_panel_input=False, now=None):
     moment = now or datetime.now().astimezone()
     snapshot = {
@@ -451,10 +411,6 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
         snapshot['kill4_self'] = _kill4_self(reference, kill4_stats, kill4_previous)
     if kill5_stats is not None or kill5_previous is not None:
         snapshot['kill5_self'] = _kill5_self(reference, kill5_stats, kill5_previous)
-    if kill6_stats is not None or kill6_previous is not None:
-        snapshot['kill6_self'] = _kill6_self(reference, kill6_stats, kill6_previous)
-    if kill7_stats is not None or kill7_previous is not None:
-        snapshot['kill7_self'] = _kill7_self(reference, kill7_stats, kill7_previous)
     models = _strategy_models().get('models') or {}
     for key, label in (('killer', '智能深排 killer'), ('framework', '固定八码框架'),
                        ('six', '七项独立框架')):
@@ -487,7 +443,7 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if len(payload) > limit:
         for key in ('panel_cumulative', 'panel_hitrate_10p', 'kill3_self', 'kill1_self',
-                    'kill2p_self', 'kill2_self', 'kill4_self', 'kill5_self', 'kill6_self', 'kill7_self', 'cold_stats', 'other_ai_self', 'three_avoid2'):
+                    'kill2p_self', 'kill2_self', 'kill4_self', 'kill5_self', 'cold_stats', 'other_ai_self', 'three_avoid2'):
             snapshot.pop(key, None)
             payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
             if len(payload) <= limit:
