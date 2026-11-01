@@ -251,11 +251,7 @@ def _run_html():
         '<div class="k8-run">'
         '<button id="k8-run-btn" type="button">▶ 启动本框架（结算上一期 + 封存下一期）</button>'
         '<span class="k8-run-status" id="k8-run-status" role="status" aria-live="polite"></span>'
-        '<details id="k8-run-admin" hidden><summary>管理员验证（只读登录需填写）</summary>'
-        '<input id="k8-run-user" type="text" autocomplete="username" maxlength="128" placeholder="管理员账号">'
-        '<input id="k8-run-password" type="password" autocomplete="current-password" maxlength="512" placeholder="管理员密码">'
-        '<div style="font-size:12px;color:#64748b;margin-top:4px">仅用于本次启动请求，不保存密码。</div>'
-        '</details></div>'
+        '</div>'
     )
     script = (
         "<script>(function(){"
@@ -267,14 +263,6 @@ def _run_html():
         "function say(t){var x=node('k8-run-status');if(x)x.textContent=t;}"
         "function setBtn(b){var x=node('k8-run-btn');if(x)x.disabled=b;}"
         "function req(o){return fetch('/api/kill8-run',Object.assign({credentials:'same-origin',cache:'no-store',redirect:'error'},o));}"
-        "function auth(){if(sessionAdmin===true)return null;"
-        "var u=node('k8-run-user'),p=node('k8-run-password'),d=node('k8-run-admin');"
-        "if(!u||!p||!u.value||!p.value){if(d){d.hidden=false;d.open=true;}"
-        "say('请填写管理员账号密码（只读登录不能启动）');"
-        "if(u&&!u.value)u.focus({preventScroll:true});else if(p)p.focus({preventScroll:true});return false;}"
-        "if(u.value.length>128||p.value.length>512){say('账号或密码格式无效');return false;}"
-        "var raw=u.value+':'+p.value,bytes=new TextEncoder().encode(raw),bin='';"
-        "bytes.forEach(function(b){bin+=String.fromCharCode(b);});p.value='';raw='';return 'Basic '+btoa(bin);}"
         "async function poll(){for(var i=0;i<80;i++){await new Promise(function(r){setTimeout(r,3000);});"
         "try{var r=await req({method:'GET',headers:{Accept:'application/json'}});var d=null;try{d=await r.json();}catch(e){}"
         "if(d&&d.ok===true&&d.running===false){say('完成，正在刷新面板…');"
@@ -287,14 +275,11 @@ def _run_html():
         "for(var k in map){var v=o[k]||'';v=String(v).replace(/[^0-9]/g,'');out[map[k]]=v;}"
         "return out;}"
         "async function run(){if(busy)return;busy=true;setBtn(true);"
-        "var a=auth();if(a===false){busy=false;setBtn(false);return;}"
-        "var h={Accept:'application/json','Content-Type':'application/json'};if(a)h.Authorization=a;"
+        "var h={Accept:'application/json','Content-Type':'application/json'};"
         "var body=JSON.stringify({exclusions:readExclusions()});"
         "say('正在启动（结算上一期 + 封存下一期）…');"
         "try{var r=await req({method:'POST',headers:h,body:body});var d=null;try{d=await r.json();}catch(e){}"
-        "if(r.status===401||r.status===403){sessionAdmin=false;var ad=node('k8-run-admin');"
-        "if(ad){ad.hidden=false;ad.open=true;}"
-        "say('需要管理员权限，请填写账号密码后重试');return;}"
+        "if(r.status===401){say('请先登录面板后再启动');return;}"
         "if(r.status===409){say('上一次仍在运行，请稍候再点');return;}"
         "if(!r.ok||!d||d.ok!==true)throw new Error('run');"
         "sessionAdmin=true;running=true;"
