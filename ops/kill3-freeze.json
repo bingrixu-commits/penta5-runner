@@ -1,14 +1,14 @@
 {
  "files": {
-  "lib/kill3_tail.py": "a8c878d5dbfcaf596328b5f5dfb237bf7734e9c6ae2c80f6c23631dd7fc88299",
-  "lib/kill_three_view.py": "34cbe0b0aa5011c4480145aafef42bd45f434ea58136a129e9bf65b7d0e1cf7f",
+  "lib/kill3_tail.py": "96c537dba763293abc2cd7c5869b39ad240ad04c8b120106158b38785e10b515",
+  "lib/kill_three_view.py": "9ad264b495197c93b84af58af8f5ded4c73d0668ba4e3270a0d19fcf618b98c2",
   "lib/panel_context.py": "f184f60f9d4b2bdf22b4e2c0e9370eedf6ba4444f3c35e630097f8ae4cfed46c",
-  "scripts/run_kill3_tail.py": "28d043701f9168cea8e44eefb2d13952af52cef946fe37bba3962736bd9e262d"
+  "scripts/run_kill3_tail.py": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d"
  },
  "freeze_hours": 72,
- "freeze_ref_period": "20261101050",
- "frozen_at": "2026-11-01T04:10:43+08:00",
- "frozen_commit": "2b0e841",
+ "freeze_ref_period": "20261101121",
+ "frozen_at": "2026-11-01T10:09:48.688441+08:00",
+ "frozen_commit": "6903e8f",
  "hash_updates": [
   {
    "at": "2026-10-31T22:50:00+08:00",
@@ -105,10 +105,34 @@
    "new_sha256": "f184f60f9d4b2bdf22b4e2c0e9370eedf6ba4444f3c35e630097f8ae4cfed46c",
    "old_sha256": "3e0df93e85697271ee60e25af2b93c58c20c528f0c070bd885d308b74b44542c",
    "reason": "为新增 kill4_tail 面板上下文新增可选 kill4_stats/kill4_previous 参数；A/B 证明：固定 fixture 下 kill3/kill2 panel_context snapshot sha256 逐字节不变（kill3=13b62e58c526961ffc45e58b68c8b03e0be058e3f64b5bd0b5ce4ddcd9370e2d、kill2=93b5be2e0fc94a62bd3ac1d1cd02454bae6c486b7d96ed6677d8461494b61e09），不改变既有框架口径"
+  },
+  {
+   "at": "2026-11-01T10:09:48.688441+08:00",
+   "commit": "6903e8f",
+   "file": "lib/kill3_tail.py",
+   "new_sha256": "96c537dba763293abc2cd7c5869b39ad240ad04c8b120106158b38785e10b515",
+   "old_sha256": "a8c878d5dbfcaf596328b5f5dfb237bf7734e9c6ae2c80f6c23631dd7fc88299",
+   "reason": "用户 2026-11-01 10:0x 明确指令关掉两套「3 期」限制——尾码稳定化 hold3-until-miss 与位置/弃位最多连用 3 期强制换码，全部交给模型自主决定：RULE_VERSION 升 kill3-tail-v10-two-counted-free，删除 apply_tail_policy 沿用与 validate_position_choice 强制换码，提示词去掉【合尾稳定化规则】【位置与弃位使用限制】；命中口径不变（整组 5 项/2 注）；v10 真实周期 ref 20261101121 已发布、tail_policy=None、无 position_restriction。"
+  },
+  {
+   "at": "2026-11-01T10:09:48.688441+08:00",
+   "commit": "6903e8f",
+   "file": "lib/kill_three_view.py",
+   "new_sha256": "9ad264b495197c93b84af58af8f5ded4c73d0668ba4e3270a0d19fcf618b98c2",
+   "old_sha256": "34cbe0b0aa5011c4480145aafef42bd45f434ea58136a129e9bf65b7d0e1cf7f",
+   "reason": "用户 2026-11-01 10:0x 明确指令关掉两套「3 期」限制——尾码稳定化 hold3-until-miss 与位置/弃位最多连用 3 期强制换码，全部交给模型自主决定：RULE_VERSION 升 kill3-tail-v10-two-counted-free，删除 apply_tail_policy 沿用与 validate_position_choice 强制换码，提示词去掉【合尾稳定化规则】【位置与弃位使用限制】；命中口径不变（整组 5 项/2 注）；v10 真实周期 ref 20261101121 已发布、tail_policy=None、无 position_restriction。"
+  },
+  {
+   "at": "2026-11-01T10:09:48.688441+08:00",
+   "commit": "6903e8f",
+   "file": "scripts/run_kill3_tail.py",
+   "new_sha256": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d",
+   "old_sha256": "28d043701f9168cea8e44eefb2d13952af52cef946fe37bba3962736bd9e262d",
+   "reason": "用户 2026-11-01 10:0x 明确指令关掉两套「3 期」限制——尾码稳定化 hold3-until-miss 与位置/弃位最多连用 3 期强制换码，全部交给模型自主决定：RULE_VERSION 升 kill3-tail-v10-two-counted-free，删除 apply_tail_policy 沿用与 validate_position_choice 强制换码，提示词去掉【合尾稳定化规则】【位置与弃位使用限制】；命中口径不变（整组 5 项/2 注）；v10 真实周期 ref 20261101121 已发布、tail_policy=None、无 position_restriction。"
   }
  ],
  "min_periods": 100,
  "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。",
- "rule_version": "kill3-tail-v9-two-counted-hold3",
+ "rule_version": "kill3-tail-v10-two-counted-free",
  "version": 1
 }
