@@ -64,12 +64,14 @@ def main():
     panel_snapshot = panel_context.build(reference, target)
     _panel_text, _panel_sha = panel_context.prompt_text(panel_snapshot)
     print('kill8 panel context sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
+    exclusions = kill8_tail.load_position_exclusions()
+    print('kill8 position exclusions: %s' % (exclusions,))
     prompt, audit = kill8_tail.build_prompt(
         reference, target, rows,
-        panel_snapshot=panel_snapshot)
+        panel_snapshot=panel_snapshot, exclusions=exclusions)
     try:
         prediction, generated_at, meta = kill8_tail.request_prediction(
-            prompt, reference, target, deadline)
+            prompt, reference, target, deadline, exclusions=exclusions)
     except Exception as error:
         print(f"kill8 request failed: {type(error).__name__}: {str(error)[:140]}")
         return 1

@@ -95,6 +95,34 @@ function createKill8RunHandler(options) {
       send(res, 409, {ok: false, error: 'run-busy'});
       return true;
     }
+    // Read optional position-exclusion body and persist it before spawning.
+    let exclusions = null;
+    try {
+      let raw = '';
+      for await (const chunk of req) { raw += chunk; }
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && parsed.exclusions) {
+          exclusions = parsed.exclusions;
+        }
+      }
+    } catch (_) {
+      // ignore malformed body; run without exclusions
+    }
+    if (exclusions) {
+      try {
+        const exclPath = path.join(root, 'data', 'kill8_position_exclusions.json');
+        fs.mkdirSync(path.dirname(exclPath), {recursive: true});
+        const normalized = {};
+        for (const k of ['q', 'b', 's', 'g']) {
+          normalized[k] = String((exclusions && exclusions[k]) || '').replace(/[^0-9]/g, '');
+        }
+        fs.writeFileSync(exclPath, JSON.stringify(normalized, null, 2));
+      } catch (err) {
+        send(res, 500, {ok: false, error: 'exclusions-persist-failed'});
+        return true;
+      }
+    }
     running = true;
     let pid;
     try {

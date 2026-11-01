@@ -50,8 +50,13 @@ FORM_LABELS = {'parity': '单双形态', 'size': '大小形态'}
 FORM_PALETTE = {'parity': '单双', 'size': '大小'}
 REVERSE_LABELS = {'parity': '单双反向冷形态', 'size': '大小反向冷形态'}
 
-RULE_VERSION = 'kill8-tail-v1-cold-forms'
+RULE_VERSION = 'kill8-tail-v2-reverse-cold-forms'
 COUNTED_FORMS = 2
+POSITION_EXCLUSIONS_PATH = ROOT / 'data' / 'kill8_position_exclusions.json'
+POSITION_KEYS = ('q', 'b', 's', 'g')
+POSITION_LABELS = {'q': '千位', 'b': '百位', 's': '十位', 'g': '个位'}
+POSITION_INDEX = {'q': 0, 'b': 1, 's': 2, 'g': 3}
+POSITION_INDEX_LABELS = {0: '千位', 1: '百位', 2: '十位', 3: '个位'}
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
@@ -180,9 +185,53 @@ def _cold_line(ranks, limit=3):
                      for form, count, omission in ranks[:limit])
 
 
-def build_prompt(reference, target, rows, *, panel_snapshot=None):
+def load_position_exclusions():
+    """读取用户手动填写的各位置排除数字（千/百/十/个，每位置 0-9 数字串）。"""
+    document = _load_json(POSITION_EXCLUSIONS_PATH, {})
+    if not isinstance(document, dict):
+        return {}
+    return {key: str(document.get(key) or '') for key in POSITION_KEYS}
+
+
+def reverse_constraints(exclusions=None):
+    """反向约束：{kind: {位置下标: 反方向字符}}。
+
+    反方向 = 排除数字的相反单双/大小（排除双写单、排除大写小）。
+    某位置排除数字方向混杂（单双混杂或大小混杂）或未排除时，该位置不约束。
+    """
+    exclusions = exclusions if isinstance(exclusions, dict) else {}
+    parity = {}
+    size = {}
+    for key, index in POSITION_INDEX.items():
+        raw = str(exclusions.get(key) or '')
+        digits = [int(ch) for ch in raw if ch.isdigit()]
+        if not digits:
+            continue
+        parities = {d % 2 for d in digits}
+        sizes = {0 if d < 5 else 1 for d in digits}
+        if len(parities) == 1:
+            parity[index] = '单' if 0 in parities else '双'
+        if len(sizes) == 1:
+            size[index] = '大' if 0 in sizes else '小'
+    return {'parity': parity, 'size': size}
+
+
+def _constraint_text(constraints):
+    """把反向约束渲染成 prompt 可读文本；空约束返回「（无）」。"""
+    if not constraints:
+        return '（无）'
+    parts = []
+    for index in sorted(constraints):
+        parts.append('%s写「%s」' % (POSITION_INDEX_LABELS[index], constraints[index]))
+    return '、'.join(parts)
+
+
+def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
+    constraints = reverse_constraints(exclusions)
+    parity_constraint = _constraint_text(constraints['parity'])
+    size_constraint = _constraint_text(constraints['size'])
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
     parity_ranks = rank_forms(window, 'parity')
     size_ranks = rank_forms(window, 'size')
@@ -210,11 +259,17 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None):
         '【四位大小形态冷热统计（16 种，按出现次数升序、当前遗漏降序排列；'
         '仅历史统计，不代表未来概率）】\n'
         + '\n'.join(size_lines) + '\n\n'
+        '【反向约束（必须严格遵守，这是「反向」的核心）】\n'
+        '你已手动排除了各位置数字，排除数字决定形态的「反方向」：\n'
+        f'· 单双形态反向约束：{parity_constraint}\n'
+        f'· 大小形态反向约束：{size_constraint}\n'
+        '约束位置必须取排除数字的反方向（排除双写单、排除单写双；排除大写小、排除小写大）；'
+        '未列出的位置由你按冷热自选。\n\n'
         '【任务】\n'
-        '1. 从 16 种四位单双形态中选 1 种作为本期「冷形态反向排除项」'
-        '（优先选出现次数少、当前遗漏最久的冷形态）；\n'
-        '2. 从 16 种四位大小形态中选 1 种作为本期「冷形态反向排除项」'
-        '（优先选出现次数少、当前遗漏最久的冷形态）；\n'
+        '1. 从 16 种四位单双形态中选 1 种作为本期「反方向冷形态排除项」'
+        '（严格遵守上面的单双反向约束，其余位置优先选冷）；\n'
+        '2. 从 16 种四位大小形态中选 1 种作为本期「反方向冷形态排除项」'
+        '（严格遵守上面的大小反向约束，其余位置优先选冷）；\n'
         '3. 命中口径：目标期实际四位单双形态 != 封存单双形态，'
         '且目标期实际四位大小形态 != 封存大小形态；2 项全中才算整组命中；\n'
         '4. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
@@ -242,11 +297,12 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None):
                          for form, count, omission in size_ranks],
         'panel_context_sha256': panel_context_sha,
         'panel_context': panel_snapshot if isinstance(panel_snapshot, dict) else None,
+        'position_exclusions': dict(exclusions) if isinstance(exclusions, dict) else {},
     }
     return prompt, audit
 
 
-def normalize_response(response):
+def normalize_response(response, *, exclusions=None):
     """Strict local validation; never pad, default or invent anything."""
     if not isinstance(response, dict):
         raise ValueError('响应必须是 JSON 对象')
@@ -258,6 +314,15 @@ def normalize_response(response):
     if (not isinstance(size_form, str) or len(size_form) != 4
             or any(char not in '大小' for char in size_form)):
         raise ValueError('size_form 必须是恰好 4 个大/小字符')
+    constraints = reverse_constraints(exclusions)
+    for index, char in constraints['parity'].items():
+        if parity_form[index] != char:
+            raise ValueError('parity_form 在%s必须取排除数字的反方向「%s」'
+                             % (POSITION_INDEX_LABELS[index], char))
+    for index, char in constraints['size'].items():
+        if size_form[index] != char:
+            raise ValueError('size_form 在%s必须取排除数字的反方向「%s」'
+                             % (POSITION_INDEX_LABELS[index], char))
     reason = str(response.get('reason', ''))
     try:
         reason.encode('utf-8')
@@ -382,7 +447,7 @@ def _post(messages, timeout):
                 pass
 
 
-def request_prediction(prompt, reference, target, deadline, log=print, value_check=None):
+def request_prediction(prompt, reference, target, deadline, log=print, value_check=None, exclusions=None):
     """At most three paid calls inside the frozen publication window."""
     from ai_call_control import require_ai_enabled
 
@@ -414,7 +479,7 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
             if choice.get('finish_reason') != 'stop':
                 raise ValueError('响应未正常结束')
             message = choice.get('message') if isinstance(choice.get('message'), dict) else {}
-            prediction = normalize_response(_extract_json(message.get('content')))
+            prediction = normalize_response(_extract_json(message.get('content')), exclusions=exclusions)
             if value_check is not None:
                 value_check(prediction)
             meta = _metadata(reference, attempt, model, api_key, envelope,
@@ -474,6 +539,7 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'panel_context_sha256': audit.get('panel_context_sha256'),
         'panel_context': audit.get('panel_context'),
         'window': WINDOW,
+        'position_exclusions': audit.get('position_exclusions') if isinstance(audit, dict) else {},
     }
     if isinstance(extra, dict):
         seal.update(extra)

@@ -281,11 +281,17 @@ def _run_html():
         "setTimeout(function(){location.reload();},400);return;}"
         "if(d&&d.ok===true)say('计算中… 已约 '+((i+1)*3)+' 秒');}catch(e){}}"
         "say('长时间未确认完成，请手动刷新页面查看结果');}"
+        "function readExclusions(){var KEY='kill8_position_exclusions_v1';var o={};"
+        "try{o=JSON.parse(localStorage.getItem(KEY)||'{}')||{};}catch(e){}"
+        "var map={'k8-ex-q':'q','k8-ex-b':'b','k8-ex-s':'s','k8-ex-g':'g'};var out={};"
+        "for(var k in map){var v=o[k]||'';v=String(v).replace(/[^0-9]/g,'');out[map[k]]=v;}"
+        "return out;}"
         "async function run(){if(busy)return;busy=true;setBtn(true);"
         "var a=auth();if(a===false){busy=false;setBtn(false);return;}"
-        "var h={Accept:'application/json'};if(a)h.Authorization=a;"
+        "var h={Accept:'application/json','Content-Type':'application/json'};if(a)h.Authorization=a;"
+        "var body=JSON.stringify({exclusions:readExclusions()});"
         "say('正在启动（结算上一期 + 封存下一期）…');"
-        "try{var r=await req({method:'POST',headers:h});var d=null;try{d=await r.json();}catch(e){}"
+        "try{var r=await req({method:'POST',headers:h,body:body});var d=null;try{d=await r.json();}catch(e){}"
         "if(r.status===401||r.status===403){sessionAdmin=false;var ad=node('k8-run-admin');"
         "if(ad){ad.hidden=false;ad.open=true;}"
         "say('需要管理员权限，请填写账号密码后重试');return;}"
@@ -331,7 +337,7 @@ def _attack_html(seal):
             'autocomplete="off" placeholder="要排除的数字，如 8" '
             'aria-label="%s排除数字"></label>' % (label, input_id, label))
     posinput = ('<div class="k8-posinput">'
-                '<div class="k8-posinput-title">✏️ 位置排除数字（你手动填，不进模型计算）</div>'
+                '<div class="k8-posinput-title">✏️ 位置排除数字（你手动填，决定形态反方向）</div>'
                 '<div class="k8-posinput-grid">%s</div>'
                 '<div class="k8-posinput-hint">每位置填 0-9 中要排除的数字（可多个，如 128 表示排除 1、2、8；'
                 '重复自动去重）；留空 = 该位置不排除（保留 10 码）。输入自动记忆，刷新不丢。</div>'
@@ -389,9 +395,9 @@ def _attack_html(seal):
 
 def _foot_html():
     return ('<div class="k8-foot">'
-            '位置排除数字由你手动填写（下方输入框，自动记忆），<b>不进本框架计算</b>；本框架由 DeepSeek 决定：'
+            '位置排除数字由你手动填写（下方输入框，自动记忆），作为形态的<b>反方向基准</b>；本框架由 DeepSeek 决定：'
             '从 16 种四位单双形态（单/双，千百十个顺序）中选 1 种、'
-            '从 16 种四位大小形态（大/小）中选 1 种，作为本期「冷形态反向排除项」。<br>'
+            '从 16 种四位大小形态（大/小）中选 1 种，作为本期「反方向冷形态排除项」（排除数字的位置取反面）。<br>'
             '冷形态定位依据：近 50 期出现次数少、当前遗漏长（仅历史统计，不代表未来概率）。<br>'
             '命中 = 目标期实际四位单双形态<b>不等于</b>封存单双形态，'
             '且实际四位大小形态<b>不等于</b>封存大小形态（2 项全中才算整组命中）。<br>'
