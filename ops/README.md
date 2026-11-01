@@ -993,3 +993,16 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结守卫：`ops/kill3-freeze.json` rule_version v10→v11，kill3_tail.py / kill_three_view.py / run_kill3_tail.py 三处 hash 更新（hash_updates 第 21–23 条）。
 - 回滚：`git revert`（三次 commit）。
 - 说明：kill1/kill2p/kill2 早已是 hold3（本次未动）；kill3 是真正确需要从 free 转 hold3 的唯一框架。
+
+## 2026-11-01 12:10 退役重复框架 kill2（二位置 7 项副本，保留 kill5）
+
+- 原因：面板上「AI 二位置杀码 + 一合尾 + 二数合/三数合建议」（kill2，7 项）与「AI 三位置杀码 + 一合尾 + 二数合/三数合建议」（kill5，8 项）属同一「一合尾 + 二数合/三数合 + 两反向形态」家族，用户确认只留一套，选保留 kill5（三位置）；kill2p（两反向形态 5 项）不在本次范围。
+- 清理范围：kill2 三件套（lib/kill2_tail.py / lib/kill_two_view.py / scripts/run_kill2_tail.py）+ cron/logrotate + panel.html KILL_TWO 区块 + panel_live_refresh/attack_editor/kill_five_view 锚点 + 派生统计（hitrate_baseline / framework_hitrate_cumulative / tail_hold_review / model_usage / ops_health_check / evidence_backup / position_kill_shadow / panel_context / position_kill_review）+ model_tier_guard targets + data/kill2_tail。
+- 面板：/root/run_stats.py 去 kill_two_view import 与 2 处 apply_kill_two_block；panel.html 按 KILL_TWO_START/END 整体剥除（-3653 字节），KILL_TWO_P 区块原样保留。
+- 派生统计：hitrate_baseline 9→8 行、framework_hitrate_cumulative 9→8 行（rows=8：killer/framework/selected_six/he3_refine/kill3_tail/kill1_tail/kill2p_tail/kill5_tail）、tail_hold_review 8→7 框架、model_usage 9→8 日志源、ops_health 去 check_kill2 项、evidence_backup JSON_DIRS 7→6、position_kill_shadow 去 kill2 条目。
+- A/B 证明：panel_context 删 _kill2_self + kill2_stats/kill2_previous 后，剩余框架 kill3/kill1/kill2p/kill5 固定 fixture 输出逐字节不变（old-without-kill2_self == new，sha256 0fb59c9c21f4；new 中无 kill2_self）。
+- 冻结守卫：panel_context hash eb3446c5… → 492e2b87…（hash_updates 第 24 条）。
+- 数据归档：/root/archive/retired-20261101-kill2/kill2-data.tar.gz（sha256=480a4abe96d78f6cb89681862ec0477460d0d2371d435e8694afec612ab12e96，5 条目）。
+- 备份：/root/ops/kill2-family-20261101-120227/（22 文件：crontab/panel.html/run_stats/panel_context/attack_editor/hitrate_baseline/evidence_backup/model_usage/panel_live_refresh/position_kill_shadow/ops_health/tail_hold_review/framework_hitrate_cumulative/position_kill_review/model_tier_guard/kill_five_view/kill_two_p_view/kill_two_view/kill2_tail/logrotate/hitrate.json/cumulative.json）。
+- 回滚：git revert + scripts/crontab_tool.sh install + tar xzf 解档 + 恢复 /root/run_stats.py（备份在 /root/ops/kill2-family-20261101-120227/run_stats.py）。
+- 并行窗口协同：kill2 三件套的 git rm 已被并行窗口 d94a0af（kill3 v11 转正）一并提交；本窗口补提交派生统计/面板/运行层，并已复核 kill3 v11 的 hash 更新未被覆盖。
