@@ -2,7 +2,7 @@
  "files": {
   "lib/kill3_tail.py": "96c537dba763293abc2cd7c5869b39ad240ad04c8b120106158b38785e10b515",
   "lib/kill_three_view.py": "9ad264b495197c93b84af58af8f5ded4c73d0668ba4e3270a0d19fcf618b98c2",
-  "lib/panel_context.py": "4d174e9f8f8114cc71044693311aa18c9d0b11e4577bcf889f028250a6c15e75",
+  "lib/panel_context.py": "eb3446c5cdb7bf68ea58d83b5be1c01ea20968ac734d34d5c99440fd34640ce7",
   "scripts/run_kill3_tail.py": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d"
  },
  "freeze_hours": 72,
@@ -161,6 +161,14 @@
    "new_sha256": "4d174e9f8f8114cc71044693311aa18c9d0b11e4577bcf889f028250a6c15e75",
    "old_sha256": "bc6062c31a7e791e925036a02e322f5b0d9a0e38b9cf1f695ab463968fa9e41f",
    "reason": "退役 kill6/kill7（重复框架），删除 panel_context 的 kill6_self/kill7_self；A/B 证明剩余框架 kill3/kill2/kill4/kill5 输出逐字节不变（188a759b…/148208bc…/dc5a3170…/bb7ba74c…）"
+  },
+  {
+   "at": "2026-11-01T11:42:02+08:00",
+   "commit": "pending-kill4-retire",
+   "file": "lib/panel_context.py",
+   "new_sha256": "eb3446c5cdb7bf68ea58d83b5be1c01ea20968ac734d34d5c99440fd34640ce7",
+   "old_sha256": "4d174e9f8f8114cc71044693311aa18c9d0b11e4577bcf889f028250a6c15e75",
+   "reason": "退役 kill4（hold3 重复框架，保留 kill5 尾码自主），删 _kill4_self + kill4_stats/kill4_previous 参数 + kill4_self 溢出名；剩余框架 A/B 逐字节相等 9837B"
   }
  ],
  "min_periods": 100,

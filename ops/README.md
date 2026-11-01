@@ -955,3 +955,14 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/kill67-retire-20261101-105329/（panel_context.py.bak、crontab.txt.bak、run_stats.py.bak）。
 - 回滚：git revert（三次 commit）+ scripts/crontab_tool.sh install + tar xzf 解档数据。
 - 补清（2026-11-01 11:31）：退役提交漏了三处残留，已一并清理——(1) panel.html 仍留 KILL_SIX/KILL_SEVEN 幽灵卡片区块（kill6/kill7 写卡任务已删、无人再覆盖；按 START/END 标记整体移除 12928 字节，复核残留 0，其余 KILL_ONE..KILL_FIVE 标记不变）；(2) scripts/model_tier_guard.py targets 仍列 KILL6（改为 KILL1/KILL2/KILL2P/KILL3/KILL4/KILL5）；(3) .env 残留 PENTA5_MODEL_KILL6（已删，备份 .env.before-kill6-removal）。另清 6 个 kill6/kill7 残留 .pyc，manifest 经 refresh_source_manifest.py --if-drift 重建（435 files）。
+
+## 2026-11-01 退役重复框架 kill4（hold3 副本，保留 kill5 尾码自主）
+
+- 原因：kill4 与 kill5 完全同口径（8 项：3 位置 + 1 合尾 + 二数合 + 三数合 + 单双 + 大小，位置不设连用限制），仅尾码策略不同（kill4 hold3-until-miss / kill5 尾码模型自主）；用户确认只留一套，选保留 kill5。
+- 清理范围：kill4 三件套 + 12 处派生统计挂接点 + cron/logrotate + data 目录 + 位置杀码影子 kill4 条目 + model_tier_guard targets + .env PENTA5_MODEL_KILL4 + panel.html KILL_FOUR 幽灵卡片。
+- 顺带修复 2 个遗留 bug：(1) scripts/tail_hold_review.py 的 FRAMEWORKS 元组在 kill6/kill7 退役（9914711）时被整体误删，导致 build() NameError，本次重建 8 条目（kill3/kill1/kill2p/kill2/kill5/framework/six/killer）；(2) lib/attack_editor_view.py 的 JS definitions 数组缺逗号（node --check 报 Unexpected token），本次补逗号。
+- A/B 证明：panel_context 删 _kill4_self + kill4_stats/kill4_previous 参数后，剩余框架 kill3/kill1/kill2p/kill2/kill5 输出逐字节不变（reference=20261101140 target=20261101141，snapshot 9837B 逐字节相等）。
+- 冻结守卫：panel_context hash 4d174e9f… → eb3446c5…（hash_updates 第 20 条）。
+- 数据归档：/root/archive/retired-20261101-kill4/kill4-data.tar.gz（sha256=9d20d039b11b1be1c7824a3ced16ec92f2d331a42068441ad89db0666b6061bf）。
+- 备份：/root/ops/kill4-family-20261101-113740/（14 个文件：crontab/panel_context/attack_editor/hitrate_baseline/evidence_backup/model_usage/panel_live_refresh/cumulative/ops_health/tail_hold_review/kill3-freeze/panel.html/run_stats/logrotate）。
+- 回滚：git revert（三次 commit）+ scripts/crontab_tool.sh install + tar xzf 解档数据。
