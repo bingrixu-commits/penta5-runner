@@ -1032,3 +1032,9 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 提交：4ebe1a2（运行层+三件套删除）、4012f2e（面板层）、e8a06a8（派生统计）、本提交（冻结 hash + 本台账）。
 - 回滚：git revert <本提交> e8a06a8 4012f2e 4ebe1a2 + scripts/crontab_tool.sh install + 把归档移回 data/kill2p_tail + 恢复 /root/run_stats.py 与 /etc/logrotate.d/penta5（均在 /root/ops/kill2p-family-20261101-121944/）。
 - 补完：.env 删 PENTA5_MODEL_KILL2P（备份同目录 .env.bak）；scripts/model_tier_guard.py DEFAULTS targets 与 data/model_tier_guard.json targets 去 KILL2P（顺带清掉已退役的 KILL2，现 targets=KILL1/KILL3）。更正 e8a06a8 提交消息里的行数：hitrate_baseline 7→6 行、tail_hold_review 6→5 框架（不是 8→7/7→6）。
+
+- 复核补正（独立复核，本提交）：
+  - 数据归档：`/root/archive/retired-20261101-kill2p/kill2p-data.tar.gz`（sha256 `5f51311753e642c44120320147afb6580b8d1f2376d340383959af6846280dbf`，3 条目：data/kill2p_tail/{seals,settlements}.json + data/kill2p_tail_cron.log，`sha256sum -c` OK）；data/kill2p_tail_cron.log 与 .kill2p_tail_job.lock 已从 data/ 删除（data/ 内 kill2p 残留 0）。
+  - 攻击语版本串 v14-retire-kill5 → **v15-retire-kill2p**（2 处，内联 JS `node --check` 通过，py_compile 通过）；panel.html 在下一次 run_stats 重建时携带新版本串。
+  - 复核：crontab 36 作业且与 ops/crontab.txt `diff` 干净；`logrotate -d` 无错且无 kill2p 路径；.env 无 PENTA5_MODEL_KILL2P（备份 /root/ops/kill2p-family-20261101-121944/.env.bak）；model_tier_guard.py DEFAULTS 与 data/model_tier_guard.json targets=KILL1/KILL3；data/hitrate_baseline.json 与 data/framework_hitrate_cumulative.json rows=6（killer/framework/selected_six/he3_refine/kill3_tail/kill1_tail）；panel.html KILL_TWO_P 计数 0（KILL_ONE/KILL_THREE/KILL_SHADOW 区块标记各 1）；lib/panel_live_refresh.py 无 KILL_TWO_P；data/ops_health.json 12:27 overall=warn 无 FAIL 且 kill2p 检查项消失；source manifest 重建为 /root/backups/auto-baseline-20261101-123135/verification-manifest.json（423 files），二次 `--if-drift` 返回 no-drift。
+  - 回滚补充：`tar xzf /root/archive/retired-20261101-kill2p/kill2p-data.tar.gz -C /root/penta5-runner/` 可恢复 data/kill2p_tail 与 cron log；版本串随本提交 revert 回退。

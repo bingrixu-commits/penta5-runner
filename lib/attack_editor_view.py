@@ -4,10 +4,10 @@ import re
 
 SCRIPT_ID = 'penta5-attack-editor-control'
 SCRIPT = r'''<script id="penta5-attack-editor-control">
-/* all-attack-editor-v14-retire-kill5 */
+/* all-attack-editor-v15-retire-kill2p */
 (function(){
 'use strict';
-const version='all-attack-editor-v14-retire-kill5',previous=window.__PENTA5_ATTACK_EDITOR__;
+const version='all-attack-editor-v15-retire-kill2p',previous=window.__PENTA5_ATTACK_EDITOR__;
 if(previous&&previous.version===version){previous.check();return;}
 if(previous&&typeof previous.destroy==='function')previous.destroy();
 const definitions=[
