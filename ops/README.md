@@ -967,3 +967,14 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/kill4-family-20261101-113740/（14 个文件：crontab/panel_context/attack_editor/hitrate_baseline/evidence_backup/model_usage/panel_live_refresh/cumulative/ops_health/tail_hold_review/kill3-freeze/panel.html/run_stats/logrotate）。
 - 回滚：git revert（三次 commit）+ scripts/crontab_tool.sh install + tar xzf 解档数据。
 - 补清（2026-11-01 11:51，本窗口）：清 3 个 kill4 残留 .pyc（lib/__pycache__/kill4_tail、lib/__pycache__/kill_four_view、scripts/__pycache__/run_kill4_tail）与 data/.kill4_tail_job.lock 遗锁；手动重跑 scripts/framework_hitrate_cumulative.py 刷新 data/framework_hitrate_cumulative.json（rows 10→9）与 hitrate.html（两者 kill4 残留均 0）；manifest refresh_source_manifest.py --if-drift 返回 no-drift。
+
+## 2026-11-01 12:00 位置杀码影子对照最终复核（n≥50 注档）
+
+- 预登记最终口径：前瞻注数 n≥50（kill1 需 50 期、kill2/kill2p/kill3 各 2 注/期需 25 期）。复核脚本阈值由 n≥30（中间档）改为 n≥50（最终档）。
+- 复核结果（只读 data/position_kill_shadow.json；命中率 Wilson 95%CI，换码↓=现行换码次数 − 策略换码次数）：
+  - **kill3**：96 注（48 期），现行 90.62% [83.1, 95.0]；hold2 89.58%(换码 39→29)、hold3 89.58%(→21)、hold5 88.54%(→15)、until-miss 87.50%(→11) —— **四档全部达标**。
+  - **kill2p**：96 注（48 期），现行 88.54% [80.6, 93.5]；hold2 87.50%(26→20)、hold3 87.50%(→16)、hold5 87.50%(→13)、until-miss 86.46%(→12) —— **四档全部达标**。
+  - **kill2**：66 注（33 期），现行 81.82% [70.9, 89.3]；hold2 81.82%(33→22)、hold3 87.88%(→23，+6.06pp)、hold5 83.33%(→13)、until-miss 84.85%(→10) —— **四档全部达标**。
+  - **kill1**：46 注（46 期）< 50，**未达 n≥50 门槛**；hold2/hold3 命中率 91.30% 持平、换码 8→5 —— 方向正面但样本不足，待补 4 期。
+- 说明：kill4 已退役并移出影子 collector（2026-11-01 11:40），kill7 未纳入；kill1 的 forward 注数按 1 注/期计。kill3 forward 样本含 20261101141 开奖前的连续记录（当时 AI 因余额停用，缺口由影子 backfill 连续期号补齐）。
+- 建议：达标三框架（kill3/kill2p/kill2）统一选 **hold3**（预登记示例档：命中率在 95%CI 内不显著变差、换码次数下降约 30–46%）；kill1 等 n≥50 后再补看。转正需用户确认后另行实施，影子对照本身不改现网封存/统计/攻击语。
