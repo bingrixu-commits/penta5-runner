@@ -1,4 +1,4 @@
-"""Compact panel-wide context for the AI kill3 / kill1 / kill2p / kill2 decision (read-only, no provider calls).
+"""Compact panel-wide context for the AI kill3 / kill1 / kill2p / kill2 / kill4 decision (read-only, no provider calls).
 
 Collects the data the operator sees on the panel — other frameworks' latest
 published decisions, today's hit rates, version-locked cumulative rates,
@@ -234,6 +234,25 @@ def _kill2_self(reference, kill2_stats, kill2_previous):
     return {'previous': previous, 'today': stats, 'reference': reference}
 
 
+def _kill4_self(reference, kill4_stats, kill4_previous):
+    previous = None
+    if isinstance(kill4_previous, dict):
+        previous = _pick(kill4_previous, ('ref_period', 'target_period', 'rule_version',
+                                          'positions', 'unselected', 'tail', 'he2_keep',
+                                          'he3_keep', 'reverse_parity', 'reverse_size',
+                                          'generated_at', 'published_at'))
+    stats = None
+    if isinstance(kill4_stats, dict):
+        stats = _pick(kill4_stats, ('total', 'group_hits', 'group_rate',
+                                    'positions', 'tail', 'he2_keep', 'he3_keep', 'patterns',
+                                    'current_win_streak', 'current_loss_streak',
+                                    'max_loss_streak', 'four_loss_cycles',
+                                    'pending', 'latest_period'))
+    if previous is None and stats is None:
+        return None
+    return {'previous': previous, 'today': stats, 'reference': reference}
+
+
 def _cold_stats_frame():
     """Compact snapshot of the restored cold-code statistics blocks (read-only)."""
     observation = _read(DATA / 'cold_observation.json', {}) or {}
@@ -346,6 +365,7 @@ def _three_avoid2():
 def build(reference, target, *, kill3_stats=None, kill3_previous=None,
           kill1_stats=None, kill1_previous=None, kill2p_stats=None,
           kill2p_previous=None, kill2_stats=None, kill2_previous=None,
+          kill4_stats=None, kill4_previous=None,
           extra_panel_input=False, now=None):
     moment = now or datetime.now().astimezone()
     snapshot = {
@@ -367,6 +387,8 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
         snapshot['kill2p_self'] = _kill2p_self(reference, kill2p_stats, kill2p_previous)
     if kill2_stats is not None or kill2_previous is not None:
         snapshot['kill2_self'] = _kill2_self(reference, kill2_stats, kill2_previous)
+    if kill4_stats is not None or kill4_previous is not None:
+        snapshot['kill4_self'] = _kill4_self(reference, kill4_stats, kill4_previous)
     models = _strategy_models().get('models') or {}
     for key, label in (('killer', '智能深排 killer'), ('framework', '固定八码框架'),
                        ('six', '七项独立框架')):
@@ -399,7 +421,7 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if len(payload) > limit:
         for key in ('panel_cumulative', 'panel_hitrate_10p', 'kill3_self', 'kill1_self',
-                    'kill2p_self', 'kill2_self', 'cold_stats', 'other_ai_self', 'three_avoid2'):
+                    'kill2p_self', 'kill2_self', 'kill4_self', 'cold_stats', 'other_ai_self', 'three_avoid2'):
             snapshot.pop(key, None)
             payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
             if len(payload) <= limit:
