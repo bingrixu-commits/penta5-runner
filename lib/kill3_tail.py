@@ -71,7 +71,7 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill3-tail-v11-hold3-two-counted'
+RULE_VERSION = 'kill3-tail-v12-hot-cold-hold3-two-counted'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
@@ -171,6 +171,22 @@ def rank_digits(values):
               size if last.get(number) is None else size - last[number] - 1)
              for number in range(10)]
     items.sort(key=lambda item: (item[1], -item[2]))
+    return items
+
+
+def rank_digits_hot(values):
+    """System hot-code ordering: count descending, then current omission ascending."""
+    counts = {number: 0 for number in range(10)}
+    last = {}
+    for index, value in enumerate(values):
+        value = int(value)
+        counts[value] += 1
+        last[value] = index
+    size = len(values)
+    items = [(number, counts[number],
+              size if last.get(number) is None else size - last[number] - 1)
+             for number in range(10)]
+    items.sort(key=lambda item: (-item[1], item[2], item[0]))
     return items
 
 
@@ -354,19 +370,38 @@ def _cold_line(ranks, limit=3):
                      for number, count, omission in ranks[:limit])
 
 
+def _hot_line(ranks, limit=3):
+    return '、'.join(f'{number}(出{count}次/遗漏{omission}期)'
+                     for number, count, omission in ranks[:limit])
+
+
 def build_prompt(reference, target, rows, *, previous_tail=None,
                  position_limit=None, panel_snapshot=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
     position_lines = []
+    position_hot_ranks = {}
+    position_cold_ranks = {}
     for key, label, index in POSITIONS:
-        ranks = rank_digits([row[index] for row in window])
-        position_lines.append(f'· {label}：{_cold_line(ranks)}')
+        values = [row[index] for row in window]
+        hot = rank_digits_hot(values)
+        cold = rank_digits(values)
+        position_hot_ranks[key] = hot
+        position_cold_ranks[key] = cold
+        position_lines.append(f'· {label}：热码 {_hot_line(hot)}；冷码 {_cold_line(cold)}')
+    latest = window[-1]
+    latest_digits = {key: int(latest[index]) for key, _label, index in POSITIONS}
+    latest_line = ' · '.join(f'{label} {latest_digits[key]}' for key, label, _index in POSITIONS)
+    neighbor_lines = []
+    for key, label, _index in POSITIONS:
+        base = latest_digits[key]
+        neighbor_lines.append(
+            f'· {label}：重码 {base}；邻码 {(base - 1) % 10} / {(base + 1) % 10}')
     tail_rows = []
     for key in TAIL_KEYS:
         values = [tail_value(row, key) for row in window]
-        ranks = rank_digits(values)
+        ranks = rank_digits_hot(values)
         kill = ranks[0][0]
         hits50 = sum(1 for value in values if value != kill)
         recent = values[-30:]
@@ -400,14 +435,19 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
         f'{history}\n\n'
-        '【近50期各位置冷热（出现次数少、当前遗漏长优先；仅历史统计，不代表未来概率）】\n'
+        '【近50期各位置热冷（热码=出现次数多、当前遗漏短；冷码=出现次数少、当前遗漏长；仅历史统计，不代表未来概率）】\n'
         + '\n'.join(position_lines) + '\n\n'
+        f'【上期开奖前四位（参考期 {reference}）】\n'
+        f'· {latest_line}\n\n'
+        '【上期重码 / 邻码候选（±1，0↔9 循环；上期号码的重复或相邻数字）】\n'
+        + '\n'.join(neighbor_lines) + '\n\n'
         '【五种合尾候选对比（合尾 = 对应位置数字之和的个位；'
         '按该尾候选码近50期真实杀号命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(tail_lines) + '\n\n'
         '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；'
+        '定位依据从该位置的近50期热码 top3、冷码 top3、上期重码、上期邻码（±1）中自主选择，不限定只用冷码；'
         '其中恰好 2 个位置计入整组（攻击语只按这 2 个位置排除），'
         '第 3 个位置用 display_only 标明，只展示、不计入整组与攻击语；\n'
         '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；系统按稳定化规则决定最终封存尾码；\n'
@@ -436,12 +476,18 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill3-tail-prompt-v11-hold3-two-counted',
+        'version': 'kill3-tail-prompt-v12-hot-cold-hold3-two-counted',
         'reference': reference,
         'target': target,
         'window': WINDOW,
         'history_sha256': sha256(history.encode('utf-8')).hexdigest(),
         'rows': [[str(int(value)) for value in row] for row in window],
+        'position_basis': 'hot-cold-repeat-neighbor',
+        'hot_ranking': {key: [[str(n), c, o] for n, c, o in hot[:3]]
+                        for key, hot in position_hot_ranks.items()},
+        'cold_ranking': {key: [[str(n), c, o] for n, c, o in cold[:3]]
+                         for key, cold in position_cold_ranks.items()},
+        'latest_row': [str(int(value)) for value in latest],
         'tail_comparison': [{'key': key, 'label': label, 'candidate': str(kill),
                              'hit50': round(hit50, 6), 'hit30': round(hit30, 6)}
                             for key, label, kill, _count, _omission, hit50, hit30 in tail_rows],
