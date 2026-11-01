@@ -1128,3 +1128,9 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/20261101-170845/ai_model_context.py.bak、/root/ops/20261101-171133/{hitrate_baseline.py.bak,framework_hitrate_cumulative.py.bak}、/root/ops/20261101-171812/strategy_comparison.py.bak。
 - 提交：58f63bc fix(killer): 回退 conditional-transition-v2→v1 边际先验，消除杀0偏置与合取 -2.3pp；b8cce56 fix(killer): strategy_comparison 当前策略映射同步 killer→v1；本提交（台账）。
 - 回滚：git revert <本提交> b8cce56 58f63bc；历史封存无需改动（v2 记录保留原 strategy_id、统计并存），面板/统计下次刷新自动回 v2 口径。
+## 2026-11-01 17:30 合尾 hold_max 复核收尾（kill1 n≥50）
+
+- kill1 前瞻 n 已到 51；hold5 98.0%（50/51）vs hold3 92.2%（47/51）McNemar p=0.250（不显著），其余档 p=1.0。
+- 最终结论：五框架均维持 hold3，本次预登记复核关闭；影子继续每 5 分钟只读运行（不改封存/统计/攻击语）。
+- 报告：/root/ops/tail-hold-review/review-holdmax-20261101-1705.md。
+- 提交：本提交（本台账）。
