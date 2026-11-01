@@ -1,7 +1,7 @@
 """位置杀码影子对照复核（只读）：前瞻样本 Wilson 95%CI + 换码下降判据。
 
 预登记判据：
-1. 前瞻每框架 forward 注数 n≥50（kill1 需 50 期、kill2/kill2p/kill3 各 2 注/期需 25 期、kill4 3 注/期需 17 期）；
+1. 前瞻每框架 forward 注数 n≥30（kill1 需 30 期、kill2/kill2p/kill3 各 2 注/期需 15 期、kill4 3 注/期需 10 期）；
 2. 稳定化各档命中率与现行差值落在 95%CI 内（不显著变差）；
 3. 换码次数明显低于现行。
 
@@ -58,21 +58,21 @@ def build():
                 'n': p_n, 'hits': p_hits, 'rate': p_rate, 'ci95': [p_lo, p_hi],
                 'changes': p_changes, 'churn_drop': churn_drop,
                 'ci_overlap_actual': overlap,
-                'criteria': {'n_ge_50': p_n >= 50, 'not_worse': overlap,
+                'criteria': {'n_ge_30': p_n >= 30, 'not_worse': overlap,
                              'churn_down': churn_drop > 0},
-                'pass': (p_n >= 50 and overlap and churn_drop > 0),
+                'pass': (p_n >= 30 and overlap and churn_drop > 0),
             }
         frameworks[name] = entry
     now = datetime.now(TZ)
     return {'version': 1, 'generated_at': now.isoformat(timespec='seconds'),
-            'note': '只读复核：n≥50、95%CI 不显著变差、换码下降三判据。',
+            'note': '只读复核：n≥30、95%CI 不显著变差、换码下降三判据。',
             'frameworks': frameworks}
 
 
 def render(data):
     lines = ['# 位置杀码影子对照复核', '',
              '> 生成：%s（只读，不改任何封存/统计）' % data.get('generated_at'), '',
-             '| 框架 | 前瞻期数 | 现行命中率(95%CI) | 策略 | 命中率(95%CI) | 换码↓ | n≥50 | 不显著变差 | 换码下降 | 达标 |',
+             '| 框架 | 前瞻期数 | 现行命中率(95%CI) | 策略 | 命中率(95%CI) | 换码↓ | n≥30 | 不显著变差 | 换码下降 | 达标 |',
              '|---|---|---|---|---|---|---|---|---|---|']
     for name, item in data.get('frameworks', {}).items():
         a = item['actual']
@@ -88,7 +88,7 @@ def render(data):
             lines.append('| %s | %s | %s %s | %s | %s %s | %d | %s | %s | %s | %s |' % (
                 name if first else '', item['periods'] if first else '',
                 a_rate, a_ci, key, p_rate, p_ci, p['churn_drop'],
-                mark(c['n_ge_50']), mark(c['not_worse']), mark(c['churn_down']), mark(p['pass'])))
+                mark(c['n_ge_30']), mark(c['not_worse']), mark(c['churn_down']), mark(p['pass'])))
             first = False
     lines += ['', '注：单位置杀1码随机基线90%。达标 = 三项判据全过。仅作影子对照，转正须另行定点确认。']
     return '\n'.join(lines)

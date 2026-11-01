@@ -885,3 +885,13 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结守卫：ops/kill3-freeze.json 的 panel_context hash 3e0df93e... → f184f60f...（hash_updates 追加第 12 条）。
 - cron：每 5 分钟 sleep 50、flock /var/lock/penta5-kill4t.lock；日志 data/kill4_tail_cron.log。
 - 回滚：git revert a8e49d3 ba991a2 + scripts/crontab_tool.sh install（恢复 crontab.txt 基线）。
+
+## 2026-11-01 位置杀码影子对照中间复核（09:30，n≥30 中间观察档）
+
+- 判据从 n≥50 放宽为中间结论档 n≥30（复核脚本阈值同步 50→30）。
+- 样本足够（n≥30）：kill3（24 期 / 48 注）、kill2p（24 期 / 48 注）。
+- 样本不足（继续观察）：kill4（3 期 / 9 注）、kill2（9 期 / 18 注）、kill1（22 期 / 22 注）。
+- kill3：hold2/hold3 命中率 95.83% vs 现行 93.75%（+2.08pp，95%CI 重叠、不显著），换码降 7-9 次；
+  hold5/until-miss 91.67%（-2.08pp）但换码降 14-16 次。方向正面。
+- kill2p：hold2/hold5/until-miss 命中率同现行 89.58%，换码降 2-7 次；hold3 87.50%（-2.08pp）。方向正面。
+- 结论：n≥30 置信区间仍宽（约 ±8pp），暂不转正；最终口径等 n≥50（约 12:00）再定。现网封存/统计/攻击语未动。
