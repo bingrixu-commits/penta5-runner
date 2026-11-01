@@ -757,7 +757,7 @@ def apply_tail_policy(prediction, seals, settlements):
 
 
 def resolve_model():
-    for name in ('PENTA5_MODEL_KILL2', 'PENTA5_MODEL_KILL3', 'PENTA5_MODEL_KILLER',
+    for name in ('PENTA5_MODEL_KILL2', 'PENTA5_MODEL_KILLER',
                  'PENTA5_DEEPSEEK_MODEL'):
         try:
             from app_secrets import get_secret
