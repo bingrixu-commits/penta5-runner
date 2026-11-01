@@ -1145,3 +1145,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/kill8-deploy/*.bak.20261101172411（5 个文件）。
 - 提交：3c6619e feat(kill8): 反向冷形态口径修正——位置排除数字决定形态反方向（5 files）；本提交（台账）。
 - 回滚：git revert <本提交> 3c6619e；历史 v1 封存保留（rule_version 不变、统计并存），面板/统计下次刷新自动回 v1 口径。
+
+## 2026-11-01 17:36 kill8 模型升级 deepseek-flash → deepseek-v4-pro
+- 依据：用户要求 kill8 的 AI 模型调用 pro（"ia模型调用pro吧"）。
+- 口径：仅模型档位升级，反向冷形态口径（整组 2 项、基线 87.89%、RULE_VERSION=kill8-tail-v2-reverse-cold-forms）不变。
+- 改动（0 文件，仅运行时配置）：.env 新增 PENTA5_MODEL_KILL8=deepseek-v4-pro（此前 .env 无此变量，kill8 resolve_model fallback 到 PENTA5_MODEL_KILLER=deepseek-flash）。.env 在 .gitignore 不 commit；get_secret 每次热读 .env，无需重启 pm2。
+- 上线验证（真实周期）：ref 20261101211 → target 20261101212，17:36:43 发布，requested_model=deepseek-v4-pro、returned_model=deepseek-v4-pro、elapsed=34.4s（<90s timeout 无超时风险；kill1/kill3 的 pro 耗时 43-153s，kill8 prompt 简单故更快）、completion_tokens=2984、reasoning_tokens=2947；封存「单双反向冷形态 单单单单 · 大小反向冷形态 大大大小」，rule_version=kill8-tail-v2-reverse-cold-forms、model=deepseek-v4-pro、model_label=DeepSeek-V4-Pro。
+- 备份：/root/ops/kill8-deploy/.env.bak.*。
+- 提交：本提交（本台账）。
+- 回滚：删 .env 里的 PENTA5_MODEL_KILL8 即回退 flash（无需重启 pm2，下次触发生效）。
