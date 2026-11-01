@@ -1199,3 +1199,23 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 提交：5d27f31 feat(kill3)（3 files）；本提交（台账 + freeze guard）。
 - 回滚：git revert <本提交> 5d27f31；历史 v11 封存保留（rule_version 不变、统计并存），面板/统计下次刷新自动回 v11 口径。
 - 待真实周期验证：seal v12 published + 按 rule_version 分组新旧并存（v11 与 v12 同期出现）。
+
+## 2026-11-02 00:35 kill9 独立框架上线（四形态排除 + 二数合 + 三数合，整组 6 项）
+
+- 依据：用户 m00001「给我弄一个框架，结合面板所有框架排除形态，给我四个形态排除。加二数合三数合。弄一个独立恐惧」（恐惧=独立封存）；m00072 补充「面板形态的，用 ia 模型筛选 4 个形态。下一局排除」。命名与四项口径经文字兜底确认（两次问卷超时，按技能 2b 文字列默认，用户回「开工」确认）。
+- 命名：kill9（退役史查无 kill9，无撞名）。
+- 四项口径：整组 6 项 = 4 形态 + 二数合 + 三数合（无位置杀码、无五选一合尾）；四个形态 = 单双(parity)+大小(size)+质合(prime)+中边(middle)，均按千百十个顺序每位置二值输出 4 字符（质合=质{1,2,3,5,7}/合{0,4,6,8,9}，中边=中{3,4,5,6}/边{0,1,2,7,8,9}）；二数合/三数合 = 保留集口径（同退役 kill2：he2 从 02468 留 4 码、he3 从 0-9 留 5 码 2奇3偶或3奇2偶）；沿用策略 = 每期模型完全自主重选（不 hold 不轮换、无位置排除输入，纯 AI）。
+- RULE_VERSION：`kill9-tail-v1-four-forms-he2he3`。
+- 命中语义：4 形态 = 目标期实际四位形态 ≠ 封存形态（反向排除项）；he2 = 6 组 pair(前4球任取2位)和值个位任一落入保留集；he3 = 4 组 triple(前4球任取3位)和值个位任一落入保留集；group = 6 项全中。settle entry 用 `prime` 字段（非 kill3 的 `counted`）。
+- 整组随机期望 0.71085114（71.085114%）：10^4 开奖空间 × 均匀配置精确枚举（config 空间 he2=5、he3=200，非蒙特卡洛）；单项 P(4形态全中)=(15/16)^4=0.77247620、P(he2)=0.98080000、P(he3)=0.93750000(=15/16)；group=(15/16)^4 × E[P(he2|draw)P(he3|draw)]，按 draw 闭式条件概率求和。反证禁止相乘：朴素 0.9375^4×0.9808×0.9375=0.71033 ≠ 0.71085（he2/he3 与同 draw 相关）。Monte Carlo 交叉(N=10^6,seed=20261101) group=0.711107 噪声内一致。项目 SINGLE_BASELINES 已含 '四位反向形态'0.9375/'二数合留4码'0.9808/'三数合留5码'0.9375，与本次单项完全一致。
+- 触发：cron `*/5` sleep45 错峰（kill3=25/kill1=35），锁 /var/lock/penta5-kill9t.lock，日志 data/kill9_tail_cron.log，独立 data/kill9_tail/ 封存+结算。
+- 文件清单（14 文件）：三件套 lib/kill9_tail.py、lib/kill_nine_view.py、scripts/run_kill9_tail.py；挂接 lib/panel_context.py、lib/hitrate_baseline.py、lib/model_usage.py、lib/evidence_backup.py、lib/attack_editor_view.py、lib/panel_live_refresh.py、scripts/framework_hitrate_cumulative.py、scripts/ops_health_check.py、ops/crontab.txt、/root/run_stats.py（仓库外）、/etc/logrotate.d/penta5（仓库外）。
+- 12 挂接点 grep 计数（全≥1，#10 N/A）：run_stats.py(kill_nine)=3、panel_context(kill9)=11、hitrate_baseline=7、framework_hitrate_cumulative=9、ops_health_check=13、model_usage=1、evidence_backup=1、attack_editor_view=2、panel_live_refresh(KILL_NINE)=1、crontab.txt=1、logrotate=1；#10 tail_hold_review.py 跳过（N/A：kill9 无合尾/tail_policy/hold 策略，4 形态+he2/he3 保留集非「合尾杀」，kill8 亦不在其 FRAMEWORKS 里）。
+- 日志名五处一致（model_usage/ops_health_check/crontab.txt/logrotate/README 全用 data/kill9_tail_cron.log）：grep 'kill9_cron.log' | grep -v 'kill9_tail_cron.log' = 0。
+- A/B 共享模块自证：KILL9_A_B_EQUAL True（pass 6/0）。OLD lib/panel_context.py sha=619e1938d3b21e4521828f47d913653d65f0022928bfa7b43bc9b4a097eebb52 → NEW=dc8146747461fac2f8202f9a8e5cf8509ed64077dcb6e895045a8701565ac79d。证明：旧模块无 _kill9_self；model_tiers/ai_self_frames 除 kill9 外逐项相等；build() 无 kill9 参数时输出逐字节一致；旧 build() 对 kill9 参数 TypeError（纯增量）。
+- kill3-freeze.json：files['lib/panel_context.py'] 619e1938…→dc814674…；hash_updates 追加 1 条（at 2026-11-02T00:29:47+08:00、commit pending-kill9、reason=纯增量 A/B 证明 kill3/kill1 输出逐字节不变），n 27→28。
+- 模块测试（/tmp/kill9_module_test.py）：pass 40/0（常量/pattern_of 正反/form_space 16/pair_triple_tails/he2=5/he3=200/build_attack/normalize_response 严格/settle 命中 6 项全中+反例 parity 不中）。渲染：空数据 12/0、fake seal 非空 7/0（6 张卡+攻击语完整）。服务器 py_compile 12 .py 全 OK；logrotate -d 语法 OK；crontab install 后 diff drift=0（previous 存 /tmp/crontab.backup.20261102_003333）。
+- 证据期号（真实周期）：首个 */5 触发 00:35:45 → ref=20261102007 target=20261102008，00:35:52 发布，deepseek-flash（returned=deepseek-flash，elapsed 4.23s，prompt 4850/655 tokens）。封存 单双双双双单·大小小大大小·质合合合质·中边中中中中·二数合0246·三数合01345；panel.html kill-nine-ai=20、KILL_NINE_START=1，攻击语「除双双双单除小大大小除合合合质除中中中中二数合0246三数合01345各」。
+- 备份：/root/ops/kill9-20261102/（panel_context.py.bak、run_stats.py.bak、logrotate_penta5.bak、kill3-freeze.json.bak + 8 个 repo 文件，旧 sha 已录）。
+- 提交：feat(kill9) 三件套+数据目录；feat(stats/monitor) 派生统计挂接（期望值 0.71085114）；chore(ops) crontab/logrotate/kill3-freeze.json/README。
+- 回滚：git revert <chore> <stats> <feat>；删 crontab 的 kill9 行 + logrotate 的 kill9 段 + data/kill9_tail/；kill3-freeze.json 用 /root/ops/kill9-20261102/kill3-freeze.json.bak 回退。

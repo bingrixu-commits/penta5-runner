@@ -2,7 +2,7 @@
   "files": {
     "lib/kill3_tail.py": "74efe32c641dd4ec1376f429c77d9e048f3f19bc234a448584cb2eb7695844d2",
     "lib/kill_three_view.py": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
-    "lib/panel_context.py": "619e1938d3b21e4521828f47d913653d65f0022928bfa7b43bc9b4a097eebb52",
+    "lib/panel_context.py": "dc8146747461fac2f8202f9a8e5cf8509ed64077dcb6e895045a8701565ac79d",
     "scripts/run_kill3_tail.py": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33"
   },
   "freeze_hours": 72,
@@ -225,6 +225,14 @@
       "new_sha256": "74efe32c641dd4ec1376f429c77d9e048f3f19bc234a448584cb2eb7695844d2",
       "old_sha256": "ed228b26e66b16ab741858d674ae1c50cecaa3302097133e30a8dfa8a6212ad8",
       "reason": "用户反馈位置杀码+合尾定位依据只取冷码 top3（面板横向战绩读得到但无逐位号码统计），问卷选择改口径：位置与合尾均改热冷并列（热码/冷码/重码/邻码都展示、模型自主选、不写禁止冷码）；RULE_VERSION 升 kill3-tail-v12-hot-cold-hold3-two-counted；结构不变（5项/2注）整组精确基线沿用 0.6191 不重注册"
+    },
+    {
+      "at": "2026-11-02T00:29:47+08:00",
+      "commit": "pending-kill9",
+      "file": "lib/panel_context.py",
+      "new_sha256": "dc8146747461fac2f8202f9a8e5cf8509ed64077dcb6e895045a8701565ac79d",
+      "old_sha256": "619e1938d3b21e4521828f47d913653d65f0022928bfa7b43bc9b4a097eebb52",
+      "reason": "新增独立框架 kill9_tail（4形态排除+二数合+三数合，6项）：panel_context 增加可选 kill9_stats/kill9_previous 入参与 kill9_self 键、_ai_self_frame 增 kill9_tail 分支、_model_tiers 键列表加 PENTA5_MODEL_KILL9；A/B 证明固定 fixture 下 kill3/kill1 build() 输出与旧版逐字节相同（KILL9_A_B_EQUAL True，无 kill9 参数时 build 逐字节一致），仅带 kill9 入参时新增 kill9_self；kill3 RULE_VERSION 与口径未变"
     }
   ],
   "min_periods": 100,

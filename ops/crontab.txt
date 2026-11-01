@@ -26,6 +26,7 @@
 25 * * * * flock -n /var/lock/penta5-model-daily.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 300 python3 -u scripts/model_daily_report.py >> data/model_daily_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-kill3t.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill3_tail.py >> data/kill3_tail_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-kill1t.lock bash -c 'sleep 35 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill1_tail.py >> data/kill1_tail_cron.log 2>&1'
+*/5 * * * * flock -n /var/lock/penta5-kill9t.lock bash -c 'sleep 45 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill9_tail.py >> data/kill9_tail_cron.log 2>&1'
 10 */6 * * * flock -n /var/lock/penta5-coldbacktest.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 300 python3 -u scripts/cold_backtest.py >> data/cold_backtest_cron.log 2>&1'
 2,12,22,32,42,52 * * * * flock -n /var/lock/penta5-hitrate-guard.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 90 python3 -u scripts/hitrate_guard.py --root /root/penta5-runner >> data/hitrate_guard_cron.log 2>&1'
 7,22,37,52 * * * * flock -n /var/lock/penta5-hitrate-cumulative.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 240 python3 -u scripts/framework_hitrate_cumulative.py >> data/framework_hitrate_cumulative_cron.log 2>&1'
