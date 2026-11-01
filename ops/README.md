@@ -1072,3 +1072,16 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 提交：7d856e7 feat(kill1): v2 定位口径（5 files, +63/-11）；本提交（台账）。
 - 回滚：`git revert <本提交> 7d856e7` 即回退代码与注册项；历史封存无需改动（v1 记录保留原 rule_version、统计并存），面板 / 统计下次刷新自动回 v1 口径。
 - 冻结守卫：kill1 无 freeze guard（ops/kill3-freeze.json 仅覆盖 kill3），本次未改 kill3 相关 hash。
+
+## 2026-11-01 16:08 AI 单位置杀码（kill1）v3 位置杀码稳定化上线：hold3-until-miss（rule kill1-tail-v3-position-hold3）
+
+- 依据：位置杀码稳定化影子定点复核（scripts/position_kill_review.py）——kill1 forward 90 期/90 注 现行 88.89% → hold3 92.22%（+3.33pp）、换码 35→14；13:05 正式复核表 kill1 58 期/58 注 93.10%，hold2/hold3 93.10%、换码 5，三判据（n≥50 注、95%CI 不显著变差、换码下降）全过。kill3-tail-v11-hold3-two-counted 已是 hold3，无需改。用户 m00662「好，余额守卫不需要」确认执行转正方案、不上余额守卫。
+- 口径（v3 起）：位置杀码按 hold3-until-miss 稳定化——某位置杀码命中后沿用同位置同杀码，最多自动沿用 3 期；失手或满 3 期后由模型重选（重选可与上期同码）。AI 选码与 prompt 完全不动，封存前做本地确定性后处理；封存新增 `position_policy` 追溯字段（model_kill/sealed_kill/reused_previous/run/note/previous）。整组随机期望不变 `(3, 0.7538)`；稳定化只改变换码频率与命中延续，不改变单位置杀 1 码随机基线 90%。
+- 改动（5 文件，+101/-3）：lib/kill1_tail.py（RULE_VERSION → `kill1-tail-v3-position-hold3`；新增 POSITION_POLICY/POSITION_HOLD_MAX、_position_hold_replay/position_hold_state/apply_position_policy；create_seal 写 position_policy；docstring 记 v3 口径）；scripts/run_kill1_tail.py（请求后先 apply_position_policy 再 apply_tail_policy，打印 position policy note）；lib/hitrate_baseline.py 与 scripts/framework_hitrate_cumulative.py（各新增 v3 注册项 `(3, 0.7538)`，保留 v1/v2）；lib/kill_one_view.py（脚注：位置与杀码不做连用限制 → v3 位置杀码稳定化说明）。
+- 单元测试：8 项全 PASS（无历史新选 / 命中沿用 run1→2 / 满 3 期换码 / 失手换码 / 单双形态字重算 / 大小形态字重算 / 同码形态不变 / v3 基线注册）；py_compile 6 文件 OK；真实封存数据集成测试（apply_position_policy + apply_tail_policy + create_seal）通过。
+- 上线验证（真实周期）：首期 v3 ref 20261101193 → target 20261101194，16:08:08 发布（deepseek-v4-pro，AI 150.2s，prompt 4177 tokens），封存 `十位 杀4 · 千十个合尾 杀4 · 大小反向形态 小大大大`，rule_version=kill1-tail-v3-position-hold3、position_policy note=「新选（同位无沿用状态）」run=1、tail_policy「沿用上期尾码（第2期，上期命中）」；形态一致性校验 form[2]=='大'=reverse(4) 通过。旧封存 150 条不减（累计 151）。ops_health kill1_tail OK ref=20261101193；面板口径行「口径 kill1-tail-v3-position-hold3 · 自 ref 20261101193 起（本版 1 期） · 整组精确基线 75.38%（3 项）」。
+- 影子退役：lib/position_kill_shadow.py FRAMEWORKS 清空（kill1 已转正、kill3 已是 hold3），面板块改为「位置杀码稳定化已全部转正」标注；data/position_kill_shadow.json frameworks={}；影子 cron 保留（每 5 分钟只重渲染该标注，不再采集）。
+- 备份：/root/ops/kill1-hold3-160057/（6 个 .bak + data/position_kill_shadow.json 快照）。
+- 提交：6b1bccd feat(kill1): v3 位置杀码 hold3-until-miss 稳定化（5 files）；a2ecc52 chore(shadow): kill1/kill3 转正后从位置杀码影子采集器退役（1 file）；本提交（台账）。
+- 回滚：`git revert a2ecc52 6b1bccd <本提交>`；kill1 历史封存无需改动（v3 记录保留、旧 v1/v2 统计并存），面板 / 统计下次刷新自动回 v2 口径。
+- 冻结守卫：ops/kill3-freeze.json 仅覆盖 kill3_tail/kill_three_view/panel_context/run_kill3_tail，本次均未改动，无需更新 hash_updates。
