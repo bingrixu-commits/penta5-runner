@@ -616,6 +616,7 @@ def refresh_selected_panel(snapshot=None, root=ROOT):
     from selected_six_model import select_current, validate_publication
     from selected_six_stats import refresh_selected_stats
     from ai_prediction_guard import read_stats
+    from seal_archive import read_full
     from scripts.run_ai_ready_job import expected_reference
     from panel_io import update_panel
     root = Path(root)
@@ -634,7 +635,7 @@ def refresh_selected_panel(snapshot=None, root=ROOT):
         except (OSError, ValueError, TypeError, KeyError, OverflowError):
             proof = None
         try:
-            index = read_stats(root/'data/selected_six_seals.json').get('prediction_seals', {})
+            index = read_full(root/'data/selected_six_seals.json').get('prediction_seals', {})
             candidates = sorted(((ref, seal) for ref, seal in index.items() if isinstance(ref, str) and parse_period(ref) and ref <= reference and isinstance(seal, dict)), reverse=True)[:50]
             for ref, seal in candidates:
                 try:

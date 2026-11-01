@@ -12,6 +12,7 @@ from ai_prediction_guard import (PublicationRejected, find_seal, publication_rej
                                  publish_saved, read_stats, store_prepared)
 from ai_strategy_validation import StrategyValidationError
 from ai_verified_stats import atomic_json, next_period
+from seal_archive import read_full, read_hot
 from killer_ai_client import KillerResponseError, request_killer_response
 from selected_six_contract import (REVISION, LEDGER_REVISION, SUPPORTED_REVISIONS, MODEL, MARKER,
     build_input_doc as _input_doc, single_tail, validate_response)
@@ -360,7 +361,7 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
     if reference != expected_reference(clock()):
         raise PublicationRejected('selected-six-reference-advanced')
     path = root / 'data/selected_six_seals.json'
-    ledger = read_stats(path)
+    ledger = read_hot(path)
     if (type(ledger.get('version', 1)) is not int or ledger.get('version', 1) != 1
             or ledger.get('revision', LEDGER_REVISION) != LEDGER_REVISION):
         raise ValueError('invalid-selected-six-ledger')
@@ -552,7 +553,7 @@ def select_current(root, snapshot):
     reference, now = (snapshot.get('latest') or {}).get('period'), snapshot.get('now') or beijing_now()
     try:
         history = _source(reference, snapshot, now)
-        seal = find_seal(read_stats(Path(root) / 'data/selected_six_seals.json'), reference)
+        seal = find_seal(read_full(Path(root) / 'data/selected_six_seals.json'), reference)
         if not isinstance(seal, dict) or seal.get('revision') != REVISION:
             return None
         validate_publication(seal, reference, now)

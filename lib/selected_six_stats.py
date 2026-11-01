@@ -14,6 +14,7 @@ import json
 import os
 
 from ai_verified_stats import atomic_json, next_period, publication_evidence_error
+from seal_archive import read_full, write_full_separated
 from selected_six_contract import (BASE_METRIC_KEYS, METRIC_KEYS, REVISION as RULE_REVISION,
                                    SUPPORTED_REVISIONS, item_count, outcomes, tail_count)
 from stats_history import (TZ, business_start, load_snapshot, parse_period, parse_time,
@@ -378,8 +379,8 @@ def refresh_selected_stats(snapshot=None, root=ROOT):
     with Path(str(path) + '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            previous = _read(path)
-            ledger = refresh_stats(_read(root / 'data/selected_six_seals.json'), snapshot['records'],
+            previous = read_full(path)
+            ledger = refresh_stats(read_full(root / 'data/selected_six_seals.json'), snapshot['records'],
                 now, previous, root=root, conflicting_periods=snapshot.get('conflicting_periods', ()))
             summary = make_summary(ledger, now, snapshot['records'], root=root,
                                    conflicting_periods=snapshot.get('conflicting_periods', ()))
@@ -396,7 +397,7 @@ def refresh_selected_stats(snapshot=None, root=ROOT):
                                    'latest_settled_period': None,
                                    'latest_known_closed_period': None}}
         if ledger != previous:
-            atomic_json(path, ledger)
+            write_full_separated(path, ledger)
         atomic_json(root / 'data/selected_six_stats.json', summary)
         # Re-stat the ledger AFTER the possible rewrite: the stat captured on
         # entry is stale the moment this run appends a settlement, which would
