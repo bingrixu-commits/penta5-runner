@@ -1176,3 +1176,14 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/kill8-deploy/kill8_run_routes.js.bak.20261101175439、kill_eight_view.py.bak.20261101175439。
 - 提交：f83cdc2 feat(kill8): 启动键免密——viewer 登录即可触发，去掉每次输管理员密码；本提交（台账）。
 - 回滚：git revert <本提交> f83cdc2。
+
+## 2026-11-01 19:25 seal/hit_stats 滚动归档上线（按月冷分片 + 主文件留近 7 天窗口）
+
+- 依据：用户采纳「凌晨5点清零不清 seal，合理分配」——seal 是逐期预测历史账本（审计/回放/统计/evidence_backup 证据全靠它），不能清零只能滚动归档。data/ 4 个封存/结算 JSON 无界增长（selected_six_seals 533MB、selected_six_hit_stats 268MB、he3 各 106/104MB），json.loads 全量读内存紧张。
+- 方案：按月滚动归档——lib/seal_archive.py 统一 loader（read_hot 只读主文件近期窗口 / read_full 冷分片+主文件透明合并 / archive 独立归档 / write_full_separated 写方分离），冷分片 data/archive/<stem>_<YYYYMM>.json.gz；主文件留近 7 天（keep_days=7），更老期号按月压 gz。json 级重写安全（seal 校验用 canonical json sha256，lib/selected_six_model.py:133 _digest sort_keys=True，与文件空格/key 顺序无关）。
+- 口径：seals（he3_refine_seals/selected_six_seals）写方 run_once 改 read_hot（只读近期 append），读方 select_current/panel/stats 改 read_full；独立 cron archive() 每天移出超期期号。hit_stats（he3_refine_hit_stats/selected_six_hit_stats）读方 previous/seals 改 read_full（避免老 verified 重 pending），写方 atomic_json 改 write_full_separated（写时分离老 verified 进冷分片）。
+- 改动（8 文件 +287/-12）：lib/seal_archive.py（新增 188 行）+ scripts/archive_seals.py（新增 CLI）+ lib/he3_refine.py / he3_refine_view.py / he3_refine_stats.py（he3 试点）+ lib/selected_six_model.py / selected_six_stats.py / selected_six_view.py（selected_six 接入）+ ops/crontab.txt（新增 03:30 archive cron）。
+- 验证（真实归档 + 端到端）：he3_refine_seals 112MB→82.9MB（归档 1572 期→1.9MB gz）、he3_refine_hit_stats 104MB→76MB（分离 784 期→1.67MB gz）、selected_six_seals 533MB→437MB（归档 866 期→7.3MB gz）、selected_six_hit_stats 268MB→219MB（分离→3.6MB gz）；read_full 合并=归档前全量；归档后 run_selected_six 正常发布 20261101231、refresh 统计 hits=89/total=157 overdue=0 conflict=0；面板 _latest_retained 正常返回最新 published；cron 手动 --apply 复跑 archived=0 nothing-to-archive（空分片不重写主文件）。
+- 备份：/root/ops/seal-archive-backup-20261101-190037/（4 个数据 JSON + 6 个代码文件 + crontab.txt）。
+- 提交：668c03b（he3 试点）、08ed39f（selected_six 接入）、873de33（挂 cron + 空分片保护）；本提交（台账）。
+- 回滚：git revert 873de33 08ed39f 668c03b；删除 data/archive/*.json.gz 并从备份目录恢复 4 个数据 JSON（冷分片合并回主文件）。
