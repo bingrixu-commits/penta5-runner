@@ -1134,3 +1134,14 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 最终结论：五框架均维持 hold3，本次预登记复核关闭；影子继续每 5 分钟只读运行（不改封存/统计/攻击语）。
 - 报告：/root/ops/tail-hold-review/review-holdmax-20261101-1705.md。
 - 提交：本提交（本台账）。
+
+## 2026-11-01 17:32 AI 双反向冷形态排除（kill8）反向口径修正（rule kill8-tail-v2-reverse-cold-forms）
+- 依据：用户指出 v1「独立选最冷形态再排除」没体现「反向」；确认「反向」= 形态在用户排除数字的位置取排除数字的相反单双/大小（排除双写单、排除大写小），未排除位置模型冷热自选；位置排除数字进框架作为反向基准（不再是「不进框架计算」）。
+- 口径：整组 2 项不变（单双 + 大小反向冷形态，2 项全中命中）；约束位置必须取排除数字反面（例 q=2 双→单、s=4 双→单、g=6 双→单；大小 q=2 小→大、s=4 小→大、g=6 大→小），未排除位置（如百位）模型冷热自选；某位置排除数字方向混杂（单双混杂或大小混杂）时该位置不约束。命中 = 目标期实际四位形态 ≠ 封存形态。整组精确基线仍 (15/16)^2=87.89%（反向约束不改变随机基线的数学期望）。
+- 数据流：前端 localStorage(kill8_position_exclusions_v1) → 启动键 POST {exclusions:{q,b,s,g}} → kill8_run_routes.js 写 data/kill8_position_exclusions.json → run_kill8_tail.py load_position_exclusions → build_prompt 反向约束段落 → 模型选形态 → normalize_response 校验约束位置取反面。
+- 改动（5 文件，+119/-16）：lib/kill8_tail.py（RULE_VERSION v1→v2-reverse-cold-forms；新增 load_position_exclusions/reverse_constraints/_constraint_text；build_prompt 加反向约束段落；normalize_response 校验约束位置取反面；create_seal 记录 position_exclusions）；scripts/run_kill8_tail.py（读 exclusions 传给 build_prompt/request_prediction）；kill8_run_routes.js（POST 接收 exclusions 写文件）；lib/kill_eight_view.py（启动键 POST 带 exclusions；文案改「反方向」）；lib/hitrate_baseline.py（登记 v2 rule）。
+- 模块测试：reverse_constraints 方向正确性全 PASS（双→单、单→双、小→大、大→小、混杂不约束、空不约束）；build_prompt 约束段落正确；normalize_response 约束校验正确。
+- 上线验证（真实周期）：POST /api/kill8-run 带 {exclusions:{q:2,s:4,g:6}} → 写文件成功 → ref 20261101210 → target 20261101211，17:31:23 发布（deepseek-flash，AI 9.1s，prompt 3439 tokens），封存「单双反向冷形态 单单单单 · 大小反向冷形态 大大大小」，rule_version=kill8-tail-v2-reverse-cold-forms、position_exclusions={q:2,b:'',s:4,g:6}；反向正确（单双千/十/个=单、大小千/十=大 个=小，百位冷选）。
+- 备份：/root/ops/kill8-deploy/*.bak.20261101172411（5 个文件）。
+- 提交：3c6619e feat(kill8): 反向冷形态口径修正——位置排除数字决定形态反方向（5 files）；本提交（台账）。
+- 回滚：git revert <本提交> 3c6619e；历史 v1 封存保留（rule_version 不变、统计并存），面板/统计下次刷新自动回 v1 口径。
