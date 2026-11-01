@@ -943,3 +943,14 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结守卫：ops/kill3-freeze.json panel_context hash 2f9d6011… → bc6062c3…（hash_updates 第 18 条）。
 - cron：每 5 分钟 sleep 60、flock /var/lock/penta5-kill7t.lock；日志 data/kill7_tail_cron.log。
 - 回滚：git revert（三次 commit）+ scripts/crontab_tool.sh install。
+
+## 2026-11-01 退役重复框架 kill6 / kill7
+
+- 原因：kill6 与 kill4 完全同口径（8 项 + hold3 + 不限制）、kill7 与 kill5 完全同口径（8 项 + 尾码模型自主 + 不限制），是重复副本，用户确认清理。
+- 清理范围：kill6/kill7 框架本体（三件套）+ 12 处派生统计挂接点 + cron/logrotate + data 目录。
+- 顺带修复：kill6/kill7 挂接时 clone 脚本 next_marker 错位，导致 kill5 相关函数在 hitrate_baseline/cumulative/ops_health/tail_review 里重复定义（各 2 个 def）；退役时一并去重（保留第一个）。
+- A/B 证明：panel_context 删除 kill6_self/kill7_self 后，剩余框架 kill3/kill2/kill4/kill5 输出逐字节不变（kill3=188a759b…、kill2=148208bc…、kill4=dc5a3170…、kill5=bb7ba74c…）。
+- 冻结守卫：panel_context hash bc6062c3… → 4d174e9f…（hash_updates 第 19 条）。
+- 数据归档：/root/archive/retired-20261101-kill67/kill67-data.tar.gz（sha256=1d98b2f0bb8dcd7eeb69abe47255e5d4815a582079c05263e3bd9993b50ed75b）。
+- 备份：/root/ops/kill67-retire-20261101-105329/（panel_context.py.bak、crontab.txt.bak、run_stats.py.bak）。
+- 回滚：git revert（三次 commit）+ scripts/crontab_tool.sh install + tar xzf 解档数据。
