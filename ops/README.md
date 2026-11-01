@@ -1019,3 +1019,15 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/kill5-family-20261101-1210/（run_stats.py / crontab / logrotate / .env / panel.html / kill3-freeze.json / model_tier_guard.json / seals / settlements / 三件套与派生脚本 .bak）。
 - 提交：349e0a4（运行层+三件套删除）、d3dbde9（面板层）、62cff4c（派生统计）、本提交（冻结 hash + 本台账）。
 - 回滚：git revert <本提交> 62cff4c d3dbde9 349e0a4 + scripts/crontab_tool.sh install + tar xzf 归档 + 恢复 /root/run_stats.py、/etc/logrotate.d/penta5、.env（均在 /root/ops/kill5-family-20261101-1210/）。
+
+## 2026-11-01 12:26 彻底退役 kill2p（AI 二位置杀码 + 一合尾 + 两反向形态，5 项）
+
+- 原因：用户发 kill2p 面板卡截图指认 kill2p 并说「这个也继续清理」，按彻底退役处理（停跑 + 删三件套 + 去全部挂接 + 面板区块剥除 + 数据归档），不留任何层；kill2 已于 12:10 退役、kill5 已于 12:18 退役，本框架为该「一合尾 + 反向形态」家族最后一套。
+- 运行层：crontab 删 `*/5 ... run_kill2p_tail.py`（install 后 `crontab_tool.sh diff` = matches）；/etc/logrotate.d/penta5 删 data/kill2p_tail_cron.log 段；删除 scripts/run_kill2p_tail.py、lib/kill2p_tail.py、lib/kill_two_p_view.py。
+- 面板：/root/run_stats.py 去 kill2p import 与 2 处 apply_kill_two_p_block 调用；panel.html KILL_TWO_P 区块（含 refresh names 里的 KILL_TWO_P）已剥除（KILL_TWO_P 计数 0，KILL_ONE/KILL_THREE 各 3）；lib/panel_live_refresh.py names 去 KILL_TWO_P；lib/attack_editor_view.py 删 kill2p 攻击语定义。
+- 派生统计：hitrate_baseline rows=6（去 kill2p 行）、framework_hitrate_cumulative rows=6（去 kill2p 行）、tail_hold_review 去 kill2p 框架、model_usage 去 kill2p 日志源、ops_health 去 check_kill2p 与 kill2p_tail_cron.log、evidence_backup JSON_DIRS 去 kill2p_tail、position_kill_shadow 去 kill2p 条目并恢复 kill3（kill2 退役时误删 kill3，本次补回，FRAMEWORKS=kill1/kill3）、position_kill_review docstring 去 kill2p。
+- A/B 证明：panel_context 删 _kill2p_self + kill2p_stats/kill2p_previous 后，kill3/kill1 固定 fixture（bare/kill3/kill1/kill3+kill1/rich）输出逐字节不变，sha256 5e8706a2…/ecfe0dfd…/57266d53…/6cd6cfe8…/a53a66f7…；新版对 kill2p 入参抛 TypeError。
+- 冻结守卫：lib/panel_context.py hash 3b1c26c7… → 619e1938…（hash_updates 第 26 条，commit pending-kill2p-retire）。
+- 数据归档：data/kill2p_tail（2.2M）移至 /root/ops/kill2p-family-20261101-121944/data_kill2p_tail；完整备份同目录（before_hitrate/before_cumulative/crontab/run_stats/panel.before.html/position_kill_shadow/logrotate/panel_context/kill3-freeze.json）。
+- 提交：4ebe1a2（运行层+三件套删除）、4012f2e（面板层）、e8a06a8（派生统计）、本提交（冻结 hash + 本台账）。
+- 回滚：git revert <本提交> e8a06a8 4012f2e 4ebe1a2 + scripts/crontab_tool.sh install + 把归档移回 data/kill2p_tail + 恢复 /root/run_stats.py 与 /etc/logrotate.d/penta5（均在 /root/ops/kill2p-family-20261101-121944/）。

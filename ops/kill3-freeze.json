@@ -2,7 +2,7 @@
   "files": {
     "lib/kill3_tail.py": "ed228b26e66b16ab741858d674ae1c50cecaa3302097133e30a8dfa8a6212ad8",
     "lib/kill_three_view.py": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
-    "lib/panel_context.py": "3b1c26c79129d0286ee19222250cd4daccba5172fa3c7336da26122443f44780",
+    "lib/panel_context.py": "619e1938d3b21e4521828f47d913653d65f0022928bfa7b43bc9b4a097eebb52",
     "scripts/run_kill3_tail.py": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33"
   },
   "freeze_hours": 72,
@@ -209,6 +209,14 @@
       "new_sha256": "3b1c26c79129d0286ee19222250cd4daccba5172fa3c7336da26122443f44780",
       "old_sha256": "492e2b87fcdeeb3ff2b918ffddf56fe8917cc8e085b3091fd9789451827c3190",
       "reason": "kill5 退役：删除 _kill5_self 与 kill5_stats/kill5_previous 参数；A/B 证明 kill3/kill1/kill2p 固定 fixture 输出逐字节不变（旧模块去掉 kill5_self 后 sha256 = 新版：bare 5ad4cb6e568e3612 / kill3 77c994150e7b7af1 / all fa9f58b2b65c442c / rich 581892950f3894ac）"
+    },
+    {
+      "at": "2026-11-01T12:26:00+08:00",
+      "commit": "pending-kill2p-retire",
+      "file": "lib/panel_context.py",
+      "new_sha256": "619e1938d3b21e4521828f47d913653d65f0022928bfa7b43bc9b4a097eebb52",
+      "old_sha256": "3b1c26c79129d0286ee19222250cd4daccba5172fa3c7336da26122443f44780",
+      "reason": "kill2p 退役：删除 _kill2p_self 与 kill2p_stats/kill2p_previous 参数；A/B 证明 kill3/kill1 固定 fixture 输出逐字节不变（bare 5e8706a2f3f38e1f / kill3 ecfe0dfd8b9e434d / kill1 57266d53388c9e6f / kill3+kill1 6cd6cfe85ec5ec1b / rich a53a66f75494a229），kill2p 入参被 TypeError 拒绝"
     }
   ],
   "min_periods": 100,
