@@ -2,7 +2,7 @@
  "files": {
   "lib/kill3_tail.py": "96c537dba763293abc2cd7c5869b39ad240ad04c8b120106158b38785e10b515",
   "lib/kill_three_view.py": "9ad264b495197c93b84af58af8f5ded4c73d0668ba4e3270a0d19fcf618b98c2",
-  "lib/panel_context.py": "df3305ab78e5d72d7228cb05459b7978925f3301b695d2a0711a0a4d114e6359",
+  "lib/panel_context.py": "2f9d601111d61914f0360bff28a0df0d7e5b5ea50a875ca744c5d28a8ce2bd15",
   "scripts/run_kill3_tail.py": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d"
  },
  "freeze_hours": 72,
@@ -137,6 +137,14 @@
    "new_sha256": "df3305ab78e5d72d7228cb05459b7978925f3301b695d2a0711a0a4d114e6359",
    "old_sha256": "f184f60f9d4b2bdf22b4e2c0e9370eedf6ba4444f3c35e630097f8ae4cfed46c",
    "reason": "kill5 新增 _kill5_self 与 build() 可选 kill5_stats/kill5_previous 入参、输出独立键 kill5_self；A/B 证明：固定 fixture（now 固定）下 kill3+k4 上下文 old/new sha256 逐字节相同 = 12c5667a1fad476232c29f6fcf98a73e67ee0ec2742bc48fc6dca76272b0d8a6，kill3/kill4 口径未变，kill5_self 只增不改。"
+  },
+  {
+   "at": "2026-11-01T10:38:48+08:00",
+   "commit": "pending-kill6",
+   "file": "lib/panel_context.py",
+   "new_sha256": "2f9d601111d61914f0360bff28a0df0d7e5b5ea50a875ca744c5d28a8ce2bd15",
+   "old_sha256": "df3305ab78e5d72d7228cb05459b7978925f3301b695d2a0711a0a4d114e6359",
+   "reason": "为新增 kill6_tail 面板上下文新增可选 kill6_stats/kill6_previous 参数；A/B 证明：固定 fixture 下 kill3/kill2/kill4 panel_context snapshot sha256 逐字节不变（kill3=3a78269d…、kill2=e9fe5d95…、kill4=1b772a30…），不改变既有框架口径"
   }
  ],
  "min_periods": 100,
