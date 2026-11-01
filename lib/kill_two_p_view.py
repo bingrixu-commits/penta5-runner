@@ -1,7 +1,7 @@
 """AI 二位置杀码 + 一合尾 + 两反向形态建议面板区块（kill2p 独立框架）。
 
 数据源 data/kill2p_tail/{seals,settlements}.json，由 scripts/run_kill2p_tail.py 每期生成。
-与 kill3/kill2/kill1 完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
+与 kill3/kill1 完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
 
 命中口径（写死，面板脚注同步展示）：
 - 位置杀码 x2 = DeepSeek 从 千/百/十/个 中选恰好 2 个位置，各排除 1 个数字（2 注/期）；
@@ -292,7 +292,7 @@ def _version_html():
                          + str(int(info.get('count') or 0)) + ' 期）')
         parts.append('整组精确基线 %.2f%%（%d 项）'
                      % (float(baseline[1]) * 100.0, int(baseline[0])))
-        parts.append('kill2p 独立框架：与 kill1/kill2/kill3 独立封存 / 结算 / 统计')
+        parts.append('kill2p 独立框架：与 kill1/kill3 独立封存 / 结算 / 统计')
         return '<div class="k2p-drop">' + ' · '.join(parts) + '</div>'
     except Exception:
         return ''

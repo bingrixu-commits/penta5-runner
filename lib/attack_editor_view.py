@@ -4,10 +4,10 @@ import re
 
 SCRIPT_ID = 'penta5-attack-editor-control'
 SCRIPT = r'''<script id="penta5-attack-editor-control">
-/* all-attack-editor-v12-kill2p */
+/* all-attack-editor-v13-retire-kill2 */
 (function(){
 'use strict';
-const version='all-attack-editor-v12-kill2p',previous=window.__PENTA5_ATTACK_EDITOR__;
+const version='all-attack-editor-v13-retire-kill2',previous=window.__PENTA5_ATTACK_EDITOR__;
 if(previous&&previous.version===version){previous.check();return;}
 if(previous&&typeof previous.destroy==='function')previous.destroy();
 const definitions=[
@@ -18,7 +18,6 @@ const definitions=[
  {id:'kill3-attack-text',copy:'kill3-attack-copy',label:'AI三位置+一合尾攻击语',data:'kill3-attack-data'},
  {id:'kill1-attack-text',copy:'kill1-attack-copy',label:'AI单位置+一合尾+一形态攻击语',data:'kill1-attack-data'},
  {id:'kill2p-attack-text',copy:'kill2p-attack-copy',label:'AI二位置+一合尾+两反向形态攻击语',data:'kill2p-attack-data'},
- {id:'kill2-attack-text',copy:'kill2-attack-copy',label:'AI二位置+一合尾+二数合/三数合攻击语',data:'kill2-attack-data'},
  {id:'kill5-attack-text',copy:'kill5-attack-copy',label:'AI三位置+一合尾+二数合/三数合·自由尾码攻击语',data:'kill5-attack-data'}
 ];
 const entries=new Map();

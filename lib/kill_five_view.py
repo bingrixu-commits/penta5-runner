@@ -531,7 +531,7 @@ def apply_kill_five_block(content, report=None):
         # 半截标记不重复插入，避免污染后续 live refresh 的成对标记校验。
         if start != -1 or end != -1:
             return content
-        for anchor in ('<!-- KILL_TWO_END -->', '<!-- KILL_THREE_END -->', '<!-- COLD_HIT_STATS_END -->',
+        for anchor in ('<!-- KILL_THREE_END -->', '<!-- COLD_HIT_STATS_END -->',
                        '<!-- POSITION_COLD_END -->'):
             position = content.find(anchor)
             if position != -1:
