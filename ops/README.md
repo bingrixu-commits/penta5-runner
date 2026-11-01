@@ -1167,3 +1167,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 提交：0211e28 fix(evidence-backup)（本台账）。
 - 回滚：git revert 0211e28；或 crontab 用 /root/ops/fix-20261101-1731/backups/ops/crontab.txt。
 
+
+## 2026-11-01 18:00 kill8 启动键免密（viewer 登录即可触发）
+- 依据：用户反馈"每次输入数字都要输入密码，不行"，要求简单按键——输入排除数字后点一下直接调模型。
+- 口径：启动键不再要求 admin，登录面板（viewer 或 admin）即可触发；前端去掉管理员密码表单。
+- 改动（2 文件）：kill8_run_routes.js（POST 去掉 admin 403 检查，viewer 也可触发；GET can_run 改为 true）；lib/kill_eight_view.py（_run_html 删除 k8-run-admin 表单 + auth() 函数，run() 直接 POST 用登录 cookie；401 提示"请先登录面板"）。
+- 验证：viewer 身份 POST /api/kill8-run → 200 {ok:true,started:true}（脚本成功 spawn）；panel.html k8-run-btn=1、k8-run-admin=0。
+- 备份：/root/ops/kill8-deploy/kill8_run_routes.js.bak.20261101175439、kill_eight_view.py.bak.20261101175439。
+- 提交：f83cdc2 feat(kill8): 启动键免密——viewer 登录即可触发，去掉每次输管理员密码；本提交（台账）。
+- 回滚：git revert <本提交> f83cdc2。
