@@ -19,7 +19,8 @@ const definitions=[
  {id:'kill1-attack-text',copy:'kill1-attack-copy',label:'AI单位置+一合尾+一形态攻击语',data:'kill1-attack-data'},
  {id:'kill2p-attack-text',copy:'kill2p-attack-copy',label:'AI二位置+一合尾+两反向形态攻击语',data:'kill2p-attack-data'},
  {id:'kill2-attack-text',copy:'kill2-attack-copy',label:'AI二位置+一合尾+二数合/三数合攻击语',data:'kill2-attack-data'}
- {id:'kill4-attack-text',copy:'kill4-attack-copy',label:'AI三位置+一合尾+二数合/三数合攻击语',data:'kill4-attack-data'}
+ {id:'kill4-attack-text',copy:'kill4-attack-copy',label:'AI三位置+一合尾+二数合/三数合攻击语',data:'kill4-attack-data'},
+ {id:'kill5-attack-text',copy:'kill5-attack-copy',label:'AI三位置+一合尾+二数合/三数合·自由尾码攻击语',data:'kill5-attack-data'}
 ];
 const entries=new Map();
 const styleId='penta5-attack-editor-style',sourceAttribute='data-penta5-attack-editor-source';

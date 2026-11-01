@@ -38,6 +38,7 @@ SOURCE_LOGS = (
     ('kill2p', 'data/kill2p_tail_cron.log'),
     ('kill2', 'data/kill2_tail_cron.log'),
     ('kill4', 'data/kill4_tail_cron.log'),
+    ('kill5', 'data/kill5_tail_cron.log'),
 )
 
 MAX_READ_BYTES = 4 * 1024 * 1024
