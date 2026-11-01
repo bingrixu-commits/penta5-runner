@@ -895,3 +895,15 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   hold5/until-miss 91.67%（-2.08pp）但换码降 14-16 次。方向正面。
 - kill2p：hold2/hold5/until-miss 命中率同现行 89.58%，换码降 2-7 次；hold3 87.50%（-2.08pp）。方向正面。
 - 结论：n≥30 置信区间仍宽（约 ±8pp），暂不转正；最终口径等 n≥50（约 12:00）再定。现网封存/统计/攻击语未动。
+
+## 2026-11-01 kill3 v10：关掉两套「3 期」限制，全部交给模型决定（用户指令）
+
+- 用户原话：「AI 三位置杀码 + 一合尾…把这个模型 3 轮换码关了，全部交给模型决定」；经确认范围 = 两套都关。
+- RULE_VERSION：kill3-tail-v9-two-counted-hold3 → kill3-tail-v10-two-counted-free；prompt 版 v9 → v10。
+  - 尾码：删除【合尾稳定化规则】与 apply_tail_policy 沿用，模型尾码每期直接封存（新封存不再写 tail_policy）。
+  - 位置/弃位：删除【位置与弃位使用限制】与 validate_position_choice 强制换码，位置杀码/放弃位置可连续使用。
+  - 面板脚注、口径归档标注（旧口径 v1–v8 → v1–v9）、hitrate_baseline 与 framework_hitrate_cumulative 各加 v10 基线 (5, 0.6191)。
+- 命中口径不变：整组仍 = 2 计入位置 + 1 合尾 + 2 反向形态共 5 项 / 2 注·期；精确基线 61.91% 不变。
+- 旧 v1–v9 封存只读保留、不重算、不补写；新封存 rule_version=v10，无 tail_policy / position_restriction。
+- 备份：/root/ops/kill3-v10-free-100349/（5 个源文件 + seals/settlements 快照）。
+

@@ -6,9 +6,8 @@
 - 3 个被杀位置全部展示，其中 AI 用 display_only 指定 2 个计入整组与攻击语（counted），
   第 3 个仅展示、不计入整组与攻击语；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
-- 尾码稳定化（v8 起，v9 保留）：上期尾码命中且自动沿用未满 3 期时沿用上期尾码；失手或自动沿用
-  满 3 期后由模型本期重选（重选可与上期同码）；模型尾项在封存里记为换码候选
-  （tail_policy.model_tail）；
+- 尾码与位置/弃位均由 DeepSeek 自主决定（v10 起）：无自动沿用、无连用期数上限、无强制换码，
+  模型每期给出的位置杀码、放弃位置、合尾直接封存（不再写 tail_policy 沿用追溯，仅保留旧字段兼容）；
 - 另输出两项反向形态（与八项独立框架同口径）：
   四位单双形态 reverse_parity、四位大小形态 reverse_size；
   被杀的 3 个位置取杀码单双/大小的反面，放弃位置的字符由 AI 自选；
@@ -17,9 +16,8 @@
 - 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
 - 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态同时命中（共 5 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
-- 同一位置杀码最多连用 3 期（中间放弃该位置不清零）、同一放弃位置最多连用 3 期，
-  满后下一期必须更换；
-- 尾码不再要求"不得与上一期同类"，改为上述稳定化口径，并在封存写 tail_policy 追溯；
+- 位置杀码与放弃位置不再强制轮换：同一位置杀码/放弃位置可连续使用，由模型自主决定；
+- 尾码与位置均无「不得与上一期同类 / 连用满 3 期必换」限制，模型完全自主；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -73,7 +71,7 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill3-tail-v9-two-counted-hold3'
+RULE_VERSION = 'kill3-tail-v10-two-counted-free'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
@@ -87,8 +85,7 @@ RETRY_INSTRUCTION = (
     'reverse_parity 为四个单/双字符，reverse_size 为四个大/小字符，'
     '3 个被杀位置都必须取杀码形态的反面'
     '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
-    '放弃位置的字符自选；合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
-    '被限制的位置不得继续使用该位置连用满3期的杀码，被限制的放弃位置必须换；'
+    '放弃位置的字符自选；合尾由你自主决定并直接封存；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
 
@@ -385,33 +382,10 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         prev_label = TAILS[previous_tail['key']]['label']
         prev_kill = str(previous_tail.get('kill', '-'))
         restriction = (f'上一期合尾：{prev_label} 杀 {prev_kill}。'
-                       '稳定化规则：上期该尾码命中且连用未满 3 期时，系统直接沿用上期尾码；'
-                       '否则采用你本期新选。你的尾项仍会记为换码候选，可正常自主选择。')
+                       '合尾由你自主决定并直接封存，无沿用/换码限制。'
+                       '（上一期尾码仅作历史参考，不影响本期选择。）')
     else:
-        restriction = '本期无上一期尾码，按你本期自主选择封存。'
-    limit = position_limit if isinstance(position_limit, dict) else {}
-    limit_lines = []
-    previous_positions = limit.get('previous_positions') or {}
-    previous_dropped = limit.get('previous_dropped')
-    previous_ref = limit.get('previous_ref_period') or reference
-    if previous_positions or previous_dropped:
-        picked = '、'.join(f'{POSITION_LABELS[key]}杀{previous_positions[key]}'
-                          for key, _label, _index in POSITIONS if key in previous_positions)
-        dropped_label = POSITION_LABELS.get(previous_dropped, previous_dropped) or '-'
-        limit_lines.append(f'上一封存（{previous_ref}）：{picked}，放弃{dropped_label}。')
-    blocked_digits = limit.get('blocked_digits') or {}
-    blocked_drop = limit.get('blocked_drop')
-    if blocked_digits or blocked_drop:
-        forced = []
-        for key, digit in blocked_digits.items():
-            forced.append(f'{POSITION_LABELS.get(key, key)}不得再杀 {digit}')
-        if blocked_drop:
-            forced.append(f'放弃位置不得继续放弃 {POSITION_LABELS.get(blocked_drop, blocked_drop)}')
-        limit_lines.append('本期强制更换：' + '；'.join(forced) + '。')
-    limit_lines.append(f'（同一位置杀码最多连用 {MAX_CONSECUTIVE_PERIODS} 期，'
-                       '中间放弃该位置不清零；'
-                       f'同一放弃位置最多连用 {MAX_CONSECUTIVE_PERIODS} 期，满后下一期必须更换）')
-    position_limit_text = '\n'.join(limit_lines)
+        restriction = '本期无上一期尾码，合尾由你自主决定并直接封存。'
     panel_section = ''
     panel_context_text = None
     panel_context_sha = None
@@ -431,14 +405,12 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '【五种合尾候选对比（合尾 = 对应位置数字之和的个位；'
         '按该尾候选码近50期真实杀号命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(tail_lines) + '\n\n'
-        '【合尾稳定化规则】\n' + restriction + '\n\n'
-        '【位置与弃位使用限制】\n' + position_limit_text + '\n\n'
+        '【合尾决策】\n' + restriction + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；'
         '其中恰好 2 个位置计入整组（攻击语只按这 2 个位置排除），'
         '第 3 个位置用 display_only 标明，只展示、不计入整组与攻击语；\n'
-        '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；'
-        '系统按稳定化规则决定最终封存尾码；\n'
+        '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），由你自主决定并直接封存；\n'
         '3. 给出两项四位反向排除形态：reverse_parity 为按千百十个顺序的四位单双形态，'
         'reverse_size 为四位大小形态；被杀的 3 个位置（含 display_only 仅展示位置）'
         '都必须取杀码形态的反面'
@@ -464,7 +436,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill3-tail-prompt-v9-two-counted-hold3',
+        'version': 'kill3-tail-prompt-v10-two-counted-free',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -474,9 +446,9 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
                              'hit50': round(hit50, 6), 'hit30': round(hit30, 6)}
                             for key, label, kill, _count, _omission, hit50, hit30 in tail_rows],
         'previous_tail': previous_tail,
-        'tail_policy': TAIL_POLICY,
-        'tail_hold_max': TAIL_HOLD_MAX,
-        'position_limit': limit,
+        'tail_policy': None,
+        'tail_hold_max': None,
+        'position_limit': None,
         'panel_context_sha256': panel_context_sha,
         'panel_context': panel_snapshot if isinstance(panel_snapshot, dict) else None,
     }
