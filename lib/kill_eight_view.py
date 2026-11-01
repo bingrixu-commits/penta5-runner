@@ -59,6 +59,13 @@ STYLE = """
 #kill-eight-ai .k8-posinput-grid label{display:flex;flex-direction:column;font-size:12px;color:#6b21a8;gap:4px;margin:0}
 #kill-eight-ai .k8-posinput-grid input{width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #c4b5fd;border-radius:6px;background:#fff;font:14px/1.4 monospace;color:#1e1b4b;text-align:center}
 #kill-eight-ai .k8-posinput-hint{font-size:12px;color:#7c3aed}
+#kill-eight-ai .k8-run{margin:8px 0 4px;padding:10px 12px;border:1px solid #c7d2fe;border-radius:8px;background:#eef2ff;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#kill-eight-ai .k8-run button{padding:8px 16px;border:0;border-radius:7px;background:#2563eb;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+#kill-eight-ai .k8-run button:disabled{background:#94a3b8;cursor:not-allowed}
+#kill-eight-ai .k8-run .k8-run-status{font-size:13px;color:#1e3a8a}
+#kill-eight-ai .k8-run details{width:100%;margin-top:6px;font-size:13px;color:#475569}
+#kill-eight-ai .k8-run summary{cursor:pointer;color:#4338ca}
+#kill-eight-ai .k8-run input{padding:6px 8px;border:1px solid #c4b5fd;border-radius:6px;margin:4px 6px 4px 0;font-size:13px}
 """
 
 
@@ -186,8 +193,8 @@ def render_block():
                 body += ('<div class="k8-meta">最近一次：参考期 %s · 目标期 %s</div>'
                          % (escape(str(previous.get('ref_period', ''))),
                             escape(str(previous.get('target_period', '')))))
-            return ('%s%s<style>%s</style><h3>%s</h3>%s%s%s%s%s%s'
-                    % (START, _section_open(), STYLE, _TITLE, body,
+            return ('%s%s<style>%s</style><h3>%s</h3>%s%s%s%s%s%s%s'
+                    % (START, _section_open(), STYLE, _TITLE, _run_html(), body,
                        _attack_html(None), _stats_html(stats), _version_html(),
                        _foot_html(), END))
         cards = []
@@ -224,16 +231,79 @@ def render_block():
             verify = '已封存，等待发布确认。'
         as_of = escape(str(seal.get('ref_period', '')))
         return ('%s%s<style>%s</style><h3>%s</h3>'
+                '%s'
                 '<div class="k8-meta">%s</div>'
                 '<div class="k8-grid">%s</div>%s'
                 '<div class="k8-reason">理由：%s</div>'
                 '%s%s<div class="k8-verify">%s</div>%s%s%s'
                 % (START, _section_open(' data-as-of="%s"' % as_of), STYLE, _TITLE,
+                   _run_html(),
                    meta, ''.join(cards), scope_html, reason,
                    _stats_html(stats), _version_html(), verify, _attack_html(seal),
                    _foot_html(), END))
     except Exception:
         return ''
+
+
+def _run_html():
+    """启动按钮：点击触发 /api/kill8-run（结算上一期 + 封存下一期 + 刷面板）。"""
+    html = (
+        '<div class="k8-run">'
+        '<button id="k8-run-btn" type="button">▶ 启动本框架（结算上一期 + 封存下一期）</button>'
+        '<span class="k8-run-status" id="k8-run-status" role="status" aria-live="polite"></span>'
+        '<details id="k8-run-admin" hidden><summary>管理员验证（只读登录需填写）</summary>'
+        '<input id="k8-run-user" type="text" autocomplete="username" maxlength="128" placeholder="管理员账号">'
+        '<input id="k8-run-password" type="password" autocomplete="current-password" maxlength="512" placeholder="管理员密码">'
+        '<div style="font-size:12px;color:#64748b;margin-top:4px">仅用于本次启动请求，不保存密码。</div>'
+        '</details></div>'
+    )
+    script = (
+        "<script>(function(){"
+        "'use strict';"
+        "var v='kill8-run-v1',old=window.__PENTA5_KILL8_RUN__;"
+        "if(old&&old.version===v)return;window.__PENTA5_KILL8_RUN__={version:v};"
+        "var busy=false,running=false,sessionAdmin=null;"
+        "function node(id){return document.getElementById(id);}"
+        "function say(t){var x=node('k8-run-status');if(x)x.textContent=t;}"
+        "function setBtn(b){var x=node('k8-run-btn');if(x)x.disabled=b;}"
+        "function req(o){return fetch('/api/kill8-run',Object.assign({credentials:'same-origin',cache:'no-store',redirect:'error'},o));}"
+        "function auth(){if(sessionAdmin===true)return null;"
+        "var u=node('k8-run-user'),p=node('k8-run-password'),d=node('k8-run-admin');"
+        "if(!u||!p||!u.value||!p.value){if(d){d.hidden=false;d.open=true;}"
+        "say('请填写管理员账号密码（只读登录不能启动）');"
+        "if(u&&!u.value)u.focus({preventScroll:true});else if(p)p.focus({preventScroll:true});return false;}"
+        "if(u.value.length>128||p.value.length>512){say('账号或密码格式无效');return false;}"
+        "var raw=u.value+':'+p.value,bytes=new TextEncoder().encode(raw),bin='';"
+        "bytes.forEach(function(b){bin+=String.fromCharCode(b);});p.value='';raw='';return 'Basic '+btoa(bin);}"
+        "async function poll(){for(var i=0;i<80;i++){await new Promise(function(r){setTimeout(r,3000);});"
+        "try{var r=await req({method:'GET',headers:{Accept:'application/json'}});var d=null;try{d=await r.json();}catch(e){}"
+        "if(d&&d.ok===true&&d.running===false){say('完成，正在刷新面板…');"
+        "setTimeout(function(){location.reload();},400);return;}"
+        "if(d&&d.ok===true)say('计算中… 已约 '+((i+1)*3)+' 秒');}catch(e){}}"
+        "say('长时间未确认完成，请手动刷新页面查看结果');}"
+        "async function run(){if(busy)return;busy=true;setBtn(true);"
+        "var a=auth();if(a===false){busy=false;setBtn(false);return;}"
+        "var h={Accept:'application/json'};if(a)h.Authorization=a;"
+        "say('正在启动（结算上一期 + 封存下一期）…');"
+        "try{var r=await req({method:'POST',headers:h});var d=null;try{d=await r.json();}catch(e){}"
+        "if(r.status===401||r.status===403){sessionAdmin=false;var ad=node('k8-run-admin');"
+        "if(ad){ad.hidden=false;ad.open=true;}"
+        "say('需要管理员权限，请填写账号密码后重试');return;}"
+        "if(r.status===409){say('上一次仍在运行，请稍候再点');return;}"
+        "if(!r.ok||!d||d.ok!==true)throw new Error('run');"
+        "sessionAdmin=true;running=true;"
+        "say('已启动，正在计算（约1-2分钟），完成后自动刷新…');poll();}"
+        "catch(e){say('启动失败，请重试');}"
+        "finally{busy=false;setBtn(false);}}"
+        "function bind(){var b=node('k8-run-btn');if(b)b.addEventListener('click',run);}"
+        "async function init(){try{var r=await req({method:'GET',headers:{Accept:'application/json'}});"
+        "var d=null;try{d=await r.json();}catch(e){}"
+        "if(d&&d.ok===true){sessionAdmin=(d.can_run===true);running=(d.running===true);"
+        "if(running)say('上一次仍在运行中…');}}catch(e){}bind();}"
+        "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}else{init();}"
+        "})();</script>"
+    )
+    return html + script
 
 
 def _attack_html(seal):
