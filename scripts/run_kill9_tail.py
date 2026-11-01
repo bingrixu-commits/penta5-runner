@@ -1,10 +1,11 @@
-"""AI 四形态排除 + 二数合 + 三数合 每期任务（cron 每 5 分钟，开奖后启动）。
+"""AI 三形态排除（面板候选池挑选）+ 二数合 + 三数合 每期任务（cron 每 5 分钟，开奖后启动）。
 
 流程：
 1. 等待本期开奖数据就绪（最多 55 秒）；
 2. 结算上一期已开奖的封存（只追加，不改封存）；
-3. 若本期参考期尚无封存，则在发布窗口内请求一次 DeepSeek（最多 3 次尝试）；
-4. 封存 → 标记已发布 → 写面板区块。任何失败只记录，不补发历史期。
+3. 汇总面板各框架本期已发布四位反向形态作为候选池，让模型从中挑 3 个；
+4. 若本期参考期尚无封存，则在发布窗口内请求一次 DeepSeek（最多 3 次尝试）；
+5. 封存 → 标记已发布 → 写面板区块。任何失败只记录，不补发历史期。
 """
 from datetime import timedelta
 from pathlib import Path
@@ -85,6 +86,15 @@ def main():
         return 0
     deadline, target = kill9_tail.deadline_for(reference)
     rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
+    pool = kill9_tail.build_form_pool(reference, target)
+    pool_text = '、'.join(
+        '%s(%s)%s' % (entry.get('form'), entry.get('kind'),
+                      '*' if entry.get('stale') else '')
+        for entry in pool)
+    print('kill9 pool: count=%d forms=%s (*=来源期非本期)' % (len(pool), pool_text or '-'))
+    if len(pool) < kill9_tail.COUNTED_FORMS:
+        print('kill9 pool too small: count=%d (<%d)'
+              % (len(pool), kill9_tail.COUNTED_FORMS))
     previous_seal = seals[-1] if seals else None
     panel_snapshot = panel_context.build(
         reference, target,
@@ -93,10 +103,10 @@ def main():
     _panel_text, _panel_sha = panel_context.prompt_text(panel_snapshot)
     print('kill9 panel context sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
     prompt, audit = kill9_tail.build_prompt(
-        reference, target, rows, panel_snapshot=panel_snapshot)
+        reference, target, rows, panel_snapshot=panel_snapshot, pool=pool)
     try:
         prediction, generated_at, meta = kill9_tail.request_prediction(
-            prompt, reference, target, deadline)
+            prompt, reference, target, deadline, pool=pool)
     except Exception as error:
         print(f"kill9 request failed: {type(error).__name__}: {str(error)[:140]}")
         return 1
@@ -115,9 +125,12 @@ def main():
         kill9_tail.mark_publication_failed(reference, f'panel-write-{type(error).__name__}')
         print(f'kill9 panel publication failed: {type(error).__name__}')
         return 1
+    forms_text = ' · '.join(
+        '形态%d %s(%s)' % (index, form, kind)
+        for index, (form, kind) in enumerate(
+            zip(prediction['forms'], prediction['form_kinds']), start=1))
     print(f'kill9 published: ref={reference} target={target} rule={kill9_tail.RULE_VERSION} · '
-          f'大小 {prediction["size_form"]} · 单双 {prediction["parity_form"]} · '
-          f'全同 {prediction["all_form"]} · 混合 {prediction["mixed_form"]} · '
+          f'{forms_text} · '
           f'二数合 {prediction["he2_keep"]} · 三数合 {prediction["he3_keep"]}')
     print(f'kill9 attack: {kill9_tail.build_attack(seal)}')
     return 0

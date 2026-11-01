@@ -2,7 +2,7 @@
   "files": {
     "lib/kill3_tail.py": "74efe32c641dd4ec1376f429c77d9e048f3f19bc234a448584cb2eb7695844d2",
     "lib/kill_three_view.py": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
-    "lib/panel_context.py": "cd3494f74dcdc431880d390d5095ae68350625a0d18631da68631ba2b7ed1196",
+    "lib/panel_context.py": "e7b2966216dcf4405e9a784b25f008341247b52575ad11a4cbe866eb089e0e27",
     "scripts/run_kill3_tail.py": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33"
   },
   "freeze_hours": 72,
@@ -241,6 +241,14 @@
       "new_sha256": "cd3494f74dcdc431880d390d5095ae68350625a0d18631da68631ba2b7ed1196",
       "old_sha256": "dc8146747461fac2f8202f9a8e5cf8509ed64077dcb6e895045a8701565ac79d",
       "reason": "kill9 v2（四形态改为 大小/单双/全同/混合）：panel_context._kill9_self 与 _ai_self_frame 的 kill9_tail 字段 parity/size/prime/middle → size/parity/all/mixed；A/B 证明 v1→v2 除 kill9 字段名外 build 逐字节一致、kill1/kill3 帧完全一致；kill3 RULE_VERSION 与口径未变"
+    },
+    {
+      "at": "2026-11-02T03:42:24+08:00",
+      "commit": "pending-kill9-v3",
+      "file": "lib/panel_context.py",
+      "new_sha256": "e7b2966216dcf4405e9a784b25f008341247b52575ad11a4cbe866eb089e0e27",
+      "old_sha256": "cd3494f74dcdc431880d390d5095ae68350625a0d18631da68631ba2b7ed1196",
+      "reason": "kill9 v3 面板上下文 previous/stats 字段由 size/parity/all/mixed 改为 forms/form_kinds/form_pool；_ai_self_frame kill9_tail 字段同步；A/B 自证（6/0）证明 kill1/kill3 上下文与 prompt_text 逐字节不变"
     }
   ],
   "min_periods": 100,

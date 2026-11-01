@@ -1,16 +1,19 @@
-"""AI 四形态排除 + 二数合 + 三数合 框架（kill9，独立封存/结算/统计）。
+"""AI 三形态排除 + 二数合 + 三数合 框架（kill9 v3，独立封存/结算/统计）。
 
 口径（面板、封存与统计都按此写死）：
-- 由 DeepSeek 每期完全自主筛选 4 个四位形态（大小/单双/全同/混合，均按千百十个顺序输出 4 字符），
-  作为本期「形态排除项」；
-- 四个形态 = 大小（大/小）、单双（单/双）、全同（全大/全小/全双/全单）、混合（每位置大/小/单/双）；
-  大=5-9、小=0-4、单=1/3/5/7/9、双=0/2/4/6/8；
+- 候选池 = 面板其他 AI 框架本期已发布的四位反向形态汇总去重（kill1 的 form、
+  kill3 的 reverse_parity/reverse_size、kill8 的 parity_form/size_form）；每项如实标注
+  来源框架、来源参考期/目标期与是否过期（来源目标期 != 本期目标期即过期，仍纳入）；
+- 由 DeepSeek 从候选池中挑选 3 个互不相同的四位形态（大小或单双，按千百十个顺序输出 4 字符），
+  作为本期「形态排除项」；池内不足 3 个时允许补足同类型形态并在 reason 说明；
+  模型不得改写池内形态，也不得凭空自造（本地校验强制 forms ⊆ 池）；
+- 形态只可能是大小（大/小）或单双（单/双）两类：大=5-9、小=0-4、单=1/3/5/7/9、双=0/2/4/6/8；
 - 形态命中 = 目标期实际四位形态 != 封存形态（反向排除项，逐位约束至少一位不满足即命中）；
 - 二数合：he2_keep 从 02468 恰好保留 4 个不同数字；前 4 球任取 2 位 6 种组合和值个位，
   任一落入保留集即命中；
 - 三数合：he3_keep 从 0-9 恰好保留 5 个不同数字且 2 奇 3 偶或 3 奇 2 偶；任取 3 位 4 种组合
   和值个位，任一落入保留集即命中；
-- 整组命中 = 4 个形态 + 二数合 + 三数合 共 6 项同时命中；
+- 整组命中 = 3 个形态 + 二数合 + 三数合 共 5 项同时命中；
 - 无位置杀码、无合尾、无连用限制（每期完全由模型按冷热重选，不沿用上期）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
@@ -47,12 +50,12 @@ MAX_TOKENS = 12288
 REASONING_EFFORT = 'high'
 NONRETRYABLE_HTTP_STATUSES = frozenset((400, 401, 402, 422))
 
-FORM_KINDS = ('size', 'parity', 'all', 'mixed')
-FORM_LABELS = {'size': '大小形态', 'parity': '单双形态', 'all': '全同形态', 'mixed': '混合形态'}
-FORM_PALETTE = {'size': '大小', 'parity': '单双', 'all': '全大/全小/全双/全单', 'mixed': '大小单双'}
-REVERSE_LABELS = {'size': '大小排除形态', 'parity': '单双排除形态',
-                  'all': '全同排除形态', 'mixed': '混合排除形态'}
+FORM_KINDS = ('size', 'parity')
+FORM_LABELS = {'size': '大小形态', 'parity': '单双形态'}
+FORM_PALETTE = {'size': '大小', 'parity': '单双'}
+REVERSE_LABELS = {'size': '大小排除形态', 'parity': '单双排除形态'}
 
+# 以下 全同/质合/中边 常量只用于 v1/v2 旧封存的结算与攻击语追溯，不再参与新一期预测。
 ALL_FORM_VALUES = ('大大大大', '小小小小', '双双双双', '单单单单')
 ALL_FORM_LABELS = {'大大大大': '全大', '小小小小': '全小', '双双双双': '全双', '单单单单': '全单'}
 
@@ -60,8 +63,8 @@ ALL_FORM_LABELS = {'大大大大': '全大', '小小小小': '全小', '双双�
 PRIME_DIGITS = frozenset((1, 2, 3, 5, 7))
 MIDDLE_DIGITS = frozenset((3, 4, 5, 6))
 
-RULE_VERSION = 'kill9-tail-v2-size-parity-all-mixed'
-COUNTED_FORMS = 4
+RULE_VERSION = 'kill9-tail-v3-pool-three-forms-he2he3'
+COUNTED_FORMS = 3
 HE2_SOURCE_DIGITS = '02468'
 HE2_KEEP_COUNT = 4
 HE3_KEEP_COUNT = 5
@@ -70,10 +73,8 @@ HE3_TRIPLES = ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
-    'size_form 必须是恰好 4 个大/小字符（按千百十个顺序）；'
-    'parity_form 必须是恰好 4 个单/双字符（按千百十个顺序）；'
-    'all_form 必须是 全大/全小/全双/全单 之一（大大大大/小小小小/双双双双/单单单单）；'
-    'mixed_form 必须是恰好 4 个混合字符（每位置为大/小/单/双之一，按千百十个顺序）；'
+    'forms 必须是恰好 3 个互不相同的四位形态组成的数组，每项 4 个 大/小 字符或 4 个 单/双 字符'
+    '（按千百十个顺序），且必须原样来自【本期候选池】（池内不足 3 个时才允许补足同类型形态）；'
     'he2_keep 为 02468 中 4 个不同数字组成的字符串；'
     'he3_keep 为 0123456789 中 5 个不同数字组成的字符串且必须 2 奇 3 偶或 3 奇 2 偶；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
@@ -242,6 +243,97 @@ def rank_forms(rows, kind):
     return items
 
 
+POOL_FRAMEWORKS = (
+    ('kill1', 'kill1_tail', ('form',)),
+    ('kill3', 'kill3_tail', ('reverse_parity', 'reverse_size')),
+    ('kill8', 'kill8_tail', ('parity_form', 'size_form')),
+)
+POOL_SOURCE_LABELS = {
+    'kill1': 'kill1 单位置杀码+一形态',
+    'kill3': 'kill3 三位置杀码',
+    'kill8': 'kill8 双反向冷形态',
+}
+
+
+def form_kind(form):
+    """按字符集判定四位形态类型：只含单/双 = parity，只含大/小 = size，其他返回 None。"""
+    if not isinstance(form, str) or len(form) != 4:
+        return None
+    chars = set(form)
+    if chars <= {'单', '双'}:
+        return 'parity'
+    if chars <= {'大', '小'}:
+        return 'size'
+    return None
+
+
+def _latest_published_seal(dirname):
+    """Read the newest published seal of a sibling framework (read-only)."""
+    document = _load_json(ROOT / 'data' / dirname / 'seals.json', {'version': 1, 'records': []})
+    records = [item for item in (document.get('records') or [])
+               if isinstance(item, dict) and item.get('publication_state') == 'published']
+    return records[-1] if records else None
+
+
+def build_form_pool(reference=None, target=None):
+    """面板各框架已发布四位反向形态汇总（kill1/kill3/kill8），按 form 去重后作为本期候选池。
+
+    每项：form / kind / sources / source_labels / ref_period / target_period /
+    published_at / stale（来源目标期 != 本期目标期即过期，仍纳入但如实标注）。
+    """
+    reference = str(reference or '')
+    target = str(target or '')
+    if not target and reference:
+        target = next_period(reference)
+    entries = []
+    index = {}
+    for source, dirname, fields in POOL_FRAMEWORKS:
+        seal = _latest_published_seal(dirname)
+        if seal is None:
+            continue
+        ref = str(seal.get('ref_period') or '')
+        tgt = str(seal.get('target_period') or '')
+        for field in fields:
+            form = seal.get(field)
+            kind = form_kind(form)
+            if kind is None:
+                continue
+            entry = index.get(form)
+            if entry is None:
+                entry = {'form': form, 'kind': kind, 'sources': [],
+                         'source_labels': [], 'ref_period': ref,
+                         'target_period': tgt, 'published_at': seal.get('published_at')}
+                entries.append(entry)
+                index[form] = entry
+            if source not in entry['sources']:
+                entry['sources'].append(source)
+                entry['source_labels'].append(POOL_SOURCE_LABELS[source])
+    for entry in entries:
+        entry['stale'] = bool(target) and str(entry.get('target_period') or '') != target
+    return entries
+
+
+def pool_forms(pool):
+    """池内形态字符串（保持池顺序）。"""
+    result = []
+    for entry in (pool or []):
+        if isinstance(entry, dict):
+            form = entry.get('form')
+            if form_kind(form) and form not in result:
+                result.append(form)
+    return result
+
+
+def pool_sha256(pool):
+    """候选池内容指纹（封存追溯用）。"""
+    text = json.dumps([{'form': entry.get('form'), 'kind': entry.get('kind'),
+                        'sources': entry.get('sources'),
+                        'target_period': entry.get('target_period')}
+                       for entry in (pool or []) if isinstance(entry, dict)],
+                      ensure_ascii=False, sort_keys=True)
+    return sha256(text.encode('utf-8')).hexdigest()
+
+
 def _history_rows(snapshot=None):
     snapshot = snapshot or load_snapshot(persist=False)
     records = snapshot.get('records') or []
@@ -289,15 +381,13 @@ def he3_candidates():
     return result
 
 
-def build_prompt(reference, target, rows, *, panel_snapshot=None):
+def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
     ranking_lines = {}
     for kind in FORM_KINDS:
         ranks = rank_forms(window, kind)
-        if kind == 'mixed':
-            ranks = ranks[:16]
         ranking_lines[kind] = [
             f'· {form}（出{count}次/遗漏{omission}期）'
             for form, count, omission in ranks]
@@ -335,6 +425,22 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None):
             '【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带'
             ' reference/target；仅供自主决策参考，不是未来概率保证）】'
             + chr(10) + panel_context_text + chr(10) + chr(10))
+    pool_entries = [entry for entry in (pool or []) if isinstance(entry, dict)]
+    pool_section = ''
+    if pool_entries:
+        pool_lines = []
+        for entry in pool_entries:
+            form = entry.get('form') or ''
+            kind = entry.get('kind') or form_kind(form) or '?'
+            sources = '、'.join(entry.get('source_labels') or entry.get('sources') or [])
+            note = ''
+            if entry.get('stale'):
+                note = '（来源期 %s，目标期 %s，非本期）' % (
+                    entry.get('ref_period') or '-', entry.get('target_period') or '-')
+            pool_lines.append('· %s（%s，来源 %s）%s'
+                              % (form, FORM_LABELS.get(kind, kind), sources or '-', note))
+        pool_section = ('【本期候选池（面板各框架本期已发布四位反向形态去重，共 %d 个；'
+                        '必须从池中挑选）】\n' % len(pool_entries)) + '\n'.join(pool_lines) + '\n\n'
     prompt = (
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
@@ -345,49 +451,41 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None):
         '【四位单双形态冷热统计（16 种，按出现次数升序、当前遗漏降序排列；'
         '仅历史统计，不代表未来概率）】\n'
         + '\n'.join(ranking_lines['parity']) + '\n\n'
-        '【四位全同形态冷热统计（4 种：全大/全小/全双/全单，按出现次数升序、当前遗漏降序排列；'
-        '仅历史统计，不代表未来概率）】\n'
-        + '\n'.join(ranking_lines['all']) + '\n\n'
-        '【四位混合形态冷热统计 Top16（共 256 种，每位置大/小/单/双；'
-        '按出现次数升序、当前遗漏降序排列；仅历史统计，不代表未来概率）】\n'
-        + '\n'.join(ranking_lines['mixed']) + '\n\n'
-        '【二数合保留4码候选（任意两位六组和值个位任一落入保留集即命中；'
+        + pool_section
+        + '【二数合保留4码候选（任意两位六组和值个位任一落入保留集即命中；'
         '按近50期真实命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(he2_lines) + '\n\n'
         '【三数合保留5码候选 Top10（任意三位四组和值个位任一落入保留集即命中；'
         '必须 2 奇 3 偶或 3 奇 2 偶；按近50期命中率排序，仅供参考）】\n'
         + '\n'.join(he3_lines) + '\n\n'
         '【任务】\n'
-        '1. 从 16 种四位大小形态中选 1 种作为本期「形态排除项」（优先选冷）；\n'
-        '2. 从 16 种四位单双形态中选 1 种作为本期「形态排除项」（优先选冷）；\n'
-        '3. 从 4 种全同形态（全大/全小/全双/全单）中选 1 种作为本期「形态排除项」（优先选冷）；\n'
-        '4. 从 256 种混合形态（每位置大/小/单/双）中选 1 种作为本期「形态排除项」（优先选冷）；\n'
-        '5. he2_keep：从 02468 中恰好保留 4 个不同数字（字符串），'
+        '1. 只从【本期候选池】中挑选 3 个互不相同的四位形态作为本期「形态排除项」；'
+        '不得改写池内形态、不得自造池外形态；若池内不足 3 个，可补足同类型形态并说明；\n'
+        '2. 每个形态命中 = 目标期实际四位形态 != 该形态（排除项，至少一位不满足）；\n'
+        '3. he2_keep：从 02468 中恰好保留 4 个不同数字（字符串），'
         '目标期任取两位的 6 种和值个位任一落入即命中；\n'
-        '6. he3_keep：从 0123456789 中恰好保留 5 个不同数字（字符串），'
+        '4. he3_keep：从 0123456789 中恰好保留 5 个不同数字（字符串），'
         '且必须 2 奇 3 偶或 3 奇 2 偶，目标期任取三位的 4 种和值个位任一落入即命中；\n'
-        '7. 命中口径：每个形态 = 目标期实际四位形态 != 封存形态（排除项，至少一位不满足）；'
-        '二数合/三数合 = 任一组合和值个位落入保留集；'
-        '以上 4 个形态 + 二数合 + 三数合共 6 项同时命中才算整组命中；\n'
-        '8. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
-        '9. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
+        '5. 命中口径：3 个形态 + 二数合 + 三数合共 5 项同时命中才算整组命中；\n'
+        '6. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
+        '7. 只能使用上面给出的历史、候选池与面板全量上下文；'
+        '面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
-        '{"size_form":"<4个大/小字符，按千百十个顺序>",'
-        '"parity_form":"<4个单/双字符，按千百十个顺序>",'
-        '"all_form":"<全大/全小/全双/全单之一：大大大大/小小小小/双双双双/单单单单>",'
-        '"mixed_form":"<4个混合字符，每位置大/小/单/双，按千百十个顺序>",'
+        '{"forms":["<4个 大/小 字符，按千百十个顺序>","<4个 大/小 字符>",'
+        '"<4个 单/双 字符或 4个 大/小 字符>"],'
         '"he2_keep":"<4位数字，从02468选>","he3_keep":"<5位数字，2奇3偶或3奇2偶>",'
         '"reason":"40字以内"}\n'
-        '注意：size_form 必须恰好 4 个大/小字符；parity_form 必须恰好 4 个单/双字符；'
-        'all_form 必须是 全大/全小/全双/全单 之一；mixed_form 必须恰好 4 个混合字符；'
-        'he2_keep 必须是 02468 里的 4 个不同数字；he3_keep 必须是 5 个不同数字且 2 奇 3 偶或 3 奇 2 偶。'
+        '注意：forms 必须恰好 3 个互不相同的四位形态，每一项都必须是 4 个 大/小 字符'
+        '或 4 个 单/双 字符，且必须原样取自【本期候选池】；'
+        'he2_keep 必须是 02468 里的 4 个不同数字；'
+        'he3_keep 必须是 5 个不同数字且 2 奇 3 偶或 3 奇 2 偶。'
     )
     if panel_section:
         _marker = prompt.find('【任务】')
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill9-prompt-v2-size-parity-all-mixed',
+        'version': 'kill9-prompt-v3-pool-three-forms-he2he3',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -397,38 +495,51 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None):
                            for form, count, omission in rank_forms(window, 'parity')],
         'size_ranking': [{'form': form, 'count': count, 'omission': omission}
                          for form, count, omission in rank_forms(window, 'size')],
-        'all_ranking': [{'form': form, 'count': count, 'omission': omission}
-                          for form, count, omission in rank_forms(window, 'all')],
-        'mixed_ranking': [{'form': form, 'count': count, 'omission': omission}
-                           for form, count, omission in rank_forms(window, 'mixed')[:16]],
         'he2_top': [{'keep': candidate, 'hit50': round(hit50, 6), 'hit30': round(hit30, 6)}
                     for candidate, _hits, hit30, hit50 in he2_rows],
         'he3_top': [{'keep': candidate, 'hit50': round(hit50, 6), 'hit30': round(hit30, 6)}
                     for candidate, _hits, hit30, hit50 in he3_rows[:10]],
         'panel_context_sha256': panel_context_sha,
         'panel_context': panel_snapshot if isinstance(panel_snapshot, dict) else None,
+        'form_pool': [{'form': entry.get('form'), 'kind': entry.get('kind'),
+                       'sources': entry.get('sources'),
+                       'ref_period': entry.get('ref_period'),
+                       'target_period': entry.get('target_period'),
+                       'published_at': entry.get('published_at'),
+                       'stale': entry.get('stale')}
+                      for entry in pool_entries],
+        'pool_sha256': pool_sha256(pool_entries),
     }
     return prompt, audit
 
 
-def normalize_response(response):
+def normalize_response(response, pool=None):
     """Strict local validation; never pad, default or invent anything."""
     if not isinstance(response, dict):
         raise ValueError('响应必须是 JSON 对象')
-    forms = {}
-    for field, palette, kind_label in (
-            ('size_form', '大小', '大/小'),
-            ('parity_form', '单双', '单/双'),
-            ('mixed_form', '大小单双', '大/小/单/双')):
-        value = response.get(field)
-        if (not isinstance(value, str) or len(value) != 4
-                or any(char not in palette for char in value)):
-            raise ValueError('%s 必须是恰好 4 个%s字符' % (field, kind_label))
-        forms[field] = value
-    all_form = response.get('all_form')
-    if (not isinstance(all_form, str) or all_form not in ALL_FORM_VALUES):
-        raise ValueError('all_form 必须是 全大/全小/全双/全单 之一')
-    forms['all_form'] = all_form
+    raw_forms = response.get('forms')
+    if not isinstance(raw_forms, list) or len(raw_forms) != COUNTED_FORMS:
+        raise ValueError('forms 必须是恰好 %d 个四位形态组成的数组' % COUNTED_FORMS)
+    forms = []
+    kinds = []
+    for index, value in enumerate(raw_forms, start=1):
+        kind = form_kind(value)
+        if kind is None:
+            raise ValueError('forms[%d] 必须是 4 个 大/小 字符或 4 个 单/双 字符' % index)
+        if value in forms:
+            raise ValueError('forms 不能重复：%s' % value)
+        forms.append(value)
+        kinds.append(kind)
+    known = pool_forms(pool)
+    if known:
+        outside = [form for form in forms if form not in known]
+        if outside and len(known) >= COUNTED_FORMS:
+            raise ValueError('forms 必须原样取自候选池：%s' % '、'.join(outside))
+        if outside and len(known) < COUNTED_FORMS:
+            missing = [form for form in known if form not in forms]
+            if missing:
+                raise ValueError('候选池不足 %d 个时必须先选完池内形态：%s'
+                                 % (COUNTED_FORMS, '、'.join(missing)))
     he2_keep = _keep_set(response.get('he2_keep'), HE2_KEEP_COUNT, HE2_SOURCE_DIGITS,
                          '二数合保留4码')
     he3_keep = _keep_set(response.get('he3_keep'), HE3_KEEP_COUNT, '0123456789',
@@ -442,10 +553,8 @@ def normalize_response(response):
     except UnicodeEncodeError:
         raise ValueError('reason 必须是合法 UTF-8 文本') from None
     return {
-        'size_form': forms['size_form'],
-        'parity_form': forms['parity_form'],
-        'all_form': forms['all_form'],
-        'mixed_form': forms['mixed_form'],
+        'forms': forms,
+        'form_kinds': kinds,
         'he2_keep': he2_keep,
         'he3_keep': he3_keep,
         'reason': reason[:200],
@@ -568,7 +677,8 @@ def _post(messages, timeout):
                 pass
 
 
-def request_prediction(prompt, reference, target, deadline, log=print, value_check=None):
+def request_prediction(prompt, reference, target, deadline, log=print, value_check=None,
+                       pool=None):
     """At most three paid calls inside the frozen publication window."""
     from ai_call_control import require_ai_enabled
 
@@ -600,7 +710,7 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
             if choice.get('finish_reason') != 'stop':
                 raise ValueError('响应未正常结束')
             message = choice.get('message') if isinstance(choice.get('message'), dict) else {}
-            prediction = normalize_response(_extract_json(message.get('content')))
+            prediction = normalize_response(_extract_json(message.get('content')), pool)
             if value_check is not None:
                 value_check(prediction)
             meta = _metadata(reference, attempt, model, api_key, envelope,
@@ -649,10 +759,10 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'generated_at': generated_at.isoformat(),
         'published_at': None,
         'publication_state': 'prepared',
-        'size_form': prediction['size_form'],
-        'parity_form': prediction['parity_form'],
-        'all_form': prediction['all_form'],
-        'mixed_form': prediction['mixed_form'],
+        'forms': list(prediction['forms']),
+        'form_kinds': list(prediction['form_kinds']),
+        'form_pool': audit.get('form_pool'),
+        'pool_sha256': audit.get('pool_sha256'),
         'he2_keep': prediction['he2_keep'],
         'he3_keep': prediction['he3_keep'],
         'reason': prediction['reason'],
@@ -725,9 +835,22 @@ def settle_pending(snapshot=None, now=None):
         actual = [int(value) for value in (record.get('numbers') or [])[:4]]
         if len(actual) != 4:
             continue
-        is_v1 = seal.get('rule_version') == 'kill9-tail-v1-four-forms-he2he3'
-        forms = {}
-        if is_v1:
+        rule = seal.get('rule_version')
+        is_v1 = rule == 'kill9-tail-v1-four-forms-he2he3'
+        is_v3 = bool(seal.get('forms')) or rule == RULE_VERSION
+        if is_v3:
+            forms = []
+            sealed_forms = seal.get('forms') if isinstance(seal.get('forms'), list) else []
+            sealed_kinds = (seal.get('form_kinds')
+                            if isinstance(seal.get('form_kinds'), list) else [])
+            for index, sealed_form in enumerate(sealed_forms):
+                kind = sealed_kinds[index] if index < len(sealed_kinds) else form_kind(sealed_form)
+                actual_form = pattern_of(actual, kind) if kind in ('size', 'parity') else '-'
+                forms.append({'form': sealed_form, 'kind': kind or '-',
+                              'actual': actual_form,
+                              'hit': bool(form_hit(sealed_form, actual))})
+        elif is_v1:
+            forms = {}
             for key, field, palette in (('parity', 'parity_form', '单双'),
                                         ('size', 'size_form', '大小'),
                                         ('prime', 'prime_form', '质合'),
@@ -739,6 +862,7 @@ def settle_pending(snapshot=None, now=None):
                        and actual_form != sealed_form)
                 forms[key] = {'form': sealed_form, 'actual': actual_form, 'hit': bool(hit)}
         else:
+            forms = {}
             for key, field in (('size', 'size_form'), ('parity', 'parity_form'),
                                ('all', 'all_form'), ('mixed', 'mixed_form')):
                 sealed_form = seal.get(field)
@@ -757,7 +881,10 @@ def settle_pending(snapshot=None, now=None):
                 'hit': bool(keep_digits) and bool(keep_digits.intersection(
                     str(value) for value in tails)),
             }
-        group_hit = bool(all(item['hit'] for item in forms.values())
+        hit_list = [item['hit'] for item in
+                    (forms if isinstance(forms, list) else forms.values())]
+        expected_items = COUNTED_FORMS if is_v3 else 4
+        group_hit = bool(len(hit_list) == expected_items and all(hit_list)
                          and keep_entries['he2_keep']['hit']
                          and keep_entries['he3_keep']['hit'])
         published = parse_time(seal.get('published_at'))
@@ -779,7 +906,10 @@ def settle_pending(snapshot=None, now=None):
             'group_hit': group_hit,
             'verified': bool(verified),
         }
-        settlement.update(forms)
+        if isinstance(forms, list):
+            settlement['forms'] = forms
+        else:
+            settlement.update(forms)
         settlements.append(settlement)
         settled.add(target)
         changed += 1
@@ -814,10 +944,23 @@ def today_stats(now=None):
     legacy = [item for item in verified if _rule_version(item) != RULE_VERSION]
     total = len(todays)
     group_hits = sum(1 for item in todays if item.get('group_hit') is True)
-    size_hits = sum(1 for item in todays if (item.get('size') or {}).get('hit') is True)
-    parity_hits = sum(1 for item in todays if (item.get('parity') or {}).get('hit') is True)
-    all_hits = sum(1 for item in todays if (item.get('all') or {}).get('hit') is True)
-    mixed_hits = sum(1 for item in todays if (item.get('mixed') or {}).get('hit') is True)
+
+    def _form_entries(item):
+        forms = item.get('forms')
+        if isinstance(forms, list):
+            return forms
+        entries = []
+        for key in ('size', 'parity', 'all', 'mixed', 'prime', 'middle'):
+            value = item.get(key)
+            if isinstance(value, dict):
+                entries.append(value)
+        return entries
+
+    form_hits = [0] * COUNTED_FORMS
+    for item in todays:
+        for index, entry in enumerate(_form_entries(item)[:COUNTED_FORMS]):
+            if isinstance(entry, dict) and entry.get('hit') is True:
+                form_hits[index] += 1
     he2_hits = sum(1 for item in todays if (item.get('he2_keep') or {}).get('hit') is True)
     he3_hits = sum(1 for item in todays if (item.get('he3_keep') or {}).get('hit') is True)
     win = loss = max_loss = four_loss = 0
@@ -847,14 +990,9 @@ def today_stats(now=None):
         'total': total,
         'group_hits': group_hits,
         'group_rate': (group_hits / total) if total else None,
-        'size': {'hits': size_hits, 'bets': total,
-                 'rate': (size_hits / total) if total else None},
-        'parity': {'hits': parity_hits, 'bets': total,
-                   'rate': (parity_hits / total) if total else None},
-        'all': {'hits': all_hits, 'bets': total,
-                'rate': (all_hits / total) if total else None},
-        'mixed': {'hits': mixed_hits, 'bets': total,
-                  'rate': (mixed_hits / total) if total else None},
+        'forms': [{'hits': form_hits[index], 'bets': total,
+                   'rate': (form_hits[index] / total) if total else None}
+                  for index in range(COUNTED_FORMS)],
         'he2_keep': {'hits': he2_hits, 'bets': total,
                      'rate': (he2_hits / total) if total else None},
         'he3_keep': {'hits': he3_hits, 'bets': total,
@@ -913,10 +1051,16 @@ def build_attack(seal):
     if not isinstance(seal, dict):
         raise ValueError('attack requires a sealed prediction')
     parts = []
-    for field in ('size_form', 'parity_form', 'all_form', 'mixed_form'):
-        value = seal.get(field)
-        if isinstance(value, str) and len(value) == 4:
-            parts.append('除' + value)
+    forms = seal.get('forms')
+    if isinstance(forms, list):
+        for value in forms:
+            if isinstance(value, str) and len(value) == 4:
+                parts.append('除' + value)
+    else:
+        for field in ('size_form', 'parity_form', 'all_form', 'mixed_form'):
+            value = seal.get(field)
+            if isinstance(value, str) and len(value) == 4:
+                parts.append('除' + value)
     he2_keep = seal.get('he2_keep')
     he3_keep = seal.get('he3_keep')
     if he2_keep and he3_keep:

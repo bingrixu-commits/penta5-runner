@@ -1,13 +1,14 @@
-"""AI 四形态排除 + 二数合 + 三数合建议面板区块（kill9 独立框架）。
+"""AI 三形态排除（面板候选池挑选）+ 二数合 + 三数合建议面板区块（kill9 独立框架）。
 
 数据源 data/kill9_tail/{seals,settlements}.json，由 scripts/run_kill9_tail.py 每期生成（cron 每 5 分钟自动触发）。
 与 kill1 / kill3 / kill8 完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
 
 命中口径（写死，面板脚注同步展示）：
-- 四个形态（大小/单双/全同/混合）均为反向排除项：命中 = 目标期实际四位形态 != 封存形态（4 字符，逐位约束至少一位不满足）；
+- 三个形态（每期从面板 kill1/kill3/kill8 本期已发布反向形态池中挑 3 个）均为反向排除项：
+  命中 = 目标期实际四位形态 != 封存形态（4 字符，逐位约束至少一位不满足）；
 - 二数合：he2_keep 从 02468 保留 4 码，前 4 球任取 2 位 6 种组合和值个位，任一落入保留集即命中；
 - 三数合：he3_keep 从 0-9 保留 5 码（2 奇 3 偶或 3 奇 2 偶），任取 3 位 4 种组合和值个位，任一落入保留集即命中；
-- 整组命中 = 4 形态 + 二数合 + 三数合 6 项同时命中；
+- 整组命中 = 3 形态 + 二数合 + 三数合 5 项同时命中；
 - 每期由模型完全自主重选（不 hold 不轮换），无手动位置排除输入；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；
 - 北京时间 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与。
@@ -29,14 +30,17 @@ START = '<!-- KILL_NINE_START -->'
 END = '<!-- KILL_NINE_END -->'
 
 # 整组随机基线兜底：(项数, 精确期望命中率)。
-# 6 项 = 大小/单双/全同/混合 4 形态反向排除 + 二数合 + 三数合。
-# 10^4 开奖空间 × 均匀配置精确枚举：size/parity/mixed 各 15/16（混合 256 中仅 16 满足）、全同随 draw 变动（1 - n_all/4）；
-# group = (15/16)^3 * (1/10^4) * Σ_draw[(1 - n_all(draw)/4) * P(he2|draw) * P(he3|draw)] = 0.71234352。
-# 单项：4 形态各 15/16=0.9375；he2=0.9808；he3=0.9375。算法取证见 ops/README.md 台账。
+# 5 项 = 3 形态（从面板候选池挑 3 个反向排除）+ 二数合 + 三数合。
+# 精确枚举（不用单项相乘）：E = E_pool × E_draw_he
+#   E_draw_he = (1/10^4)·Σ_{10^4 开奖}[h2(draw)·h3(draw)] = 0.920224（h2/h3 = 随机保留集命中比例，5/200 个候选）；
+#   E_pool = 池来源模型（kill1 单位置形态 1 个且类型 1/2 均匀、kill3/kill8 各 parity+size 各 1 个，16 种均匀）去重后均匀挑 3 的
+#            E[(1 - k_p/16)(1 - k_s/16)]，超几何精确枚举 = 859005/1048576 = 0.81921101；
+#   E = 0.81921101 × 0.920224 = 0.75385763。
+# 单项：3 形态各 15/16=0.9375；he2=0.9808；he3=0.9375。算法取证见 ops/README.md 台账（_enum_kill9_v3.py）。
 # hitrate_baseline.RULE_BASELINE[('kill9_tail', RULE_VERSION)] 未登记时使用本值。
-FALLBACK_BASELINE = (6, 0.71234352)
+FALLBACK_BASELINE = (5, 0.75385763)
 
-_TITLE = '🤖 AI 四形态排除 + 二数合 + 三数合建议'
+_TITLE = '🤖 AI 三形态排除 + 二数合 + 三数合建议'
 
 STYLE = """
 #kill-nine-ai{box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;padding:14px;border:1px solid #c7d2fe;border-radius:12px;background:#f8faff;color:#334155;font:14px/1.6 sans-serif;min-width:0;overflow-wrap:anywhere}
@@ -84,29 +88,24 @@ def _stats_html(stats):
     pending = stats.get('pending') or 0
     late = stats.get('late') or 0
     if total:
-        size = stats.get('size') or {}
-        parity = stats.get('parity') or {}
-        allform = stats.get('all') or {}
-        mixed = stats.get('mixed') or {}
+        form_rows = stats.get('forms')
+        form_rows = form_rows if isinstance(form_rows, list) else []
         he2 = stats.get('he2_keep') or {}
         he3 = stats.get('he3_keep') or {}
-        join = ' · '.join([
-            '整组命中率（6 项全中） <b>%s</b>（%s/%s 期）'
-            % (_pct(stats.get('group_rate')), stats.get('group_hits'), total),
-            '大小排除形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
-            % (_pct(size.get('rate')), size.get('hits'), size.get('bets')),
-            '单双排除形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
-            % (_pct(parity.get('rate')), parity.get('hits'), parity.get('bets')),
-            '全同排除形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
-            % (_pct(allform.get('rate')), allform.get('hits'), allform.get('bets')),
-            '混合排除形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
-            % (_pct(mixed.get('rate')), mixed.get('hits'), mixed.get('bets')),
-            '二数合保留（随机基线98.08%%） <b>%s</b>（%s/%s 期）'
-            % (_pct(he2.get('rate')), he2.get('hits'), he2.get('bets')),
-            '三数合保留（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
-            % (_pct(he3.get('rate')), he3.get('hits'), he3.get('bets')),
-            '待核验 <b>%s</b> 期' % pending,
-        ])
+        parts = ['整组命中率（5 项全中） <b>%s</b>（%s/%s 期）'
+                 % (_pct(stats.get('group_rate')), stats.get('group_hits'), total)]
+        for index in range(3):
+            item = form_rows[index] if index < len(form_rows) else {}
+            item = item if isinstance(item, dict) else {}
+            parts.append('形态%d（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
+                         % (index + 1, _pct(item.get('rate')),
+                            item.get('hits', '-'), item.get('bets', total)))
+        parts.append('二数合保留（随机基线98.08%%） <b>%s</b>（%s/%s 期）'
+                     % (_pct(he2.get('rate')), he2.get('hits'), he2.get('bets')))
+        parts.append('三数合保留（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
+                     % (_pct(he3.get('rate')), he3.get('hits'), he3.get('bets')))
+        parts.append('待核验 <b>%s</b> 期' % pending)
+        join = ' · '.join(parts)
     else:
         join = ('今日暂无已核验样本 · 待核验 <b>%s</b> 期 · '
                 '最早一期开奖后核验（北京时间 05:00 清零）' % pending)
@@ -124,8 +123,8 @@ def _stats_html(stats):
         join += ' · 当前 <b style="color:#b91c1c">连败 %s 期</b>' % loss
     join += ' · 今日四手连败 <b>%s</b> 次（不重叠计数）' % (stats.get('four_loss_cycles') or 0)
     if total and total < 200:
-        sigma = 100.0 * math.sqrt(0.71234352 * 0.28765648 / total)
-        join += (' · 整组样本 n=%s（&lt;200 属小样本：71.23%% 整组 1σ≈%.1fpp、2σ≈%.1fpp），'
+        sigma = 100.0 * math.sqrt(0.75385763 * 0.24614237 / total)
+        join += (' · 整组样本 n=%s（&lt;200 属小样本：75.39%% 整组 1σ≈%.1fpp、2σ≈%.1fpp），'
                  '单日整组只作波动参考' % (total, sigma, 2 * sigma))
     return '<div class="k9-stats"><span>%s</span></div>' % join
 
@@ -134,13 +133,22 @@ def _settlement_line(settlement):
     if not isinstance(settlement, dict):
         return '已发布，等待目标期开奖核验。'
     parts = ['目标期已开奖：' + ''.join(str(value) for value in (settlement.get('actual') or []))]
-    for field, label in (('size', '大小'), ('parity', '单双'),
-                         ('all', '全同'), ('mixed', '混合')):
-        item = settlement.get(field) or {}
-        if isinstance(item, dict) and item:
-            parts.append('%s形态 %s %s（实际 %s）' % (
-                label, item.get('form', '-'),
+    form_items = settlement.get('forms')
+    if isinstance(form_items, list):
+        for index, item in enumerate(form_items, start=1):
+            if not isinstance(item, dict) or not item:
+                continue
+            parts.append('形态%d %s %s（实际 %s）' % (
+                index, item.get('form', '-'),
                 '命中' if item.get('hit') is True else '未中', item.get('actual', '-')))
+    else:
+        for field, label in (('size', '大小'), ('parity', '单双'),
+                             ('all', '全同'), ('mixed', '混合')):
+            item = settlement.get(field) or {}
+            if isinstance(item, dict) and item:
+                parts.append('%s形态 %s %s（实际 %s）' % (
+                    label, item.get('form', '-'),
+                    '命中' if item.get('hit') is True else '未中', item.get('actual', '-')))
     for field, label in (('he2_keep', '二数合'), ('he3_keep', '三数合')):
         item = settlement.get(field) or {}
         if isinstance(item, dict) and item:
@@ -220,11 +228,26 @@ def render_block():
                        _attack_html(None), _stats_html(stats), _version_html(),
                        _foot_html(), END))
         cards = []
-        for field, label in (('size_form', '大小'), ('parity_form', '单双'),
-                             ('all_form', '全同'), ('mixed_form', '混合')):
-            value = seal.get(field)
-            if isinstance(value, str) and len(value) == 4:
-                cards.append(_form_card(label, value, '排除该四位%s形态（计入整组）' % label))
+        pool_index = {}
+        for entry in (seal.get('form_pool') or []):
+            if isinstance(entry, dict) and entry.get('form'):
+                pool_index[entry['form']] = entry
+        sealed_forms = seal.get('forms') if isinstance(seal.get('forms'), list) else []
+        sealed_kinds = seal.get('form_kinds') if isinstance(seal.get('form_kinds'), list) else []
+        for index, value in enumerate(sealed_forms, start=1):
+            if not isinstance(value, str) or len(value) != 4:
+                continue
+            info = pool_index.get(value) or {}
+            sources = '、'.join(info.get('source_labels') or info.get('sources') or [])
+            sub = '排除该四位形态（计入整组）'
+            if sources:
+                sub = '来源 %s；%s' % (sources, sub)
+            if info.get('stale'):
+                sub += '；来源期 %s' % str(info.get('target_period') or '非本期')
+            kind = sealed_kinds[index - 1] if index - 1 < len(sealed_kinds) else None
+            if kind in ('size', 'parity'):
+                sub += '（%s）' % kill9_tail.FORM_LABELS.get(kind, kind)
+            cards.append(_form_card('形态%d' % index, value, sub))
         he2_keep = seal.get('he2_keep')
         if isinstance(he2_keep, str) and he2_keep:
             cards.append(_keep_card('二数合', he2_keep,
@@ -234,9 +257,9 @@ def render_block():
             cards.append(_keep_card('三数合', he3_keep,
                                     '保留 5 码，任一三位和值个位落入即命中（计入整组）'))
         reason = escape(str(seal.get('reason') or '')) or '（无）'
-        scope_html = ('<div class="k9-drop">整组 6 项：大小 + 单双 + 全同 + 混合（4 形态反向排除）'
-                      '+ 二数合保留4码 + 三数合保留5码；无连用限制（每期按冷热重选）；'
-                      '每期由模型完全自主选码（无手动输入）</div>')
+        scope_html = ('<div class="k9-drop">整组 5 项：3 形态（从面板 kill1/kill3/kill8 本期已发布'
+                      '反向形态池中挑选）+ 二数合保留4码 + 三数合保留5码；无连用限制（每期重选）；'
+                      '模型只能从候选池挑选，不得改写或自造（本地校验强制）</div>')
         model = seal.get('model_label') or kill9_tail.model_label()
         meta = ('参考期 %s ｜ 目标期 %s ｜ AI 计算 %s（北京时间） ｜ %s'
                 % (escape(str(seal.get('ref_period', ''))),
@@ -284,9 +307,9 @@ def _attack_html(seal):
         "if(navigator.clipboard&&navigator.clipboard.writeText){"
         "navigator.clipboard.writeText(t).then(function(){done(true);},fb);}else{fb();}")
     return ('<div class="k9-attack">'
-            '<div class="k9-attack-title">完整攻击语（AI 四形态排除 + 二数合 + 三数合）</div>'
+            '<div class="k9-attack-title">完整攻击语（AI 三形态排除 + 二数合 + 三数合）</div>'
             '<textarea id="k9-attack" readonly rows="2" '
-            'aria-label="kill9 完整攻击语（四形态排除 + 二数合 + 三数合）" '
+            'aria-label="kill9 完整攻击语（三形态排除 + 二数合 + 三数合）" '
             'style="display:block;width:100%%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
             'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
             '%s</textarea>'
@@ -299,13 +322,13 @@ def _attack_html(seal):
 
 def _foot_html():
     return ('<div class="k9-foot">'
-            '本框架由 DeepSeek 每期完全自主决定：从 16 种四位大小形态、16 种四位单双形态、'
-            '4 种全同形态（全大/全小/全双/全单）、256 种混合形态（每位置大/小/单/双）中各选 1 种作为本期「反向冷形态排除项」，'
+            '本框架的 3 个形态由 DeepSeek 从候选池中挑选：候选池 = 面板 kill1（单位置杀码+一形态）、'
+            'kill3（三位置杀码）、kill8（双反向冷形态）本期已发布的四位反向形态去重后汇总（来源期如实标注）。'
+            '模型只能从池中挑 3 个互不相同的四位形态作为本期「反向形态排除项」，不得改写、不得自造；'
             '另从 02468 保留 4 码（二数合）、从 0-9 保留 5 码且 2 奇 3 偶或 3 奇 2 偶（三数合）。<br>'
-            '冷形态定位依据：近 50 期出现次数少、当前遗漏长（仅历史统计，不代表未来概率）。<br>'
-            '命中 = 4 个形态的目标期实际四位形态<b>均不等于</b>封存形态，'
-            '且二数合/三数合任一组合和值个位落入保留集（6 项全中才算整组命中）。<br>'
-            '无连用限制（每期按冷热重选，不沿用上期），无手动位置排除输入；'
+            '命中 = 3 个形态的目标期实际四位形态<b>均不等于</b>封存形态，'
+            '且二数合/三数合任一组合和值个位落入保留集（5 项全中才算整组命中）。<br>'
+            '无连用限制（每期重选，不沿用上期），无手动位置排除输入；'
             '旧口径（历史版本封存）保留但不计入本统计；'
             '只统计开奖前发布、开奖后核验的记录；北京时间 05:00 清零；'
             '只使用前 4 球（千/百/十/个），第 5 球不参与；平台提前 70 秒关盘。'
@@ -313,7 +336,7 @@ def _foot_html():
 
 
 def apply_kill_nine_block(content, report=None):
-    """原地替换/插入 AI 四形态排除 + 二数合 + 三数合区块；任何异常原样返回 content。"""
+    """原地替换/插入 AI 三形态排除 + 二数合 + 三数合区块；任何异常原样返回 content。"""
     try:
         if not isinstance(content, str) or not content:
             return content
