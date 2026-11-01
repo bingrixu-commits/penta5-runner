@@ -57,6 +57,7 @@ RULE_BASELINE = {
     ('kill2p_tail', 'kill2p-tail-v1-two-positions-one-tail-two-forms'): (5, 0.6203),
     ('kill2p_tail', 'kill2p-tail-v2-panel-context-rich'): (5, 0.6203),
     ('kill2_tail', 'kill2-tail-v1-two-positions-he2he3'): (7, 0.5708),
+    ('kill2_tail', 'kill2-tail-v2-two-positions-he2he3-rot3'): (7, 0.5708),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -881,7 +882,7 @@ def cum_kill2():
     settlements = _read(DATA / 'kill2_tail' / 'settlements.json') or {}
     seals = _read(DATA / 'kill2_tail' / 'seals.json') or {}
     seal_records = seals.get('records') or []
-    rule = 'kill2-tail-v1-two-positions-he2he3'
+    rule = 'kill2-tail-v2-two-positions-he2he3-rot3'
     if seal_records and isinstance(seal_records[-1], dict):
         rule = seal_records[-1].get('rule_version') or rule
     seal_rule = {str(record.get('ref_period')): record.get('rule_version')

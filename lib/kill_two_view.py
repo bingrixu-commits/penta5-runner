@@ -32,7 +32,7 @@ TITLE = '🤖 AI 二位置杀码 + 一合尾 + 二数合/三数合建议'
 # 2 位置 + 合尾 + 二数合 + 三数合 + 2 形态，10^4 精确枚举期望 0.5708（精确枚举，非相乘）。仅在现行 revision
 # 尚未登记进 hitrate_baseline.RULE_BASELINE 时兜底展示；登记后以登记值为准。
 FALLBACK_BASELINE = (7, 0.5708)
-REGISTERED_RULE = 'kill2-tail-v1-two-positions-he2he3'
+REGISTERED_RULE = 'kill2-tail-v2-two-positions-he2he3-rot3'
 
 STYLE = """
 #kill-two-ai{box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;padding:14px;border:1px solid #c7d2fe;border-radius:12px;background:#f8faff;color:#334155;font:14px/1.6 sans-serif;min-width:0;overflow-wrap:anywhere}

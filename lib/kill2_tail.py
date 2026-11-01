@@ -19,6 +19,7 @@
 - 整组命中 = 2 个位置 + 1 个合尾 + 二数合 + 三数合 + 2 项反向形态同时命中（共 7 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 同一位置杀码最多连用 3 期（中间未选该位置不清零），满后下一期必须更换；
+- 未选位置最多连用 3 期（连续 3 期未选中该位置杀码后，本期必须选中该位置）；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -72,7 +73,7 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill2-tail-v1-two-positions-he2he3'
+RULE_VERSION = 'kill2-tail-v2-two-positions-he2he3-rot3'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
@@ -95,6 +96,7 @@ RETRY_INSTRUCTION = (
     '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
     '未选 2 个位置的字符自选；合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
     '被限制的位置不得继续使用该位置连用满3期的杀码；'
+    '连续满3期未选中的位置本期必须选中该位置杀码；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
 
@@ -468,8 +470,14 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         forced = ['%s不得再杀 %s' % (POSITION_LABELS.get(key, key), value)
                   for key, value in blocked_digits.items()]
         limit_lines.append('本期强制更换：' + '\uff1b'.join(forced) + '\u3002')
-    limit_lines.append('（同一位置杀码最多连用 %d 期，中间未选该位置不清零）'
-                       % MAX_CONSECUTIVE_PERIODS)
+    blocked_unselected = limit.get('blocked_unselected') or []
+    if blocked_unselected:
+        must_select = '、'.join(POSITION_LABELS.get(key, key) for key in blocked_unselected)
+        limit_lines.append('本期必须选中（未选位置已连续%d期未选中）：%s。'
+                           % (MAX_CONSECUTIVE_PERIODS, must_select))
+    limit_lines.append('（同一位置杀码最多连用 %d 期，中间未选该位置不清零；'
+                       '未选位置最多连用 %d 期，满后本期必须选中）'
+                       % (MAX_CONSECUTIVE_PERIODS, MAX_CONSECUTIVE_PERIODS))
     position_limit_text = '\n'.join(limit_lines)
     panel_section = ''
     panel_context_text = None
@@ -534,7 +542,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill2-tail-prompt-v1-two-positions-he2he3',
+        'version': 'kill2-tail-prompt-v2-two-positions-he2he3-rot3',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -594,6 +602,26 @@ def _trailing_digit_streaks(seals):
     return streaks
 
 
+def _trailing_unselected_streaks(seals):
+    """Trailing consecutive periods each position was left unselected.
+
+    A position counts as unselected when it is absent from the seal's
+    'positions' dict; selecting (killing) it resets its streak.
+    """
+    streaks = {}
+    for key, _label, _index in POSITIONS:
+        count = 0
+        for seal in reversed(seals):
+            positions = seal.get('positions') if isinstance(seal, dict) else None
+            if not isinstance(positions, dict):
+                break
+            if key in positions:
+                break
+            count += 1
+        streaks[key] = count
+    return streaks
+
+
 def position_restrictions(seals):
     """Consecutive-use limits for position kills."""
     seals = [item for item in (seals or []) if isinstance(item, dict)]
@@ -603,6 +631,9 @@ def position_restrictions(seals):
     for key, (digit, count) in digit_streaks.items():
         if digit is not None and count >= MAX_CONSECUTIVE_PERIODS:
             blocked_digits[key] = digit
+    unselected_streaks = _trailing_unselected_streaks(seals)
+    blocked_unselected = [key for key, count in unselected_streaks.items()
+                          if count >= MAX_CONSECUTIVE_PERIODS]
     return {
         'max_consecutive': MAX_CONSECUTIVE_PERIODS,
         'previous_ref_period': previous.get('ref_period'),
@@ -611,12 +642,14 @@ def position_restrictions(seals):
         'previous_unselected': list(previous.get('unselected') or []),
         'digit_streaks': {key: {'digit': digit, 'periods': count}
                           for key, (digit, count) in digit_streaks.items() if digit is not None},
+        'unselected_streaks': unselected_streaks,
         'blocked_digits': blocked_digits,
+        'blocked_unselected': blocked_unselected,
     }
 
 
 def validate_position_choice(prediction, position_limit=None):
-    """Reject over-limit kill codes."""
+    """Reject over-limit kill codes or a repeatedly unselected position."""
     if not isinstance(position_limit, dict):
         return prediction
     limit = position_limit.get('max_consecutive') or MAX_CONSECUTIVE_PERIODS
@@ -625,6 +658,10 @@ def validate_position_choice(prediction, position_limit=None):
         if key in positions and str(positions[key]) == str(value):
             label = POSITION_LABELS.get(key, key)
             raise ValueError('%s已连续%d期使用杀码%s，本期必须换码' % (label, limit, value))
+    for key in (position_limit.get('blocked_unselected') or []):
+        if key not in positions:
+            label = POSITION_LABELS.get(key, key)
+            raise ValueError('%s已连续%d期未选中，本期必须选中该位置杀码' % (label, limit))
     return prediction
 
 def _trailing_tail_streak(seals):
