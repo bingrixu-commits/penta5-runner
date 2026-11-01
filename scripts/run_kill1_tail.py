@@ -109,6 +109,7 @@ def main():
         print(f'kill1 publication rejected after inference: {rejection}; ref={reference}')
         return 0
     settlements = kill1_tail.load_settlements()
+    prediction = kill1_tail.apply_position_policy(prediction, seals, settlements)
     prediction = kill1_tail.apply_tail_policy(prediction, seals, settlements)
     seal = kill1_tail.create_seal(reference, target, latest.get('opentime'), prediction,
                                   prompt, audit, generated_at, meta)
@@ -126,6 +127,11 @@ def main():
     print(f'kill1 published: ref={reference} target={target} rule={kill1_tail.RULE_VERSION} {picked} · '
           f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]} · '
           f'{kill1_tail.REVERSE_LABELS[prediction["form_type"]]} {prediction["form"]}')
+    position_policy = prediction.get('position_policy') or {}
+    if position_policy:
+        print('kill1 position policy: ' + str(position_policy.get('note'))
+              + ' · sealed=' + str(prediction['positions'].get(position_policy.get('key')))
+              + ' · model=' + str(position_policy.get('model_kill')))
     tail_policy = prediction.get('tail_policy') or {}
     if tail_policy:
         print('kill1 tail policy: ' + str(tail_policy.get('note'))

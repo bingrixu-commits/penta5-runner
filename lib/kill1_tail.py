@@ -16,7 +16,9 @@
 - 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
 - 整组命中 = 1 个位置 + 1 个合尾 + 1 项反向形态同时命中（共 3 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
-- 位置与杀码不做连用限制（用户 2026-11-01 确认「不限制，完全由模型选」）；
+- 位置杀码稳定化 hold3-until-miss（v3 起）：某位置杀码命中后沿用同位置同杀码、最多自动沿用 3 期；
+  失手或满 3 期后由模型重选（重选可与上期同码）；模型位置项在封存里记为换码候选
+  （position_policy.model_kill）；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -71,10 +73,12 @@ REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 FORM_LABELS = dict(REVERSE_LABELS)
 
-RULE_VERSION = 'kill1-tail-v2-hot-repeat-one-form'
+RULE_VERSION = 'kill1-tail-v3-position-hold3'
 COUNTED_POSITIONS = 1
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
+POSITION_HOLD_MAX = 3
+POSITION_POLICY = 'hold3-until-miss'
 
 
 RETRY_INSTRUCTION = (
@@ -566,6 +570,90 @@ def apply_tail_policy(prediction, seals, settlements):
     return result
 
 
+def _position_hold_replay(seals, settlements):
+    """Deterministic replay of post-cutover seals into per-position hold state."""
+    settled = {}
+    for item in settlements or []:
+        if isinstance(item, dict) and item.get('verified'):
+            settled[str(item.get('target_period') or '')] = item
+    state = {}
+    for seal in seals or []:
+        if not isinstance(seal, dict):
+            continue
+        policy = seal.get('position_policy')
+        if not isinstance(policy, dict):
+            continue
+        counted = [key for key in (seal.get('counted') or []) if key in POSITION_INDEX]
+        if not counted:
+            continue
+        key = counted[0]
+        kill = (seal.get('positions') or {}).get(key)
+        item = settled.get(str(seal.get('target_period') or ''))
+        if kill is None or item is None:
+            continue
+        hit = ((item.get('positions') or {}).get(key) or {}).get('hit') is True
+        previous = state.get(key)
+        run = (previous['run'] + 1) if (policy.get('reused_previous') and previous) else 1
+        state[key] = {'digit': str(kill), 'run': run, 'prev_hit': hit}
+    return state
+
+
+def position_hold_state(seals, settlements):
+    """State used by the position-hold policy; read-only."""
+    return {'policy': POSITION_POLICY, 'hold_max': POSITION_HOLD_MAX,
+            'streaks': _position_hold_replay(seals, settlements)}
+
+
+def apply_position_policy(prediction, seals, settlements):
+    """Return a copy whose counted position kill follows hold3-until-miss."""
+    if not isinstance(prediction, dict):
+        raise ValueError('prediction must be an object')
+    positions = dict(prediction.get('positions') or {})
+    counted = [key for key in (prediction.get('counted') or list(positions))
+               if key in POSITION_INDEX]
+    if not counted:
+        raise ValueError('prediction has no counted position')
+    key = counted[0]
+    model_kill = str(positions.get(key))
+    streak = position_hold_state(seals, settlements)['streaks'].get(key)
+    reused = False
+    final = model_kill
+    run = 1
+    if streak and streak.get('prev_hit') is True and int(streak.get('run') or 0) < POSITION_HOLD_MAX:
+        final = streak['digit']
+        reused = True
+        run = int(streak['run']) + 1
+        note = '沿用同位上期杀码（第%s期，上期命中）' % streak.get('run')
+    elif streak and streak.get('prev_hit') is True:
+        note = '换码（同位自动沿用已满%s期，改由模型重选）' % POSITION_HOLD_MAX
+    elif streak and streak.get('prev_hit') is False:
+        note = '换码（同位上期未命中）'
+    else:
+        note = '新选（同位无沿用状态）'
+    positions[key] = final
+    result = dict(prediction)
+    result['positions'] = positions
+    if reused and final != model_kill:
+        form = result.get('form')
+        if isinstance(form, str) and len(form) == 4:
+            form_type = result.get('form_type')
+            parity_label, size_label = reverse_attributes(int(final))
+            required = parity_label if form_type == 'reverse_parity' else size_label
+            index = POSITION_INDEX[key]
+            result['form'] = form[:index] + required + form[index + 1:]
+        original = str(result.get('reason') or '')
+        result['reason'] = ('位置杀码按稳定化沿用 %s 杀%s（AI 候选 %s）。模型原话：%s' % (
+            POSITION_LABELS[key], final, model_kill, original))[:200]
+    result['position_policy'] = {
+        'policy': POSITION_POLICY, 'hold_max': POSITION_HOLD_MAX,
+        'key': key, 'label': POSITION_LABELS[key],
+        'model_kill': model_kill, 'sealed_kill': final,
+        'reused_previous': reused, 'run': run, 'note': note,
+        'previous': streak,
+    }
+    return result
+
+
 def resolve_model():
     for name in ('PENTA5_MODEL_KILL1', 'PENTA5_MODEL_KILL1', 'PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL'):
         try:
@@ -769,6 +857,7 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'counted': prediction.get('counted') or list(prediction['positions']),
         'tail': prediction['tail'],
         'tail_policy': prediction.get('tail_policy'),
+        'position_policy': prediction.get('position_policy'),
         'form_type': prediction['form_type'],
         'form': prediction['form'],
         'reason': prediction['reason'],
