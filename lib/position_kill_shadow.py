@@ -4,7 +4,7 @@
 最多连用 K 期；失手或连用满 K 期后改用模型本期新选码。
 本影子同时对照多档：hold2 / hold3 / hold5 / hold-until-miss（不设上限）。
 
-数据源：kill1/kill2p/kill3 各框架已结算(verified)记录里的 positions/counted/actual，
+数据源：kill1/kill3 各框架已结算(verified)记录里的 positions/counted/actual，
 逐期确定性回放；只写 data/position_kill_shadow.json 与面板 POSITION_KILL_SHADOW 区块，
 不调用模型、不改任何封存/统计/攻击语。
 """
@@ -26,7 +26,7 @@ ANCHOR = '<!-- TAIL_STABILITY_SHADOW_END -->'
 POS_INDEX = {'q': 0, 'b': 1, 's': 2, 'g': 3}
 FRAMEWORKS = (
     ('kill1_tail', 'AI单位置(kill1)'),
-    ('kill2p_tail', 'AI二位置(kill2p)'),
+    ('kill3_tail', 'AI三位置(kill3)'),
 )
 POLICIES = (
     ('hold2', 2, '命中沿用·最多连用2期·失手换码'),

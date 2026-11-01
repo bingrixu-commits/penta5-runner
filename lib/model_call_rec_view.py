@@ -2,7 +2,7 @@
 """面板区块「AI 模型调用推荐」（flash / pro 档位，只读不切换）。
 
 口径（写死）：
-- 按 AI 任务（killer / framework / selected_six / he3 / kill3 / kill1 / kill2p）
+- 按 AI 任务（killer / framework / selected_six / he3 / kill3 / kill1）
   对比现行档与替代档的版本锁定累计命中率（model_split，按封存 requested_model 分档）；
 - 换档条件：两档累计样本均 ≥200 且替代档高 ≥2pp、双侧 z 检验 p<0.05；
 - 整组期望基线（10^4 精确枚举）只作对照列；余额/燃耗/守护状态来自

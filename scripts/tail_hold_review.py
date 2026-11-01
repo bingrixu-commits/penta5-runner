@@ -176,35 +176,9 @@ def _kill1_entries():
     return rows
 
 
-def _kill2p_entries():
-    '''kill2p_tail（AI 二位置 + 一合尾 + 两反向形态）的尾项稳定化复盘行。'''
-    actuals = {}
-    for settlement in (_read(DATA / 'kill2p_tail/settlements.json', {}) or {}).get('records') or []:
-        nums = settlement.get('actual')
-        target = settlement.get('target_period')
-        if target and isinstance(nums, list) and len(nums) >= 4:
-            actuals[str(target)] = [int(x) for x in nums[:4]]
-    seals = {}
-    for seal in (_read(DATA / 'kill2p_tail/seals.json', {}) or {}).get('records') or []:
-        if isinstance(seal, dict) and seal.get('tail_policy'):
-            seals[str(seal.get('target_period'))] = seal
-    rows = []
-    for target in sorted(seals):
-        seal = seals[target]
-        nums = actuals.get(target)
-        tail = seal.get('tail') or {}
-        key = str(tail.get('key') or '').replace('tail_', '')
-        if nums is None or key not in TAIL:
-            continue
-        hit = [_tv(nums, key) != int(tail.get('kill')) % 10]
-        rows.append((target, (seal.get('tail_policy') or {}).get('reused_previous') is True, hit))
-    return rows
-
-
 FRAMEWORKS = (
     ('AI三位置', _kill3_entries),
     ('AI单位置+一合尾+一形态', _kill1_entries),
-    ('AI二位置+一合尾+两反向形态', _kill2p_entries),
     ('固定八码', _framework_entries),
     ('七项独立v7', _six_entries),
     ('killer九项', _killer_entries),

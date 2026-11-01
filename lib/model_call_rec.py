@@ -48,9 +48,6 @@ TASKS = (
      'env_chain': ('PENTA5_MODEL_KILL3', 'PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL')},
     {'key': 'kill1_tail', 'label': 'AI 单位置杀码（3 项）',
      'env_chain': ('PENTA5_MODEL_KILL1', 'PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL')},
-    {'key': 'kill2p_tail', 'label': 'AI 二位置杀码（5 项）',
-     'env_chain': ('PENTA5_MODEL_KILL2P', 'PENTA5_MODEL_KILL3', 'PENTA5_MODEL_KILLER',
-                   'PENTA5_DEEPSEEK_MODEL')},
 )
 
 ALT_MODEL = {
