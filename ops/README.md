@@ -837,3 +837,39 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/position-kill-shadow-20261101-065738/（panel_live_refresh.py、crontab.txt、新文件）。
 - 回滚：git revert 1af215a + scripts/crontab_tool.sh install（恢复 crontab.txt 基线 36 行）；
   数据文件 data/position_kill_shadow.json 未跟踪可留可删。
+
+## 2026-11-01 重新上线 kill2_tail（AI 二位置杀码 + 一合尾 + 二数合/三数合，7 项独立框架）
+
+- 背景：kill2_tail 曾于 2f7a8b0 上线、0f2df82 退役；本次按用户已确认口径重建（沿用 v1 名
+  `kill2-tail-v1-two-positions-he2he3`），并更正整组精确枚举基线。
+- 口径（用户已确认，Lead 转述，确认通道=用户已选/文字口径）：
+  - 命名 kill2 → `lib/kill2_tail.py`、`lib/kill_two_view.py`、面板 `section id=kill-two-ai`、
+    `apply_kill_two_block`、`RULE_VERSION=kill2-tail-v1-two-positions-he2he3`、`data/kill2_tail/`、
+    cron 锁 `/var/lock/penta5-kill2t.lock`、日志 `data/kill2_cron.log`。
+  - 整组 7 项 = **2 位置杀码（全计入，无 display_only）** + 1 合尾 + 二数合 + 三数合 + 2 反向形态。
+  - 形态：`reverse_parity`（单双）+ `reverse_size`（大小）；被杀位取杀码形态反面、其余位自选（与 kill3 同）。
+  - 尾码：`hold3-until-miss`（与 kill3 同）。连用限制：位置杀码最多连用 3 期、中间未选该位置不清零（`MAX_CONSECUTIVE_PERIODS=3`）。
+  - 二数合 he2_keep：从 02468 留 4 个不同数字，任取两位 6 组和值个位任一落入保留集即命中。
+  - 三数合 he3_keep：从 0123456789 留 5 个不同数字（2奇3偶或3奇2偶），任取三位 4 组和值个位任一落入保留集即命中。
+- 精确枚举整组随机期望 = **0.5708（7 项，10^4 开奖空间均匀配置精确枚举，非相乘）**。单项相乘约 0.5864 偏高。
+  交叉验证（全复现到 6 位小数）：kill2p 5 项 0.620303（现网 0.6203 ✓）、he2 留4码 0.9808 ✓、he3 留5码 0.9375 ✓。
+  **更正**：旧 kill2（2f7a8b0）曾登记 0.5726（抄自 selected_six v7 的 minimax 优化形态），kill2 实为
+  「被杀位取反、其余自选」口径，应为 0.5708。
+- 三件套：lib/kill2_tail.py（1206 行，grep -c kill3=0）、lib/kill_two_view.py（549 行）、
+  scripts/run_kill2_tail.py（163 行）；kill_two_view.py 的 FALLBACK_BASELINE 已改 (7,0.5708)、57.08%。
+- 12 处挂接点：run_stats（import 1 + 调用 2，/root 仓库外）、panel_context（kill2_self 7）、
+  hitrate_baseline（7）、framework_hitrate_cumulative（10）、ops_health_check（16）、model_usage（2）、
+  evidence_backup（1）、attack_editor_view（1）、panel_live_refresh（1）、tail_hold_review（5）、
+  crontab（1）、logrotate（1，/etc 仓库外）。
+- 模块测试：/tmp/kill2_module_test.py → RESULT {"pass":28,"fail":0}（reverse/normalize/he2-he3 校验/
+  settle group_hit True+False/attack/位置连用/尾码 hold3 全过）。
+- 共享模块 A/B（panel_context.py）：old=ops/kill2-20261101-082622/panel_context.py.bak vs new，固定 fixture
+  下 build() 输出逐字节相同——kill3 7637ced1…、kill1 01fc5228…、kill2p 889e8fa2…、noargs 0973b419…；
+  仅带 kill2 入参时新增 kill2_self，kill3/kill1/kill2p 口径未变。
+- 冻结守卫：ops/kill3-freeze.json 更新 lib/panel_context.py sha256
+  00982a02…→3e0df93e…，hash_updates 追加一条（commit 记为 pending-kill2）。
+- crontab：ops/crontab.txt 在 kill2p 行后加同构行（sleep 45、flock /var/lock/penta5-kill2t.lock），
+  scripts/crontab_tool.sh install 后 diff 无差异；logrotate -d 已识别 data/kill2_cron.log。
+- 备份：/root/ops/kill2-20261101-082622/（panel_context.py.bak、run_stats.py.bak、logrotate.penta5.bak）。
+- 上线验证（真实期号封存/结算）由 Lead 下一轮统筹核验；本批做到「部署就绪 + crontab 已装 + 离线渲染先验 +
+  模块测试 fail:0 + A/B sha256 等值 + 12 挂接点 grep 全≥1 + 三次 commit」。
