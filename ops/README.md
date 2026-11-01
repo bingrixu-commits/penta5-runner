@@ -1055,3 +1055,20 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/tail-hold-max-shadow-20261101-124648/（panel_live_refresh.py.bak、crontab.txt.bak、logrotate-penta5.bak）。
 - 提交：36edcf3（影子模块+runner+面板注册+cron 基线）、本提交（台账）。
 - 回滚：git revert <本提交> 36edcf3 + scripts/crontab_tool.sh install + 恢复 /root/ops/tail-hold-max-shadow-20261101-124648/ 下 panel_live_refresh.py、crontab.txt、logrotate-penta5；并删除 lib/tail_hold_max_shadow.py、scripts/run_tail_hold_max_shadow.py、data/tail_hold_max_shadow.json 与 data/tail_hold_max_shadow_cron.log。
+
+## 2026-11-01 13:07 AI 单位置杀码（kill1）v2 定位口径上线：热码 top3 + 上期重码/邻码（rule kill1-tail-v2-hot-repeat-one-form）
+
+- 依据：用户质疑「AI 单位置杀码」与「AI 三位置杀码」定位依据同源——两框架提示词几乎相同、都盯近 50 期冷码。取证：kill1 近 30 期杀码 30/30 落在冷码 top3、25/30 为全位置最冷；85 个共同目标期里 kill1 位置 ∈ kill3 计入位置 74%、同位置同码 61%，组合不分散。用户拍板「照你的意思来部署到服务落地运行」= kill1 改非冷码口径、kill3 保持冷码。
+- 口径：v2 起 kill1 定位依据改为「该位置近 50 期热码 top3（出现次数多、当前遗漏短优先）+ 上期该位置重码 + 上期邻码（±1，0↔9 循环）」，提示词明文禁止以上期冷码 / 长遗漏码作为定位依据；其余不变（1 位置杀 1 码 + 5 合尾 hold3-until-miss + 1 反向形态，前 4 球，05:00 清零）。kill3 口径不动（kill3-tail-v11-hold3-two-counted）。
+- 改动（5 文件，+63/-11）：lib/kill1_tail.py（RULE_VERSION → `kill1-tail-v2-hot-repeat-one-form`；新增 `rank_digits_hot` / `_hot_line`；`build_prompt` 重写定位段并新增 audit `position_basis=hot-repeat-neighbor` / `hot_ranking` / `latest_row`，版本串 `kill1-tail-prompt-v2-hot-repeat`；docstring 记录 v1 归档口径）；lib/kill_one_view.py（`_foot_html` 增 v2 定位依据说明）；scripts/run_kill1_tail.py（published 打印加 `rule=`）；lib/hitrate_baseline.py 与 scripts/framework_hitrate_cumulative.py（各新增 v2 注册项 `(3, 0.7538)`，cum_kill1 默认 rule 改 v2；v1 注册行保留供历史记录分组）。
+- 期望基线核验（10^4 全开奖空间 numpy 枚举，draws shape (10000,4)）：固定配置 P(pos)=0.90、P(tail)=0.90、P(form)=0.9375、P(form|pos)=0.930556 → P(group)=0.9×0.9×0.930556=0.75375；均匀配置抽样 4000 组均值 0.759277（sd 0.006813）。结论：命中结构与 v1 完全一致，注册常量 (3, 0.7538) 不变、面板口径行继续显示 75.38%；单位置杀码单项期望恒 90%，本改动不改变单框架命中率期望，目标是与 kill3 去冗余（历史 88 个共同期热码代理回放：同位置同码 53.4% → 0%），不得对外宣称命中率提升。
+- 模块测试：py_compile 5 文件 OK；`build_prompt` 合成历史断言热码段 / 上期开奖行 / 重码邻码段齐全、无「各位置冷热」、audit 字段齐全、`latest_row.digits == window[-1]`；`rank_digits_hot([0,0,0,9,9,8,7,6,5,4])[0] == (0,3,7)`；`normalize_response` 对非法形态（被杀位未取反）仍拒绝；`apply_tail_policy` 正常；`kill_one_view.render_block()` 含 v2 口径 / 75.38% / v2 脚注。
+- 上线验证（真实周期）：
+  - 首期 v2：ref 20261101157 → target 20261101158，13:07:44.718 发布（AI 127.06s / deepseek-v4-pro / prompt 4165 / completion 11804 / reasoning 11735），封存 `个位 杀8 · 千百个合尾 杀8 · 大小反向形态 大大小小`，tail_policy 换码（上期未命中）。行为证明：ref 157 开奖 [1,4,8,8]，个位上期 8 为重码、个位热码 top3=[1,9,3]，候选集 {1,3,7,8,9}，杀码 8 属候选且非冷码；同期 kill3 计入位置 q:6/s:5，无同位置同码重叠。
+  - 结算：ref157→158 为 v2 首期 `group_hit=True / verified=True`（target 158 开奖 [3,4,0,3]：个位 3≠8、q+b+g=3+4+3=10 尾≠8、实际 小小小小≠大大小小，三项全中）；settlements 累计 n=118。
+  - 面板：panel.html KILL_ONE 标记各 1、v2 rule 1 处、v1 rule 0 处、`定位依据（v2 起）` 1 处、`整组精确基线 75.38%` 1 处；口径行「口径 kill1-tail-v2-hot-repeat-one-form · 自 ref 20261101157 起（本版 1 期） · 整组精确基线 75.38%（3 项）」；kill3 区块同期正常（v11 基线 61.91%）。
+  - 第二期 v2：ref 20261101158 → target 20261101159，13:11:53 发布（AI 75.09s / deepseek-v4-pro），封存 千位 杀4，reason 记「千位4属热码邻码」。
+- 备份：/root/ops/kill1-v2-20261101-130030/（6 个 .bak 备份文件 + data/kill1_tail/{seals,settlements}.json 快照 + sha256.before.txt + apply_kill1_v2.py，脚本 sha256 6c3eaf5e89e11b0be481f2d5e0b04a89188147c05ab661bda2f88e56452bbb69）。
+- 提交：7d856e7 feat(kill1): v2 定位口径（5 files, +63/-11）；本提交（台账）。
+- 回滚：`git revert <本提交> 7d856e7` 即回退代码与注册项；历史封存无需改动（v1 记录保留原 rule_version、统计并存），面板 / 统计下次刷新自动回 v1 口径。
+- 冻结守卫：kill1 无 freeze guard（ops/kill3-freeze.json 仅覆盖 kill3），本次未改 kill3 相关 hash。
