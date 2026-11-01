@@ -53,6 +53,7 @@ RULE_BASELINE = {
     ('kill8_tail', 'kill8-tail-v2-reverse-cold-forms'): (2, 0.8789),
     ('kill9_tail', 'kill9-tail-v1-four-forms-he2he3'): (6, 0.71085114),
     ('kill9_tail', 'kill9-tail-v2-size-parity-all-mixed'): (6, 0.71234352),
+    ('kill9_tail', 'kill9-tail-v3-pool-three-forms-he2he3'): (5, 0.75385763),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -62,7 +63,7 @@ LABELS = {
     'kill3_tail': 'AI 三位置杀码',
     'kill1_tail': 'AI 单位置杀码（3 项）',
     'kill8_tail': 'AI 双反向冷形态（2 项）',
-    'kill9_tail': 'AI 四形态排除+二数合+三数合（6 项）',
+    'kill9_tail': 'AI 三形态排除+二数合+三数合（5 项）',
 }
 SINGLE_BASELINES = (
     ('杀 1 码', 0.9),
@@ -290,7 +291,7 @@ def _kill9_rows():
     for record in rows:
         if not isinstance(record, dict) or not record.get('verified'):
             continue
-        if 'prime' not in record and 'all' not in record:
+        if not any(key in record for key in ('prime', 'all', 'forms')):
             continue
         if (record.get('rule_version') != rule
                 and seal_rule.get(str(record.get('ref_period'))) != rule):
