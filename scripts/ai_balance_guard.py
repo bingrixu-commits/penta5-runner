@@ -30,9 +30,9 @@ BALANCE_ENV_KEYS = ('PENTA5_FRAMEWORK_API_KEY', 'PENTA5_KILLER_API_KEY')
 STATE_NAME = 'ai_balance_guard.json'
 PAUSE_CONFIRMATIONS = 2
 # 余额低于该值(1 元，用户 2026-10-31 指定)就提前停（避免 0 元附近发请求吃 HTTP 402 漏期）；
-# 充值后要回到 RESUME_BALANCE_CNY 以上才恢复，避免来回抖动。
+# 充值后要回到 RESUME_BALANCE_CNY 以上才恢复（用户 2026-11-01 指定恢复阈值同为 1 元）。
 PAUSE_BALANCE_CNY = 1.00
-RESUME_BALANCE_CNY = 2.00
+RESUME_BALANCE_CNY = 1.00
 
 
 def state_path(root):
