@@ -9,6 +9,7 @@ import json
 import os
 
 from ai_verified_stats import atomic_json, publication_evidence_error
+from seal_archive import read_full, write_full_separated
 from ai_prediction_guard import read_stats
 from stats_history import (TZ, business_start, load_snapshot, parse_period, parse_time,
                            period_slot, valid_draw_record, validate_conflicting_periods)
@@ -424,8 +425,8 @@ def refresh_he3_stats(snapshot=None, root=ROOT):
     with Path(str(path) + '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            previous = _read(path)
-            seals = _read(root / 'data/he3_refine_seals.json')
+            previous = read_full(path)
+            seals = read_full(root / 'data/he3_refine_seals.json')
             # Scope this snapshot to one refresh only. Every child still runs
             # the full parent/hash/history/archive/settlement validation.
             parent_seals = read_stats(root / 'data/r1_framework_seals.json')
@@ -441,7 +442,7 @@ def refresh_he3_stats(snapshot=None, root=ROOT):
                     'percent': None, 'latest_settled_period': None, 'pending_count': 0,
                     'overdue_count': 0, 'conflict_count': 0, 'stats_error': True}
         if ledger != previous:
-            atomic_json(path, ledger)
+            write_full_separated(path, ledger)
         atomic_json(summary_path, summary)
         # Write the stamp last: a concurrent reader must never see it matching a
         # half-updated ledger/summary pair.

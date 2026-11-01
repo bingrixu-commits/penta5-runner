@@ -16,6 +16,7 @@ from ai_request_deadline import MAX_TOKENS, RequestDeadline, request_timeout
 from ai_provider_policy import strict_json_object
 from ai_operation_window import ERROR_CODES as WINDOW_ERROR_CODES, OperationWindow
 from ai_verified_stats import atomic_json, next_period, sync_parent_directory
+from seal_archive import read_full, read_hot
 from ai_call_control import AICallsDisabled, require_ai_enabled
 from framework_ai_client import _response_metadata
 from framework_hit_stats import _publication
@@ -371,7 +372,7 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
         return _paused(root, reference, clock)
     loader = loader or _loader(root)
     path = root / 'data/he3_refine_seals.json'
-    ledger = read_stats(path)
+    ledger = read_hot(path)
     if ledger.get('version', 1) != 1:
         raise ValueError('invalid-refinement-ledger-version')
     ledger.setdefault('version', 1)
@@ -529,7 +530,7 @@ def select_current(root, snapshot):
     try:
         if publication_rejection(reference, snapshot, now):
             return None
-        seal = find_seal(read_stats(Path(root) / 'data/he3_refine_seals.json'), reference)
+        seal = find_seal(read_full(Path(root) / 'data/he3_refine_seals.json'), reference)
         _validate_saved(seal, reference, now, root=root)
         source = _source(root, reference, snapshot, now)
         if source is None or any(source[key] != seal[key] for key in

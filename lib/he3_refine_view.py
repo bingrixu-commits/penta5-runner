@@ -549,13 +549,14 @@ def _retained_from_seal(seal):
 def _latest_retained(root, now=None):
     """Read the newest independently valid publication without generating one."""
     from ai_prediction_guard import read_stats
+    from seal_archive import read_full
     from he3_refine import _validate_saved
     from stats_history import beijing_now
 
     root = Path(root)
     now = now if isinstance(now, datetime) else beijing_now()
     try:
-        ledger = read_stats(root / 'data/he3_refine_seals.json')
+        ledger = read_full(root / 'data/he3_refine_seals.json')
         seals = ledger.get('prediction_seals', {})
         if not isinstance(seals, dict):
             return None
