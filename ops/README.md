@@ -1097,3 +1097,13 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/kill8-deploy/hitrate_baseline.py.bak.20261101163456（11771 字节）。
 - 提交：03b291d feat(kill8): 双反向冷形态排除框架上线（4 files，+1152）；本提交（台账）。
 - 回滚：`git revert 03b291d <本提交>`；data/kill8_tail/ 目录删除即可（新框架无历史封存）。
+
+
+## 2026-11-01 16:47 joint_form 转正门禁 live 阈值收紧（0.0→0.5pp，防噪声级误转正）
+
+- 依据：全框架命中率审计发现 killer 是唯一被判「偏离随机基线」(p=0.021) 的框架，根因是模型单项弱项（k2/k3/k4/he_all≈88.9% vs 90% 基线）9 项合取累积，非代码 bug；但转正门禁 MIN_LIVE_DELTA_PP=0.0 让「live 增益≥0 即通过」，killer 靠 backfill 形态层 +2.8pp（选择偏差：992 对形态选最大）转正，而 live 增益仅 +0.30pp（噪声级），backfill 增益 live 无兑现。用户拍板「先收紧 joint_form 转正门禁 live 阈值」。
+- 口径：转正门禁 live 增益阈值 0.0→0.5pp（live delta 须 ≥0.5pp 才判 ready）；backfill 2.0pp、burn_in 72 期、strong 288 期、min_strong 1.5pp 均不变。改后 killer live_delta=0.296pp<0.5 → ready=false（此前 0.299pp≥0 误判 ready=true）；framework 仍 ready=false（-0.295pp）。killer 已转正的 enabled=true 状态不受影响（门禁从不回退已 enabled 项）。
+- 改动（1 文件，+1/-1）：scripts/joint_form_promotion_gate.py:22 MIN_LIVE_DELTA_PP 0.0→0.5（附注释说明 backfill 形态层增益选择偏差 live 无兑现）。
+- 验证：py_compile OK；手动跑 python3 scripts/joint_form_promotion_gate.py → killer ready=false(0.296<0.5)、framework ready=false、status=not-met；门禁为 cron 脚本（每 10 分钟 :04/:14/:24/:34/:44/:54 由 penta5-joint-guard 跑），无需重启，下次 cron 自动生效；refresh_source_manifest.py --if-drift 返回 no-drift；ops_health manifest_drift OK（auto-baseline-20261101-164708）。
+- 提交：feab5b0 fix(gate): joint_form 转正门禁 live 阈值 0.0→0.5pp 收紧噪声级误转正；本提交（台账）。
+- 回滚：`git revert <本提交> feab5b0` 即回退阈值到 0.0。
