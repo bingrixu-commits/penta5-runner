@@ -966,3 +966,4 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 数据归档：/root/archive/retired-20261101-kill4/kill4-data.tar.gz（sha256=9d20d039b11b1be1c7824a3ced16ec92f2d331a42068441ad89db0666b6061bf）。
 - 备份：/root/ops/kill4-family-20261101-113740/（14 个文件：crontab/panel_context/attack_editor/hitrate_baseline/evidence_backup/model_usage/panel_live_refresh/cumulative/ops_health/tail_hold_review/kill3-freeze/panel.html/run_stats/logrotate）。
 - 回滚：git revert（三次 commit）+ scripts/crontab_tool.sh install + tar xzf 解档数据。
+- 补清（2026-11-01 11:51，本窗口）：清 3 个 kill4 残留 .pyc（lib/__pycache__/kill4_tail、lib/__pycache__/kill_four_view、scripts/__pycache__/run_kill4_tail）与 data/.kill4_tail_job.lock 遗锁；手动重跑 scripts/framework_hitrate_cumulative.py 刷新 data/framework_hitrate_cumulative.json（rows 10→9）与 hitrate.html（两者 kill4 残留均 0）；manifest refresh_source_manifest.py --if-drift 返回 no-drift。
