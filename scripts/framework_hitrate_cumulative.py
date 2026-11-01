@@ -61,6 +61,7 @@ RULE_BASELINE = {
     ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v3-position-hold3'): (3, 0.7538),
     ('kill9_tail', 'kill9-tail-v1-four-forms-he2he3'): (6, 0.71085114),
+    ('kill9_tail', 'kill9-tail-v2-size-parity-all-mixed'): (6, 0.71234352),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -850,7 +851,7 @@ def cum_kill9():
     settlements = _read(DATA / 'kill9_tail' / 'settlements.json') or {}
     seals = _read(DATA / 'kill9_tail' / 'seals.json') or {}
     seal_records = seals.get('records') or []
-    rule = 'kill9-tail-v1-four-forms-he2he3'
+    rule = 'kill9-tail-v2-size-parity-all-mixed'
     if seal_records and isinstance(seal_records[-1], dict):
         rule = seal_records[-1].get('rule_version') or rule
     seal_rule = {str(record.get('ref_period')): record.get('rule_version')
@@ -866,7 +867,7 @@ def cum_kill9():
             launch.append(row.get('target_period'))
         if not row.get('verified'):
             continue
-        if 'prime' not in row:
+        if 'prime' not in row and 'all' not in row:
             continue
         hit = bool(row.get('group_hit'))
         rolling.append((row.get('target_period'), hit))

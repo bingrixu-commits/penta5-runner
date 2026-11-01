@@ -52,6 +52,7 @@ RULE_BASELINE = {
     ('kill8_tail', 'kill8-tail-v1-cold-forms'): (2, 0.8789),
     ('kill8_tail', 'kill8-tail-v2-reverse-cold-forms'): (2, 0.8789),
     ('kill9_tail', 'kill9-tail-v1-four-forms-he2he3'): (6, 0.71085114),
+    ('kill9_tail', 'kill9-tail-v2-size-parity-all-mixed'): (6, 0.71234352),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -289,7 +290,7 @@ def _kill9_rows():
     for record in rows:
         if not isinstance(record, dict) or not record.get('verified'):
             continue
-        if 'prime' not in record:
+        if 'prime' not in record and 'all' not in record:
             continue
         if (record.get('rule_version') != rule
                 and seal_rule.get(str(record.get('ref_period'))) != rule):
