@@ -164,6 +164,9 @@ def archive(path, keep_days=7, now=None, dry_run=True, log=print):
               "months": months}
     if dry_run:
         return result
+    if not cold:
+        log("nothing to archive for %s (keep_days=%d)" % (path.name, keep_days))
+        return result
     _write_cold(path, cold, log)
     atomic_json(path, hot)
     log("rewrote hot %s: kept=%s" % (path.name, result["kept"]))

@@ -35,3 +35,6 @@
 35 22 * * * flock -n /var/lock/penta5-tail-review.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 120 python3 -u scripts/tail_hold_review.py >> data/tail_hold_review_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-poskill-shadow.lock bash -c 'sleep 55 && cd /root/penta5-runner && timeout --kill-after=3s 90 python3 -u scripts/run_position_kill_shadow.py >> data/position_kill_shadow_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-tail-holdmax.lock bash -c 'sleep 45 && cd /root/penta5-runner && timeout --kill-after=3s 180 python3 -u scripts/run_tail_hold_max_shadow.py >> data/tail_hold_max_shadow_cron.log 2>&1'
+
+# seal/hit_stats 滚动归档：每天把超 7 天期号按月压到 data/archive/*.json.gz，主文件留近期窗口（read_full 透明合并冷分片）
+30 3 * * * flock -n /var/lock/penta5-seal-archive.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 600 python3 -u scripts/archive_seals.py --target he3_refine_seals --target selected_six_seals --keep-days 7 --apply >> data/seal_archive_cron.log 2>&1'
