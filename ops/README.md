@@ -1006,3 +1006,16 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/kill2-family-20261101-120227/（22 文件：crontab/panel.html/run_stats/panel_context/attack_editor/hitrate_baseline/evidence_backup/model_usage/panel_live_refresh/position_kill_shadow/ops_health/tail_hold_review/framework_hitrate_cumulative/position_kill_review/model_tier_guard/kill_five_view/kill_two_p_view/kill_two_view/kill2_tail/logrotate/hitrate.json/cumulative.json）。
 - 回滚：git revert + scripts/crontab_tool.sh install + tar xzf 解档 + 恢复 /root/run_stats.py（备份在 /root/ops/kill2-family-20261101-120227/run_stats.py）。
 - 并行窗口协同：kill2 三件套的 git rm 已被并行窗口 d94a0af（kill3 v11 转正）一并提交；本窗口补提交派生统计/面板/运行层，并已复核 kill3 v11 的 hash 更新未被覆盖。
+
+## 2026-11-01 12:18 彻底退役 kill5（AI 三位置杀码 + 一合尾 + 二数合/三数合，8 项）
+
+- 原因：用户面板截图指认 kill5 并要求「这个框架清理了」，经确认按彻底退役处理（停跑 + 删三件套 + 去全部挂接 + 面板区块剥除 + 数据归档），不留任何层；kill2 已于 12:10 退役，本框架为该「一合尾 + 二数合/三数合」家族最后一套。
+- 运行层：crontab 删 `*/5 ... run_kill5_tail.py`（37 作业，`diff <(crontab -l) ops/crontab.txt` 干净）；/etc/logrotate.d/penta5 删 data/kill5_tail_cron.log 段（logrotate -d 无错）；.env 删 PENTA5_MODEL_KILL5；model_tier_guard.py DEFAULTS targets 与 data/model_tier_guard.json targets 均去 KILL5（现 KILL1/KILL2/KILL2P/KILL3）。
+- 面板：/root/run_stats.py 去 kill5 import 与 2 处 apply_kill_five_block 调用；12:04 并行窗口 kill2 改动后面板链曾退化为 `apply_model_signi_block(apply_kill_five_block())`、早写必 TypeError，本次恢复完整 12 层链（model_call_rec→…→strip_retired_panels(page)）再去掉 kill5 层，run_stats 全阶段 success（278.5s，failed=0）；panel.html KILL_FIVE 区块（6588B）随 rebuild 清除（KILL_FIVE 计数 0，KILL_ONE/KILL_THREE/KILL_TWO_P/KILL_SHADOW 各 1）；lib/panel_live_refresh.py names 去 KILL_FIVE；lib/attack_editor_view.py 删 kill5 攻击语定义、版本 v13-retire-kill2→v14-retire-kill5；删除 lib/kill_five_view.py。
+- 派生统计：hitrate_baseline 8→7 行（data/hitrate_baseline.json rows=7、kill5 0）；framework_hitrate_cumulative 8→7（rows=7、hitrate.html kill5 0）；tail_hold_review 7→6 框架；model_usage 8→7 日志源；ops_health 去 check_kill5 与 PROVIDER_402 日志项；evidence_backup JSON_DIRS 6→5；panel_context 删 _kill5_self + kill5_stats/kill5_previous 入参与 snapshot 键。
+- A/B 证明：panel_context 固定 fixture（bare/kill3/all/rich）旧模块去掉 kill5_self 后与新版逐字节相同，sha256 5ad4cb6e568e3612 / 77c994150e7b7af1 / fa9f58b2b65c442c / 581892950f3894ac；新版 snapshot 无 kill5_self。
+- 冻结守卫：lib/panel_context.py hash 492e2b87… → 3b1c26c7…（hash_updates 第 25 条，commit pending-kill5-retire）。
+- 数据归档：/root/archive/retired-20261101-kill5/kill5-data.tar.gz（sha256 d8527a5df072ccaffcb2d4b648efa04771328e95a29e280f710ff0b1f126deaf，3 条目：seals/settlements/cron log），data/kill5_tail + kill5_tail_cron.log + .kill5_tail_job.lock + pyc 已清。
+- 备份：/root/ops/kill5-family-20261101-1210/（run_stats.py / crontab / logrotate / .env / panel.html / kill3-freeze.json / model_tier_guard.json / seals / settlements / 三件套与派生脚本 .bak）。
+- 提交：349e0a4（运行层+三件套删除）、d3dbde9（面板层）、62cff4c（派生统计）、本提交（冻结 hash + 本台账）。
+- 回滚：git revert <本提交> 62cff4c d3dbde9 349e0a4 + scripts/crontab_tool.sh install + tar xzf 归档 + 恢复 /root/run_stats.py、/etc/logrotate.d/penta5、.env（均在 /root/ops/kill5-family-20261101-1210/）。
