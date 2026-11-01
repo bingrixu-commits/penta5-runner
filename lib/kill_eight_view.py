@@ -53,6 +53,12 @@ STYLE = """
 #kill-eight-ai .k8-attack-title{font-size:13px;font-weight:600;color:#3730a3}
 #kill-eight-ai .k8-foot{margin-top:8px;font-size:12px;color:#94a3b8}
 #kill-eight-ai .k8-empty{padding:6px 2px;font-size:14px;color:#475569}
+#kill-eight-ai .k8-posinput{border:1px dashed #a5b4fc;border-radius:8px;background:#f5f3ff;padding:10px 12px;margin-bottom:8px}
+#kill-eight-ai .k8-posinput-title{font-size:13px;font-weight:600;color:#4c1d95;margin-bottom:8px}
+#kill-eight-ai .k8-posinput-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,120px),1fr));gap:8px;margin-bottom:6px}
+#kill-eight-ai .k8-posinput-grid label{display:flex;flex-direction:column;font-size:12px;color:#6b21a8;gap:4px;margin:0}
+#kill-eight-ai .k8-posinput-grid input{width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #c4b5fd;border-radius:6px;background:#fff;font:14px/1.4 monospace;color:#1e1b4b;text-align:center}
+#kill-eight-ai .k8-posinput-hint{font-size:12px;color:#7c3aed}
 """
 
 
@@ -180,9 +186,10 @@ def render_block():
                 body += ('<div class="k8-meta">最近一次：参考期 %s · 目标期 %s</div>'
                          % (escape(str(previous.get('ref_period', ''))),
                             escape(str(previous.get('target_period', '')))))
-            return ('%s%s<style>%s</style><h3>%s</h3>%s%s%s%s%s'
+            return ('%s%s<style>%s</style><h3>%s</h3>%s%s%s%s%s%s'
                     % (START, _section_open(), STYLE, _TITLE, body,
-                       _stats_html(stats), _version_html(), _foot_html(), END))
+                       _attack_html(None), _stats_html(stats), _version_html(),
+                       _foot_html(), END))
         cards = []
         parity_form = seal.get('parity_form')
         if isinstance(parity_form, str) and len(parity_form) == 4:
@@ -230,27 +237,39 @@ def render_block():
 
 
 def _attack_html(seal):
-    """反向冷形态攻击语 + 复制按钮（复制脚本沿用 kill1 同款，只换元素 id）。"""
-    if not isinstance(seal, dict) or not seal.get('published_at'):
-        return ''
-    try:
-        text = kill8_tail.build_attack(seal)
-    except Exception:
-        return ''
-    if not text:
-        return ''
-    payload = json.dumps({'version': 1,
-                          'reference_period': seal.get('ref_period'),
-                          'target_period': seal.get('target_period'),
-                          'published_at': seal.get('published_at'),
-                          'attack': text},
-                         ensure_ascii=False, allow_nan=False, separators=(',', ':'))
-    for old, new in (('&', '\\u0026'), ('<', '\\u003c'), ('>', '\\u003e')):
-        payload = payload.replace(old, new)
+    """位置排除数字输入区 + 完整攻击语（位置排除 + AI 冷形态）+ 复制按钮。
+
+    位置排除数字由用户手动输入（不进框架计算），前端 localStorage 记忆；
+    完整攻击语 = 千<保留>百<保留>十<保留>个<保留>除<单双>除<大小>，
+    保留数字按 1234567890 顺序去掉被排除数字得到。seal 为 None 时只有位置部分。
+    """
+    parity_form = ''
+    size_form = ''
+    if isinstance(seal, dict):
+        if isinstance(seal.get('parity_form'), str) and len(seal['parity_form']) == 4:
+            parity_form = seal['parity_form']
+        if isinstance(seal.get('size_form'), str) and len(seal['size_form']) == 4:
+            size_form = seal['size_form']
+    data_div = ('<div id="k8-form-data" data-parity="%s" data-size="%s" style="display:none"></div>'
+                % (escape(parity_form), escape(size_form)))
+    position_labels = (('k8-ex-q', '千位'), ('k8-ex-b', '百位'),
+                       ('k8-ex-s', '十位'), ('k8-ex-g', '个位'))
+    inputs = []
+    for input_id, label in position_labels:
+        inputs.append(
+            '<label>%s<input id="%s" inputmode="numeric" maxlength="10" '
+            'autocomplete="off" placeholder="要排除的数字，如 8" '
+            'aria-label="%s排除数字"></label>' % (label, input_id, label))
+    posinput = ('<div class="k8-posinput">'
+                '<div class="k8-posinput-title">✏️ 位置排除数字（你手动填，不进模型计算）</div>'
+                '<div class="k8-posinput-grid">%s</div>'
+                '<div class="k8-posinput-hint">每位置填 0-9 中要排除的数字（可多个，如 128 表示排除 1、2、8；'
+                '重复自动去重）；留空 = 该位置不排除（保留 10 码）。输入自动记忆，刷新不丢。</div>'
+                '</div>' % ''.join(inputs))
     copy_action = (
-        "var b=document.getElementById('kill8-attack-text');if(!b)return;"
+        "var b=document.getElementById('k8-combined-attack');if(!b)return;"
         "var t=b.value||b.textContent||'';"
-        "var s=document.getElementById('kill8-copy-status');"
+        "var s=document.getElementById('k8-copy-status');"
         "var done=function(ok){if(s){s.textContent=ok?'已复制':'复制失败，请手动选择';"
         "s.style.color=ok?'#15803d':'#b91c1c';}};"
         "var fb=function(){var a=document.createElement('textarea');a.value=t;"
@@ -259,22 +278,48 @@ def _attack_html(seal):
         "try{ok=document.execCommand('copy')===true;}catch(e){}a.remove();done(ok);};"
         "if(navigator.clipboard&&navigator.clipboard.writeText){"
         "navigator.clipboard.writeText(t).then(function(){done(true);},fb);}else{fb();}")
-    return ('<div class="k8-attack">'
-            '<div class="k8-attack-title">攻击语（形态排除；位置排除数字由用户手动完成）</div>'
-            '<textarea id="kill8-attack-text" readonly rows="2" aria-label="AI 双反向冷形态排除攻击语" '
-            'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
-            'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
-            + escape(text) + '</textarea>'
-            '<button id="kill8-attack-copy" type="button" onclick="' + copy_action + '" '
-            'style="padding:7px 15px;border:0;border-radius:7px;background:#4f46e5;color:#fff;cursor:pointer;">'
-            '复制攻击语</button>'
-            '<span id="kill8-copy-status" role="status" style="margin-left:8px;font-size:12px;"></span></div>'
-            '<script id="kill8-attack-data" type="application/json">' + payload + '</script>')
+    script = (
+        "<script>(function(){"
+        "var KEY='kill8_position_exclusions_v1';var ORDER='1234567890';"
+        "var IDS=['k8-ex-q','k8-ex-b','k8-ex-s','k8-ex-g'];"
+        "function norm(v){v=(v||'').replace(/[^0-9]/g,'');var seen={},out='';"
+        "for(var i=0;i<v.length;i++){if(!seen[v[i]]){seen[v[i]]=1;out+=v[i];}}return out;}"
+        "function keep(v){v=norm(v);var out='';for(var i=0;i<ORDER.length;i++){"
+        "if(v.indexOf(ORDER[i])<0)out+=ORDER[i];}return out;}"
+        "function g(id){var el=document.getElementById(id);return el?el.value:'';}"
+        "function forms(){var el=document.getElementById('k8-form-data');"
+        "if(!el)return['',''];return[el.getAttribute('data-parity')||'',el.getAttribute('data-size')||''];}"
+        "function build(){var f=forms();var p='千'+keep(g('k8-ex-q'))+'百'+keep(g('k8-ex-b'))"
+        "+'十'+keep(g('k8-ex-s'))+'个'+keep(g('k8-ex-g'));"
+        "if(f[0])p+='除'+f[0];if(f[1])p+='除'+f[1];return p;}"
+        "function save(){var o={};for(var i=0;i<IDS.length;i++){o[IDS[i]]=norm(g(IDS[i]));}"
+        "try{localStorage.setItem(KEY,JSON.stringify(o));}catch(e){}}"
+        "function load(){var o={};try{o=JSON.parse(localStorage.getItem(KEY)||'{}')||{};}catch(e){}"
+        "for(var i=0;i<IDS.length;i++){var el=document.getElementById(IDS[i]);"
+        "if(el&&o[IDS[i]])el.value=o[IDS[i]];}}"
+        "function update(){save();var a=document.getElementById('k8-combined-attack');"
+        "if(a)a.value=build();}"
+        "function init(){load();for(var i=0;i<IDS.length;i++){"
+        "var el=document.getElementById(IDS[i]);if(el)el.addEventListener('input',update);}update();}"
+        "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}else{init();}"
+        "})();</script>")
+    attack = ('<div class="k8-attack">'
+              '<div class="k8-attack-title">完整攻击语（位置排除数字 + AI 冷形态）</div>'
+              '<textarea id="k8-combined-attack" readonly rows="2" '
+              'aria-label="kill8 完整攻击语（位置排除 + 冷形态）" '
+              'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
+              'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
+              '</textarea>'
+              '<button id="k8-attack-copy" type="button" onclick="' + copy_action + '" '
+              'style="padding:7px 15px;border:0;border-radius:7px;background:#4f46e5;color:#fff;cursor:pointer;">'
+              '复制完整攻击语</button>'
+              '<span id="k8-copy-status" role="status" style="margin-left:8px;font-size:12px;"></span></div>')
+    return data_div + posinput + attack + script
 
 
 def _foot_html():
     return ('<div class="k8-foot">'
-            '位置排除数字由用户手动完成，<b>不进本框架计算</b>；本框架由 DeepSeek 决定：'
+            '位置排除数字由你手动填写（下方输入框，自动记忆），<b>不进本框架计算</b>；本框架由 DeepSeek 决定：'
             '从 16 种四位单双形态（单/双，千百十个顺序）中选 1 种、'
             '从 16 种四位大小形态（大/小）中选 1 种，作为本期「冷形态反向排除项」。<br>'
             '冷形态定位依据：近 50 期出现次数少、当前遗漏长（仅历史统计，不代表未来概率）。<br>'
