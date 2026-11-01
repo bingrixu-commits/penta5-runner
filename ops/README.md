@@ -1038,3 +1038,20 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   - 攻击语版本串 v14-retire-kill5 → **v15-retire-kill2p**（2 处，内联 JS `node --check` 通过，py_compile 通过）；panel.html 在下一次 run_stats 重建时携带新版本串。
   - 复核：crontab 36 作业且与 ops/crontab.txt `diff` 干净；`logrotate -d` 无错且无 kill2p 路径；.env 无 PENTA5_MODEL_KILL2P（备份 /root/ops/kill2p-family-20261101-121944/.env.bak）；model_tier_guard.py DEFAULTS 与 data/model_tier_guard.json targets=KILL1/KILL3；data/hitrate_baseline.json 与 data/framework_hitrate_cumulative.json rows=6（killer/framework/selected_six/he3_refine/kill3_tail/kill1_tail）；panel.html KILL_TWO_P 计数 0（KILL_ONE/KILL_THREE/KILL_SHADOW 区块标记各 1）；lib/panel_live_refresh.py 无 KILL_TWO_P；data/ops_health.json 12:27 overall=warn 无 FAIL 且 kill2p 检查项消失；source manifest 重建为 /root/backups/auto-baseline-20261101-123135/verification-manifest.json（423 files），二次 `--if-drift` 返回 no-drift。
   - 回滚补充：`tar xzf /root/archive/retired-20261101-kill2p/kill2p-data.tar.gz -C /root/penta5-runner/` 可恢复 data/kill2p_tail 与 cron log；版本串随本提交 revert 回退。
+## 2026-11-01 12:50 合尾稳定化 hold_max 多档只读影子上线（5 框架 × hold2/hold3/hold5/不设上限）
+
+- 原因：hold3-until-miss 已在 AI三位置、固定八码、七项独立v7、killer、AI单位置（kill1）转正，但「自动沿用最多几期」一直只用过 3；本次按需部署只读影子对照四档，不改任何封存/正式统计/攻击语。
+- 实现：新增 lib/tail_hold_max_shadow.py（540 行）+ scripts/run_tail_hold_max_shadow.py；覆盖 kill1_tail、kill3_tail、七项独立v7、固定八码、killer 五个合尾框架，按已封存记录 + 真实开奖确定性回放 hold2 / hold3(现网) / hold5 / hold-until-miss 四档；输出 backfill+forward 的命中率、换码次数、沿用期数，并附 hold3 复现封存一致性校验。
+- 回放口径：窗口自各框架首个 tail_hold3/tail_policy 元数据期起（kill1 20261101014、kill3 20261031255、six 20261031266、framework 20261031265、killer 20261031268）；窗口内 kill3 有 18 期无 hold 元数据的期按模型/封存计；连续性判据改为「上一封存 target == 当前 reference」，跨日界（如 six 20261031288→20261101001）不再误判。
+- 面板/运行层：面板块 TAIL_HOLD_MAX_SHADOW 插在 POSITION_KILL_SHADOW 之后（markers 各 1）；lib/panel_live_refresh.py names 注册该块，version quiet-panel-v21-live-sections → quiet-panel-v22-live-sections；crontab 新增 */5 sleep45 flock /var/lock/penta5-tail-holdmax.lock timeout180 作业（36→37 作业，install 后 diff=matches）；/etc/logrotate.d/penta5 增 data/tail_hold_max_shadow_cron.log（logrotate -d 无错）。
+- 12:50 首轮快照（cron 12:50:55，forward 各 1；hold3 复现封存全 100%：kill1 114/114、kill3 149/149、six 153/153、framework 156/156、killer 153/153）：
+  - framework 156 期/312 注：现行=hold3 90.38%（换码 29）；hold2 90.38%（30）、hold5 89.74%（25）、不设上限 89.42%（20）。
+  - killer 153 期/459 注：现行 89.98%（70）；hold2 90.63%（86）、hold5 90.20%（51）、不设上限 90.85%（40）。
+  - 七项独立v7 153 期：现行 89.54%（46）；hold2 90.85%（58）、hold5 91.50%（29）、不设上限 91.50%（16）。
+  - AI三位置 kill3 167 期：现行 87.43%（38）；hold2 88.02%（45）、hold5 88.62%（33）、不设上限 85.63%（31）。
+  - AI单位置 kill1 114 期：现行 86.84%（27）；hold2 88.60%（30）、hold5 88.60%（25）、不设上限 90.35%（9）。
+- 结论：四档命中率差异均在样本噪声内（n=114–167；单尾杀 1 码数学上限恒 90%）；hold3 与现行逐期一致证明复现正确；hold_max 只改变换码频率（不设上限换码最少），不提高命中率。按预登记口径等前瞻 n≥50 后复核再决定是否调整档位。
+- 验证：py_compile；12:50:55 真实 cron 周期 status ok、cron 日志非空、五框架 forward 各 1；外网 nginx:3001 登录取面与磁盘 panel.html 逐字节一致（sha256 cb7c164441e4370de692f3fd307e95365d0f713384823f68cd1a67d40819ffd3）。
+- 备份：/root/ops/tail-hold-max-shadow-20261101-124648/（panel_live_refresh.py.bak、crontab.txt.bak、logrotate-penta5.bak）。
+- 提交：36edcf3（影子模块+runner+面板注册+cron 基线）、本提交（台账）。
+- 回滚：git revert <本提交> 36edcf3 + scripts/crontab_tool.sh install + 恢复 /root/ops/tail-hold-max-shadow-20261101-124648/ 下 panel_live_refresh.py、crontab.txt、logrotate-penta5；并删除 lib/tail_hold_max_shadow.py、scripts/run_tail_hold_max_shadow.py、data/tail_hold_max_shadow.json 与 data/tail_hold_max_shadow_cron.log。
