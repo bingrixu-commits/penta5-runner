@@ -30,6 +30,7 @@ BASELINE_BASIS = '现行规则 10^4 开奖组合精确枚举校准（2026-10-31�
 # (key, 规则 revision) -> (整组项目数, 精确随机期望)
 RULE_BASELINE = {
     ('killer', 'conditional-transition-v2'): (9, 0.4162),
+    ('killer', 'conditional-transition-v1'): (9, 0.4162),
     ('framework', 'marginal-frequency-v2'): (8, 0.5559),
     ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
     ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),

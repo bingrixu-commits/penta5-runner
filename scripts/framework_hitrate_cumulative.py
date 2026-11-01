@@ -41,6 +41,7 @@ JOINT_FORM_BOUNDARY_NOTE = ('该时刻起 framework/killer 的 2 个反向形态
 
 RULE_BASELINE = {
     ('killer', 'conditional-transition-v2'): (9, 0.4162),
+    ('killer', 'conditional-transition-v1'): (9, 0.4162),
     ('framework', 'marginal-frequency-v2'): (8, 0.5559),
     ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
     ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),
@@ -676,7 +677,7 @@ def cum_killer():
             continue
         records.append((row.get('target_period'), all(bool(v) for v in outcome.values()),
                         model_by_ref.get(str(row.get('ref_period')))))
-    rule = _rule_from_strategy('killer') or 'conditional-transition-v2'
+    rule = _rule_from_strategy('killer') or 'conditional-transition-v1'
     promoted_at, promoted_moment = _joint_form_boundary()
     expected_map = _joint_expected_map('killer', promoted_moment)
     launch = [target for target, _, _ in records]
@@ -685,7 +686,7 @@ def cum_killer():
         if isinstance(seal, dict) and seal.get('target_period'):
             launch.append(seal.get('target_period'))
     row = _build('killer', rule, records, 'data/r1_stats.json',
-                 '账本未标注规则版本；按现行规则 conditional-transition-v2 复核全部记录',
+                 '账本未标注规则版本；按现行规则 conditional-transition-v1 复核全部记录',
                  expected_map=expected_map, promoted_moment=promoted_moment, launch=launch)
     if promoted_moment is not None:
         row = _with_post_optimized(row, records, promoted_at, promoted_moment)

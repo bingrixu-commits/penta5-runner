@@ -24,7 +24,7 @@ from stats_history import parse_period, parse_time, period_slot
 VERSION = 'ai-model-context-v1'
 REQUEST_POLICY = 'independent-strategy-v2'
 REQUEST_DEFINITION_VERSION = 2
-POLICY_STRATEGIES = {'killer': 'conditional-transition-v2',
+POLICY_STRATEGIES = {'killer': 'conditional-transition-v1',
                      'framework': 'marginal-frequency-v2'}
 MAX_SOURCE_BYTES = 16 * 1024 * 1024
 MAX_CONTEXT_BYTES = 16000
@@ -246,7 +246,7 @@ def build_model_context(snapshot, kind, seals, *, data_dir=Path('/root/penta5-ru
         raise ValueError('invalid-model-context-kind')
     supported = ((KILLER_STRATEGY, LEGACY_KILLER_STRATEGY) if kind == 'killer'
                  else (FRAMEWORK_STRATEGY, LEGACY_FRAMEWORK_STRATEGY))
-    strategy_id = strategy_id or supported[0]
+    strategy_id = strategy_id or POLICY_STRATEGIES[kind]
     if strategy_id not in supported:
         raise ValueError('invalid-model-context-strategy')
     strategy = build_strategy(history, reference, strategy_id, now)
@@ -453,7 +453,7 @@ def prepare_model_request(prompt, snapshot, kind, seals, *, data_dir=Path('/root
             raise ValueError('invalid-saved-independent-model-input')
     elif (isinstance(audit.get('body'), dict)
           and isinstance(audit['body'].get('strategy'), dict)
-          and audit['body']['strategy'].get('strategy_id') in POLICY_STRATEGIES.values()):
+          and audit['body']['strategy'].get('strategy_id') in (KILLER_STRATEGY, FRAMEWORK_STRATEGY)):
         # A v2 body cannot be relabelled as a legacy archive by deleting policy
         # metadata while keeping its self-consistent content hashes.
         raise ValueError('missing-saved-independent-model-input-policy')
