@@ -931,3 +931,15 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结守卫：ops/kill3-freeze.json panel_context hash df3305ab… → 2f9d6011…（hash_updates 第 17 条）。
 - cron：每 5 分钟 sleep 55、flock /var/lock/penta5-kill6t.lock；日志 data/kill6_tail_cron.log。
 - 回滚：git revert（三次 commit）+ scripts/crontab_tool.sh install。
+
+## 2026-11-01 位置杀码 kill7 独立框架上线（同 kill5 口径）
+
+- 命名与四项口径（ask_user_question 通道确认，2026-11-01）：kill7 = 3 位置杀码 + 1 合尾 + 二数合 + 三数合 + 单双 + 大小 2 反向形态 = 8 项；尾码模型自主（无 hold3）；位置不设连用限制（与 kill5 完全同口径）。
+- RULE_VERSION=kill7-tail-v1-three-positions-he2he3；独立封存 data/kill7_tail/。
+- 整组期望（与 kill5 同口径）：0.5038（固定种子 20261101、10^8 样本蒙特卡洛，非相乘）。
+- 三件套：lib/kill7_tail.py、lib/kill_seven_view.py、scripts/run_kill7_tail.py；模块测试 20 PASS / 0 FAIL。
+- 12 挂接点：/root/run_stats.py（仓库外）、panel_context（新增 kill7_self）、hitrate_baseline、framework_hitrate_cumulative、ops_health_check、model_usage、evidence_backup、attack_editor_view、panel_live_refresh、tail_hold_review、ops/crontab.txt、/etc/logrotate.d/penta5；日志名 kill7_tail_cron.log 五处一致。
+- A/B 证明：panel_context.py 改动后 kill3/kill2/kill4/kill6 固定 fixture 输出 sha256 逐字节不变（kill3=9224d43d401c88e5f9ce5b4d4b134eca072f24e1807cf78d54de0a1f78bfc6e5、kill2=f06ff1978c32e768f05ba534c9cfb6d0992f85ad28480f596ea6f0a63be5b6c4、kill4=fb588a10e26fb6219038817c6eaed966a2c8ff1458071fb875a2fa24be2e335a、kill6=2457369afa459f4895294a77f3c76a42945440fc4fd8069358e5fb37c8c12549）。
+- 冻结守卫：ops/kill3-freeze.json panel_context hash 2f9d6011… → bc6062c3…（hash_updates 第 18 条）。
+- cron：每 5 分钟 sleep 60、flock /var/lock/penta5-kill7t.lock；日志 data/kill7_tail_cron.log。
+- 回滚：git revert（三次 commit）+ scripts/crontab_tool.sh install。
