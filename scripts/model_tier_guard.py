@@ -30,7 +30,7 @@ TZ = ZoneInfo('Asia/Shanghai')
 DEFAULTS = {
     'version': 1,
     'enabled': True,
-    'targets': ['KILL1', 'KILL2P', 'KILL3'],
+    'targets': ['KILL1', 'KILL3'],
     'pro_model': 'deepseek-v4-pro',
     'flash_model': 'deepseek-flash',
     'pro_on_balance': 50.0,

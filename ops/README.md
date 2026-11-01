@@ -1031,3 +1031,4 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 数据归档：data/kill2p_tail（2.2M）移至 /root/ops/kill2p-family-20261101-121944/data_kill2p_tail；完整备份同目录（before_hitrate/before_cumulative/crontab/run_stats/panel.before.html/position_kill_shadow/logrotate/panel_context/kill3-freeze.json）。
 - 提交：4ebe1a2（运行层+三件套删除）、4012f2e（面板层）、e8a06a8（派生统计）、本提交（冻结 hash + 本台账）。
 - 回滚：git revert <本提交> e8a06a8 4012f2e 4ebe1a2 + scripts/crontab_tool.sh install + 把归档移回 data/kill2p_tail + 恢复 /root/run_stats.py 与 /etc/logrotate.d/penta5（均在 /root/ops/kill2p-family-20261101-121944/）。
+- 补完：.env 删 PENTA5_MODEL_KILL2P（备份同目录 .env.bak）；scripts/model_tier_guard.py DEFAULTS targets 与 data/model_tier_guard.json targets 去 KILL2P（顺带清掉已退役的 KILL2，现 targets=KILL1/KILL3）。更正 e8a06a8 提交消息里的行数：hitrate_baseline 7→6 行、tail_hold_review 6→5 框架（不是 8→7/7→6）。
