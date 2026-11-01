@@ -873,3 +873,15 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/kill2-20261101-082622/（panel_context.py.bak、run_stats.py.bak、logrotate.penta5.bak）。
 - 上线验证（真实期号封存/结算）由 Lead 下一轮统筹核验；本批做到「部署就绪 + crontab 已装 + 离线渲染先验 +
   模块测试 fail:0 + A/B sha256 等值 + 12 挂接点 grep 全≥1 + 三次 commit」。
+
+## 2026-11-01 位置杀码 kill4 独立框架上线（ba991a2 / a8e49d3）
+
+- 命名与四项口径（ask_user_question 通道确认，2026-11-01）：kill4 = 3 位置杀码 + 1 合尾 + 二数合 + 三数合 + 单双 + 大小 2 反向形态 = 8 项；尾码 hold3-until-miss；位置不设连用限制（无 position_restriction）。
+- RULE_VERSION=kill4-tail-v1-three-positions-he2he3；独立封存 data/kill4_tail/。
+- 整组精确枚举（10^4 开奖空间 × 均匀配置，10^8 蒙特卡洛固定种子，非相乘）：0.5038（kill2 7 项对照 0.5708）。
+- 三件套：lib/kill4_tail.py、lib/kill_four_view.py、scripts/run_kill4_tail.py；模块测试 20 PASS / 0 FAIL。
+- 12 挂接点：/root/run_stats.py（仓库外）、panel_context（新增 kill4_self）、hitrate_baseline、framework_hitrate_cumulative、ops_health_check、model_usage、evidence_backup、attack_editor_view、panel_live_refresh、tail_hold_review、ops/crontab.txt、/etc/logrotate.d/penta5。
+- A/B 证明：panel_context.py 改动后 kill3/kill2 固定 fixture 输出 sha256 逐字节不变（kill3=13b62e58c526961ffc45e58b68c8b03e0be058e3f64b5bd0b5ce4ddcd9370e2d、kill2=93b5be2e0fc94a62bd3ac1d1cd02454bae6c486b7d96ed6677d8461494b61e09）。
+- 冻结守卫：ops/kill3-freeze.json 的 panel_context hash 3e0df93e... → f184f60f...（hash_updates 追加第 12 条）。
+- cron：每 5 分钟 sleep 50、flock /var/lock/penta5-kill4t.lock；日志 data/kill4_tail_cron.log。
+- 回滚：git revert a8e49d3 ba991a2 + scripts/crontab_tool.sh install（恢复 crontab.txt 基线）。
