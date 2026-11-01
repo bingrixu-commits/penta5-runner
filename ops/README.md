@@ -954,3 +954,4 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 数据归档：/root/archive/retired-20261101-kill67/kill67-data.tar.gz（sha256=1d98b2f0bb8dcd7eeb69abe47255e5d4815a582079c05263e3bd9993b50ed75b）。
 - 备份：/root/ops/kill67-retire-20261101-105329/（panel_context.py.bak、crontab.txt.bak、run_stats.py.bak）。
 - 回滚：git revert（三次 commit）+ scripts/crontab_tool.sh install + tar xzf 解档数据。
+- 补清（2026-11-01 11:31）：退役提交漏了三处残留，已一并清理——(1) panel.html 仍留 KILL_SIX/KILL_SEVEN 幽灵卡片区块（kill6/kill7 写卡任务已删、无人再覆盖；按 START/END 标记整体移除 12928 字节，复核残留 0，其余 KILL_ONE..KILL_FIVE 标记不变）；(2) scripts/model_tier_guard.py targets 仍列 KILL6（改为 KILL1/KILL2/KILL2P/KILL3/KILL4/KILL5）；(3) .env 残留 PENTA5_MODEL_KILL6（已删，备份 .env.before-kill6-removal）。另清 6 个 kill6/kill7 残留 .pyc，manifest 经 refresh_source_manifest.py --if-drift 重建（435 files）。
