@@ -200,7 +200,7 @@ def _kill9_self(reference, kill9_stats, kill9_previous):
     previous = None
     if isinstance(kill9_previous, dict):
         previous = _pick(kill9_previous, ('ref_period', 'target_period', 'rule_version',
-                                          'forms', 'form_kinds', 'form_pool',
+                                          'forms', 'form_kinds', 'form_pool', 'all_form',
                                           'he2_keep', 'he3_keep',
                                           'generated_at', 'published_at'))
     stats = None
@@ -281,7 +281,7 @@ def _ai_self_frame(kind):
     elif kind == 'kill1_tail':
         fields += ['counted', 'form_type', 'form']
     elif kind == 'kill9_tail':
-        fields += ['forms', 'form_kinds', 'form_pool', 'he2_keep', 'he3_keep']
+        fields += ['forms', 'form_kinds', 'form_pool', 'all_form', 'he2_keep', 'he3_keep']
     latest = _pick(records[-1], fields) if records else None
     settlements = _read(DATA / kind / 'settlements.json', {}) or {}
     verified = [item for item in (settlements.get('records') or [])

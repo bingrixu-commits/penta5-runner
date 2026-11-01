@@ -1,9 +1,9 @@
-"""AI 三形态排除（面板候选池挑选）+ 二数合 + 三数合 每期任务（cron 每 5 分钟，开奖后启动）。
+"""AI 四形态排除（面板候选池挑 3 + 全同形态挑 1）+ 二数合 + 三数合 每期任务（cron 每 5 分钟，开奖后启动）。
 
 流程：
 1. 等待本期开奖数据就绪（最多 55 秒）；
 2. 结算上一期已开奖的封存（只追加，不改封存）；
-3. 汇总面板各框架本期已发布四位反向形态作为候选池，让模型从中挑 3 个；
+3. 汇总面板各框架本期已发布四位反向形态作为候选池，让模型从中挑 3 个，另从 4 个全同形态中挑 1 个；
 4. 若本期参考期尚无封存，则在发布窗口内请求一次 DeepSeek（最多 3 次尝试）；
 5. 封存 → 标记已发布 → 写面板区块。任何失败只记录，不补发历史期。
 """
@@ -130,7 +130,7 @@ def main():
         for index, (form, kind) in enumerate(
             zip(prediction['forms'], prediction['form_kinds']), start=1))
     print(f'kill9 published: ref={reference} target={target} rule={kill9_tail.RULE_VERSION} · '
-          f'{forms_text} · '
+          f'{forms_text} · 形态4 {prediction["all_form"]}(all) · '
           f'二数合 {prediction["he2_keep"]} · 三数合 {prediction["he3_keep"]}')
     print(f'kill9 attack: {kill9_tail.build_attack(seal)}')
     return 0

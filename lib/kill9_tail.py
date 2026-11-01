@@ -1,4 +1,4 @@
-"""AI 三形态排除 + 二数合 + 三数合 框架（kill9 v3，独立封存/结算/统计）。
+"""AI 四形态排除（面板候选池挑 3 + 全同形态挑 1）+ 二数合 + 三数合 框架（kill9 v4，独立封存/结算/统计）。
 
 口径（面板、封存与统计都按此写死）：
 - 候选池 = 面板其他 AI 框架本期已发布的四位反向形态汇总去重（kill1 的 form、
@@ -7,13 +7,15 @@
 - 由 DeepSeek 从候选池中挑选 3 个互不相同的四位形态（大小或单双，按千百十个顺序输出 4 字符），
   作为本期「形态排除项」；池内不足 3 个时允许补足同类型形态并在 reason 说明；
   模型不得改写池内形态，也不得凭空自造（本地校验强制 forms ⊆ 池）；
+- 再由 DeepSeek 从 4 个全同形态（大大大大/小小小小/双双双双/单单单单）中挑选 1 个作为本期
+  第 4 个「形态排除项」（原样使用，不得与上面 3 个池选形态重复）；
 - 形态只可能是大小（大/小）或单双（单/双）两类：大=5-9、小=0-4、单=1/3/5/7/9、双=0/2/4/6/8；
 - 形态命中 = 目标期实际四位形态 != 封存形态（反向排除项，逐位约束至少一位不满足即命中）；
 - 二数合：he2_keep 从 02468 恰好保留 4 个不同数字；前 4 球任取 2 位 6 种组合和值个位，
   任一落入保留集即命中；
 - 三数合：he3_keep 从 0-9 恰好保留 5 个不同数字且 2 奇 3 偶或 3 奇 2 偶；任取 3 位 4 种组合
   和值个位，任一落入保留集即命中；
-- 整组命中 = 3 个形态 + 二数合 + 三数合 共 5 项同时命中；
+- 整组命中 = 3 个池选形态 + 1 个全同形态 + 二数合 + 三数合 共 6 项同时命中；
 - 无位置杀码、无合尾、无连用限制（每期完全由模型按冷热重选，不沿用上期）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
@@ -55,7 +57,7 @@ FORM_LABELS = {'size': '大小形态', 'parity': '单双形态'}
 FORM_PALETTE = {'size': '大小', 'parity': '单双'}
 REVERSE_LABELS = {'size': '大小排除形态', 'parity': '单双排除形态'}
 
-# 以下 全同/质合/中边 常量只用于 v1/v2 旧封存的结算与攻击语追溯，不再参与新一期预测。
+# 全同形态：v4 起作为第 4 个必选「形态排除项」（每期从 4 个中挑 1 个）；质合/中边 常量只用于 v1 旧封存追溯。
 ALL_FORM_VALUES = ('大大大大', '小小小小', '双双双双', '单单单单')
 ALL_FORM_LABELS = {'大大大大': '全大', '小小小小': '全小', '双双双双': '全双', '单单单单': '全单'}
 
@@ -63,8 +65,13 @@ ALL_FORM_LABELS = {'大大大大': '全大', '小小小小': '全小', '双双�
 PRIME_DIGITS = frozenset((1, 2, 3, 5, 7))
 MIDDLE_DIGITS = frozenset((3, 4, 5, 6))
 
-RULE_VERSION = 'kill9-tail-v3-pool-three-forms-he2he3'
-COUNTED_FORMS = 3
+V1_RULE = 'kill9-tail-v1-four-forms-he2he3'
+V2_RULE = 'kill9-tail-v2-size-parity-all-mixed'
+V3_RULE = 'kill9-tail-v3-pool-three-forms-he2he3'
+RULE_VERSION = 'kill9-tail-v4-pool-three-plus-all-form-he2he3'
+COUNTED_FORMS = 3                            # 池选形态数（必须原样取自候选池）
+ALL_FORM_PICK = 1                            # 全同形态必选数（4 个全同形态中挑 1 个）
+TOTAL_FORMS = COUNTED_FORMS + ALL_FORM_PICK  # 整组形态项数 = 4
 HE2_SOURCE_DIGITS = '02468'
 HE2_KEEP_COUNT = 4
 HE3_KEEP_COUNT = 5
@@ -75,6 +82,7 @@ RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
     'forms 必须是恰好 3 个互不相同的四位形态组成的数组，每项 4 个 大/小 字符或 4 个 单/双 字符'
     '（按千百十个顺序），且必须原样来自【本期候选池】（池内不足 3 个时才允许补足同类型形态）；'
+    'all_form 必须原样取自 大大大大/小小小小/双双双双/单单单单 之一，且不得与 forms 重复；'
     'he2_keep 为 02468 中 4 个不同数字组成的字符串；'
     'he3_keep 为 0123456789 中 5 个不同数字组成的字符串且必须 2 奇 3 偶或 3 奇 2 偶；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
@@ -441,6 +449,11 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
                               % (form, FORM_LABELS.get(kind, kind), sources or '-', note))
         pool_section = ('【本期候选池（面板各框架本期已发布四位反向形态去重，共 %d 个；'
                         '必须从池中挑选）】\n' % len(pool_entries)) + '\n'.join(pool_lines) + '\n\n'
+    all_lines = ['· %s（%s）' % (form, ALL_FORM_LABELS.get(form, form))
+                 for form in ALL_FORM_VALUES]
+    all_section = ('【本期全同形态（4 个，必须从中挑选 1 个作为第 4 个形态排除项；'
+                   '原样使用，且不得与上面挑出的 3 个池选形态重复）】\n'
+                   + '\n'.join(all_lines) + '\n\n')
     prompt = (
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
@@ -452,6 +465,7 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
         '仅历史统计，不代表未来概率）】\n'
         + '\n'.join(ranking_lines['parity']) + '\n\n'
         + pool_section
+        + all_section
         + '【二数合保留4码候选（任意两位六组和值个位任一落入保留集即命中；'
         '按近50期真实命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(he2_lines) + '\n\n'
@@ -459,24 +473,28 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
         '必须 2 奇 3 偶或 3 奇 2 偶；按近50期命中率排序，仅供参考）】\n'
         + '\n'.join(he3_lines) + '\n\n'
         '【任务】\n'
-        '1. 只从【本期候选池】中挑选 3 个互不相同的四位形态作为本期「形态排除项」；'
+        '1. 先从【本期候选池】中挑选 3 个互不相同的四位形态作为本期 3 个「形态排除项」；'
         '不得改写池内形态、不得自造池外形态；若池内不足 3 个，可补足同类型形态并说明；\n'
-        '2. 每个形态命中 = 目标期实际四位形态 != 该形态（排除项，至少一位不满足）；\n'
-        '3. he2_keep：从 02468 中恰好保留 4 个不同数字（字符串），'
+        '2. 再从【本期全同形态】的 4 个全同形态中恰好挑选 1 个作为本期第 4 个「形态排除项」；'
+        '必须原样使用，且不得与第 1 步挑出的 3 个形态重复；\n'
+        '3. 每个形态命中 = 目标期实际四位形态 != 该形态（排除项，至少一位不满足）；\n'
+        '4. he2_keep：从 02468 中恰好保留 4 个不同数字（字符串），'
         '目标期任取两位的 6 种和值个位任一落入即命中；\n'
-        '4. he3_keep：从 0123456789 中恰好保留 5 个不同数字（字符串），'
+        '5. he3_keep：从 0123456789 中恰好保留 5 个不同数字（字符串），'
         '且必须 2 奇 3 偶或 3 奇 2 偶，目标期任取三位的 4 种和值个位任一落入即命中；\n'
-        '5. 命中口径：3 个形态 + 二数合 + 三数合共 5 项同时命中才算整组命中；\n'
-        '6. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
-        '7. 只能使用上面给出的历史、候选池与面板全量上下文；'
+        '6. 命中口径：3 个池选形态 + 1 个全同形态 + 二数合 + 三数合共 6 项同时命中才算整组命中；\n'
+        '7. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
+        '8. 只能使用上面给出的历史、候选池、全同形态与面板全量上下文；'
         '面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"forms":["<4个 大/小 字符，按千百十个顺序>","<4个 大/小 字符>",'
         '"<4个 单/双 字符或 4个 大/小 字符>"],'
+        '"all_form":"<大大大大/小小小小/双双双双/单单单单 之一>",'
         '"he2_keep":"<4位数字，从02468选>","he3_keep":"<5位数字，2奇3偶或3奇2偶>",'
         '"reason":"40字以内"}\n'
         '注意：forms 必须恰好 3 个互不相同的四位形态，每一项都必须是 4 个 大/小 字符'
         '或 4 个 单/双 字符，且必须原样取自【本期候选池】；'
+        'all_form 必须是 大大大大/小小小小/双双双双/单单单单 之一且不得与 forms 重复；'
         'he2_keep 必须是 02468 里的 4 个不同数字；'
         'he3_keep 必须是 5 个不同数字且 2 奇 3 偶或 3 奇 2 偶。'
     )
@@ -485,7 +503,8 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill9-prompt-v3-pool-three-forms-he2he3',
+        'version': 'kill9-prompt-v4-pool-three-plus-all-form-he2he3',
+        'all_form_values': list(ALL_FORM_VALUES),
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -540,6 +559,12 @@ def normalize_response(response, pool=None):
             if missing:
                 raise ValueError('候选池不足 %d 个时必须先选完池内形态：%s'
                                  % (COUNTED_FORMS, '、'.join(missing)))
+    all_form = response.get('all_form')
+    if not isinstance(all_form, str) or all_form not in ALL_FORM_VALUES:
+        raise ValueError('all_form 必须是 4 个全同形态之一：%s'
+                         % '、'.join(ALL_FORM_VALUES))
+    if all_form in forms:
+        raise ValueError('all_form 不能与 forms 重复：%s' % all_form)
     he2_keep = _keep_set(response.get('he2_keep'), HE2_KEEP_COUNT, HE2_SOURCE_DIGITS,
                          '二数合保留4码')
     he3_keep = _keep_set(response.get('he3_keep'), HE3_KEEP_COUNT, '0123456789',
@@ -555,6 +580,7 @@ def normalize_response(response, pool=None):
     return {
         'forms': forms,
         'form_kinds': kinds,
+        'all_form': all_form,
         'he2_keep': he2_keep,
         'he3_keep': he3_keep,
         'reason': reason[:200],
@@ -761,6 +787,7 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'publication_state': 'prepared',
         'forms': list(prediction['forms']),
         'form_kinds': list(prediction['form_kinds']),
+        'all_form': prediction['all_form'],
         'form_pool': audit.get('form_pool'),
         'pool_sha256': audit.get('pool_sha256'),
         'he2_keep': prediction['he2_keep'],
@@ -836,9 +863,26 @@ def settle_pending(snapshot=None, now=None):
         if len(actual) != 4:
             continue
         rule = seal.get('rule_version')
-        is_v1 = rule == 'kill9-tail-v1-four-forms-he2he3'
-        is_v3 = bool(seal.get('forms')) or rule == RULE_VERSION
-        if is_v3:
+        is_v1 = rule == V1_RULE
+        is_v4 = rule == RULE_VERSION or (isinstance(seal.get('all_form'), str)
+                                         and isinstance(seal.get('forms'), list))
+        is_v3 = (not is_v4) and (bool(seal.get('forms')) or rule == V3_RULE)
+        if is_v4:
+            forms = []
+            sealed_forms = seal.get('forms') if isinstance(seal.get('forms'), list) else []
+            sealed_kinds = (seal.get('form_kinds')
+                            if isinstance(seal.get('form_kinds'), list) else [])
+            for index, sealed_form in enumerate(sealed_forms):
+                kind = sealed_kinds[index] if index < len(sealed_kinds) else form_kind(sealed_form)
+                actual_form = pattern_of(actual, kind) if kind in ('size', 'parity') else '-'
+                forms.append({'form': sealed_form, 'kind': kind or '-',
+                              'actual': actual_form,
+                              'hit': bool(form_hit(sealed_form, actual))})
+            all_form = seal.get('all_form')
+            forms.append({'form': all_form, 'kind': 'all',
+                          'actual': pattern_of(actual, 'size') + '/' + pattern_of(actual, 'parity'),
+                          'hit': bool(form_hit(all_form, actual))})
+        elif is_v3:
             forms = []
             sealed_forms = seal.get('forms') if isinstance(seal.get('forms'), list) else []
             sealed_kinds = (seal.get('form_kinds')
@@ -883,7 +927,7 @@ def settle_pending(snapshot=None, now=None):
             }
         hit_list = [item['hit'] for item in
                     (forms if isinstance(forms, list) else forms.values())]
-        expected_items = COUNTED_FORMS if is_v3 else 4
+        expected_items = TOTAL_FORMS if is_v4 else (COUNTED_FORMS if is_v3 else 4)
         group_hit = bool(len(hit_list) == expected_items and all(hit_list)
                          and keep_entries['he2_keep']['hit']
                          and keep_entries['he3_keep']['hit'])
@@ -956,9 +1000,9 @@ def today_stats(now=None):
                 entries.append(value)
         return entries
 
-    form_hits = [0] * COUNTED_FORMS
+    form_hits = [0] * TOTAL_FORMS
     for item in todays:
-        for index, entry in enumerate(_form_entries(item)[:COUNTED_FORMS]):
+        for index, entry in enumerate(_form_entries(item)[:TOTAL_FORMS]):
             if isinstance(entry, dict) and entry.get('hit') is True:
                 form_hits[index] += 1
     he2_hits = sum(1 for item in todays if (item.get('he2_keep') or {}).get('hit') is True)
@@ -992,7 +1036,7 @@ def today_stats(now=None):
         'group_rate': (group_hits / total) if total else None,
         'forms': [{'hits': form_hits[index], 'bets': total,
                    'rate': (form_hits[index] / total) if total else None}
-                  for index in range(COUNTED_FORMS)],
+                  for index in range(TOTAL_FORMS)],
         'he2_keep': {'hits': he2_hits, 'bets': total,
                      'rate': (he2_hits / total) if total else None},
         'he3_keep': {'hits': he3_hits, 'bets': total,
@@ -1047,7 +1091,7 @@ def deadline_for(reference):
 
 
 def build_attack(seal):
-    """攻击语：4 个形态排除项 + 二数合保留4码 + 三数合保留5码。"""
+    """攻击语：3 个池选形态 + 1 个全同形态 + 二数合保留4码 + 三数合保留5码（共 4 个「除」）。"""
     if not isinstance(seal, dict):
         raise ValueError('attack requires a sealed prediction')
     parts = []
@@ -1061,6 +1105,10 @@ def build_attack(seal):
             value = seal.get(field)
             if isinstance(value, str) and len(value) == 4:
                 parts.append('除' + value)
+    if isinstance(forms, list):
+        all_form = seal.get('all_form')
+        if isinstance(all_form, str) and len(all_form) == 4:
+            parts.append('除' + all_form)
     he2_keep = seal.get('he2_keep')
     he3_keep = seal.get('he3_keep')
     if he2_keep and he3_keep:
