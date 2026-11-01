@@ -845,7 +845,7 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 口径（用户已确认，Lead 转述，确认通道=用户已选/文字口径）：
   - 命名 kill2 → `lib/kill2_tail.py`、`lib/kill_two_view.py`、面板 `section id=kill-two-ai`、
     `apply_kill_two_block`、`RULE_VERSION=kill2-tail-v1-two-positions-he2he3`、`data/kill2_tail/`、
-    cron 锁 `/var/lock/penta5-kill2t.lock`、日志 `data/kill2_cron.log`。
+    cron 锁 `/var/lock/penta5-kill2t.lock`、日志 `data/kill2_tail_cron.log`。
   - 整组 7 项 = **2 位置杀码（全计入，无 display_only）** + 1 合尾 + 二数合 + 三数合 + 2 反向形态。
   - 形态：`reverse_parity`（单双）+ `reverse_size`（大小）；被杀位取杀码形态反面、其余位自选（与 kill3 同）。
   - 尾码：`hold3-until-miss`（与 kill3 同）。连用限制：位置杀码最多连用 3 期、中间未选该位置不清零（`MAX_CONSECUTIVE_PERIODS=3`）。
@@ -869,7 +869,7 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结守卫：ops/kill3-freeze.json 更新 lib/panel_context.py sha256
   00982a02…→3e0df93e…，hash_updates 追加一条（commit 记为 pending-kill2）。
 - crontab：ops/crontab.txt 在 kill2p 行后加同构行（sleep 45、flock /var/lock/penta5-kill2t.lock），
-  scripts/crontab_tool.sh install 后 diff 无差异；logrotate -d 已识别 data/kill2_cron.log。
+  scripts/crontab_tool.sh install 后 diff 无差异；logrotate -d 已识别 data/kill2_tail_cron.log。
 - 备份：/root/ops/kill2-20261101-082622/（panel_context.py.bak、run_stats.py.bak、logrotate.penta5.bak）。
 - 上线验证（真实期号封存/结算）由 Lead 下一轮统筹核验；本批做到「部署就绪 + crontab 已装 + 离线渲染先验 +
   模块测试 fail:0 + A/B sha256 等值 + 12 挂接点 grep 全≥1 + 三次 commit」。
