@@ -116,8 +116,8 @@ def main():
         print(f'kill9 panel publication failed: {type(error).__name__}')
         return 1
     print(f'kill9 published: ref={reference} target={target} rule={kill9_tail.RULE_VERSION} · '
-          f'单双 {prediction["parity_form"]} · 大小 {prediction["size_form"]} · '
-          f'质合 {prediction["prime_form"]} · 中边 {prediction["middle_form"]} · '
+          f'大小 {prediction["size_form"]} · 单双 {prediction["parity_form"]} · '
+          f'全同 {prediction["all_form"]} · 混合 {prediction["mixed_form"]} · '
           f'二数合 {prediction["he2_keep"]} · 三数合 {prediction["he3_keep"]}')
     print(f'kill9 attack: {kill9_tail.build_attack(seal)}')
     return 0
