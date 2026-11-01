@@ -1154,3 +1154,16 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/kill8-deploy/.env.bak.*。
 - 提交：本提交（本台账）。
 - 回滚：删 .env 里的 PENTA5_MODEL_KILL8 即回退 flash（无需重启 pm2，下次触发生效）。
+## 2026-11-01 18:15 evidence_backup 断更修复上线（链式刷新 + 3GiB 上限 + 870s 墙预算）
+
+- 依据：ops_health WARN evidence_backup（verified_at=2026-10-31T05:13:31 断更 36h）。cron 9 5 * * * 跑 scripts/run_evidence_backup.py，11-01 05:09 失败 matching-source-manifest-unavailable。
+- 根因（四个叠加）：① manifest drift——备份要求 source manifest sha256 与 live bytes 逐字节一致（lib/evidence_backup.py:331 newest_source_manifest→:226 _source_entries→:247 hash 不符 raise），04:55→05:09 窗口内另一窗口提交致 drift；② bundle 超上限——业务封存 JSON 增长（data/ ~1.34GiB + RDS system_snapshots）使 raw bundle 超 2GiB → backup-too-large（:477）；③ 超时——2GiB+ bundle 压缩+isolated-restore 验证超旧 480s 墙预算，被 cron SIGTERM 静默杀（日志空）；④ 活跃编辑竞态（仅业务时段）——newest_source_manifest(:338) 与 create_bundle(:452) 两次 _source_entries 之间 source 文件被另一窗口改动 → source-manifest-hash-mismatch。
+- 修复（commit 0211e28，3 文件 +11/-9）：
+  - ops/crontab.txt:19 evidence 备份 cron 前置链 refresh_source_manifest.py --if-drift &&，backup timeout 480→900。
+  - lib/evidence_backup.py:27 MAX_TOTAL 2GiB→3GiB（磁盘检查需 2*MAX_TOTAL+1GiB=7GiB，free ~23GiB OK）。
+  - scripts/run_evidence_backup.py:81 _budget(480)→_budget(870)、:84 >=470→>=860、:107 >455→>850（内部 SIGALRM 先于 cron 900s SIGTERM，打印 clean status）。
+- 验证（手动重跑成功）：latest-verified.json verified_at=2026-11-01T18:14:43、archive=evidence-20261101-180915-60572994.tar.gz、size=323,927,874（324MB gz）、source_count=430、system_snapshots=13296、attempt=1；py_compile OK；crontab install+diff 通过。
+- 长期待决策：seal/stat JSON 无界增长（10-31 249MB gz → 11-01 324MB gz），需 retention；活跃编辑竞态 hash-mismatch 仅业务时段触发，05:09 排程规避。
+- 提交：0211e28 fix(evidence-backup)（本台账）。
+- 回滚：git revert 0211e28；或 crontab 用 /root/ops/fix-20261101-1731/backups/ops/crontab.txt。
+
