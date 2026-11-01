@@ -25,8 +25,8 @@ END = '<!-- ' + MARKER + '_END -->'
 ANCHOR = '<!-- TAIL_STABILITY_SHADOW_END -->'
 POS_INDEX = {'q': 0, 'b': 1, 's': 2, 'g': 3}
 FRAMEWORKS = (
-    ('kill1_tail', 'AI单位置(kill1)'),
-    ('kill3_tail', 'AI三位置(kill3)'),
+    # ('kill1_tail', 'AI单位置(kill1)'),  # 2026-11-01 16:10 启用 hold3-until-miss，不再列入影子对照
+    # ('kill3_tail', 'AI三位置(kill3)'),  # kill3-tail-v11 已是 hold3-until-miss，不再列入影子对照
 )
 POLICIES = (
     ('hold2', 2, '命中沿用·最多连用2期·失手换码'),
@@ -168,6 +168,14 @@ def _num(value):
 
 def render_block(data):
     order = [name for _src, name in FRAMEWORKS if name in (data.get('frameworks') or {})]
+    if not order:
+        return (START + '<section id="position-kill-shadow" aria-label="位置杀码稳定化候选影子">'
+                '<h3>✅ 位置杀码稳定化已全部转正</h3>'
+                '<div style="font-size:13px;color:#475569;margin-top:4px">'
+                'kill1 已于 2026-11-01 启用 hold3-until-miss（本地确定性后处理 + position_policy 追溯）；'
+                'kill3-tail-v11 已是 hold3-until-miss。影子对照结束，不再采集。生成 '
+                + str(data.get('generated_at') or '-') + '</div>'
+                '</section>' + END)
     body = []
     for name in order:
         item = data['frameworks'][name]
