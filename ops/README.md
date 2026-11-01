@@ -978,3 +978,18 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   - **kill1**：46 注（46 期）< 50，**未达 n≥50 门槛**；hold2/hold3 命中率 91.30% 持平、换码 8→5 —— 方向正面但样本不足，待补 4 期。
 - 说明：kill4 已退役并移出影子 collector（2026-11-01 11:40），kill7 未纳入；kill1 的 forward 注数按 1 注/期计。kill3 forward 样本含 20261101141 开奖前的连续记录（当时 AI 因余额停用，缺口由影子 backfill 连续期号补齐）。
 - 建议：达标三框架（kill3/kill2p/kill2）统一选 **hold3**（预登记示例档：命中率在 95%CI 内不显著变差、换码次数下降约 30–46%）；kill1 等 n≥50 后再补看。转正需用户确认后另行实施，影子对照本身不改现网封存/统计/攻击语。
+
+## 2026-11-01 12:03 kill3 位置杀码尾码 hold3 转正（v10 free → v11 hold3）
+
+- 依据：位置杀码影子对照 12:00 最终复核（n≥50 注档）kill3 96 注达标 —— hold3 命中率 89.58%（现行 90.62%，95%CI [81.9,94.2] 与现行 [83.1,95.0] 重叠、不显著变差），换码 39→21（↓46%）。
+- 口径：`kill3-tail-v11-hold3-two-counted`（命中口径不变：2 个计入位置 + 1 合尾 + 2 反向形态 = 5 项 / 2 注；整组精确基线 0.6191）。
+- 改动：
+  - `lib/kill3_tail.py`：RULE_VERSION v10→v11；build_prompt 合尾限制 free → hold3（【合尾稳定化规则】；任务第 2 条改为「作为本期换码候选；系统按稳定化规则决定最终封存尾码」）；audit.tail_policy=hold3-until-miss、tail_hold_max=3；docstring 更新。
+  - `scripts/run_kill3_tail.py`：request_prediction 后调用 `apply_tail_policy`（hold3 沿用），打印 tail_policy note。
+  - `lib/hitrate_baseline.py` / `scripts/framework_hitrate_cumulative.py`：加 v11 基线映射 `(5, 0.6191)`。
+  - `lib/kill_three_view.py`：旧口径文案「v1–v9」→「历史版本」。
+  - `lib/position_kill_shadow.py`：影子 collector 退役 kill3 条目（保留 kill1/kill2p/kill2；kill1 46 注未达 n≥50，继续观察）。
+- 模块测试：apply_tail_policy 合成用例（上期命中→沿用第 1 期；上期未命中→换码）通过；build_prompt 真实 ref=20261101144 生成含【合尾稳定化规则】/换码候选，audit.version=v11。
+- 冻结守卫：`ops/kill3-freeze.json` rule_version v10→v11，kill3_tail.py / kill_three_view.py / run_kill3_tail.py 三处 hash 更新（hash_updates 第 21–23 条）。
+- 回滚：`git revert`（三次 commit）。
+- 说明：kill1/kill2p/kill2 早已是 hold3（本次未动）；kill3 是真正确需要从 free 转 hold3 的唯一框架。

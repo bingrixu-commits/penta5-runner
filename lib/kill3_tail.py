@@ -7,7 +7,7 @@
   第 3 个仅展示、不计入整组与攻击语；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
 - 尾码与位置/弃位均由 DeepSeek 自主决定（v10 起）：无自动沿用、无连用期数上限、无强制换码，
-  模型每期给出的位置杀码、放弃位置、合尾直接封存（不再写 tail_policy 沿用追溯，仅保留旧字段兼容）；
+  模型每期给出的位置杀码、放弃位置；合尾按 hold3-until-miss 稳定化沿用：上期尾码命中且连用未满 3 期沿用上期，否则用模型本期新选；封存写 tail_policy 追溯；
 - 另输出两项反向形态（与八项独立框架同口径）：
   四位单双形态 reverse_parity、四位大小形态 reverse_size；
   被杀的 3 个位置取杀码单双/大小的反面，放弃位置的字符由 AI 自选；
@@ -71,7 +71,7 @@ TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 
-RULE_VERSION = 'kill3-tail-v10-two-counted-free'
+RULE_VERSION = 'kill3-tail-v11-hold3-two-counted'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
@@ -382,10 +382,10 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         prev_label = TAILS[previous_tail['key']]['label']
         prev_kill = str(previous_tail.get('kill', '-'))
         restriction = (f'上一期合尾：{prev_label} 杀 {prev_kill}。'
-                       '合尾由你自主决定并直接封存，无沿用/换码限制。'
-                       '（上一期尾码仅作历史参考，不影响本期选择。）')
+                       '稳定化规则：上期该尾码命中且连用未满 3 期时，系统直接沿用上期尾码；'
+                       '否则采用你本期新选。你的尾项仍会记为换码候选，可正常自主选择。')
     else:
-        restriction = '本期无上一期尾码，合尾由你自主决定并直接封存。'
+        restriction = '本期无上一期尾码，按你本期自主选择封存。'
     panel_section = ''
     panel_context_text = None
     panel_context_sha = None
@@ -405,12 +405,12 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '【五种合尾候选对比（合尾 = 对应位置数字之和的个位；'
         '按该尾候选码近50期真实杀号命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(tail_lines) + '\n\n'
-        '【合尾决策】\n' + restriction + '\n\n'
+        '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；'
         '其中恰好 2 个位置计入整组（攻击语只按这 2 个位置排除），'
         '第 3 个位置用 display_only 标明，只展示、不计入整组与攻击语；\n'
-        '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），由你自主决定并直接封存；\n'
+        '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；系统按稳定化规则决定最终封存尾码；\n'
         '3. 给出两项四位反向排除形态：reverse_parity 为按千百十个顺序的四位单双形态，'
         'reverse_size 为四位大小形态；被杀的 3 个位置（含 display_only 仅展示位置）'
         '都必须取杀码形态的反面'
@@ -436,7 +436,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill3-tail-prompt-v10-two-counted-free',
+        'version': 'kill3-tail-prompt-v11-hold3-two-counted',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -446,8 +446,8 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
                              'hit50': round(hit50, 6), 'hit30': round(hit30, 6)}
                             for key, label, kill, _count, _omission, hit50, hit30 in tail_rows],
         'previous_tail': previous_tail,
-        'tail_policy': None,
-        'tail_hold_max': None,
+        'tail_policy': TAIL_POLICY,
+        'tail_hold_max': TAIL_HOLD_MAX,
         'position_limit': None,
         'panel_context_sha256': panel_context_sha,
         'panel_context': panel_snapshot if isinstance(panel_snapshot, dict) else None,

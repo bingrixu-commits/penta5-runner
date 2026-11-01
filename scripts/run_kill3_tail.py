@@ -109,6 +109,8 @@ def main():
     if rejection:
         print(f'kill3 publication rejected after inference: {rejection}; ref={reference}')
         return 0
+    settlements = kill3_tail.load_settlements()
+    prediction = kill3_tail.apply_tail_policy(prediction, seals, settlements)
     seal = kill3_tail.create_seal(reference, target, latest.get('opentime'), prediction,
                                   prompt, audit, generated_at, meta)
     kill3_tail.save_seal(seal)
@@ -127,7 +129,9 @@ def main():
     dropped = kill3_tail.POSITION_LABELS.get(prediction['dropped'], prediction['dropped'])
     print(f'kill3 published: ref={reference} target={target} {picked} · '
           f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]} 放弃:{dropped}')
-    print('kill3 model-free: positions/tail decided by model, no forced rotation/hold.')
+    tail_policy = prediction.get('tail_policy') or {}
+    if tail_policy:
+        print('kill3 tail policy: ' + str(tail_policy.get('note')) + ' · ' + str(tail_policy.get('policy')))
     return 0
 
 

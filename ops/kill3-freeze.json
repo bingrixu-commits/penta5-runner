@@ -1,9 +1,9 @@
 {
  "files": {
-  "lib/kill3_tail.py": "96c537dba763293abc2cd7c5869b39ad240ad04c8b120106158b38785e10b515",
-  "lib/kill_three_view.py": "9ad264b495197c93b84af58af8f5ded4c73d0668ba4e3270a0d19fcf618b98c2",
+  "lib/kill3_tail.py": "ed228b26e66b16ab741858d674ae1c50cecaa3302097133e30a8dfa8a6212ad8",
+  "lib/kill_three_view.py": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
   "lib/panel_context.py": "eb3446c5cdb7bf68ea58d83b5be1c01ea20968ac734d34d5c99440fd34640ce7",
-  "scripts/run_kill3_tail.py": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d"
+  "scripts/run_kill3_tail.py": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33"
  },
  "freeze_hours": 72,
  "freeze_ref_period": "20261101121",
@@ -169,10 +169,34 @@
    "new_sha256": "eb3446c5cdb7bf68ea58d83b5be1c01ea20968ac734d34d5c99440fd34640ce7",
    "old_sha256": "4d174e9f8f8114cc71044693311aa18c9d0b11e4577bcf889f028250a6c15e75",
    "reason": "退役 kill4（hold3 重复框架，保留 kill5 尾码自主），删 _kill4_self + kill4_stats/kill4_previous 参数 + kill4_self 溢出名；剩余框架 A/B 逐字节相等 9837B"
+  },
+  {
+   "at": "2026-11-01T12:03:38+08:00",
+   "commit": "pending-kill3-v11",
+   "file": "lib/kill3_tail.py",
+   "new_sha256": "ed228b26e66b16ab741858d674ae1c50cecaa3302097133e30a8dfa8a6212ad8",
+   "old_sha256": "96c537dba763293abc2cd7c5869b39ad240ad04c8b120106158b38785e10b515",
+   "reason": "kill3 位置杀码尾码 hold3 转正（影子对照 n≥50 达标：命中率 CI 内不显著变差、换码 39→21）；RULE_VERSION kill3-tail-v10-two-counted-free → kill3-tail-v11-hold3-two-counted"
+  },
+  {
+   "at": "2026-11-01T12:03:38+08:00",
+   "commit": "pending-kill3-v11",
+   "file": "lib/kill_three_view.py",
+   "new_sha256": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
+   "old_sha256": "9ad264b495197c93b84af58af8f5ded4c73d0668ba4e3270a0d19fcf618b98c2",
+   "reason": "kill3 位置杀码尾码 hold3 转正（影子对照 n≥50 达标：命中率 CI 内不显著变差、换码 39→21）；RULE_VERSION kill3-tail-v10-two-counted-free → kill3-tail-v11-hold3-two-counted"
+  },
+  {
+   "at": "2026-11-01T12:03:38+08:00",
+   "commit": "pending-kill3-v11",
+   "file": "scripts/run_kill3_tail.py",
+   "new_sha256": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33",
+   "old_sha256": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d",
+   "reason": "kill3 位置杀码尾码 hold3 转正（影子对照 n≥50 达标：命中率 CI 内不显著变差、换码 39→21）；RULE_VERSION kill3-tail-v10-two-counted-free → kill3-tail-v11-hold3-two-counted"
   }
  ],
  "min_periods": 100,
  "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。",
- "rule_version": "kill3-tail-v10-two-counted-free",
- "version": 1
+ "rule_version": "kill3-tail-v11-hold3-two-counted",
+ "version": 2
 }
