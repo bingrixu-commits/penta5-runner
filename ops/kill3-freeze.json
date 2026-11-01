@@ -2,7 +2,7 @@
  "files": {
   "lib/kill3_tail.py": "96c537dba763293abc2cd7c5869b39ad240ad04c8b120106158b38785e10b515",
   "lib/kill_three_view.py": "9ad264b495197c93b84af58af8f5ded4c73d0668ba4e3270a0d19fcf618b98c2",
-  "lib/panel_context.py": "f184f60f9d4b2bdf22b4e2c0e9370eedf6ba4444f3c35e630097f8ae4cfed46c",
+  "lib/panel_context.py": "df3305ab78e5d72d7228cb05459b7978925f3301b695d2a0711a0a4d114e6359",
   "scripts/run_kill3_tail.py": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d"
  },
  "freeze_hours": 72,
@@ -129,6 +129,14 @@
    "new_sha256": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d",
    "old_sha256": "28d043701f9168cea8e44eefb2d13952af52cef946fe37bba3962736bd9e262d",
    "reason": "用户 2026-11-01 10:0x 明确指令关掉两套「3 期」限制——尾码稳定化 hold3-until-miss 与位置/弃位最多连用 3 期强制换码，全部交给模型自主决定：RULE_VERSION 升 kill3-tail-v10-two-counted-free，删除 apply_tail_policy 沿用与 validate_position_choice 强制换码，提示词去掉【合尾稳定化规则】【位置与弃位使用限制】；命中口径不变（整组 5 项/2 注）；v10 真实周期 ref 20261101121 已发布、tail_policy=None、无 position_restriction。"
+  },
+  {
+   "at": "2026-11-01T10:26:53.756020+08:00",
+   "commit": "kill5-panel-context",
+   "file": "lib/panel_context.py",
+   "new_sha256": "df3305ab78e5d72d7228cb05459b7978925f3301b695d2a0711a0a4d114e6359",
+   "old_sha256": "f184f60f9d4b2bdf22b4e2c0e9370eedf6ba4444f3c35e630097f8ae4cfed46c",
+   "reason": "kill5 新增 _kill5_self 与 build() 可选 kill5_stats/kill5_previous 入参、输出独立键 kill5_self；A/B 证明：固定 fixture（now 固定）下 kill3+k4 上下文 old/new sha256 逐字节相同 = 12c5667a1fad476232c29f6fcf98a73e67ee0ec2742bc48fc6dca76272b0d8a6，kill3/kill4 口径未变，kill5_self 只增不改。"
   }
  ],
  "min_periods": 100,
