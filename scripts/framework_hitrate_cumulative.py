@@ -58,7 +58,7 @@ RULE_BASELINE = {
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
     ('kill2p_tail', 'kill2p-tail-v1-two-positions-one-tail-two-forms'): (5, 0.6203),
     ('kill2p_tail', 'kill2p-tail-v2-panel-context-rich'): (5, 0.6203),
-    ('kill5_tail', 'kill5-tail-v1-three-positions-he2he3'): (8, 0.5038),}
+}
 LABELS = {
     'killer': '智能深排 killer（9 项）',
     'framework': '固定八码框架（8 项）',
@@ -67,7 +67,7 @@ LABELS = {
     'kill3_tail': 'AI 三位置杀码',
     'kill1_tail': 'AI 单位置杀码（3 项）',
     'kill2p_tail': 'AI 二位置杀码（5 项）',
-    'kill5_tail': 'AI 三位置杀码 + 二数合/三数合（8 项·自由尾码）',}
+}
 WINDOWS = {
     'killer': '自账本首期累计',
     'framework': '自账本首期累计',
@@ -76,7 +76,7 @@ WINDOWS = {
     'kill3_tail': '当前规则版本累计',
     'kill1_tail': '当前规则版本累计',
     'kill2p_tail': '当前规则版本累计',
-    'kill5_tail': '当前规则版本累计',}
+}
 ROLLING_WINDOWS = (('24h', 288), ('7d', 2016))
 ROLLING_RECENT_PERIODS = 24
 ROLLING_DEFINITION = (
@@ -875,38 +875,6 @@ def cum_kill2p():
                   rolling=rolling, launch=launch)
 
 
-def cum_kill5():
-    settlements = _read(DATA / 'kill5_tail' / 'settlements.json') or {}
-    seals = _read(DATA / 'kill5_tail' / 'seals.json') or {}
-    seal_records = seals.get('records') or []
-    rule = 'kill5-tail-v1-three-positions-he2he3'
-    if seal_records and isinstance(seal_records[-1], dict):
-        rule = seal_records[-1].get('rule_version') or rule
-    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
-                 for record in seal_records if isinstance(record, dict)}
-    records, rolling, launch = [], [], []
-    for record in seal_records:
-        if isinstance(record, dict) and record.get('target_period'):
-            launch.append(record.get('target_period'))
-    for row in settlements.get('records') or []:
-        if not isinstance(row, dict):
-            continue
-        if row.get('target_period'):
-            launch.append(row.get('target_period'))
-        if not row.get('verified'):
-            continue
-        if 'counted' not in row:
-            continue
-        hit = bool(row.get('group_hit'))
-        rolling.append((row.get('target_period'), hit))
-        if (row.get('rule_version') != rule
-                and seal_rule.get(str(row.get('ref_period'))) != rule):
-            continue
-        records.append((row.get('target_period'), hit, None))
-    return _build('kill5_tail', rule, records, 'data/kill5_tail/settlements.json',
-                  rolling=rolling, launch=launch)
-
-
 def build():
     rows = []
     errors = []
@@ -916,8 +884,7 @@ def build():
                        ('selected_six', cum_selected_six), ('he3_refine', cum_he3),
                        ('kill3_tail', cum_kill3),
                        ('kill1_tail', cum_kill1),
-                       ('kill2p_tail', cum_kill2p),
-                       ('kill5_tail', cum_kill5)):
+                       ('kill2p_tail', cum_kill2p)):
         try:
             row = func()
             if row and row.get('n'):
