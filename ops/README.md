@@ -1187,3 +1187,15 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份：/root/ops/seal-archive-backup-20261101-190037/（4 个数据 JSON + 6 个代码文件 + crontab.txt）。
 - 提交：668c03b（he3 试点）、08ed39f（selected_six 接入）、873de33（挂 cron + 空分片保护）；本提交（台账）。
 - 回滚：git revert 873de33 08ed39f 668c03b；删除 data/archive/*.json.gz 并从备份目录恢复 4 个数据 JSON（冷分片合并回主文件）。
+
+## 2026-11-01 22:20 kill3 位置杀码 + 合尾定位依据改热冷并列（v11 → v12）
+
+- 依据：用户反馈「AI 三位置杀码 + 一合尾建议 这个框架排除码怎么都是取冷码框架，面板其他数据读取不到吗」——位置杀码与合尾都只取近 50 期冷码 top3，面板横向战绩（panel_context 的 killer/framework/six/selected_six/he3/stat50/cold_stats/model_tiers/three_avoid2/kill3_self）读得到但无逐位号码统计。用户选择（问卷 deploy_target）改口径：位置与合尾都改热冷并列，热码+冷码+重码+邻码都展示、模型自主选、不写「禁止用冷码」，升 v12。
+- 口径：RULE_VERSION kill3-tail-v11-hold3-two-counted → kill3-tail-v12-hot-cold-hold3-two-counted；位置段每位置并列展示 热码 top3 + 冷码 top3，新增【上期开奖前四位（参考期 X）】与【上期重码/邻码候选（±1，0↔9 循环）】两段；合尾候选从冷码序改为热码序（新增 rank_digits_hot）；任务第 1 条加「定位依据从该位置的近 50 期热码 top3、冷码 top3、上期重码、上期邻码（±1）中自主选择，不限定只用冷码」；结构不变（2 计入位置 + 1 合尾 + 2 反向形态 = 5 项 / 2 注），整组精确基线沿用 0.6191（改的是 prompt 内容不是结构，10^4 枚举不重注册）。
+- 改动（3 文件 +54/-6）：lib/kill3_tail.py（RULE_VERSION v12；新增 rank_digits_hot / _hot_line；build_prompt 位置段热冷并列 + latest/neighbor；tail 循环 rank_digits_hot；audit 加 position_basis=hot-cold-repeat-neighbor / hot_ranking / cold_ranking / latest_row）；lib/hitrate_baseline.py、scripts/framework_hitrate_cumulative.py（各加 v12 行 (5, 0.6191)，旧条目 v4/v5/v6/v7/v8/v9/v10/v11 全部保留）。
+- 模块测试：py_compile OK；build_prompt 自测（50 期合成 window）——热码/冷码/上期开奖前四位/重码邻码段落齐全、audit version/position_basis/hot_ranking/cold_ranking/latest_row 正确、hot_ranking top 计数=max、cold_ranking top 计数=min（不写死命中哪一位）；check_kill3_freeze 复验 status=ok（v12 冻结 0/100 期重启）。
+- 备份：/root/ops/kill3-v12-20261101-221443/（改动前 3 文件 cp -a）。
+- 冻结守卫：ops/kill3-freeze.json rule_version v11→v12、files[lib/kill3_tail.py] hash 更新、frozen_at / freeze_ref_period(20261101268) / frozen_commit 重置、hash_updates 追加第 27 条。
+- 提交：5d27f31 feat(kill3)（3 files）；本提交（台账 + freeze guard）。
+- 回滚：git revert <本提交> 5d27f31；历史 v11 封存保留（rule_version 不变、统计并存），面板/统计下次刷新自动回 v11 口径。
+- 待真实周期验证：seal v12 published + 按 rule_version 分组新旧并存（v11 与 v12 同期出现）。

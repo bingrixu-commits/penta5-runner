@@ -1,14 +1,14 @@
 {
   "files": {
-    "lib/kill3_tail.py": "ed228b26e66b16ab741858d674ae1c50cecaa3302097133e30a8dfa8a6212ad8",
+    "lib/kill3_tail.py": "74efe32c641dd4ec1376f429c77d9e048f3f19bc234a448584cb2eb7695844d2",
     "lib/kill_three_view.py": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
     "lib/panel_context.py": "619e1938d3b21e4521828f47d913653d65f0022928bfa7b43bc9b4a097eebb52",
     "scripts/run_kill3_tail.py": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33"
   },
   "freeze_hours": 72,
-  "freeze_ref_period": "20261101121",
-  "frozen_at": "2026-11-01T10:09:48.688441+08:00",
-  "frozen_commit": "6903e8f",
+  "freeze_ref_period": "20261101268",
+  "frozen_at": "2026-11-01T22:20:40+08:00",
+  "frozen_commit": "5d27f31",
   "hash_updates": [
     {
       "at": "2026-10-31T22:50:00+08:00",
@@ -217,10 +217,18 @@
       "new_sha256": "619e1938d3b21e4521828f47d913653d65f0022928bfa7b43bc9b4a097eebb52",
       "old_sha256": "3b1c26c79129d0286ee19222250cd4daccba5172fa3c7336da26122443f44780",
       "reason": "kill2p 退役：删除 _kill2p_self 与 kill2p_stats/kill2p_previous 参数；A/B 证明 kill3/kill1 固定 fixture 输出逐字节不变（bare 5e8706a2f3f38e1f / kill3 ecfe0dfd8b9e434d / kill1 57266d53388c9e6f / kill3+kill1 6cd6cfe85ec5ec1b / rich a53a66f75494a229），kill2p 入参被 TypeError 拒绝"
+    },
+    {
+      "at": "2026-11-01T22:20:40+08:00",
+      "commit": "5d27f31",
+      "file": "lib/kill3_tail.py",
+      "new_sha256": "74efe32c641dd4ec1376f429c77d9e048f3f19bc234a448584cb2eb7695844d2",
+      "old_sha256": "ed228b26e66b16ab741858d674ae1c50cecaa3302097133e30a8dfa8a6212ad8",
+      "reason": "用户反馈位置杀码+合尾定位依据只取冷码 top3（面板横向战绩读得到但无逐位号码统计），问卷选择改口径：位置与合尾均改热冷并列（热码/冷码/重码/邻码都展示、模型自主选、不写禁止冷码）；RULE_VERSION 升 kill3-tail-v12-hot-cold-hold3-two-counted；结构不变（5项/2注）整组精确基线沿用 0.6191 不重注册"
     }
   ],
   "min_periods": 100,
   "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。",
-  "rule_version": "kill3-tail-v11-hold3-two-counted",
+  "rule_version": "kill3-tail-v12-hot-cold-hold3-two-counted",
   "version": 2
 }
