@@ -74,14 +74,15 @@ def run(root, destination, source_manifest=None, *, creator=create_bundle, verif
         if shutil.disk_usage(destination).free < 2 * MAX_TOTAL + 1024 ** 3:
             raise ValueError('backup-disk-space-low')
         started, began = clock(), monotonic()
-        # 2026-10-30: the bundle grew to ~1.4GB raw / 242MB gz. The 240s wall
-        # budget was measured at 226s on 10-29 and is now hit during the
-        # isolated-restore verification, leaving a valid archive without a
-        # receipt. Give the same bounded work 480s (cron timeout is 480s too).
-        with _budget(480):
+        # 2026-11-01: bundle grew past 2GiB (data/ ~1.34GiB + RDS system_snapshots);
+        # MAX_TOTAL now 3GiB and the whole create+isolated-restore-verify cycle
+        # exceeds the old 480s wall budget. Give the bounded work 870s so the
+        # internal SIGALRM fires before the cron timeout (900s) and prints a
+        # clean status instead of being SIGTERM-killed silently.
+        with _budget(870):
             source_manifest = source_manifest or newest_source_manifest(root)
             for attempt in range(1, 4):
-                if monotonic() - began >= 470:
+                if monotonic() - began >= 860:
                     raise TimeoutError('backup-wall-budget-exhausted')
                 archive = destination / ('evidence-' + started.strftime('%Y%m%d-%H%M%S')
                                          + '-' + uuid4().hex[:8] + '.tar.gz')
@@ -104,7 +105,7 @@ def run(root, destination, source_manifest=None, *, creator=create_bundle, verif
                     # Credentials/schema/integrity failures require inspection.
                     if str(error) not in ('evidence-changed-during-backup', 'sources-changed-during-backup') or attempt == 3:
                         raise
-                    if monotonic() - began > 455:
+                    if monotonic() - began > 850:
                         raise TimeoutError('backup-wall-budget-exhausted')
                     sleep(3)
     raise ValueError('backup-attempts-exhausted')

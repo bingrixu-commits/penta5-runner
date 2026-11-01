@@ -24,7 +24,8 @@ from zoneinfo import ZoneInfo
 VERSION = 'penta5-evidence-backup-v1'
 TZ = ZoneInfo('Asia/Shanghai')
 MAX_MEMBER = 1024 * 1024 * 1024
-MAX_TOTAL = 2 * 1024 * 1024 * 1024
+# 2026-11-01: business evidence (seal/stat JSON) grew past 2GiB; data/ ~1.34GiB + RDS business-tables (system_snapshots) pushed the raw bundle over the old 2GiB bound -> raise to 3GiB (disk check needs 2*MAX_TOTAL+1GiB=7GiB, disk free ~23GiB, OK).
+MAX_TOTAL = 3 * 1024 * 1024 * 1024
 SAFE_CONFIG = {'LOCAL_STATE_MODE', 'ALGO_DURABLE_STORE', 'DATA_READ_MODE',
                'PENTA5_DAY_RESET_HOUR', 'PENTA5_ALGO_PROCESS_MODE',
                'PENTA5_ORCHESTRATE_FORCE_INPROCESS'}
