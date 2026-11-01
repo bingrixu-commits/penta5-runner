@@ -40,6 +40,7 @@ SOURCE_LOGS = (
     ('kill4', 'data/kill4_tail_cron.log'),
     ('kill5', 'data/kill5_tail_cron.log'),
     ('kill6', 'data/kill6_tail_cron.log'),
+    ('kill7', 'data/kill7_tail_cron.log'),
 )
 
 MAX_READ_BYTES = 4 * 1024 * 1024
