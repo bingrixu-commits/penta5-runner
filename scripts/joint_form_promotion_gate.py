@@ -19,7 +19,7 @@ from stats_history import beijing_now
 
 BURN_IN = 72          # >= 6 hours of live periods
 STRONG = 288          # >= 1 day of live periods
-MIN_LIVE_DELTA_PP = 0.0
+MIN_LIVE_DELTA_PP = 0.5  # 收紧: live 增益须>=0.5pp 才算非噪声; backfill 形态层增益(选择偏差)live 无兑现, 0.0 会让 +0.3pp 噪声级增益配合 backfill 触发误转正
 MIN_BACKFILL_DELTA_PP = 2.0
 MIN_STRONG_DELTA_PP = 1.5
 STALE_MINUTES = 25
