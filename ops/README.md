@@ -1107,3 +1107,14 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 验证：py_compile OK；手动跑 python3 scripts/joint_form_promotion_gate.py → killer ready=false(0.296<0.5)、framework ready=false、status=not-met；门禁为 cron 脚本（每 10 分钟 :04/:14/:24/:34/:44/:54 由 penta5-joint-guard 跑），无需重启，下次 cron 自动生效；refresh_source_manifest.py --if-drift 返回 no-drift；ops_health manifest_drift OK（auto-baseline-20261101-164708）。
 - 提交：feab5b0 fix(gate): joint_form 转正门禁 live 阈值 0.0→0.5pp 收紧噪声级误转正；本提交（台账）。
 - 回滚：`git revert <本提交> feab5b0` 即回退阈值到 0.0。
+## 2026-11-01 17:05 合尾 hold_max 多档影子定点复核（预登记口径 n≥50）
+
+- 结论：维持现网 hold3 不变（四档无显著差异；hold_max 只改换码频率、不提高命中率）。
+- 数据（data/tail_hold_max_shadow.json，generated_at 17:00:57，start_period 20261101154；hold3 复现封存 backfill 仍 100%：kill1 159/159、kill3 196/196、six 202/202、framework 206/206、killer 203/203）。
+- 前瞻 n：kill1 47、kill3 50、six 52、framework 52、killer 52（kill1 差 3 期到 50，其余达标）。
+- 配对检验（McNemar，hold3 vs 各档，item 层）全 p≥0.25 无显著：kill1 vs hold5 p=0.250、six vs hold2 p=0.500、killer vs hold2/hold5/不设上限 p=0.727/0.581/0.754，其余 p=1.0；各档 Wilson 95%CI 高度重叠。
+- 换码频率（前瞻段 ch 次数）：不设上限最少（kill1 3、six 4、killer 15），hold2 最多（six 21、killer 30）；命中率无系统性差异。
+- 单尾杀 1 码数学上限仍 90%；本窗口 six hold2 94.2%（n=52）等 >90% 属小样本上浮。
+- 报告：/root/ops/tail-hold-review/review-holdmax-20261101-1705.md。
+- 待补：kill1 前瞻 n=47，17:30 复确认 n≥50 后关闭本次复核。
+- 提交：本提交（本台账）。
