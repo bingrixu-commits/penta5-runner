@@ -1118,3 +1118,13 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 报告：/root/ops/tail-hold-review/review-holdmax-20261101-1705.md。
 - 待补：kill1 前瞻 n=47，17:30 复确认 n≥50 后关闭本次复核。
 - 提交：本提交（本台账）。
+## 2026-11-01 17:15 killer 智能深排策略回退 conditional-transition-v2 → v1 边际先验（消除杀0偏置 + 合取 -2.3pp）
+
+- 依据：全框架命中率审计唯一偏离框架 killer 的根因定位——按 strategy_id 拆 data/r1_stats.json verified_evaluations（9 项）命中率：no-strategy n=925 joint=0.4086、conditional-transition-v1 n=94 joint=0.4255、conditional-transition-v2 n=1343 joint=0.3872（显著低于 10^4 精确枚举随机基线 0.4162/0.4188）。杀 0 占比 100% 由 v2 造成（v2 k1 .573/k2 .527/k3 .463/k4 .491、he_all 一度 68%；v1 ≈0%、no-strategy ≈均匀）。机制：lib/strategy_features.py:182 _transition_v2 用均匀先验 (count+1)/(n+10)，条件状态稀疏(n 小)时所有数字同分≈0.1，模型按「同分允许任意合法同分项」默认选 0；v1(_transition :88) 用边际先验 (count+1)/(50+10) 平滑不塌缩。v2 约 10-23 起作为未提交活编辑上线，10-30 才被 e6fd41d 大基线提交收录。用户拍板「回退到 v1 边际先验（推荐）」。
+- 口径：killer 策略 conditional-transition-v2 → conditional-transition-v1（parameters prior_strength=10 / prior_laplace_alpha=1 / minimum_conditional_n=5 / maximum_transitions=49，即边际先验平滑，不塌缩）。9 项结构与精确随机基线 (9, 0.4162) 均不变；framework 保持 marginal-frequency-v2（p=0.776 健康）不动。v1 是 LEGACY 策略走 legacy 渲染分支（audit 无 request_policy），校验回退到基础 validate_killer_response（v1 本就无策略专属校验）。
+- 改动（3 文件，+7/-5）：lib/ai_model_context.py（L27 POLICY_STRATEGIES killer→conditional-transition-v1；L249 build_model_context 默认策略 strategy_id or supported[0]→or POLICY_STRATEGIES[kind]；L456 prepare_model_request 守卫 in POLICY_STRATEGIES.values()→in (KILLER_STRATEGY, FRAMEWORK_STRATEGY)，避免 v1 legacy 分支被误判为「v2 body 冒充 legacy」而触发 missing-saved-independent-model-input-policy）；lib/hitrate_baseline.py 与 scripts/framework_hitrate_cumulative.py（各新增 RULE_BASELINE 注册项 ('killer','conditional-transition-v1'):(9,0.4162)，cum_killer 回退默认 rule 改 v1，保留 v2 注册行供历史分组）。
+- 模块测试（真实快照 load_snapshot，ref 20261101206）：build_model_context 默认 strategy_id=conditional-transition-v1；features 非塌缩（q 位 smoothed_descriptive_share [0.037,0.139,0.102,0.046,0.157,0.093,0.120,0.194,0.093,0.019]、fallback=conditional-with-prior）；append_model_context + prepare_model_request 全链路 round-trip 无 raise、audit 无 request_policy；classic_killer_validator 返回基础 validate_killer_response（非 v2 _closure）。py_compile 3 文件 OK。
+- 上线验证：killer 为 cron 脚本（每 5 分钟 :25 秒 python3 scripts/run_ai_ready_job.py killer，每次全新进程 import lib/ai_model_context.py，无需重启）；下一次 killer 运行即产出 v1 封存（待下一真实周期以 rule_version/strategy_id=conditional-transition-v1 封存为证）。
+- 备份：/root/ops/20261101-170845/ai_model_context.py.bak、/root/ops/20261101-171133/{hitrate_baseline.py.bak,framework_hitrate_cumulative.py.bak}。
+- 提交：58f63bc fix(killer): 回退 conditional-transition-v2→v1 边际先验，消除杀0偏置与合取 -2.3pp；本提交（台账）。
+- 回滚：git revert <本提交> 58f63bc；历史封存无需改动（v2 记录保留原 strategy_id、统计并存），面板/统计下次刷新自动回 v2 口径。
