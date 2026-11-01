@@ -1085,3 +1085,15 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 提交：6b1bccd feat(kill1): v3 位置杀码 hold3-until-miss 稳定化（5 files）；a2ecc52 chore(shadow): kill1/kill3 转正后从位置杀码影子采集器退役（1 file）；本提交（台账）。
 - 回滚：`git revert a2ecc52 6b1bccd <本提交>`；kill1 历史封存无需改动（v3 记录保留、旧 v1/v2 统计并存），面板 / 统计下次刷新自动回 v2 口径。
 - 冻结守卫：ops/kill3-freeze.json 仅覆盖 kill3_tail/kill_three_view/panel_context/run_kill3_tail，本次均未改动，无需更新 hash_updates。
+
+## 2026-11-01 16:43 AI 双反向冷形态排除（kill8）框架上线（rule kill8-tail-v1-cold-forms）
+- 依据：用户要求建立独立框架——「位置排除数字由用户手动完成，模型排除 2 个反向冷形态」；kill8 为全新编号（不撞退役名 kill2/kill4/kill5/kill6/kill7）。
+- 口径：整组 2 项 = 单双反向冷形态 + 大小反向冷形态；命中 = 目标期实际四位单双形态 ≠ 封存单双形态 且 实际四位大小形态 ≠ 封存大小形态（2 项全中才命中）；无合尾、无连用限制（每期按冷热/遗漏重选，不沿用上期）；位置排除数字由用户手动完成、不进框架计算；手动触发（非 cron），每期跑一次 = 结算上一期 + 封存下一期 + 刷面板。
+- 冷形态定位依据：近 50 期出现次数少、当前遗漏长（16 种四位单双 × 16 种四位大小形态冷排序，各选最冷 1 种）。
+- 改动（4 文件，+1152）：lib/kill8_tail.py（695 行，新：RULE_VERSION=kill8-tail-v1-cold-forms、FORM_KINDS=(parity,size)、form_space 16 种、rank_forms 冷排序、pattern_of 复刻 kill1、normalize_response 校验 parity_form/size_form、settle_pending 判 parity/size hit、build_attack='除<parity>除<size>'）；lib/kill_eight_view.py（312 行，新：KILL_EIGHT START/END 标记、锚点 KILL_ONE_END、FALLBACK_BASELINE=(2,0.8789)）；scripts/run_kill8_tail.py（108 行，新：手动触发版，无 wait_for_source）；lib/hitrate_baseline.py（+37：RULE_BASELINE 登记 kill8=(2,0.8789)、LABELS、_kill8_rows 过滤 parity 字段、build 里 extend）。
+- 整组精确基线：均匀配置 10^4 全枚举平均期望 (15/16)^2 = 87.89%（2 项）；单项基线各 93.75%。
+- 单元测试：模块测试全部 PASS（RULE_VERSION/FORM_KINDS/form_space 16 种/pattern_of 单双与大小/rank_forms 冷排序/build_attack/normalize_response 严格校验）。
+- 上线验证（真实周期）：首期 ref 20261101200 → target 20261101201，16:42:33 发布（deepseek-flash，AI 1.0s，prompt 3327 tokens），封存「单双反向冷形态 单单单双 · 大小反向冷形态 小大小大」，rule_version=kill8-tail-v1-cold-forms；16:45:12 开奖 ['7','3','8','2'] → parity 单单双双（≠单单单双 命中）、size 大小大小（≠小大小大 命中）、整组 group_hit=true、verified=true。面板 KILL_EIGHT 区块插入 KILL_ONE_END 之后（KILL_EIGHT_START/END 各 1、kill-eight-ai 1）。hitrate_baseline rows 6→7（kill8 行 n=1 样本不足）。
+- 备份：/root/ops/kill8-deploy/hitrate_baseline.py.bak.20261101163456（11771 字节）。
+- 提交：03b291d feat(kill8): 双反向冷形态排除框架上线（4 files，+1152）；本提交（台账）。
+- 回滚：`git revert 03b291d <本提交>`；data/kill8_tail/ 目录删除即可（新框架无历史封存）。
