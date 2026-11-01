@@ -2,6 +2,9 @@
 
 口径（面板、封存与统计都按此写死）：
 - 由 DeepSeek 从 千/百/十/个 四个位置中选 1 个位置，排除 1 个数字（杀码）；
+- 定位依据（v2 起）：每个位置给出近 50 期热码 top3 与上期（参考期）该位置重码/邻码
+  （±1，0↔9 循环），模型须从中选择排除码，不得以冷码（出现次数少、当前遗漏长）为依据；
+  v1 的冷码定位口径已归档，旧封存保留原 rule_version 不再产生新记录；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
 - 尾码稳定化 hold3-until-miss：上期尾码命中且自动沿用未满 3 期时沿用上期尾码；失手或自动沿用
   满 3 期后由模型本期重选（重选可与上期同码）；模型尾项在封存里记为换码候选
@@ -68,7 +71,7 @@ REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 FORM_LABELS = dict(REVERSE_LABELS)
 
-RULE_VERSION = 'kill1-tail-v1-one-position-one-form'
+RULE_VERSION = 'kill1-tail-v2-hot-repeat-one-form'
 COUNTED_POSITIONS = 1
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
@@ -170,6 +173,21 @@ def rank_digits(values):
     items.sort(key=lambda item: (item[1], -item[2]))
     return items
 
+
+def rank_digits_hot(values):
+    """System hot-code ordering: count descending, then current omission ascending."""
+    counts = {number: 0 for number in range(10)}
+    last = {}
+    for index, value in enumerate(values):
+        value = int(value)
+        counts[value] += 1
+        last[value] = index
+    size = len(values)
+    items = [(number, counts[number],
+              size if last.get(number) is None else size - last[number] - 1)
+             for number in range(10)]
+    items.sort(key=lambda item: (-item[1], item[2], item[0]))
+    return items
 
 def tail_value(row, key):
     return sum(int(row[index]) for index in TAILS[key]['indices']) % 10
@@ -328,15 +346,30 @@ def _cold_line(ranks, limit=3):
                      for number, count, omission in ranks[:limit])
 
 
+def _hot_line(ranks, limit=3):
+    return '、'.join(f'{number}(出{count}次/遗漏{omission}期)'
+                     for number, count, omission in ranks[:limit])
+
 def build_prompt(reference, target, rows, *, previous_tail=None,
                  panel_snapshot=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
-    position_lines = []
+    hot_by_position = []
     for key, label, index in POSITIONS:
-        ranks = rank_digits([row[index] for row in window])
-        position_lines.append(f'· {label}：{_cold_line(ranks)}')
+        ranks = rank_digits_hot([row[index] for row in window])
+        hot_by_position.append((key, label, index, ranks))
+    position_lines = [f'· {label}：{_hot_line(ranks)}'
+                      for _key, label, _index, ranks in hot_by_position]
+    latest = window[-1]
+    latest_digits = {key: int(latest[index]) for key, _label, index in POSITIONS}
+    latest_line = ' · '.join(f'{label} {latest_digits[key]}'
+                             for key, label, _index in POSITIONS)
+    neighbor_lines = []
+    for key, label, _index in POSITIONS:
+        base = latest_digits[key]
+        neighbor_lines.append(
+            f'· {label}：重码 {base}；邻码 {(base - 1) % 10} / {(base + 1) % 10}')
     tail_rows = []
     for key in TAIL_KEYS:
         values = [tail_value(row, key) for row in window]
@@ -374,14 +407,20 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
         f'{history}\n\n'
-        '【近50期各位置冷热（出现次数少、当前遗漏长优先；仅历史统计，不代表未来概率）】\n'
+        '【近50期各位置热码（出现次数多、当前遗漏短优先；仅历史统计，不代表未来概率）】\n'
         + '\n'.join(position_lines) + '\n\n'
+        f'【上期开奖前四位（参考期 {reference}）】\n'
+        f'· {latest_line}\n\n'
+        '【上期重码 / 邻码候选（±1，0↔9 循环；上期号码的重复或相邻数字）】\n'
+        + '\n'.join(neighbor_lines) + '\n\n'
         '【五种合尾候选对比（合尾 = 对应位置数字之和的个位；'
         '按该尾候选码近50期真实杀号命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(tail_lines) + '\n\n'
         '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【任务】\n'
-        '1. 从 千/百/十/个 四个位置中挑 1 个位置，排除 1 个数字（0-9）；\n'
+        '1. 从 千/百/十/个 四个位置中挑 1 个位置，并从该位置的近50期热码 top3、'
+        '上期重码、上期邻码（±1）中排除 1 个数字（0-9）；'
+        '不得以上期冷码 / 长遗漏码作为定位依据；\n'
         '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；'
         '系统按稳定化规则决定最终封存尾码；\n'
         '3. 从两种四位反向排除形态中挑 1 种并给出 4 个字符：'
@@ -393,8 +432,8 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
         '形态 = 目标期实际四位形态不等于你给出的这个封存形态（反向排除项）；'
         '以上 3 项（1 个位置 + 1 个合尾 + 1 项形态）同时命中才算整组命中；\n'
-        '5. 冷热、遗漏、重码只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
-        '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄或为避开同号强行换码，也不得声称保证命中。\n\n'
+        '5. 热码、重码、邻码、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
+        '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"position":{"key":"q|b|s|g","kill":<0-9整数>},'
         '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
@@ -408,12 +447,21 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill1-tail-prompt-v1-one-position-one-form',
+        'version': 'kill1-tail-prompt-v2-hot-repeat',
         'reference': reference,
         'target': target,
         'window': WINDOW,
         'history_sha256': sha256(history.encode('utf-8')).hexdigest(),
         'rows': [[str(int(value)) for value in row] for row in window],
+        'position_basis': 'hot-repeat-neighbor',
+        'hot_ranking': [{'key': key, 'label': label,
+                         'top': [{'number': str(number), 'count': count,
+                                  'omission': omission}
+                                 for number, count, omission in ranks[:3]]}
+                        for key, label, _index, ranks in hot_by_position],
+        'latest_row': {'period': str(reference),
+                       'digits': {key: str(latest_digits[key])
+                                  for key, _label, _index in POSITIONS}},
         'tail_comparison': [{'key': key, 'label': label, 'candidate': str(kill),
                              'hit50': round(hit50, 6), 'hit30': round(hit30, 6)}
                             for key, label, kill, _count, _omission, hit50, hit30 in tail_rows],

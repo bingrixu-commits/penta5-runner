@@ -56,6 +56,7 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v10-two-counted-free'): (5, 0.6191),
     ('kill3_tail', 'kill3-tail-v11-hold3-two-counted'): (5, 0.6191),
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
+    ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -811,7 +812,7 @@ def cum_kill1():
     settlements = _read(DATA / 'kill1_tail' / 'settlements.json') or {}
     seals = _read(DATA / 'kill1_tail' / 'seals.json') or {}
     seal_records = seals.get('records') or []
-    rule = 'kill1-tail-v1-one-position-one-form'
+    rule = 'kill1-tail-v2-hot-repeat-one-form'
     if seal_records and isinstance(seal_records[-1], dict):
         rule = seal_records[-1].get('rule_version') or rule
     seal_rule = {str(record.get('ref_period')): record.get('rule_version')

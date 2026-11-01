@@ -123,7 +123,7 @@ def main():
     position_key = next(iter(prediction['positions']))
     picked = '%s 杀%s' % (kill1_tail.POSITION_LABELS[position_key],
                           prediction['positions'][position_key])
-    print(f'kill1 published: ref={reference} target={target} {picked} · '
+    print(f'kill1 published: ref={reference} target={target} rule={kill1_tail.RULE_VERSION} {picked} · '
           f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]} · '
           f'{kill1_tail.REVERSE_LABELS[prediction["form_type"]]} {prediction["form"]}')
     tail_policy = prediction.get('tail_policy') or {}
