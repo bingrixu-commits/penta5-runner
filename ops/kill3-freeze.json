@@ -1,14 +1,14 @@
 {
   "files": {
-    "lib/kill3_tail.py": "74efe32c641dd4ec1376f429c77d9e048f3f19bc234a448584cb2eb7695844d2",
-    "lib/kill_three_view.py": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
-    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38",
-    "scripts/run_kill3_tail.py": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33"
+    "lib/kill3_tail.py": "3c1eeba3cbbacc5a864297a93e7467a856beaea1af605fc87d1966f1fc063a59",
+    "lib/kill_three_view.py": "e4757632cf66ef865264f3043efd1025875acdc08b1c54e781bbd8b01f061d1f",
+    "scripts/run_kill3_tail.py": "0261afc28c93f7af4a4469b8604c2974f2f677a0f9cd827db9ed6c16b158ac5d",
+    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
   },
   "freeze_hours": 72,
-  "freeze_ref_period": "20261101268",
-  "frozen_at": "2026-11-01T22:20:40+08:00",
-  "frozen_commit": "5d27f31",
+  "freeze_ref_period": "20261104005",
+  "frozen_at": "2026-11-04T00:23:17+08:00",
+  "frozen_commit": "ccec6f2",
   "hash_updates": [
     {
       "at": "2026-10-31T22:50:00+08:00",
@@ -257,10 +257,42 @@
       "new_sha256": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38",
       "old_sha256": "e7b2966216dcf4405e9a784b25f008341247b52575ad11a4cbe866eb089e0e27",
       "reason": "kill9 v4（3 池选形态 + 1 全同形态 4 选 1 + 二数合 + 三数合）：panel_context._kill9_self previous 字段与 _ai_self_frame kill9_tail fields 增加 all_form；A/B 自证（6/0）证明 kill1/kill3 上下文与 prompt_text 逐字节不变（OLD_SHA 619e1938… / NEW_SHA 79031796…）"
+    },
+    {
+      "at": "2026-11-04T00:23:17+08:00",
+      "commit": "ccec6f2",
+      "file": "lib/kill3_tail.py",
+      "new_sha256": "3c1eeba3cbbacc5a864297a93e7467a856beaea1af605fc87d1966f1fc063a59",
+      "old_sha256": "74efe32c641dd4ec1376f429c77d9e048f3f19bc234a448584cb2eb7695844d2",
+      "reason": "kill3 v13：整组 5 项 → 8 项（新增三数共现避开 3 组，由后端 extraKills 按目标期给定、模型不选）；新增 resolve_three_avoid/_group_code/group_avoid_hit、build_attack 追加「除对数a-b-c」、build_prompt 固定三数组段与 8 项口径、settle three_avoid 逐组命中、today_stats 三数共现战绩；RULE_VERSION → kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid。"
+    },
+    {
+      "at": "2026-11-04T00:23:17+08:00",
+      "commit": "ccec6f2",
+      "file": "lib/kill_three_view.py",
+      "new_sha256": "e4757632cf66ef865264f3043efd1025875acdc08b1c54e781bbd8b01f061d1f",
+      "old_sha256": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
+      "reason": "kill3 v13 面板：3 张「三数共现 避开1组/2组/3组」卡、整组统计 8 项 + 三数共现避开 3 组合并/逐组战绩、结算行三数共现命中、脚注 8 项口径。"
+    },
+    {
+      "at": "2026-11-04T00:23:17+08:00",
+      "commit": "ccec6f2",
+      "file": "scripts/run_kill3_tail.py",
+      "new_sha256": "88018efb8bf8b31bc7d8d7a8da22d17cabe35cb71fe7a7e132e76e6610ff5a1e",
+      "old_sha256": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33",
+      "reason": "kill3 v13 runner：_resolve_three_avoid(target) 取三数组（20s 轮询）→ build_prompt(three_avoid=) / create_seal(extra={\"three_avoid\":})，published 日志打印「三数共现 除对数…」。"
+    },
+    {
+      "at": "2026-11-04T00:29:30+08:00",
+      "commit": "4225b30",
+      "file": "scripts/run_kill3_tail.py",
+      "new_sha256": "0261afc28c93f7af4a4469b8604c2974f2f677a0f9cd827db9ed6c16b158ac5d",
+      "old_sha256": "88018efb8bf8b31bc7d8d7a8da22d17cabe35cb71fe7a7e132e76e6610ff5a1e",
+      "reason": "真机首期 ref=20261104005 实测：三数组由主预测管线在开奖后约 +63s 写入 state.json，晚于本任务启动（+38s），原 20s 固定等待在 +58s 超时导致该期漏发；改为按 deadline 倒推等待（reserve=75s、上限 150s），00:28:04 正常发布。"
     }
   ],
   "min_periods": 100,
-  "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。",
-  "rule_version": "kill3-tail-v12-hot-cold-hold3-two-counted",
+  "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。 2026-11-04 00:23 用户指令变更（冻结期内例外）：用户明确要求把「三数共现避开 3 组」加进本框架整组（8 项）并给出攻击语格式「除对数579-349-089」，经用户问卷确认（8 项口径 / 组序按 1-2-3 组标签 / 升 v13 替换现网 v12）直接升 v13（kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid），未走影子门禁（用户指令优先）；冻结戳按 v13 重置（frozen_at 2026-11-04T00:23:17 / freeze_ref_period 20261104004），旧 v1–v12 封存只读保留、结算口径不变。（注：ref=20261104004 已由 v12 于 00:20:50 封存，故首个 v13 封存为 ref=20261104005 → target=20261104006；freeze_ref_period 按 20261104005 起算。）",
+  "rule_version": "kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid",
   "version": 2
 }
