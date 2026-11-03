@@ -6,7 +6,9 @@
 - 位置命中 = 该位置实际开奖号 != 杀码；
 - 合尾命中 = 该合尾实际和值个位 != 排除码；
 - 反向形态命中 = 目标期实际四位单双/大小形态 != 封存形态（反向排除项）；
-- 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态同时命中（共 5 项）；
+- 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态 + 三数共现避开 3 组同时命中（共 8 项）；
+- 三数共现避开 1/2/3 组由系统按目标期给定（data/state.json extraKills），每组算 1 项，
+  单项命中 = 该组 3 个数字未全部出现在 4 球开奖号中，单项基线 97.96%；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
@@ -92,9 +94,16 @@ def _stats_html(stats):
         parity = patterns.get('reverse_parity') or {}
         size = patterns.get('reverse_size') or {}
         counted_positions = int(getattr(kill3_tail, 'COUNTED_POSITIONS', 2))
-        group_items = counted_positions + 3
+        three_avoid_items = int(getattr(kill3_tail, 'THREE_AVOID_ITEMS', 3))
+        group_items = counted_positions + 3 + three_avoid_items
+        merge_avoid = (stats.get('three_avoid') or {}).get('merged') or {}
+        per_avoid = (stats.get('three_avoid') or {}).get('per_group') or {}
+        per_avoid_text = ' / '.join(
+            '%s %s' % (_pct((per_avoid.get(key) or {}).get('rate')),
+                       (per_avoid.get(key) or {}).get('label') or key)
+            for key in getattr(kill3_tail, 'THREE_AVOID_KEYS', ()))
         join = ' · '.join([
-            f'整组命中率（{group_items} 项全中：{counted_positions} 位置 + 合尾 + 2 形态） <b>{_pct(stats.get("group_rate"))}</b>'
+            f'整组命中率（{group_items} 项全中：{counted_positions} 位置 + 合尾 + 2 形态 + 三数共现 {three_avoid_items} 组） <b>{_pct(stats.get("group_rate"))}</b>'
             f'（{stats.get("group_hits")}/{total} 期）',
             f'位置杀码（{counted_positions} 注/期，随机基线90%） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
             f'（{stats.get("positions", {}).get("hits")}/{stats.get("positions", {}).get("bets")} 注）',
@@ -102,6 +111,8 @@ def _stats_html(stats):
             f'（{tail_stats.get("hits")}/{tail_stats.get("bets")} 期{tail_ci_text}）',
             f'单双反向（随机基线93.75%） <b>{_pct(parity.get("rate"))}</b>（{parity.get("hits")}/{total} 期）',
             f'大小反向（随机基线93.75%） <b>{_pct(size.get("rate"))}</b>（{size.get("hits")}/{total} 期）',
+            f'三数共现避开 3 组（单项基线97.96%） <b>{_pct(merge_avoid.get("rate"))}</b>'
+            f'（{merge_avoid.get("hits")}/{merge_avoid.get("bets")} 期{("；" + per_avoid_text) if per_avoid_text else ""}）',
             f'待核验 <b>{pending}</b> 期',
         ])
     else:
@@ -146,6 +157,12 @@ def _settlement_line(settlement):
         entry = patterns.get(field) or {}
         if entry:
             parts.append(f'{label}{"命中" if entry.get("hit") else "未中"}（实际 {entry.get("actual", "-")}）')
+    avoid_entries = [entry for entry in (settlement.get('three_avoid') or [])
+                     if isinstance(entry, dict)]
+    if avoid_entries:
+        parts.append('三数共现避开 ' + '/'.join(
+            '%s%s' % (entry.get('value'), '命中' if entry.get('hit') else '未中')
+            for entry in avoid_entries))
     if settlement.get('verified') is not True:
         parts.append('发布晚于开奖，未计入统计')
     else:
@@ -242,6 +259,17 @@ def render_block():
                     f'<div class="k3-card k3-pattern"><div class="k3-pos">{label}</div>'
                     f'<div class="k3-form">{escape(form)}</div>'
                     f'<div class="k3-sub">排除该四位形态</div></div>')
+        for group in (seal.get('three_avoid') or []):
+            if not isinstance(group, dict):
+                continue
+            code = str(group.get('value') or '')
+            if not code:
+                continue
+            cards.append(
+                f'<div class="k3-card k3-pattern">'
+                f'<div class="k3-pos">三数共现 {escape(str(group.get("label") or ""))}</div>'
+                f'<div class="k3-form">{escape(code)}</div>'
+                f'<div class="k3-sub">排除该组三数共现</div></div>')
         dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
         reason = escape(str(seal.get('reason') or '')) or '（无）'
         seal_tail_policy = seal.get('tail_policy') or {}
@@ -358,7 +386,9 @@ def _foot_html():
             '合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态'
             '（3 个被杀位置都取杀码形态反面，含仅展示位置；弃位字符自选）。<br>'
-            '2 个计入位置 + 1 个合尾 + 2 项反向形态共 5 项同时命中才算整组命中；'
+            '三数共现避开 1/2/3 组由系统按目标期给定、各算 1 项（单项基线 97.96%：'
+            '该组 3 个数字<b>未全部</b>出现在 4 球开奖号中即命中）；<br>'
+            '2 个计入位置 + 1 个合尾 + 2 项反向形态 + 三数共现 3 组共 8 项同时命中才算整组命中；'
             '旧口径（v1–v9）的封存记录保留但不计入本统计；'
             '只统计开奖前发布、开奖后核验的记录；北京时间 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与；'
             '平台提前 70 秒关盘。'

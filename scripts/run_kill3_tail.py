@@ -65,6 +65,18 @@ def _acquire_job_lock():
         raise SystemExit(0)
 
 
+def _resolve_three_avoid(target, seconds=20.0):
+    """取目标期的三数共现避开 1/2/3 组；state.json 尚未刷新时最多等 seconds 秒。"""
+    started = time.monotonic()
+    while True:
+        groups = kill3_tail.resolve_three_avoid(target)
+        if groups:
+            return groups
+        if time.monotonic() - started > seconds:
+            raise SystemExit('kill3 three-avoid source missing for target=%s' % target)
+        time.sleep(2.0)
+
+
 def main():
     _acquire_job_lock()
     require_ai_enabled()
@@ -84,6 +96,9 @@ def main():
         print(f'kill3 skipped: {rejection}; ref={reference}')
         return 0
     deadline, target = kill3_tail.deadline_for(reference)
+    three_avoid = _resolve_three_avoid(target)
+    print('kill3 three-avoid groups: ' + ' · '.join(
+        '%s %s' % (group['label'], group['value']) for group in three_avoid))
     rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
     previous_seal = seals[-1] if seals else None
     previous_tail = (previous_seal.get('tail') or {}) if isinstance(previous_seal, dict) else {}
@@ -96,7 +111,8 @@ def main():
     prompt, audit = kill3_tail.build_prompt(
         reference, target, rows,
         previous_tail=previous_tail if isinstance(previous_tail, dict) else None,
-        panel_snapshot=panel_snapshot)
+        panel_snapshot=panel_snapshot,
+        three_avoid=three_avoid)
 
     try:
         prediction, generated_at, meta = kill3_tail.request_prediction(
@@ -112,7 +128,8 @@ def main():
     settlements = kill3_tail.load_settlements()
     prediction = kill3_tail.apply_tail_policy(prediction, seals, settlements)
     seal = kill3_tail.create_seal(reference, target, latest.get('opentime'), prediction,
-                                  prompt, audit, generated_at, meta)
+                                  prompt, audit, generated_at, meta,
+                                  extra={'three_avoid': three_avoid})
     kill3_tail.save_seal(seal)
     kill3_tail.mark_published(reference)
     try:
@@ -127,8 +144,10 @@ def main():
         + ('(仅展示)' if key == display_only else '')
         for key, _label, _index in kill3_tail.POSITIONS if key in prediction['positions'])
     dropped = kill3_tail.POSITION_LABELS.get(prediction['dropped'], prediction['dropped'])
+    avoid_codes = '-'.join(group['value'] for group in three_avoid)
     print(f'kill3 published: ref={reference} target={target} {picked} · '
-          f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]} 放弃:{dropped}')
+          f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]} 放弃:{dropped}'
+          f' · 三数共现 除对数{avoid_codes}')
     tail_policy = prediction.get('tail_policy') or {}
     if tail_policy:
         print('kill3 tail policy: ' + str(tail_policy.get('note')) + ' · ' + str(tail_policy.get('policy')))

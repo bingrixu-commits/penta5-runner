@@ -14,7 +14,10 @@
 - 位置命中 = 该位置实际开奖号 != 杀码；
 - 合尾命中 = 该合尾实际和值个位 != 排除码；
 - 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
-- 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态同时命中（共 5 项）；
+- 三数共现避开 1/2/3 组：由后端按目标期给定（v13 起计入整组，不由模型选择、不从响应解析）；
+  每组 3 个数字，单项命中 = 该组 3 个数字【未全部】出现在目标期 4 球开奖号中（单项基线 97.96%）；
+- 攻击语在合尾之后追加「除对数<1组>-<2组>-<3组>」（与固定八码框架同格式）；
+- 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态 + 三数共现避开 3 组同时命中（共 8 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 位置杀码与放弃位置不再强制轮换：同一位置杀码/放弃位置可连续使用，由模型自主决定；
 - 尾码与位置均无「不得与上一期同类 / 连用满 3 期必换」限制，模型完全自主；
@@ -70,8 +73,12 @@ TAILS = {
 TAIL_KEYS = tuple(TAILS)
 REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
+THREE_AVOID_KEYS = ('threeDigitAvoid', 'threeDigitHit', 'threeDigitAvoid2')
+THREE_AVOID_LABELS = {'threeDigitAvoid': '避开1组', 'threeDigitHit': '避开2组',
+                      'threeDigitAvoid2': '避开3组'}
+THREE_AVOID_ITEMS = len(THREE_AVOID_KEYS)
 
-RULE_VERSION = 'kill3-tail-v12-hot-cold-hold3-two-counted'
+RULE_VERSION = 'kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
@@ -228,7 +235,8 @@ def build_attack(seal):
     """与八项独立框架同格式的攻击语。
 
     位置保留码（被杀位置为去掉杀码的 9 码，未选位置保留 10 码）→ 四定 →
-    合尾保留码（去掉排除码）→ 除<四位单双形态>除<四位大小形态>。
+    合尾保留码（去掉排除码）→ 除对数<1组>-<2组>-<3组> →
+    除<四位单双形态>除<四位大小形态>。
     """
     if not isinstance(seal, dict):
         raise ValueError('attack requires a sealed prediction')
@@ -253,10 +261,73 @@ def build_attack(seal):
     if tail_label:
         parts.append(tail_label + remaining(tail.get('kill')))
     text = ''.join(parts)
+    codes = [str(group.get('value') or '') for group in (seal.get('three_avoid') or [])
+             if isinstance(group, dict)]
+    codes = [code for code in codes if code]
+    if codes:
+        if any(_group_code(code) is None for code in codes):
+            raise ValueError('attack three-avoid group must be three digits')
+        text += '除对数' + '-'.join(codes)
     parity, size = seal.get('reverse_parity'), seal.get('reverse_size')
     if parity and size:
         text += '除' + str(parity) + '除' + str(size)
     return text
+
+
+def _group_code(value):
+    """三数共现组必须是 3 个数字（保留原顺序，便于展示与攻击语）。"""
+    text = str(value if value is not None else '').strip()
+    if len(text) != 3 or any(char not in '0123456789' for char in text):
+        return None
+    return text
+
+
+def resolve_three_avoid(target, state=None):
+    """取目标期对应的三数共现避开 1/2/3 组（标签顺序 1→2→3，与面板块同源）。
+
+    数据源 data/state.json：优先 currentPrediction（该期尚未核验时的即时预测），
+    回退 predictions[] 中 targetPeriod 相同的最近一条；取不到返回 []。
+    """
+    doc = state if isinstance(state, dict) else _load_json(STATE_PATH, {}, strict=False)
+    if not isinstance(doc, dict):
+        return []
+    target = str(target)
+    candidates = []
+    current = doc.get('currentPrediction')
+    if isinstance(current, dict):
+        candidates.append(current)
+    records = doc.get('predictions')
+    if isinstance(records, list):
+        for record in reversed(records):
+            if isinstance(record, dict):
+                candidates.append(record)
+    for record in candidates:
+        period = str(record.get('targetPeriod') or '')
+        if period != target:
+            continue
+        extras = record.get('extraKills')
+        if not isinstance(extras, dict):
+            continue
+        groups = []
+        for key in THREE_AVOID_KEYS:
+            entry = extras.get(key)
+            code = _group_code(entry.get('value') if isinstance(entry, dict) else None)
+            if code is None:
+                groups = []
+                break
+            groups.append({'key': key, 'label': THREE_AVOID_LABELS[key], 'value': code})
+        if groups:
+            return groups
+    return []
+
+
+def group_avoid_hit(numbers, code):
+    """三数共现避开：该组 3 个数字未在 4 球中全部出现即命中。"""
+    text = _group_code(code)
+    if text is None:
+        raise ValueError('three-avoid group must be three digits')
+    present = {int(value) for value in numbers[:4]}
+    return not all(int(char) in present for char in text)
 
 
 def _position_key(value):
@@ -376,7 +447,7 @@ def _hot_line(ranks, limit=3):
 
 
 def build_prompt(reference, target, rows, *, previous_tail=None,
-                 position_limit=None, panel_snapshot=None):
+                 position_limit=None, panel_snapshot=None, three_avoid=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
@@ -431,6 +502,19 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
             '【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带'
             ' reference/target；仅供自主决策参考，不是未来概率保证）】'
             + chr(10) + panel_context_text + chr(10) + chr(10))
+    three_avoid = [group for group in (three_avoid or [])
+                   if isinstance(group, dict) and _group_code(group.get('value'))]
+    three_avoid_section = ''
+    if three_avoid:
+        avoid_lines = [f'· {group.get("label") or group.get("key")}：'
+                       f'{_group_code(group.get("value"))}'
+                       '（该组 3 个数字不得在目标期 4 球开奖号中全部出现）'
+                       for group in three_avoid]
+        three_avoid_section = (
+            '【本期固定三数共现避开组（v13 起计入整组，由系统按目标期给定，不需要你选择）】'
+            + chr(10) + chr(10).join(avoid_lines)
+            + chr(10) + '这 3 组各算 1 项，与你的位置/合尾/形态一起参与整组命中判定。'
+            + chr(10) + chr(10))
     prompt = (
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
@@ -458,7 +542,8 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '4. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码（只算 2 个计入位置）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
         '反向形态 = 目标期实际四位形态不等于这两个封存形态（反向排除项）；'
-        '以上 5 项（2 个计入位置 + 1 个合尾 + 2 项形态）同时命中才算整组命中；\n'
+        '三数共现避开 = 目标期 4 球开奖号中不包含该组全部 3 个数字（3 组各算 1 项，固定给定）；\n'
+        '以上 8 项（2 个计入位置 + 1 个合尾 + 2 项形态 + 三数共现避开 3 组）同时命中才算整组命中；\n'
         '5. 冷热、遗漏、重码只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄或为避开同号强行换码，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
@@ -475,14 +560,21 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         _marker = prompt.find('【任务】')
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
+    if three_avoid_section:
+        _marker = prompt.find('【任务】')
+        if _marker != -1:
+            prompt = prompt[:_marker] + three_avoid_section + prompt[_marker:]
     audit = {
-        'version': 'kill3-tail-prompt-v12-hot-cold-hold3-two-counted',
+        'version': 'kill3-tail-prompt-v13-hot-cold-hold3-two-counted-three-avoid',
         'reference': reference,
         'target': target,
         'window': WINDOW,
         'history_sha256': sha256(history.encode('utf-8')).hexdigest(),
         'rows': [[str(int(value)) for value in row] for row in window],
         'position_basis': 'hot-cold-repeat-neighbor',
+        'three_avoid': [{'key': group.get('key'), 'label': group.get('label'),
+                        'value': _group_code(group.get('value'))}
+                       for group in three_avoid],
         'hot_ranking': {key: [[str(n), c, o] for n, c, o in hot[:3]]
                         for key, hot in position_hot_ranks.items()},
         'cold_ranking': {key: [[str(n), c, o] for n, c, o in cold[:3]]
@@ -996,11 +1088,22 @@ def settle_pending(snapshot=None, now=None):
                    and all(char in palette for char in sealed_form)
                    and actual_form != sealed_form)
             patterns[field] = {'form': sealed_form, 'actual': actual_form, 'hit': bool(hit)}
+        avoid_entries = []
+        raw_groups = seal.get('three_avoid')
+        for group in raw_groups if isinstance(raw_groups, list) else []:
+            if not isinstance(group, dict):
+                continue
+            code = _group_code(group.get('value'))
+            avoid_entries.append({'key': group.get('key'), 'label': group.get('label'),
+                                  'value': code,
+                                  'hit': None if code is None
+                                         else group_avoid_hit(actual, code)})
         counted = seal.get('counted') or [key for key in positions
                                           if key != seal.get('display_only')]
         group_hit = (all(positions[key]['hit'] for key in counted if key in positions)
                      and tail_entry['hit']
-                     and all(item['hit'] for item in patterns.values()))
+                     and all(item['hit'] for item in patterns.values())
+                     and all(item['hit'] is True for item in avoid_entries))
         published = parse_time(seal.get('published_at'))
         drawn = parse_time(record.get('opentime'))
         verified = (seal.get('publication_state') == 'published' and published is not None
@@ -1021,6 +1124,7 @@ def settle_pending(snapshot=None, now=None):
             'dropped': seal.get('dropped'),
             'tail': tail_entry,
             'patterns': patterns,
+            'three_avoid': avoid_entries,
             'group_hit': bool(group_hit),
             'verified': bool(verified),
         }
@@ -1077,6 +1181,27 @@ def today_stats(now=None):
                    if (item.get('patterns') or {}).get(field, {}).get('hit') is True)
         pattern_stats[field] = {'hits': hits, 'bets': total,
                                 'rate': (hits / total) if total else None}
+    avoid_merged_hits = avoid_merged_bets = 0
+    avoid_stats = {key: {'label': THREE_AVOID_LABELS[key], 'hits': 0, 'bets': 0,
+                         'rate': None} for key in THREE_AVOID_KEYS}
+    for item in todays:
+        entries = [entry for entry in (item.get('three_avoid') or [])
+                   if isinstance(entry, dict) and entry.get('hit') is not None]
+        if not entries:
+            continue
+        flags = [entry.get('hit') for entry in entries]
+        avoid_merged_bets += 1
+        if all(flags):
+            avoid_merged_hits += 1
+        for entry in entries:
+            bucket = avoid_stats.get(entry.get('key'))
+            if bucket is None:
+                continue
+            bucket['bets'] += 1
+            if entry.get('hit') is True:
+                bucket['hits'] += 1
+    for bucket in avoid_stats.values():
+        bucket['rate'] = (bucket['hits'] / bucket['bets']) if bucket['bets'] else None
     win = loss = max_loss = four_loss = 0
     for item in sorted(todays, key=lambda row: str(row.get('target_period'))):
         if item.get('group_hit') is True:
@@ -1114,6 +1239,11 @@ def today_stats(now=None):
         'current_loss_streak': loss,
         'max_loss_streak': max_loss,
         'four_loss_cycles': four_loss,
+        'three_avoid': {'items': THREE_AVOID_ITEMS, 'per_group': avoid_stats,
+                        'merged': {'hits': avoid_merged_hits,
+                                   'bets': avoid_merged_bets,
+                                   'rate': (avoid_merged_hits / avoid_merged_bets)
+                                           if avoid_merged_bets else None}},
         'pending': pending,
         'late': late,
         'legacy': {'total': len(legacy),
