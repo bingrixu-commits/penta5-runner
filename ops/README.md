@@ -1289,3 +1289,17 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 提交：feat(kill3) ccec6f2（三件套）→ feat(stats) 660cfd1（两处基线行）→ fix(kill3) 4225b30（三数组等待窗口）→ chore(ops) 384aac0（冻结守卫 + 稳定方案）→ chore(ops) 本台账。
 - 回滚：git revert 本台账 → 384aac0 → 4225b30 → 660cfd1 → ccec6f2；或 cp /root/ops/kill3-ai-001937.bak 内 6 个 .py 回原路径 + 恢复 ops/kill3-freeze.json + py_compile 复验；v13 封存/结算只读保留（新代码对无 three_avoid 的旧封存仍按 5 项口径结算，v1–v12 封存不受影响）。面板/统计下次刷新自动回 v12 口径。
 - 备注：攻击语组序按问卷确认取 1/2/3 组标签序（579-089-349 语义），与用户字面示例「579-349-089」（1 组/3 组/2 组）不同，仅 `'-'.join` 顺序一行可换；实盘组值由后端每期给定（当前连续为 579/268/089）。
+
+## 2026-11-04 01:24 面板自动刷新永久失效修复（kill1/kill9/kill8 区块补 </section>，刷新名单 v24）
+
+- 依据：用户 m00001「数字不跳动，要按f5，才会刷新」（确认目标为线上 penta5 面板）。
+- 根因：lib/kill_one_view.py / lib/kill_nine_view.py / lib/kill_eight_view.py 的 render 返回值各 2 处漏写 `</section>`（`_foot_html(), END))`），面板 HTML 里 KILL_ONE/KILL_NINE/KILL_EIGHT 三段各只有 1 个 `<section>`、0 个 `</section>`；浏览器解析后 kill-one 的 section 未闭合，其后整页内容被嵌套进该 section，区块 START 评论在 section 外、END 评论在 section 内 → 浏览器里两者 parentNode 不同 → panel_live_refresh 的 ranges() 每次 throw `unbalanced-marker:KILL_ONE`（names 顺序首个失败）→ 8s 整页自动刷新永久失效，只能按 F5。与「数字不跳动」症状完全一致。
+- 修法：三个 view 的每处 `_foot_html(), END))` → `_foot_html(), '</section>' + END))`；lib/panel_live_refresh.py 版本 `quiet-panel-v23-live-sections` → `quiet-panel-v24-live-sections`，names 在 `'TAIL_HOLD_MAX_SHADOW'` 后追加 `'MODEL_USAGE','JOINT_FORM_SHADOW','HITRATE_BASE'`（这三块页面存在但原先不在刷新名单，其中模型运行卡片每分钟更新余额/Token 却永不自动刷新）。**KILL_EIGHT 故意不加名单**：块内有用户手填的 k8-ex-q/b/s/g 排除码输入框与 k8-combined-attack textarea，morph 会用服务端值覆盖手动输入；kill8 仅在手动 run 后变化，且 run 完成脚本自动 location.reload。
+- 面板现状：34 个 marker 区块 section/div/style/textarea 全配平；面板底部脚本为 v24；刷新 names 含 MODEL_USAGE/JOINT_FORM_SHADOW/HITRATE_BASE；git status 仅 4 个 lib 文件（panel.html 为 skip-worktree 生成物，不入库）。
+- 验证（无头 Chrome，/tmp/panelsnaps 可复现环境）：① 修复前每次 refresh 都失败，instrument 后 title 捕获 `unbalanced-marker:KILL_ONE`；② 修复后用两次真实重生成快照 A6/B6（01:26:18、01:26:22，均 v24 且平衡）跑 8s 自动刷新：dump 中 STAT50_COMPARE_STATS 由「82期」自动变「83期」、统计更新时间 01:21:39→01:25:59、PENTA5_STATS_PANEL 校验时间 01:26:08→01:26:16，且无 penta5-live-notice 错误条；③ 另一组合成快照（A3/B3syn）验证新增名单的 RUNTIME_OBSERVABILITY 与 MODEL_USAGE 也会随刷新更新。④ 三个模板 render_block 离线复验 section 1/1 闭合。
+- 中途现象：01:25:02 面板曾被一个 01:20:5x 启动的旧代码 run_stats 进程覆盖回 v23（该进程导入的旧模板），下一轮新进程（01:25:58 启动）已自动写回 v24；01:26:18/01:26:22 两次真实写入均为 v24 且区块平衡，说明无残留旧代码进程。
+- 运维复验：`scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift` 写出 auto-baseline-20261104-012437（434 files）；ops_health overall WARN（manifest_drift 已恢复 OK，剩历史 warn：kill3_stability/data_tmp/coverage）。
+- 备份：/root/backups/panel-refresh-fix-20261104-012013/（4 个 .py + 修复前 panel.html）。
+- 提交：fix(panel) bb882e5；chore(ops) 本台账。
+- 回滚：git revert 本台账 → bb882e5，或 cp /root/backups/panel-refresh-fix-20261104-012013/ 内 4 个 .py 回原路径后 py_compile，等一次 run_stats/面板重生成即恢复旧脚本（注意：旧模板会让自动刷新再次失效，仅作紧急回退）。
+- 注意：已打开的旧页面 DOM 已是不平衡结构，无法自愈，需手动 F5 一次加载 v24 脚本；之后数字每 8s 自动跳动。
