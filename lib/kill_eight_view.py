@@ -196,7 +196,7 @@ def render_block():
             return ('%s%s<style>%s</style><h3>%s</h3>%s%s%s%s%s%s%s'
                     % (START, _section_open(), STYLE, _TITLE, _run_html(), body,
                        _attack_html(None), _stats_html(stats), _version_html(),
-                       _foot_html(), END))
+                       _foot_html(), '</section>' + END))
         cards = []
         parity_form = seal.get('parity_form')
         if isinstance(parity_form, str) and len(parity_form) == 4:
@@ -240,7 +240,7 @@ def render_block():
                    _run_html(),
                    meta, ''.join(cards), scope_html, reason,
                    _stats_html(stats), _version_html(), verify, _attack_html(seal),
-                   _foot_html(), END))
+                   _foot_html(), '</section>' + END))
     except Exception:
         return ''
 

@@ -231,7 +231,7 @@ def render_block():
             return ('%s%s<style>%s</style><h3>%s</h3>%s%s%s%s%s%s'
                     % (START, _section_open(), STYLE, _TITLE, body,
                        _attack_html(None), _stats_html(stats), _version_html(),
-                       _foot_html(), END))
+                       _foot_html(), '</section>' + END))
         cards = []
         pool_index = {}
         for entry in (seal.get('form_pool') or []):
@@ -292,7 +292,7 @@ def render_block():
                 % (START, _section_open(' data-as-of="%s"' % as_of), STYLE, _TITLE,
                    meta, ''.join(cards), scope_html, reason,
                    _stats_html(stats), _version_html(), verify, _attack_html(seal),
-                   _foot_html(), END))
+                   _foot_html(), '</section>' + END))
     except Exception:
         return ''
 
