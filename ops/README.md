@@ -1346,3 +1346,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 提交：feat(kill3) `2c34e59`；chore(ops) `c181b0b`（freeze 更新）+ 本台账。manifest baseline 重建：`scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift` → auto-baseline-20261105-044509（434 files），ops_health manifest_drift 恢复 OK。
 - 回滚：`git revert 本台账 → c181b0b → 2c34e59`，或 cp 备份内 6 个源码 + ops/kill3-freeze.json 回原路径后 `py_compile`；freeze 需恢复 v14 值（rule_version v14、frozen_at 2026-11-05T03:26:17+08:00、frozen_commit fb5f327、freeze_ref_period 20261105041、sha a96151f9…/0261afc2…、删本次 2 条 hash_updates 与 policy 段）。
 - 注意：v15 只「把候选还给模型」，没有硬约束；若新版本累计 n≥20 后 repeat 占比仍高（或冷码又回到 90%），再考虑加硬校验（如禁止选上期同位开奖号 / 强制至少 1 个位置取非重码）。统计按 rule_version 分段，旧 v14 封存只读保留。
+
+### KILL_THREE v15 部署落地（2026-11-05 04:56，`bb3a947`）
+
+- 复核脚本入库：`scripts/kill3_v15_review.py`（只读：位置依据标签 / hold 采纳 / 分项与整组命中；路径按仓库根推导，任意 cwd 可跑）。用法 `python3 scripts/kill3_v15_review.py --rule v15`；逐期明细会按 target_period 回填 seal 上的 `position_basis_used` / `hold_adopted`。
+- 运行方式：kill3 由 cron 每 5 分钟新起解释器（`*/5` flock + `timeout 220 python3 scripts/run_kill3_tail.py`），改代码/新增脚本即生效，**不需要重启任何 pm2 服务**。
+- 面板：`panel.html` 每期由守护进程重写；后端 `penta5_backend_runner.js` 的 `getPanelHtmlText()` 以 `fs.statSync(panel.html).mtimeMs` 为缓存键 → 文件更新后下一次请求即返回新版，同样无需重启（实测 panel.html mtime 04:56:36，nginx 04:56:39/44 的 `/panel` 请求 200）。
+- 外网入口：nginx `:3001`（限流 + proxy-guard）→ 后端 127.0.0.1:3010；最近一周的 `/var/log/nginx/access.log` 里 `/panel?_panel_refresh=…` 持续 200。
+- GitHub 远端：本机 `git push` 无凭证（`fatal: could not read Username for 'https://github.com'`），344 个提交只在服务器本地 + /root/backups 证据里；要同步远端需配置 token / deploy key 后再 push。
+- 校验：`py_compile` OK；`ops_health_check.py` kill3_freeze/kill3_tail/manifest_drift/panel_html 全 OK；`refresh_source_manifest.py --if-drift` → `no-drift`。
