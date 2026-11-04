@@ -68,6 +68,40 @@ def _summary(summary):
         'hits': 0, 'total': 0, 'max_win_streak': 0, 'max_loss_streak': 0,
         'current_win_streak': 0, 'current_loss_streak': 0, 'available': False,
         'current_streak_interrupted': False, 'current_streak_as_of': None}
+    raw_rolling = summary.get('rolling')
+    raw_rolling = raw_rolling if isinstance(raw_rolling, dict) else {}
+    raw_rolling_metrics = raw_rolling.get('metrics')
+    raw_rolling_metrics = raw_rolling_metrics if isinstance(raw_rolling_metrics, dict) else {}
+    rolling_metrics = {}
+    rolling_valid = True
+    for key in METRIC_KEYS:
+        raw = raw_rolling_metrics.get(key)
+        raw = raw if isinstance(raw, dict) else {}
+        hits, total = _count(raw.get('hits')), _count(raw.get('total'))
+        if hits is None or total is None or hits > total:
+            hits, total = 0, 0
+            rolling_valid = False
+        rolling_metrics[key] = {'hits': hits, 'total': total,
+                                'percent': round(100 * hits / total, 4) if total else None}
+    raw_rolling_overall = raw_rolling.get('overall')
+    raw_rolling_overall = raw_rolling_overall if isinstance(raw_rolling_overall, dict) else {}
+    rolling_hits, rolling_total = _count(raw_rolling_overall.get('hits')), _count(raw_rolling_overall.get('total'))
+    rolling_window, rolling_target = _count(raw_rolling.get('window')), _count(raw_rolling.get('window_target'))
+    if (rolling_hits is None or rolling_total is None or rolling_hits > rolling_total
+            or rolling_window is None or rolling_target is None
+            or not 0 < rolling_target <= 10000 or rolling_window != rolling_total
+            or rolling_total > rolling_target
+            or any(metric['total'] != rolling_total for metric in rolling_metrics.values())):
+        rolling_valid = False
+    rolling = {'available': bool(rolling_valid and rolling_total
+                              and raw_rolling.get('available') is True),
+               'window': rolling_window if rolling_window is not None else 0,
+               'window_target': rolling_target if rolling_target is not None else 0,
+               'metrics': rolling_metrics if rolling_valid else {},
+               'overall': {'hits': rolling_hits if rolling_valid else 0,
+                           'total': rolling_total if rolling_valid else 0,
+                           'percent': round(100 * rolling_hits / rolling_total, 4)
+                                      if rolling_valid and rolling_total else None}}
     raw_day = str(summary.get('biz_date') or '')
     try:
         day = date.fromisoformat(raw_day).isoformat()
@@ -77,7 +111,8 @@ def _summary(summary):
     latest = latest if re.fullmatch(r'[0-9]{11}', latest) else '--'
     pending = _count(summary.get('pending_count'))
     conflicts = _count(summary.get('conflict_count'))
-    return {'biz_date': day, 'metrics': metrics, 'overall': overall, 'latest_settled_period': latest,
+    return {'biz_date': day, 'metrics': metrics, 'overall': overall, 'rolling': rolling,
+            'latest_settled_period': latest,
             'pending_count': pending if pending is not None else 0,
             'conflict_count': conflicts if conflicts is not None else 0,
             'stats_error': summary.get('stats_error') is True}
@@ -115,6 +150,8 @@ SCRIPT = """<script id="r1-framework-hit-script">
   });
   if(grids.length!==1)return;
   var keys=['q_kill1','b_kill1','he_h3_kill','he_q3_kill','pattern_ds','pattern_dx','he2_keep','he3_keep'];
+  var rollAvailable=data.rolling&&data.rolling.available===true&&Number.isSafeInteger(data.rolling.window)&&data.rolling.window>0;
+  var rollingPrefix=rollAvailable?('滚动'+data.rolling.window+'期：'+(data.rolling.overall.hits/data.rolling.overall.total*100).toFixed(2)+'%（'+data.rolling.overall.hits+'/'+data.rolling.overall.total+'期） ｜ '):'';
   keys.forEach(function(key,index){
     var row=grids[0].children[index],badges=row.querySelectorAll('[data-r1-hit-key]');
     var badge=null;
@@ -131,7 +168,10 @@ SCRIPT = """<script id="r1-framework-hit-script">
     var metric=data.metrics&&data.metrics[key],label=index<6?'排除成功率':(key==='he2_keep'?'4码命中率':'6码命中率');
     badge.setAttribute('data-stats-business-date',data.biz_date);
     var valid=metric&&Number.isSafeInteger(metric.hits)&&Number.isSafeInteger(metric.total)&&metric.total>0&&metric.hits>=0&&metric.hits<=metric.total;
-    badge.textContent=data.stats_error===true?'统计核验失败，暂停显示命中率':valid?label+' '+(metric.hits/metric.total*100).toFixed(2)+'%（'+metric.hits+'/'+metric.total+'期）':'暂无已验证数据';
+    var rollMetric=rollAvailable&&data.rolling.metrics?data.rolling.metrics[key]:null;
+    var rollValid=rollMetric&&Number.isSafeInteger(rollMetric.hits)&&Number.isSafeInteger(rollMetric.total)&&rollMetric.total>0&&rollMetric.hits>=0&&rollMetric.hits<=rollMetric.total;
+    var rollText=rollAvailable?(rollValid?'｜滚动'+data.rolling.window+'期 '+(rollMetric.hits/rollMetric.total*100).toFixed(2)+'%（'+rollMetric.hits+'/'+rollMetric.total+'期）':'｜滚动口径暂无'):'';
+    badge.textContent=data.stats_error===true?'统计核验失败，暂停显示命中率':valid?label+' 本日 '+(metric.hits/metric.total*100).toFixed(2)+'%（'+metric.hits+'/'+metric.total+'期）'+rollText:'暂无已验证数据';
     badge.title=data.stats_error===true?'统计核验失败，暂停显示命中率':(index===2||index===3?'此合尾项统计排除成功率：实际合尾不等于排除码，随机基线90%。':index<2?'定位杀码随机基线90%（实际数字不等于杀码即成功）。':index===4||index===5?'四位反向形态随机基线93.75%（实际形态不等于排除形态即成功）。':index===6?'二数合保留4码随机基线98.08%；任一两位合尾落入保留集即命中。':index===7?'三数合保留6码随机基线97.44%；任一三位合尾落入保留集即命中。':'')+'仅计入开奖前发布、开奖后核验的前4球记录。';
   });
   var overall=card.querySelector('[data-r1-framework-overall]');
@@ -144,7 +184,7 @@ SCRIPT = """<script id="r1-framework-hit-script">
   overall.setAttribute('data-stats-business-date',data.biz_date);
   var group=data.overall;
   overall.textContent=data.stats_error===true?'整组战绩：统计核验失败，暂停显示':
-    group&&group.available===true?'整组8项全部通过：'+(group.hits/group.total*100).toFixed(2)+'%（'+group.hits+'/'+group.total+'期） ｜ 当前连中：'+group.current_win_streak+'手 ｜ 当前连败：'+group.current_loss_streak+'手 ｜ 最高连中：'+group.max_win_streak+'手 ｜ 最高连败：'+group.max_loss_streak+'手':
+    group&&group.available===true?'整组8项全部通过：'+rollingPrefix+'本日 '+(group.hits/group.total*100).toFixed(2)+'%（'+group.hits+'/'+group.total+'期） ｜ 当前连中：'+group.current_win_streak+'手 ｜ 当前连败：'+group.current_loss_streak+'手 ｜ 最高连中：'+group.max_win_streak+'手 ｜ 最高连败：'+group.max_loss_streak+'手':
     '整组8项全部通过：暂无已验证数据 ｜ 当前连中：— ｜ 当前连败：— ｜ 最高连中：— ｜ 最高连败：—';
   if(data.stats_error!==true&&group&&group.available===true&&group.current_streak_interrupted===true){
     var interrupted=document.createElement('div');interrupted.setAttribute('data-r1-current-streak-interrupted','1');
@@ -164,6 +204,10 @@ def render_stats_block(summary):
     for old, replacement in [('&', '\\u0026'), ('<', '\\u003c'), ('>', '\\u003e'),
                               ('\u2028', '\\u2028'), ('\u2029', '\\u2029')]:
         encoded = encoded.replace(old, replacement)
+    rolling_line = (('<br>滚动口径（最近' + str(data['rolling']['window']) + '个已验证期）：整组8项全过 '
+                    + '%.2f%%' % data['rolling']['overall']['percent']
+                    + '（' + str(data['rolling']['overall']['hits']) + '/' + str(data['rolling']['overall']['total']) + '期）')
+                   if data['rolling']['available'] else '')
     notice = (
         '<div id="r1_framework_stats_notice" data-stats-business-date="' + escape(data['biz_date'], quote=True) + '" style="max-width:1000px;margin:8px auto 16px;padding:8px 12px;'
         'box-sizing:border-box;border:1px solid #bfdbfe;border-radius:6px;background:#f8fbff;color:#475569;'
@@ -171,7 +215,7 @@ def render_stats_block(summary):
         '<b>框架8项本版已验证战绩</b> ｜ ' + escape(data['biz_date']) + ' 05:00起（北京时间）'
         '<br>仅统计本版开奖前已发布、开奖后完成核验的记录；旧策略证据保留，不并入本版。只使用前4球。'
         '前6项显示排除成功率，后二项显示保留集命中率（二数合保留4码、三数合保留6码）。'
-        '前6项随机基线均为90%（10选1杀1码，单尾项同样90%）；单日n<30的小格波动大，请以累计样本判断。'
+        '前6项随机基线均为90%（10选1杀1码，单尾项同样90%）；单日n<30波动大，请以滚动口径与累计样本判断。'
         '合尾两项启用稳定化：上期两项均命中时沿用上期尾码，最多自动沿用3期；封存元数据 tail_hold3 留档，命中口径不变。'
         '整组战绩以同一期8项全部通过为准；缺期或冲突期中断连续。'
         '当前连续段按最新已开奖期核验；未开奖不计，已开奖缺期、冲突或未核验会中断，不计作失手。'
@@ -181,6 +225,7 @@ def render_stats_block(summary):
            + '尚无有效核验，当前连续段已中断。</b>'
            if data['overall']['available'] and data['overall']['current_streak_interrupted'] else '')
         + ('<br><b style="color:#b45309;">有' + str(data['conflict_count']) + '期开奖号码存在冲突，未计入命中率，等待复核。</b>' if data['conflict_count'] else '')
+        + rolling_line
         + '</div>')
     if data['stats_error']:
         notice = ('<div id="r1_framework_stats_notice" data-stats-business-date="' + escape(data['biz_date'], quote=True)

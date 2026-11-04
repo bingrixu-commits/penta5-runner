@@ -15,6 +15,7 @@ from stats_history import (TZ, business_start, parse_period, parse_time,
 METRIC_KEYS = ('q_kill1', 'b_kill1', 'he_h3_kill', 'he_q3_kill',
                'pattern_ds', 'pattern_dx', 'he2_keep', 'he3_keep')
 VERSION = 1
+ROLLING_WINDOW = 100
 _PROOF_FIELDS = ('ref_period', 'target_period', 'evidence_version',
                  'publication_state', 'reference_open_time', 'generated_at', 'published_at')
 
@@ -249,6 +250,28 @@ def _overall_summary(entries):
             'current_win_streak': wins, 'current_loss_streak': losses}
 
 
+def _rolling_summary(entries, window=ROLLING_WINDOW):
+    """Rolling view over the most recent verified periods of the same policy scope.
+
+    The daily block answers "how did today go"; a 14-period day is far too small
+    to judge an 8-item conjunction, so the card also carries a rolling view over
+    the latest ``window`` verified periods.  Outcomes are recomputed from the
+    stored evidence only; the ledger is never rewritten.
+    """
+    selected = list(entries[-window:]) if window > 0 else []
+    metrics = {key: {'hits': 0, 'total': 0, 'percent': None} for key in METRIC_KEYS}
+    for entry in selected:
+        for key in METRIC_KEYS:
+            metrics[key]['total'] += 1
+            metrics[key]['hits'] += int(entry['outcomes'][key])
+    for metric in metrics.values():
+        if metric['total']:
+            metric['percent'] = round(metric['hits'] / metric['total'] * 100, 1)
+    overall = _overall_summary(selected)
+    return {'window_target': window, 'window': len(selected), 'available': bool(selected),
+            'metrics': metrics, 'overall': overall}
+
+
 def make_summary(ledger, now, records=None, *, conflicting_periods=(), allowed_targets=None, strategy_id=None):
     """Summarize only actual opens in the requested Beijing 05:00 business day."""
     now = _current(now)
@@ -288,6 +311,10 @@ def make_summary(ledger, now, records=None, *, conflicting_periods=(), allowed_t
     entries = sorted((entry for entry in checked['verified'].values()
                       if entry['biz_date'] == day and entry['target_period'] not in conflicts),
                      key=lambda entry: (parse_time(entry['actual']['opentime']), entry['target_period']))
+    rolling_entries = sorted((entry for target, entry in checked['verified'].items()
+                              if target not in conflicts),
+                             key=lambda entry: entry['target_period'])
+    rolling = _rolling_summary(rolling_entries)
     metrics = {key: {'hits': 0, 'total': 0, 'percent': None} for key in METRIC_KEYS}
     for entry in entries:
         for key in METRIC_KEYS:
@@ -311,7 +338,8 @@ def make_summary(ledger, now, records=None, *, conflicting_periods=(), allowed_t
         # It is neither a win nor a loss and cannot change historical totals.
         overall.update(current_win_streak=0, current_loss_streak=0,
                        current_streak_interrupted=True, current_streak_as_of=latest_known)
-    return {'biz_date': day, 'metrics': metrics, 'overall': overall, 'strategy_id': strategy_id,
+    return {'biz_date': day, 'metrics': metrics, 'overall': overall, 'rolling': rolling,
+            'strategy_id': strategy_id,
             'historical_policy_count': historical_policy_count,
             'latest_settled_period': latest['target_period'] if latest else None,
             'conflict_count': sum(business_start(period_slot(target)).strftime('%Y-%m-%d') == day
