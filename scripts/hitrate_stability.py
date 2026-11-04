@@ -107,6 +107,20 @@ def _window(drift_windows, key):
     return result
 
 
+
+def _coverage_note(coverage_24h, recent):
+    """24h 窗口覆盖率含窗口内历史缺口，note 用来说明缺口是否仍在发生。"""
+    if not isinstance(recent, dict):
+        return ''
+    verified, online, missed = recent.get('verified'), recent.get('online'), recent.get('missed')
+    if not isinstance(online, int) or online <= 0 or not isinstance(verified, int):
+        return ''
+    if isinstance(missed, int) and missed > 0:
+        return '近 %d 期仍有 %d 期未核验' % (online, missed)
+    if coverage_24h is not None and coverage_24h < COVERAGE_CLIFF:
+        return '24h 窗口含历史缺口，近 %d 期已全部核验（缺口不再发生）' % online
+    return ''
+
 def _judge(coverage_24h, recent, w100, w300, n, churn):
     reasons = []
     level = 'ok'
@@ -262,6 +276,10 @@ def main(argv=None):
             'recent24': {'verified': recent.get('verified'), 'online': recent.get('online'),
                          'missed': recent.get('missed'), 'hits': recent.get('hits'),
                          'rate': _num(recent.get('group_rate'))},
+            'coverage_recent24': (recent['verified'] / float(recent['online'])
+                                  if isinstance(recent.get('online'), int) and recent['online'] > 0
+                                  and isinstance(recent.get('verified'), int) else None),
+            'coverage_note': _coverage_note(coverage_24h, recent),
             'w100': w100,
             'w300': w300,
             'w500': w500,
@@ -285,6 +303,7 @@ def main(argv=None):
         'basis': '滚动窗口 100/200/300/500 期 + 累计显著性；单日 n 约 22 期(1 sigma 约 +-10pp)，'
                  '日百分比只作展示，不作为结论口径',
         'windows_note': '滚动窗口结束时点 = 上一个已结算期；full=false 表示窗口未填满',
+        'coverage_note': 'coverage_24h 是 24h 滑动窗口覆盖率（窗口内历史缺口仍计入）；coverage_recent24 只看窗口内最近 24 期，用于判断缺口是否仍在发生',
         'thresholds': {'min_sample': MIN_SAMPLE, 'fast_drop_z100': FAST_DROP_Z100,
                        'fast_drop_z300': FAST_DROP_Z300, 'slow_drift_z100': SLOW_DRIFT_Z100,
                        'coverage_cliff': COVERAGE_CLIFF,

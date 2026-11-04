@@ -99,8 +99,13 @@ def _row_cells(row):
         lifetime = '-'
     cover = _pct(row.get('coverage_24h'))
     cov = _num(row.get('coverage_24h'))
-    cover_cell = (f'<td style="color:#b45309">{cover}</td>' if cov is not None and cov < 0.95
-                  else f'<td>{cover}</td>')
+    note = str(row.get('coverage_note') or '')
+    recent_cov = _num(row.get('coverage_recent24'))
+    cover_cell = (f'<td title="{escape(note)}" style="color:#b45309">{cover}</td>'
+                  if cov is not None and cov < 0.95 else f'<td>{cover}</td>')
+    recent_cell = (f'<td title="{escape(note)}" style="color:#b45309">{_pct(recent_cov)}</td>'
+                   if recent_cov is not None and recent_cov < 0.95
+                   else f'<td>{_pct(recent_cov)}</td>')
     ci = _ci(w100.get('ci95')) if w100 else ''
     return ('<tr>'
             f'<td>{escape(str(row.get("label") or row.get("key") or "-"))}'
@@ -110,6 +115,7 @@ def _row_cells(row):
             + f'<td>{cumulative}</td>'
             + f'<td>{_pct(row.get("expected"))}</td>'
             + cover_cell
+            + recent_cell
             + f'<td>{lifetime}</td>'
             + f'<td>{badge}</td>'
             '</tr>')
@@ -150,11 +156,11 @@ def render_block(report=None):
         f'{reasons_html}'
         '<table class="hs-table"><thead><tr>'
         '<th>框架</th><th>滚动100期</th><th>滚动300期</th><th>累计</th>'
-        '<th>精确基线</th><th>24h覆盖</th><th>口径存活</th><th>判定</th>'
+        '<th>精确基线</th><th>24h窗口覆盖</th><th>近24期覆盖</th><th>口径存活</th><th>判定</th>'
         '</tr></thead><tbody>' + rows_html + '</tbody></table>'
         '<div class="hs-foot">断崖规则：24h 覆盖率&lt;80% 且尾部仍漏≥3 期；滚动100期 z≤-2.58 且 300 期 z≤-1.0；'
-        '口径切换后存活&lt;24h 或 &lt;30 期。覆盖率低不自动判断崖（历史缺口已恢复时只作提示），'
-        '但覆盖率低时命中率样本同样不完整，请结合 n 解读。</div>'
+        '口径切换后存活&lt;24h 或 &lt;30 期。「24h 窗口覆盖」会把窗口内历史缺口一并计入；'
+        '「近 24 期覆盖」只看最近 24 期，判断缺口是否仍在发生；覆盖率低时命中率样本同样不完整，请结合 n 解读。</div>'
         f'</section>{END}')
 
 
