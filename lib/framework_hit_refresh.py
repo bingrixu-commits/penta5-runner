@@ -11,6 +11,7 @@ from framework_hit_view import (apply_stats_block, render_stats_block,
 from killer_hit_stats import summarize_killer
 import killer_hit_view
 from panel_io import update_panel
+from ai_model_context import POLICY_STRATEGIES
 from stats_history import load_snapshot, business_start
 from strategy_features import KILLER_STRATEGY, FRAMEWORK_STRATEGY
 
@@ -89,8 +90,8 @@ def refresh_framework_stats(snapshot=None, root=ROOT, panel_writer=None):
                                    conflicting_periods=conflicts)
             summary = make_summary(ledger, snapshot['now'], snapshot['records'],
                                    conflicting_periods=conflicts,
-                                   allowed_targets=_policy_targets(seals, FRAMEWORK_STRATEGY),
-                                   strategy_id=FRAMEWORK_STRATEGY)
+                                   allowed_targets=_policy_targets(seals, POLICY_STRATEGIES['framework']),
+                                   strategy_id=POLICY_STRATEGIES['framework'])
         except (ValueError, TypeError, KeyError):
             _write_framework_summary(_failure_summary(snapshot), root, panel_writer)
             raise
@@ -108,7 +109,7 @@ def refresh_killer_stats(snapshot=None, root=ROOT, panel_writer=None):
         summary = summarize_killer(_read_object(root / 'data' / 'r1_stats.json', missing_ok=True),
                                    snapshot['records'], snapshot['now'],
                                    conflicting_periods=snapshot.get('conflicting_periods', ()),
-                                   strategy_id=KILLER_STRATEGY)
+                                   strategy_id=POLICY_STRATEGIES['killer'])
     except (ValueError, TypeError, KeyError):
         _write_killer_summary(_failure_summary(snapshot), root, panel_writer)
         raise
