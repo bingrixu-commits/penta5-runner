@@ -1355,3 +1355,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 外网入口：nginx `:3001`（限流 + proxy-guard）→ 后端 127.0.0.1:3010；最近一周的 `/var/log/nginx/access.log` 里 `/panel?_panel_refresh=…` 持续 200。
 - GitHub 远端：本机 `git push` 无凭证（`fatal: could not read Username for 'https://github.com'`），344 个提交只在服务器本地 + /root/backups 证据里；要同步远端需配置 token / deploy key 后再 push。
 - 校验：`py_compile` OK；`ops_health_check.py` kill3_freeze/kill3_tail/manifest_drift/panel_html 全 OK；`refresh_source_manifest.py --if-drift` → `no-drift`。
+
+### killer 日榜「今日已验证战绩」恢复（2026-11-05 05:55，`5adea54`）
+
+- 现象：面板 KILLER 卡（DeepSeek-V4.1-Flash 智能深度排除）四位杀码/推荐合杀/排除形态等每项都显示「暂无今日已验证数据」。
+- 根因：`58f63bc`（11-01）把 killer 策略回退 v2→v1（`lib/ai_model_context.py:27` `POLICY_STRATEGIES['killer']='conditional-transition-v1'`），但 `lib/framework_hit_refresh.py` 的 killer 日榜仍用 `strategy_features.KILLER_STRATEGY`（v2 常量）过滤 → 当日 v1 封存全被当旧策略排除，summary 归零、latest_settled_period='--'，前端 JS 回退为「暂无」。结算/核验本身正常（data/r1_stats.json 当日各指标已 11 期）。
+- 修复：`lib/framework_hit_refresh.py` 引入 `from ai_model_context import POLICY_STRATEGIES`，framework/killer 两处过滤统一改用当前生效策略，避免下次策略切换再漂移。
+- 证据：`PYTHONPATH=lib python3 -c` 调 `refresh_killer_stats()` → biz_date=2026-11-05、latest_settled_period=20261105070、metrics k1 90.9%(10/11)、k2 81.8%、k3 100%、k4 81.8%、he_all 100%、he_q3 81.8%、he_h3 72.7%、pat1 100%、pat2 90.9%；panel.html `#r1-killer-hit-data` payload 同步为新值（stats_error=false）。framework 卡重跑 `refresh_framework_stats()` 指标不变（策略仍 v2）。
+- 回滚：`git revert 5adea54`；无需重启 pm2（run_stats.py 每期结算后重跑，浏览器刷新即见）。
+- 校验：py_compile OK；`refresh_source_manifest.py --if-drift` → auto-baseline-20261105-055251（435 files），manifest_drift 恢复 OK；`ops_health_check.py` overall=warn（仅既有 coverage/model_usage/kill3_stability，与本次无关）。
