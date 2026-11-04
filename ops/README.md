@@ -1383,3 +1383,13 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 校验：`scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift` → `no-drift`（auto-baseline-20261105-062653）；`scripts/ops_health_check.py` → 仅既有 3 条 warn（coverage / model_usage / kill3_stability），manifest_drift / panel_html / job:framework 全 OK。
 - 后续真实周期（自动推进证据）：20261105078 结算后面板于 06:30:57 重写，卡片整组「滚动100期 57.00%（57/100期）｜本日 52.63%（10/19期）」，逐项 94/86/89/90/91/96/99/98，notice 行同步 57.00% —— 说明滚动窗口随每期结算自动前移，无需人工干预。
 - 数据口径（供后续对照）：v2 策略最近 100 期整组 56/100=56.00%，逐项 94/86/89/89/91/96/99/98；最近 50 期 26/50=52.00%；全量 n=1685 时 918/1685=54.48%。滚动口径只换展示，不改封存/结算/命中率账本（`data/r1_framework_hit_stats.json` 未被滚动改造写回）。
+
+### 命中率稳定性/断崖护栏上线（2026-11-05 07:00，\`aee3882\`）
+
+- 背景（用户 m00074「部署落地，如何做到波动不大，别断崖式下滑」）：取证结论——单日 n≈22、1σ≈±10pp，日百分比不能作结论；口径切换会造成当日统计清零（kill3_tail 5 天 11 版、v14 只活 14 期）；真正可判的信号是「滚动窗口显著性 + 覆盖率 + 口径 churn」。
+- 新增 \`scripts/hitrate_stability.py\`（cron \`13,28,43,58\`，flock + timeout 90）→ \`data/hitrate_stability.json\`，状态 \`data/hitrate_stability_state.json\` 记录各框架现行 rule 的 since/switch_at/n_at_switch。判定：24h 覆盖率<80% 且尾部仍漏≥3 期 → 断崖 alert；滚动100期 z≤−2.58 且 300 期 z≤−1.0 → alert；100 期 z≤−2.0 → watch；观测到口径切换且存活<24h 或<30 期 → alert，<72h 或<100 期 → watch；异常一律 exit 0（不阻塞后续任务）。
+- 面板：新增 \`lib/hitrate_stability_view.py\`（section \`#hitrate-stability\`，8 列：滚动100/300、累计、精确基线、24h 覆盖、口径存活、判定），在 \`/root/run_stats.py\` 两处 update_panel 链注入（该文件不在 git 仓库内，已备份）。
+- 实时刷新：\`lib/panel_live_refresh.py\` 的 names 白名单加 \`HITRATE_STABILITY\`，版本串 quiet-panel-v24→v25（不改版本号浏览器不会重载新 JS）。
+- 体检：\`scripts/ops_health_check.py\` 新增 \`check_hitrate_stability\`（报告缺失/过期>45min → WARN；summary fail→FAIL、warn→WARN），随 ops_health 每 10min 巡检。
+- 验证：首跑 status=warn、watch=1（selected_six 滚动100期 46.0% z=−2.28）；面板注入幂等、START/END 各 1 个、7 行齐全（killer 100 期 35.0%、framework 57.0%、he3 96.0%、kill3 68.0% n=25、kill1 74.0%、kill9 79.0%，coverage_24h 全 31.2%）；\`crontab_tool.sh diff\` → matches（36 jobs）；ops_health manifest_drift / crontab_drift 恢复 OK（baseline \`auto-baseline-20261105-070118\`）。
+- 回滚：\`git revert aee3882\` + \`bash scripts/crontab_tool.sh install\`（crontab 回到不含该 job 的基线）；\`/root/run_stats.py\` 与 \`lib/panel_live_refresh.py\` 用 \`/root/backups/hitrate-stability-20261105-065755/\` 覆盖回去，面板下期重生成即恢复。
