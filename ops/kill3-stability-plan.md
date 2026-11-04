@@ -62,3 +62,5 @@
 - ops_health 新增探针 kill3_freeze：口径版本与受控源码 hash 不变 → OK，并显示进度（N/100 期、已冻结 h/72h）；任一变化 → WARN，detail 列出变更文件或口径差异。其他框架（framework/six/cold/killer 等）的稳定化改动不在此守卫范围。
 - 经批准的变更（冻结期满走门禁，或冻结期内允许的 bug 修复）完成后，必须重算受控文件 hash、更新冻结戳并记录原因与 commit；否则监控会持续 WARN。
 - 冻结期结束条件：≥100 期 或 满 72 小时，先到为准；当前进度见 ops_health 的 kill3_freeze 行。
+
+- 2026-11-05 03:15 用户指令变更（冻结期内例外，非口径升级）：四手连败展示口径改跨天累计（kill1/kill9/kill8/kill3 四卡统一，新增 four_loss_cycles_total；原「今日四手连败」保留向后兼容）。只改统计展示与脚注，不改选码/尾码/封存/结算，不升 RULE_VERSION；kill3_tail.py / kill_three_view.py 重算 hash 并记入 ops/kill3-freeze.json 的 hash_updates（frozen_at 未重置）。提交 e359450。

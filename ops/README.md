@@ -1303,3 +1303,17 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 提交：fix(panel) bb882e5；chore(ops) 本台账。
 - 回滚：git revert 本台账 → bb882e5，或 cp /root/backups/panel-refresh-fix-20261104-012013/ 内 4 个 .py 回原路径后 py_compile，等一次 run_stats/面板重生成即恢复旧脚本（注意：旧模板会让自动刷新再次失效，仅作紧急回退）。
 - 注意：已打开的旧页面 DOM 已是不平衡结构，无法自愈，需手动 F5 一次加载 v24 脚本；之后数字每 8s 自动跳动。
+
+## 2026-11-05 03:15 四手连败改跨天累计（kill1/kill9/kill8/kill3 四卡统一）
+
+- 依据：用户 m00469「今日连败，4手统计，主要连败四手都算一次，一直叠加，下次连败四手，就是俩次」；两轮问卷确认：范围保持「当日业务日 05:00 起」不动、输赢判定仍为全部 8 项全中、计数不重叠（4/8/12 各 1 次），把「四手连败」改为跨天累计并四张框架卡一起改。
+- 口径：新增 `four_loss_cycles_total`——各框架按当前 RULE_VERSION 的全部已核验结算记录（跨天、不随 05:00 清零）按 target_period 排序，连续 4 期整组未全中记 1 次、8 期记 2 次、赢一次清零；旧版本（非当前 RULE_VERSION）记录不计入（与整组命中率「旧口径不计入」一致）。原「今日」字段 `four_loss_cycles` 保留向后兼容；`lib/panel_context.py` 的 _pick 白名单未改（不改变 AI 面板上下文）。
+- 现值（e359450）：KILL_ONE **0**（v3 · n=287）、KILL_NINE **2**（v4 · n=180）、KILL_EIGHT **0**（v2 · n=34）、KILL_THREE **0**（v13 · n=61）。kill3 的 4 连败块只出现在历史版本里（v1–v13 共 8 块，如 20261101049/1130/1150/1183、20261102200），v13 自 20261104005 起未再出现，故为 0。
+- 修法：四个 tail 模块抽 `_streak_stats(rows)` 并在 today_stats 返回 `four_loss_cycles_total`（跨天、按 RULE_VERSION 过滤）；四个 view 标签改「累计四手连败 <b>N</b> 次（自本版本上线起，跨天不重叠计数）」、脚注补口径说明；panel.html 用 `panel_io.update_panel` 手术式替换四卡标签与脚注（值 0/2/0/0），不重渲染整块。
+- 验证：patch 前 old_string 唯一性校验；`py_compile` COMPILE_OK；四视图 `_stats_html(today_stats())` 输出累计 0/2/0/0 且 `_foot_html()` 含新说明；panel 中「累计四手连败」标签 4 处、旧「今日四手连败」0 处；git diff 8 files、92 insertions / 52 deletions。
+- 冻结守卫：改动落在 v13 冻结受控文件（kill3_tail.py / kill_three_view.py），按 ops/kill3-stability-plan.md §8 走「用户指令例外」——重算两文件 sha256 并记入 ops/kill3-freeze.json 的 hash_updates（frozen_at / frozen_commit / RULE_VERSION 均未重置），stability-plan 追加记录。
+- 备份：/root/backups/four-loss-cumulative-20261105-031022/（4 tail + 4 view + 改动前 panel.html）。
+- 提交：feat(panel) e359450；chore(ops) 本台账 + freeze/plan 更新。
+- 运维复验：`scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift` 重建 baseline 后 `scripts/ops_health_check.py`：kill3_freeze 恢复 OK、manifest_drift=OK；overall 仍 WARN 只剩历史/环境告警（deepseek_balance 3.33 CNY、coverage 24h、model_usage 余额仅够约 2h 等）。
+- 回滚：`git revert 本台账 → e359450`，或 cp 备份内 4 个 tail + 4 个 view 回原路径、panel.html 用备份替换后 `py_compile`；下次面板重生成自动恢复旧文案。
+- 注意：panel.html 是 skip-worktree 生成物（不入库），每期由 run_stats/各任务重写时使用新视图代码；已打开的旧页面需 F5 或等面板自身刷新才会显示新标签。
