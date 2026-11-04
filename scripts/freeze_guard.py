@@ -185,7 +185,19 @@ def _rule_version(root, key):
         except OSError:
             return None
         match = re.search(r"^[ \t]*%s\s*=\s*'([^']+)'" % re.escape(name), text, re.M)
-        return match.group(1) if match else None
+        if match:
+            return match.group(1)
+        # 支持间接常量赋值：REVISION = V7_REVISION -> V7_REVISION = '...'
+        alias = re.search(r"^[ \t]*%s\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\b" % re.escape(name), text, re.M)
+        for _ in range(3):
+            if not alias:
+                return None
+            target = alias.group(1)
+            match = re.search(r"^[ \t]*%s\s*=\s*'([^']+)'" % re.escape(target), text, re.M)
+            if match:
+                return match.group(1)
+            alias = re.search(r"^[ \t]*%s\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\b" % re.escape(target), text, re.M)
+        return None
     if cfg.get('rule_from_seal'):
         document = _read_json(root / cfg['seal_path'], {}) or {}
         seals = document.get(cfg.get('seal_selector')) if isinstance(document, dict) else None
