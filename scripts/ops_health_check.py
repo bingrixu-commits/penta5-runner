@@ -1367,6 +1367,55 @@ def check_hitrate_cumulative(ctx):
                    'as_of_period': document.get('as_of_period')})
 
 
+STABILITY_REPORT_JSON = 'hitrate_stability.json'
+STABILITY_STALE_MINUTES = 45
+
+
+def check_hitrate_stability(ctx):
+    """命中率稳定性/断崖护栏：读 data/hitrate_stability.json（scripts/hitrate_stability.py）。
+
+    判定只看滚动窗口（100/300/500 期）与累计显著性：单日约 22 期、1 sigma 约 +-10pp，
+    日百分比不足以判断优劣，因此本检查在报告过期或出现「断崖/口径清零」时才升级。
+    """
+    path = ctx['root'] / 'data' / STABILITY_REPORT_JSON
+    payload, error = _load_json(path)
+    if not isinstance(payload, dict):
+        return _entry('hitrate_stability', WARN,
+                      '稳定性报告缺失/不可读（cron 应每 15 分钟跑 scripts/hitrate_stability.py）: %s'
+                      % (error or 'invalid shape'))
+    summary = payload.get('summary')
+    summary = summary if isinstance(summary, dict) else {}
+    status = str(summary.get('status') or 'unknown')
+    alerts = summary.get('alerts') if isinstance(summary.get('alerts'), list) else []
+    watch = summary.get('watch') if isinstance(summary.get('watch'), list) else []
+    generated = _parse_time(payload.get('generated_at'))
+    age_minutes = None
+    if generated is not None:
+        try:
+            age_minutes = (ctx['now'] - generated).total_seconds() / 60.0
+        except TypeError:
+            age_minutes = None
+    bits = ['as_of=%s' % (payload.get('as_of_period') or '-')]
+    if age_minutes is not None:
+        bits.append('age=%.1fmin' % age_minutes)
+    if alerts:
+        bits.append('断崖/清零: ' + '; '.join(
+            '%s(%s)' % (item.get('key'), ','.join(item.get('reasons') or []))
+            for item in alerts[:3] if isinstance(item, dict)))
+    if watch:
+        bits.append('观察: ' + ','.join(
+            str(item.get('key')) for item in watch[:5] if isinstance(item, dict)))
+    value = {'status': status, 'alerts': alerts, 'watch': watch,
+             'age_minutes': age_minutes, 'as_of_period': payload.get('as_of_period')}
+    detail = ' · '.join(bits)
+    if age_minutes is not None and age_minutes > STABILITY_STALE_MINUTES:
+        return _entry('hitrate_stability', WARN,
+                      '稳定性报告过期(%.1fmin>%dmin): %s' % (age_minutes, STABILITY_STALE_MINUTES, detail),
+                      value)
+    report_status = FAIL if status == 'fail' else WARN if status == 'warn' else OK
+    return _entry('hitrate_stability', report_status, detail, value)
+
+
 def check_coverage(ctx):
     """滚动发布覆盖率（现行水平），读 framework_hitrate_cumulative.json 的 coverage_24h。
 
@@ -1501,6 +1550,7 @@ CHECK_FUNCS = (
     check_provider_402,
     check_hitrate_cumulative,
     check_coverage,
+    check_hitrate_stability,
     check_ai_control,
     check_model_usage,
 )
@@ -1528,6 +1578,7 @@ FALLBACK_NAMES = {
     'check_provider_402': ('provider_402',),
     'check_hitrate_cumulative': ('hitrate_cumulative',),
     'check_coverage': ('coverage',),
+    'check_hitrate_stability': ('hitrate_stability',),
     'check_ai_control': ('ai_control',),
     'check_model_usage': ('model_usage',),
 }
