@@ -1,14 +1,14 @@
 {
   "files": {
-    "lib/kill3_tail.py": "426d014f4590724274284fae87defa26d752f28abe57d636f6138c5a69400cdc",
+    "lib/kill3_tail.py": "a96151f9c3b2be6b9c72ee3c3e9835d3e3056358d9d6a8668aa542f9050eebc4",
     "lib/kill_three_view.py": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
     "scripts/run_kill3_tail.py": "0261afc28c93f7af4a4469b8604c2974f2f677a0f9cd827db9ed6c16b158ac5d",
     "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
   },
   "freeze_hours": 72,
-  "freeze_ref_period": "20261104005",
-  "frozen_at": "2026-11-04T00:23:17+08:00",
-  "frozen_commit": "ccec6f2",
+  "freeze_ref_period": "20261105041",
+  "frozen_at": "2026-11-05T03:26:17+08:00",
+  "frozen_commit": "fb5f327",
   "hash_updates": [
     {
       "at": "2026-10-31T22:50:00+08:00",
@@ -305,10 +305,18 @@
       "new_sha256": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
       "old_sha256": "e4757632cf66ef865264f3043efd1025875acdc08b1c54e781bbd8b01f061d1f",
       "reason": "同上：标签改「累计四手连败 <b>N</b> 次（自本版本上线起，跨天不重叠计数）」、脚注补口径说明，取 four_loss_cycles_total。"
+    },
+    {
+      "at": "2026-11-05T03:26:17+08:00",
+      "commit": "fb5f327",
+      "file": "lib/kill3_tail.py",
+      "old_sha256": "426d014f4590724274284fae87defa26d752f28abe57d636f6138c5a69400cdc",
+      "new_sha256": "a96151f9c3b2be6b9c72ee3c3e9835d3e3056358d9d6a8668aa542f9050eebc4",
+      "reason": "用户指令 m00595 + 问卷（2026-11-05）：KILL_THREE 位置排除依据改「近50期热码 top3 + 上期重码 + 邻码」，删冷码候选并禁止冷码/长遗漏依据，升 RULE_VERSION v14；整组结构（8 项）不变、注册基线 0.5863 沿用，旧 v13 封存只读保留。"
     }
   ],
   "min_periods": 100,
-  "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。 2026-11-04 00:23 用户指令变更（冻结期内例外）：用户明确要求把「三数共现避开 3 组」加进本框架整组（8 项）并给出攻击语格式「除对数579-349-089」，经用户问卷确认（8 项口径 / 组序按 1-2-3 组标签 / 升 v13 替换现网 v12）直接升 v13（kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid），未走影子门禁（用户指令优先）；冻结戳按 v13 重置（frozen_at 2026-11-04T00:23:17 / freeze_ref_period 20261104004），旧 v1–v12 封存只读保留、结算口径不变。（注：ref=20261104004 已由 v12 于 00:20:50 封存，故首个 v13 封存为 ref=20261104005 → target=20261104006；freeze_ref_period 按 20261104005 起算。） 2026-11-05 03:15 用户指令例外（m00469 + 两轮问卷）：仅把「四手连败」统计展示改为跨天累计（新增 four_loss_cycles_total，旧今日字段保留），不改选码/尾码/封存/结算；kill3_tail.py 与 kill_three_view.py hash 重算并记入 hash_updates（未重置 frozen_at、未升 RULE_VERSION）。",
-  "rule_version": "kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid",
+  "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。 2026-11-04 00:23 用户指令变更（冻结期内例外）：用户明确要求把「三数共现避开 3 组」加进本框架整组（8 项）并给出攻击语格式「除对数579-349-089」，经用户问卷确认（8 项口径 / 组序按 1-2-3 组标签 / 升 v13 替换现网 v12）直接升 v13（kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid），未走影子门禁（用户指令优先）；冻结戳按 v13 重置（frozen_at 2026-11-04T00:23:17 / freeze_ref_period 20261104004），旧 v1–v12 封存只读保留、结算口径不变。（注：ref=20261104004 已由 v12 于 00:20:50 封存，故首个 v13 封存为 ref=20261104005 → target=20261104006；freeze_ref_period 按 20261104005 起算。） 2026-11-05 03:15 用户指令例外（m00469 + 两轮问卷）：仅把「四手连败」统计展示改为跨天累计（新增 four_loss_cycles_total，旧今日字段保留），不改选码/尾码/封存/结算；kill3_tail.py 与 kill_three_view.py hash 重算并记入 hash_updates（未重置 frozen_at、未升 RULE_VERSION）。 2026-11-05 用户指令例外（m00595 + 问卷）：KILL_THREE 位置排除依据改热码/重码/邻码（v14，禁冷码/长遗漏），整组结构不变、基线沿用 0.5863，旧 v13 封存只读保留；冻结戳按 v14 重置（frozen_at 2026-11-05T03:26:17+08:00 / freeze_ref_period 20261105041）。",
+  "rule_version": "kill3-tail-v14-hot-repeat-neighbor-hold3-two-counted-three-avoid",
   "version": 2
 }

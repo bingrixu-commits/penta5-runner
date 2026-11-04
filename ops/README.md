@@ -1317,3 +1317,16 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 运维复验：`scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift` 重建 baseline 后 `scripts/ops_health_check.py`：kill3_freeze 恢复 OK、manifest_drift=OK；overall 仍 WARN 只剩历史/环境告警（deepseek_balance 3.33 CNY、coverage 24h、model_usage 余额仅够约 2h 等）。
 - 回滚：`git revert 本台账 → e359450`，或 cp 备份内 4 个 tail + 4 个 view 回原路径、panel.html 用备份替换后 `py_compile`；下次面板重生成自动恢复旧文案。
 - 注意：panel.html 是 skip-worktree 生成物（不入库），每期由 run_stats/各任务重写时使用新视图代码；已打开的旧页面需 F5 或等面板自身刷新才会显示新标签。
+
+## 2026-11-05 03:26 KILL_THREE 位置排除依据改热码/重码/邻码（v14，禁冷码/长遗漏）
+
+- 依据：用户 m00595「定位排除，别死定冷码。规则对没」；问卷选择 A「对齐 KILL_ONE」：位置候选只给近 50 期热码 top3 + 上期重码 + 邻码（±1），删掉冷码段，prompt 明确禁止冷码/长遗漏为依据；位置是否参与（放弃哪一位）仍完全交给模型，不加硬约束。
+- 根因（取证）：v12 把热冷并列交给模型后，AI 仍死盯冷码与大遗漏——v12+v13 共 242 期、348 个 counted 杀码中冷码 top3 占 315（90.5%），热码 top3 仅 27（7.8%）；v13 的 128 个 counted 杀码里当期最冷码 98（76.6%）、热码 rank1 仅 2；distinct (pos,digit) 仅 22 种，b=8 连用 16/17 期（20261104286、20261105007 起）、q=8 连 9 期；64 期里 48 期固定放弃个位。对照 KILL_ONE v3（prompt 本就禁冷码）冷码 rank1 仅 14/291（≈7%）、位置分布 q122/b105/g33/s31。
+- 修法（只改 lib/kill3_tail.py）：`RULE_VERSION = kill3-tail-v14-hot-repeat-neighbor-hold3-two-counted-three-avoid`；position_lines 删「；冷码 {_cold_line(cold)}」只留热码；候选区标题改为「近50期各位置热码（出现次数多、当前遗漏短优先；仅历史统计，不代表未来概率）」；task1 改为「定位依据从该位置的近50期热码 top3、上期重码、上期邻码（±1）中自主选择，不得以上期冷码 / 长遗漏码作为定位依据；」；task5 改「热码、重码、遗漏只是历史特征」；prompt audit version → kill3-tail-prompt-v14-…、position_basis → hot-repeat-neighbor（cold_ranking 仅留 audit 追溯、不进 prompt）。整组构成（2 counted 位置 + 1 display_only + 合尾 + 2 反向形态 + 3 组三数共现 = 8 项）与封存/结算逻辑未变。
+- 基线：结构未变，用 10^4 开奖空间精确枚举复验（43 期样本）exp8=0.583307、exp5=0.621881，与已注册 8 项 0.5863 / 5 项 0.6191 一致，不重注册；`lib/hitrate_baseline.py` 与 `scripts/framework_hitrate_cumulative.py` 为 v14 各追加一行 `(8, 0.5863)`，旧 v13 行保留。
+- 验证：patch 前 old_string 唯一性校验（8 条 count==1）→ 备份 → patch → `py_compile` COMPILE-OK → /tmp/test_kill3_v14.py 11 条断言（prompt 内「冷码」仅剩禁止句 1 次、无冷码候选、热码段 4 位、audit 新字段）+ normalize_response（合法 JSON 通过、非法单双形态拒绝）ALL-TESTS-OK。真实周期：ref 20261105041 / target 20261105042 已封存 v14、publication_state=published、published_at 2026-11-05T03:26:18.650912+08:00，positions q5/b2/g6（display_only g，counted q/b，dropped s），reason「……模型原话：定位取上期重码与热码，尾沿用稳定码，形态取反面。」；panel.html KILL_THREE 区块口径行已变为「口径 kill3-tail-v14-… · 自 ref 20261105041 起（本版 1 期）」，`kill3-tail-v13` 0 处。
+- 冻结守卫：重算 lib/kill3_tail.py sha256（426d014f4590724274284fae87defa26d752f28abe57d636f6138c5a69400cdc → a96151f9c3b2be6b9c72ee3c3e9835d3e3056358d9d6a8668aa542f9050eebc4），重置 ops/kill3-freeze.json：rule_version=v14、frozen_at=2026-11-05T03:26:17+08:00、frozen_commit=fb5f327、freeze_ref_period=20261105041、hash_updates +1 条、policy 追加例外；check_kill3_freeze → status=ok（v14 进度自 20261105041 起算，0/100 期）。
+- 备份：/root/ops/kill3-v14-20261105-032446/（lib/kill3_tail.py、lib/kill_three_view.py、lib/hitrate_baseline.py、scripts/framework_hitrate_cumulative.py、scripts/run_kill3_tail.py、ops/kill3-freeze.json）。
+- 提交：feat(kill3) fb5f327；chore(ops) 本台账 + stability-plan/freeze 更新。
+- 回滚：`git revert 本台账 → fb5f327`，或 cp 备份 6 个文件回原路径后 `py_compile`；同时把 ops/kill3-freeze.json 恢复为 v13 冻结戳（rule_version/frozen_at/freeze_ref_period/frozen_commit 原值、删掉本次 hash_updates 条目、删掉 policy 例外句），下一期起旧 prompt 生效。
+- 注意：v13 封存只读保留，统计按 rule_version 分段；本版只改「依据候选与措辞」，模型仍可能偶尔选到冷码（无硬校验/重试），但 prompt 已不提供冷码候选且明确禁止——若新版本累计 n≥20 后冷码占比仍 >50%，再考虑加硬校验/重试。

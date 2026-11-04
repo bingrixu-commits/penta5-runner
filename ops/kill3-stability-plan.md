@@ -64,3 +64,4 @@
 - 冻结期结束条件：≥100 期 或 满 72 小时，先到为准；当前进度见 ops_health 的 kill3_freeze 行。
 
 - 2026-11-05 03:15 用户指令变更（冻结期内例外，非口径升级）：四手连败展示口径改跨天累计（kill1/kill9/kill8/kill3 四卡统一，新增 four_loss_cycles_total；原「今日四手连败」保留向后兼容）。只改统计展示与脚注，不改选码/尾码/封存/结算，不升 RULE_VERSION；kill3_tail.py / kill_three_view.py 重算 hash 并记入 ops/kill3-freeze.json 的 hash_updates（frozen_at 未重置）。提交 e359450。
+- 2026-11-05 03:26 用户指令变更（冻结期内例外，口径升级 v14）：位置排除依据改为「近50期热码 top3、上期重码、上期邻码（±1）」，删除冷码候选并明确禁止以冷码/长遗漏为依据（对齐 KILL_ONE v3）；整组结构不变（8 项），注册基线 0.5863 沿用、不重注册。冻结戳按 v14 重置：frozen_at 2026-11-05T03:26:17+08:00、freeze_ref_period 20261105041、frozen_commit fb5f327；lib/kill3_tail.py sha256 426d014f…→a96151f9… 记入 hash_updates。提交 fb5f327。
