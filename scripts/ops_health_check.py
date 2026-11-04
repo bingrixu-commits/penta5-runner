@@ -1369,6 +1369,8 @@ def check_hitrate_cumulative(ctx):
 
 STABILITY_REPORT_JSON = 'hitrate_stability.json'
 STABILITY_STALE_MINUTES = 45
+ATTRIBUTION_REPORT_JSON = 'hitrate_attribution.json'
+ATTRIBUTION_STALE_MINUTES = 40
 
 
 def check_hitrate_stability(ctx):
@@ -1414,6 +1416,127 @@ def check_hitrate_stability(ctx):
                       value)
     report_status = FAIL if status == 'fail' else WARN if status == 'warn' else OK
     return _entry('hitrate_stability', report_status, detail, value)
+
+
+
+def _pct_text(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return '-'
+    return '%.1f%%' % (value * 100.0)
+
+
+def check_hitrate_attribution(ctx):
+    """命中率归因：读 data/hitrate_attribution.json（scripts/hitrate_attribution.py）。
+
+    只检查报告是否新鲜、窗口是否覆盖到最近的已核验封存；单项 z 只作归因线索，
+    不因此升级 FAIL（单日/百期样本约 +/-5pp，须与累计显著性一起看）。
+    """
+    path = ctx['root'] / 'data' / ATTRIBUTION_REPORT_JSON
+    payload, error = _load_json(path)
+    if not isinstance(payload, dict):
+        return _entry('hitrate_attribution', WARN,
+                      '归因报告缺失/不可读（cron 应每 10 分钟跑 scripts/hitrate_attribution.py）: %s'
+                      % (error or 'invalid shape'))
+    frameworks = payload.get('frameworks')
+    frameworks = frameworks if isinstance(frameworks, dict) else {}
+    generated = _parse_time(payload.get('generated_at'))
+    age_minutes = None
+    if generated is not None:
+        try:
+            age_minutes = (ctx['now'] - generated).total_seconds() / 60.0
+        except TypeError:
+            age_minutes = None
+    summary = payload.get('summary') if isinstance(payload.get('summary'), dict) else {}
+    attention = summary.get('attention') if isinstance(summary.get('attention'), list) else []
+    bits = ['window=%s' % (payload.get('window') or '-'),
+            'frameworks=%d' % len(frameworks)]
+    if age_minutes is not None:
+        bits.append('age=%.1fmin' % age_minutes)
+    for key in ('killer', 'six'):
+        data = frameworks.get(key) if isinstance(frameworks.get(key), dict) else {}
+        if data:
+            bits.append('%s=%s/%s' % (key, _pct_text(data.get('group_rate')),
+                                      _pct_text(data.get('group_baseline'))))
+    if attention:
+        bits.append('关注项 ' + ','.join(str(item.get('item')) for item in attention[:3]
+                                          if isinstance(item, dict)))
+    value = {'window': payload.get('window'), 'attention_count': len(attention),
+             'age_minutes': age_minutes, 'as_of_period': payload.get('as_of_period')}
+    detail = ' · '.join(bits)
+    if not frameworks:
+        return _entry('hitrate_attribution', WARN, '归因报告没有可用框架数据: ' + detail, value)
+    if age_minutes is not None and age_minutes > ATTRIBUTION_STALE_MINUTES:
+        return _entry('hitrate_attribution', WARN,
+                      '归因报告过期(%.1fmin>%dmin): %s' % (age_minutes, ATTRIBUTION_STALE_MINUTES, detail),
+                      value)
+    return _entry('hitrate_attribution', OK, detail, value)
+
+
+FREEZE_GUARDS_JSON = 'ops/freeze-guards.json'
+
+
+def _freeze_guard_module():
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import freeze_guard
+    return freeze_guard
+
+
+def check_freeze_guards(ctx):
+    """通用口径冻结守卫: ops/freeze-guards.json (scripts/freeze_guard.py).
+
+    冻结窗口(默认 72h / 100 期)内受控源码或 RULE_VERSION 变化即 WARN；
+    shared 文件(如 lib/panel_context.py)变更只记录不告警；到期只记录不告警。
+    """
+    try:
+        rows = _freeze_guard_module().evaluate(ctx['root'])
+    except Exception as exc:
+        return _entry('freeze_guards', WARN,
+                      '通用冻结守卫不可用: %s: %s' % (type(exc).__name__, exc))
+    rows = [row for row in rows if isinstance(row, dict)]
+    if not rows:
+        return _entry('freeze_guards', WARN,
+                      'ops/freeze-guards.json 无框架记录，先跑 python3 scripts/freeze_guard.py init')
+    status = OK
+    details, values = [], {}
+    frozen = changed = expired = 0
+    for row in rows:
+        key = str(row.get('key') or '?')
+        if row.get('missing'):
+            status = _max_status(status, WARN)
+            details.append('%s=未冻结' % key)
+            values[key] = {'missing': True}
+            continue
+        frozen += 1
+        problems = []
+        if row.get('files_changed'):
+            changed += 1
+            status = _max_status(status, WARN)
+            problems.append('变更:' + ','.join(row['files_changed']))
+        if row.get('rule_changed'):
+            status = _max_status(status, WARN)
+            problems.append('口径:%s->%s' % (row.get('frozen_version') or '-',
+                                            row.get('rule_version') or '-'))
+        progress = '%d/%d期 %.1fh/%.0fh' % (
+            int(row.get('periods') or 0), int(row.get('min_periods') or 0),
+            float(row.get('hours') or 0), float(row.get('freeze_hours') or 0))
+        if row.get('expired'):
+            expired += 1
+            progress += '(到期)'
+        if row.get('shared_changed'):
+            problems.append('共享变更:' + ','.join(row['shared_changed']))
+        details.append('%s %s%s' % (key, progress, (' ' + ';'.join(problems)) if problems else ''))
+        values[key] = {'periods': row.get('periods'), 'min_periods': row.get('min_periods'),
+                       'hours': row.get('hours'), 'freeze_hours': row.get('freeze_hours'),
+                       'files_changed': row.get('files_changed') or [],
+                       'shared_changed': row.get('shared_changed') or [],
+                       'rule_version': row.get('rule_version'),
+                       'rule_changed': bool(row.get('rule_changed')),
+                       'expired': bool(row.get('expired'))}
+    detail = '冻结中 %d 框架·变更 %d·到期 %d: %s' % (frozen, changed, expired, '; '.join(details))
+    return _entry('freeze_guards', status, detail,
+                  {'frameworks': values, 'changed': changed, 'expired': expired})
 
 
 def check_coverage(ctx):
@@ -1533,7 +1656,7 @@ CHECK_FUNCS = (
     check_kill1,
     check_kill9,
     check_kill3_stability,
-    check_kill3_freeze,
+    check_freeze_guards,
     check_stat50,
     check_reference_statuses,
     check_panel,
@@ -1551,6 +1674,7 @@ CHECK_FUNCS = (
     check_hitrate_cumulative,
     check_coverage,
     check_hitrate_stability,
+    check_hitrate_attribution,
     check_ai_control,
     check_model_usage,
 )
@@ -1561,7 +1685,7 @@ FALLBACK_NAMES = {
     'check_kill1': ('kill1_tail',),
     'check_kill9': ('kill9_tail',),
     'check_kill3_stability': ('kill3_stability',),
-    'check_kill3_freeze': ('kill3_freeze',),
+    'check_freeze_guards': ('freeze_guards',),
     'check_stat50': ('stat50_seal',),
     'check_reference_statuses': tuple(name for name, _ in REFERENCE_STATUS_FILES),
     'check_panel': ('panel_html',),
@@ -1579,6 +1703,7 @@ FALLBACK_NAMES = {
     'check_hitrate_cumulative': ('hitrate_cumulative',),
     'check_coverage': ('coverage',),
     'check_hitrate_stability': ('hitrate_stability',),
+    'check_hitrate_attribution': ('hitrate_attribution',),
     'check_ai_control': ('ai_control',),
     'check_model_usage': ('model_usage',),
 }
