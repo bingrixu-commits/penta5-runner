@@ -1,0 +1,449 @@
+{
+ "guards": {
+  "framework": {
+   "files": {
+    "lib/auto_r1_framework.py": "06b294257804e007d8133bbf893557ab66e43e70c9523a80a2660f41f9c90823",
+    "lib/auto_r1_match5.py": "ede5da3be3ea3ace61866df146546efabf1611708a6226681968943d6619a13e"
+   },
+   "freeze_hours": 72.0,
+   "freeze_ref_period": "20261105089",
+   "frozen_at": "2026-11-05T07:30:53.521085+08:00",
+   "frozen_commit": "1497b06",
+   "hash_updates": [],
+   "label": "R1 框架",
+   "min_periods": 100,
+   "rule_version": "marginal-frequency-v2",
+   "shared": {
+    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
+   }
+  },
+  "he3_refine": {
+   "files": {
+    "lib/he3_refine.py": "c9e238e06dcaacbe813e30d880c761d39b45aff37129eb667f54f856d496b970",
+    "lib/he3_refine_stats.py": "05059c01feb06cffda358bba05acf66c2d4d84ebdb74ab27d8fcacb45eb7616b"
+   },
+   "freeze_hours": 72.0,
+   "freeze_ref_period": "20261105089",
+   "frozen_at": "2026-11-05T07:30:53.521085+08:00",
+   "frozen_commit": "1497b06",
+   "hash_updates": [],
+   "label": "he3 精修",
+   "min_periods": 100,
+   "rule_version": "he3-refine-v3-panel-context",
+   "shared": {
+    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
+   }
+  },
+  "kill1_tail": {
+   "files": {
+    "lib/kill1_tail.py": "a6dc66d32cdbe67cf316e860cb8578d4318a4770c05cc870af786d8c02ae1aa4",
+    "lib/kill_one_view.py": "f9d1af693f79dc93f96d23885df906d1b6c5c8588b182e90f7994faf1c6d3ff3"
+   },
+   "freeze_hours": 72.0,
+   "freeze_ref_period": "20261105090",
+   "frozen_at": "2026-11-05T07:30:53.521085+08:00",
+   "frozen_commit": "1497b06",
+   "hash_updates": [],
+   "label": "单位置杀码(kill1)",
+   "min_periods": 100,
+   "rule_version": "kill1-tail-v3-position-hold3",
+   "shared": {
+    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
+   }
+  },
+  "kill3_tail": {
+   "files": {
+    "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
+    "lib/kill_three_view.py": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
+    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38",
+    "scripts/run_kill3_tail.py": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5"
+   },
+   "freeze_hours": 72.0,
+   "freeze_ref_period": "20261105056",
+   "frozen_at": "2026-11-05T04:44:42+08:00",
+   "frozen_commit": "1497b06",
+   "hash_updates": [
+    {
+     "at": "2026-10-31T22:50:00+08:00",
+     "commit": "2f7a8b0",
+     "file": "lib/panel_context.py",
+     "new_sha256": "0791a310ddd402a74da375050253ecf3657a219cd9d5080a32f916c4c8150028",
+     "old_sha256": "9a8e458f6360fce19fa414a3063026637eee30bfabc164c334bbfc1b62d3226b",
+     "reason": "为新增 kill2_tail 面板上下文新增可选 kill2_stats/kill2_previous 参数；kill3 调用路径无参数变化，固定 fixture 下 kill3 panel_context snapshot/prompt_text sha256 逐字节不变（9d45ac95...），不改变 kill3 口径"
+    },
+    {
+     "at": "2026-11-01T00:05:00+08:00",
+     "commit": "pending-kill2-v2",
+     "file": "lib/panel_context.py",
+     "new_sha256": "95aa4cd808c87a3ce789cc0707895019cac92035b19b24ec0c68eb9ff14a6991",
+     "old_sha256": "0791a310ddd402a74da375050253ecf3657a219cd9d5080a32f916c4c8150028",
+     "reason": "kill2_tail 升 v2（三选二：3 位置展示、2 个计入整组）后，kill2_self 记录新增 display_only/counted/dropped 字段；kill3 调用路径不传 kill2 参数，固定 fixture 下 kill3 panel_context snapshot/prompt_text sha256 逐字节不变（9d45ac95…）"
+    },
+    {
+     "at": "2026-11-01T01:08:00+08:00",
+     "commit": "1e96ae5",
+     "file": "lib/panel_context.py",
+     "new_sha256": "11f6d164239e57f4333e0d9114b4b5a7f8439f64a8527490762d59049dd0df70",
+     "old_sha256": "95aa4cd808c87a3ce789cc0707895019cac92035b19b24ec0c68eb9ff14a6991",
+     "reason": "为新增 kill1_tail 框架在面板上下文新增可选 kill1_stats/kill1_previous 入参与 kill1_self 键；kill3/kill2 调用路径不传 kill1 参数，固定 fixture 下 A/B 两版模块 build()+prompt_text() 的 snapshot/prompt_text sha256 逐字节相同（kill3 2492ed52b8f5a36d…、kill2 65cb1b363cf79a81…），仅 kill1 调用新增 kill1_self，不改变 kill3/kill2 口径"
+    },
+    {
+     "at": "2026-11-01T02:26:00+08:00",
+     "commit": "7ce1814",
+     "file": "lib/panel_context.py",
+     "new_sha256": "c782632b33c1bf402e8baf5803f468cfcab2113d28d90dd65b11023a4493f284",
+     "old_sha256": "11f6d164239e57f4333e0d9114b4b5a7f8439f64a8527490762d59049dd0df70",
+     "reason": "按用户要求退役 cold_framework（冷码七项框架），删除 panel_context 的 _cold_frame 与 frameworks.cold_framework 注入；A/B 证明：kill1/kill2/kill3 固定 fixture 下新版 build()+prompt_text() 的 snapshot 与旧版逐字节相同、仅去掉 frameworks.cold_framework 一个键（其余键值全等），kill3 RULE_VERSION 与选码口径未变，属面板上下文输入的有意裁剪"
+    },
+    {
+     "at": "2026-11-01T04:05:00+08:00",
+     "commit": "0f2df82",
+     "file": "lib/panel_context.py",
+     "new_sha256": "0657aceb9b1d94a75b8427e76ff325f33586adebdf959790524ee2f8c1b70f36",
+     "old_sha256": "c782632b33c1bf402e8baf5803f468cfcab2113d28d90dd65b11023a4493f284",
+     "reason": "按用户要求彻底退役 kill2_tail（AI 二位置杀码 + 一合尾 + 二数合/三数合），删除 panel_context 的 _kill2_self 与 kill2_stats/kill2_previous 入参与 kill2_self 键；A/B 证明：kill1/kill3 固定 fixture 下新版 build()+prompt_text() 的 snapshot sha256 与旧版逐字节相同（kill3 4108cc37…、kill1 326a9146…），kill3 RULE_VERSION 与选码口径未变，属面板上下文输入的有意裁剪"
+    },
+    {
+     "at": "2026-11-01T04:10:43+08:00",
+     "commit": "2b0e841",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "a8c878d5dbfcaf596328b5f5dfb237bf7734e9c6ae2c80f6c23631dd7fc88299",
+     "old_sha256": "496dd526701731d9e97bc0d48e685ef181899d29b625caa96d3266ad1fd5f00a",
+     "reason": "用户 2026-11-01 03:39/04:0x 明确指令恢复「从三个位置选两个计入」口径并保留 v8 尾码 hold3 稳定化：RULE_VERSION 升 kill3-tail-v9-two-counted-hold3，COUNTED_POSITIONS 3→2，恢复 display_only 机制（提示词/校验/封存 sealed 字段含 display_only/counted、整组 5 项、攻击语只按 2 个计入位置排除）；尾码策略 TAIL_POLICY=hold3-until-miss 未变；合成用例 36 项 PASS、v9 真实周期 ref 20261101050/1051 已发布、首个 v9 结算 group_hit=True。"
+    },
+    {
+     "at": "2026-11-01T04:10:43+08:00",
+     "commit": "2b0e841",
+     "file": "lib/kill_three_view.py",
+     "new_sha256": "34cbe0b0aa5011c4480145aafef42bd45f434ea58136a129e9bf65b7d0e1cf7f",
+     "old_sha256": "097ec649819f90641f1495e5d832f3b9de1da64e9c713b7d4d4eb484092ae260",
+     "reason": "面板区块同步 v9：位置卡显示「仅展示，不计入整组」、统计行改 5 项（2 位置 + 合尾 + 2 形态）/位置 2 注/期、脚注与旧口径标签改为 v1–v8、口径追溯行显示 v9 与 61.91%（5 项）；尾码稳定化行保留。"
+    },
+    {
+     "at": "2026-11-01T04:10:43+08:00",
+     "commit": "063c701",
+     "file": "lib/panel_context.py",
+     "new_sha256": "36fa71540ba84134ef03d3f29d6ebd522d8d1664bd3097237c2ba4b2ee30c92d",
+     "old_sha256": "0657aceb9b1d94a75b8427e76ff325f33586adebdf959790524ee2f8c1b70f36",
+     "reason": "新增独立框架 kill2p_tail 在 panel_context 增加可选 kill2p_stats/kill2p_previous 入参与 kill2p_self 键；A/B 证明：固定 fixture 下 kill3 snapshot sha 0fda1290…、kill1 0383c3ac…、noargs 3b33018a… 与旧版逐字节相同，带 kill2p 入参仅新增 kill2p_self 键；kill3 调用路径不传该参数、口径未变。core commit 063c701。"
+    },
+    {
+     "at": "2026-11-01T04:47:00+08:00",
+     "commit": "7f7b45e",
+     "file": "lib/panel_context.py",
+     "new_sha256": "bb2bca54a941740af52520fb1baf34e7e531c581bdaf9a0db03062f5d769d432",
+     "old_sha256": "36fa71540ba84134ef03d3f29d6ebd522d8d1664bd3097237c2ba4b2ee30c92d",
+     "reason": "kill2p 升 v2「扩 AI 输入」：panel_context 新增可选 extra_panel_input（默认 False）与 cold_stats/other_ai_self 两个富上下文键（冷码统计 + kill3/kill1 最近封存与近 10 期战绩），富上下文独立上限 12000；kill3/kill1 调用不传该参数，固定 fixture 下 build()+prompt_text() 与改前逐字节相同（kill3 72cc24ca…、kill1 feb6b4c8…、kill2p v1 模式 61f31de0…），不改变 kill3 口径"
+    },
+    {
+     "at": "2026-11-01T06:20:00+08:00",
+     "commit": "pending-avoid2-ai-context",
+     "file": "lib/panel_context.py",
+     "new_sha256": "00982a0273115829028b7192936af98e7cd6f4be42689be9bd2c6764ae1d3167",
+     "old_sha256": "bb2bca54a941740af52520fb1baf34e7e531c581bdaf9a0db03062f5d769d432",
+     "reason": "用户指令「这个也加入 AI 模型」：panel_context 新增 three_avoid2 参考段（三数共现避开1/2/3组当前号码 + 最新一期逐组结果与合并结论 + 本/上一业务日合并核验与10^4精确枚举基线），kill1/kill2p/kill3 提示词与 six/he3 输入文档、killer/framework 归档同步携带；A/B：同 fixture 下除新增键外其余键逐字节相同，数据文件缺失时值为 null；kill3 RULE_VERSION 未变"
+    },
+    {
+     "at": "2026-11-01T08:35:07+08:00",
+     "commit": "pending-kill2",
+     "file": "lib/panel_context.py",
+     "new_sha256": "3e0df93e85697271ee60e25af2b93c58c20c528f0c070bd885d308b74b44542c",
+     "old_sha256": "00982a0273115829028b7192936af98e7cd6f4be42689be9bd2c6764ae1d3167",
+     "reason": "新增独立框架 kill2_tail（kill2-tail-v1-two-positions-he2he3）：panel_context 增加可选 kill2_stats/kill2_previous 入参与 kill2_self 键；A/B 证明固定 fixture 下 kill3/kill1/kill2p/noargs 的 build() 输出逐字节相同（kill3 7637ced1…、kill1 01fc5228…、kill2p 889e8fa2…、noargs 0973b419…），仅带 kill2 入参时新增 kill2_self；kill3 RULE_VERSION 与口径未变"
+    },
+    {
+     "at": "2026-11-01T09:06:48+08:00",
+     "commit": "pending-kill4",
+     "file": "lib/panel_context.py",
+     "new_sha256": "f184f60f9d4b2bdf22b4e2c0e9370eedf6ba4444f3c35e630097f8ae4cfed46c",
+     "old_sha256": "3e0df93e85697271ee60e25af2b93c58c20c528f0c070bd885d308b74b44542c",
+     "reason": "为新增 kill4_tail 面板上下文新增可选 kill4_stats/kill4_previous 参数；A/B 证明：固定 fixture 下 kill3/kill2 panel_context snapshot sha256 逐字节不变（kill3=13b62e58c526961ffc45e58b68c8b03e0be058e3f64b5bd0b5ce4ddcd9370e2d、kill2=93b5be2e0fc94a62bd3ac1d1cd02454bae6c486b7d96ed6677d8461494b61e09），不改变既有框架口径"
+    },
+    {
+     "at": "2026-11-01T10:09:48.688441+08:00",
+     "commit": "6903e8f",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "96c537dba763293abc2cd7c5869b39ad240ad04c8b120106158b38785e10b515",
+     "old_sha256": "a8c878d5dbfcaf596328b5f5dfb237bf7734e9c6ae2c80f6c23631dd7fc88299",
+     "reason": "用户 2026-11-01 10:0x 明确指令关掉两套「3 期」限制——尾码稳定化 hold3-until-miss 与位置/弃位最多连用 3 期强制换码，全部交给模型自主决定：RULE_VERSION 升 kill3-tail-v10-two-counted-free，删除 apply_tail_policy 沿用与 validate_position_choice 强制换码，提示词去掉【合尾稳定化规则】【位置与弃位使用限制】；命中口径不变（整组 5 项/2 注）；v10 真实周期 ref 20261101121 已发布、tail_policy=None、无 position_restriction。"
+    },
+    {
+     "at": "2026-11-01T10:09:48.688441+08:00",
+     "commit": "6903e8f",
+     "file": "lib/kill_three_view.py",
+     "new_sha256": "9ad264b495197c93b84af58af8f5ded4c73d0668ba4e3270a0d19fcf618b98c2",
+     "old_sha256": "34cbe0b0aa5011c4480145aafef42bd45f434ea58136a129e9bf65b7d0e1cf7f",
+     "reason": "用户 2026-11-01 10:0x 明确指令关掉两套「3 期」限制——尾码稳定化 hold3-until-miss 与位置/弃位最多连用 3 期强制换码，全部交给模型自主决定：RULE_VERSION 升 kill3-tail-v10-two-counted-free，删除 apply_tail_policy 沿用与 validate_position_choice 强制换码，提示词去掉【合尾稳定化规则】【位置与弃位使用限制】；命中口径不变（整组 5 项/2 注）；v10 真实周期 ref 20261101121 已发布、tail_policy=None、无 position_restriction。"
+    },
+    {
+     "at": "2026-11-01T10:09:48.688441+08:00",
+     "commit": "6903e8f",
+     "file": "scripts/run_kill3_tail.py",
+     "new_sha256": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d",
+     "old_sha256": "28d043701f9168cea8e44eefb2d13952af52cef946fe37bba3962736bd9e262d",
+     "reason": "用户 2026-11-01 10:0x 明确指令关掉两套「3 期」限制——尾码稳定化 hold3-until-miss 与位置/弃位最多连用 3 期强制换码，全部交给模型自主决定：RULE_VERSION 升 kill3-tail-v10-two-counted-free，删除 apply_tail_policy 沿用与 validate_position_choice 强制换码，提示词去掉【合尾稳定化规则】【位置与弃位使用限制】；命中口径不变（整组 5 项/2 注）；v10 真实周期 ref 20261101121 已发布、tail_policy=None、无 position_restriction。"
+    },
+    {
+     "at": "2026-11-01T10:26:53.756020+08:00",
+     "commit": "kill5-panel-context",
+     "file": "lib/panel_context.py",
+     "new_sha256": "df3305ab78e5d72d7228cb05459b7978925f3301b695d2a0711a0a4d114e6359",
+     "old_sha256": "f184f60f9d4b2bdf22b4e2c0e9370eedf6ba4444f3c35e630097f8ae4cfed46c",
+     "reason": "kill5 新增 _kill5_self 与 build() 可选 kill5_stats/kill5_previous 入参、输出独立键 kill5_self；A/B 证明：固定 fixture（now 固定）下 kill3+k4 上下文 old/new sha256 逐字节相同 = 12c5667a1fad476232c29f6fcf98a73e67ee0ec2742bc48fc6dca76272b0d8a6，kill3/kill4 口径未变，kill5_self 只增不改。"
+    },
+    {
+     "at": "2026-11-01T10:38:48+08:00",
+     "commit": "pending-kill6",
+     "file": "lib/panel_context.py",
+     "new_sha256": "2f9d601111d61914f0360bff28a0df0d7e5b5ea50a875ca744c5d28a8ce2bd15",
+     "old_sha256": "df3305ab78e5d72d7228cb05459b7978925f3301b695d2a0711a0a4d114e6359",
+     "reason": "为新增 kill6_tail 面板上下文新增可选 kill6_stats/kill6_previous 参数；A/B 证明：固定 fixture 下 kill3/kill2/kill4 panel_context snapshot sha256 逐字节不变（kill3=3a78269d…、kill2=e9fe5d95…、kill4=1b772a30…），不改变既有框架口径"
+    },
+    {
+     "at": "2026-11-01T10:48:23+08:00",
+     "commit": "pending-kill7",
+     "file": "lib/panel_context.py",
+     "new_sha256": "bc6062c31a7e791e925036a02e322f5b0d9a0e38b9cf1f695ab463968fa9e41f",
+     "old_sha256": "2f9d601111d61914f0360bff28a0df0d7e5b5ea50a875ca744c5d28a8ce2bd15",
+     "reason": "为新增 kill7_tail 面板上下文新增可选 kill7_stats/kill7_previous 参数；A/B 证明：固定 fixture 下 kill3/kill2/kill4/kill6 panel_context snapshot sha256 逐字节不变（kill3=9224d43d…、kill2=f06ff197…、kill4=fb588a10…、kill6=2457369a…）"
+    },
+    {
+     "at": "2026-11-01T11:20:35+08:00",
+     "commit": "pending-kill67-retire",
+     "file": "lib/panel_context.py",
+     "new_sha256": "4d174e9f8f8114cc71044693311aa18c9d0b11e4577bcf889f028250a6c15e75",
+     "old_sha256": "bc6062c31a7e791e925036a02e322f5b0d9a0e38b9cf1f695ab463968fa9e41f",
+     "reason": "退役 kill6/kill7（重复框架），删除 panel_context 的 kill6_self/kill7_self；A/B 证明剩余框架 kill3/kill2/kill4/kill5 输出逐字节不变（188a759b…/148208bc…/dc5a3170…/bb7ba74c…）"
+    },
+    {
+     "at": "2026-11-01T11:42:02+08:00",
+     "commit": "pending-kill4-retire",
+     "file": "lib/panel_context.py",
+     "new_sha256": "eb3446c5cdb7bf68ea58d83b5be1c01ea20968ac734d34d5c99440fd34640ce7",
+     "old_sha256": "4d174e9f8f8114cc71044693311aa18c9d0b11e4577bcf889f028250a6c15e75",
+     "reason": "退役 kill4（hold3 重复框架，保留 kill5 尾码自主），删 _kill4_self + kill4_stats/kill4_previous 参数 + kill4_self 溢出名；剩余框架 A/B 逐字节相等 9837B"
+    },
+    {
+     "at": "2026-11-01T12:03:38+08:00",
+     "commit": "pending-kill3-v11",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "ed228b26e66b16ab741858d674ae1c50cecaa3302097133e30a8dfa8a6212ad8",
+     "old_sha256": "96c537dba763293abc2cd7c5869b39ad240ad04c8b120106158b38785e10b515",
+     "reason": "kill3 位置杀码尾码 hold3 转正（影子对照 n≥50 达标：命中率 CI 内不显著变差、换码 39→21）；RULE_VERSION kill3-tail-v10-two-counted-free → kill3-tail-v11-hold3-two-counted"
+    },
+    {
+     "at": "2026-11-01T12:03:38+08:00",
+     "commit": "pending-kill3-v11",
+     "file": "lib/kill_three_view.py",
+     "new_sha256": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
+     "old_sha256": "9ad264b495197c93b84af58af8f5ded4c73d0668ba4e3270a0d19fcf618b98c2",
+     "reason": "kill3 位置杀码尾码 hold3 转正（影子对照 n≥50 达标：命中率 CI 内不显著变差、换码 39→21）；RULE_VERSION kill3-tail-v10-two-counted-free → kill3-tail-v11-hold3-two-counted"
+    },
+    {
+     "at": "2026-11-01T12:03:38+08:00",
+     "commit": "pending-kill3-v11",
+     "file": "scripts/run_kill3_tail.py",
+     "new_sha256": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33",
+     "old_sha256": "2a41b46549925a7af72bcebce49fc9443711c63e07640719bbc2f4232119015d",
+     "reason": "kill3 位置杀码尾码 hold3 转正（影子对照 n≥50 达标：命中率 CI 内不显著变差、换码 39→21）；RULE_VERSION kill3-tail-v10-two-counted-free → kill3-tail-v11-hold3-two-counted"
+    },
+    {
+     "at": "2026-11-01T12:05:56+08:00",
+     "commit": "pending-kill2-retire",
+     "file": "lib/panel_context.py",
+     "new_sha256": "492e2b87fcdeeb3ff2b918ffddf56fe8917cc8e085b3091fd9789451827c3190",
+     "old_sha256": "eb3446c5cdb7bf68ea58d83b5be1c01ea20968ac734d34d5c99440fd34640ce7",
+     "reason": "kill2 退役：删除 _kill2_self 与 kill2_stats/kill2_previous 参数；A/B 证明 kill3/kill1/kill2p/kill5 固定 fixture 输出逐字节不变（sha256 0fb59c9c21f4）"
+    },
+    {
+     "at": "2026-11-01T12:16:51+08:00",
+     "commit": "pending-kill5-retire",
+     "file": "lib/panel_context.py",
+     "new_sha256": "3b1c26c79129d0286ee19222250cd4daccba5172fa3c7336da26122443f44780",
+     "old_sha256": "492e2b87fcdeeb3ff2b918ffddf56fe8917cc8e085b3091fd9789451827c3190",
+     "reason": "kill5 退役：删除 _kill5_self 与 kill5_stats/kill5_previous 参数；A/B 证明 kill3/kill1/kill2p 固定 fixture 输出逐字节不变（旧模块去掉 kill5_self 后 sha256 = 新版：bare 5ad4cb6e568e3612 / kill3 77c994150e7b7af1 / all fa9f58b2b65c442c / rich 581892950f3894ac）"
+    },
+    {
+     "at": "2026-11-01T12:26:00+08:00",
+     "commit": "pending-kill2p-retire",
+     "file": "lib/panel_context.py",
+     "new_sha256": "619e1938d3b21e4521828f47d913653d65f0022928bfa7b43bc9b4a097eebb52",
+     "old_sha256": "3b1c26c79129d0286ee19222250cd4daccba5172fa3c7336da26122443f44780",
+     "reason": "kill2p 退役：删除 _kill2p_self 与 kill2p_stats/kill2p_previous 参数；A/B 证明 kill3/kill1 固定 fixture 输出逐字节不变（bare 5e8706a2f3f38e1f / kill3 ecfe0dfd8b9e434d / kill1 57266d53388c9e6f / kill3+kill1 6cd6cfe85ec5ec1b / rich a53a66f75494a229），kill2p 入参被 TypeError 拒绝"
+    },
+    {
+     "at": "2026-11-01T22:20:40+08:00",
+     "commit": "5d27f31",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "74efe32c641dd4ec1376f429c77d9e048f3f19bc234a448584cb2eb7695844d2",
+     "old_sha256": "ed228b26e66b16ab741858d674ae1c50cecaa3302097133e30a8dfa8a6212ad8",
+     "reason": "用户反馈位置杀码+合尾定位依据只取冷码 top3（面板横向战绩读得到但无逐位号码统计），问卷选择改口径：位置与合尾均改热冷并列（热码/冷码/重码/邻码都展示、模型自主选、不写禁止冷码）；RULE_VERSION 升 kill3-tail-v12-hot-cold-hold3-two-counted；结构不变（5项/2注）整组精确基线沿用 0.6191 不重注册"
+    },
+    {
+     "at": "2026-11-02T00:29:47+08:00",
+     "commit": "pending-kill9",
+     "file": "lib/panel_context.py",
+     "new_sha256": "dc8146747461fac2f8202f9a8e5cf8509ed64077dcb6e895045a8701565ac79d",
+     "old_sha256": "619e1938d3b21e4521828f47d913653d65f0022928bfa7b43bc9b4a097eebb52",
+     "reason": "新增独立框架 kill9_tail（4形态排除+二数合+三数合，6项）：panel_context 增加可选 kill9_stats/kill9_previous 入参与 kill9_self 键、_ai_self_frame 增 kill9_tail 分支、_model_tiers 键列表加 PENTA5_MODEL_KILL9；A/B 证明固定 fixture 下 kill3/kill1 build() 输出与旧版逐字节相同（KILL9_A_B_EQUAL True，无 kill9 参数时 build 逐字节一致），仅带 kill9 入参时新增 kill9_self；kill3 RULE_VERSION 与口径未变"
+    },
+    {
+     "at": "2026-11-02T02:54:26+08:00",
+     "commit": "pending-kill9-v2",
+     "file": "lib/panel_context.py",
+     "new_sha256": "cd3494f74dcdc431880d390d5095ae68350625a0d18631da68631ba2b7ed1196",
+     "old_sha256": "dc8146747461fac2f8202f9a8e5cf8509ed64077dcb6e895045a8701565ac79d",
+     "reason": "kill9 v2（四形态改为 大小/单双/全同/混合）：panel_context._kill9_self 与 _ai_self_frame 的 kill9_tail 字段 parity/size/prime/middle → size/parity/all/mixed；A/B 证明 v1→v2 除 kill9 字段名外 build 逐字节一致、kill1/kill3 帧完全一致；kill3 RULE_VERSION 与口径未变"
+    },
+    {
+     "at": "2026-11-02T03:42:24+08:00",
+     "commit": "pending-kill9-v3",
+     "file": "lib/panel_context.py",
+     "new_sha256": "e7b2966216dcf4405e9a784b25f008341247b52575ad11a4cbe866eb089e0e27",
+     "old_sha256": "cd3494f74dcdc431880d390d5095ae68350625a0d18631da68631ba2b7ed1196",
+     "reason": "kill9 v3 面板上下文 previous/stats 字段由 size/parity/all/mixed 改为 forms/form_kinds/form_pool；_ai_self_frame kill9_tail 字段同步；A/B 自证（6/0）证明 kill1/kill3 上下文与 prompt_text 逐字节不变"
+    },
+    {
+     "at": "2026-11-02T04:00:00+08:00",
+     "commit": "pending-kill9-v4",
+     "file": "lib/panel_context.py",
+     "new_sha256": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38",
+     "old_sha256": "e7b2966216dcf4405e9a784b25f008341247b52575ad11a4cbe866eb089e0e27",
+     "reason": "kill9 v4（3 池选形态 + 1 全同形态 4 选 1 + 二数合 + 三数合）：panel_context._kill9_self previous 字段与 _ai_self_frame kill9_tail fields 增加 all_form；A/B 自证（6/0）证明 kill1/kill3 上下文与 prompt_text 逐字节不变（OLD_SHA 619e1938… / NEW_SHA 79031796…）"
+    },
+    {
+     "at": "2026-11-04T00:23:17+08:00",
+     "commit": "ccec6f2",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "3c1eeba3cbbacc5a864297a93e7467a856beaea1af605fc87d1966f1fc063a59",
+     "old_sha256": "74efe32c641dd4ec1376f429c77d9e048f3f19bc234a448584cb2eb7695844d2",
+     "reason": "kill3 v13：整组 5 项 → 8 项（新增三数共现避开 3 组，由后端 extraKills 按目标期给定、模型不选）；新增 resolve_three_avoid/_group_code/group_avoid_hit、build_attack 追加「除对数a-b-c」、build_prompt 固定三数组段与 8 项口径、settle three_avoid 逐组命中、today_stats 三数共现战绩；RULE_VERSION → kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid。"
+    },
+    {
+     "at": "2026-11-04T00:23:17+08:00",
+     "commit": "ccec6f2",
+     "file": "lib/kill_three_view.py",
+     "new_sha256": "e4757632cf66ef865264f3043efd1025875acdc08b1c54e781bbd8b01f061d1f",
+     "old_sha256": "9e0c0a539d62d831bd5de0189001eedbc09c68dff6342ae375c79aee728b1944",
+     "reason": "kill3 v13 面板：3 张「三数共现 避开1组/2组/3组」卡、整组统计 8 项 + 三数共现避开 3 组合并/逐组战绩、结算行三数共现命中、脚注 8 项口径。"
+    },
+    {
+     "at": "2026-11-04T00:23:17+08:00",
+     "commit": "ccec6f2",
+     "file": "scripts/run_kill3_tail.py",
+     "new_sha256": "88018efb8bf8b31bc7d8d7a8da22d17cabe35cb71fe7a7e132e76e6610ff5a1e",
+     "old_sha256": "4ff478fc7d405d0c27087e1a1ca9d13754272583a1bb778e4676527b58388d33",
+     "reason": "kill3 v13 runner：_resolve_three_avoid(target) 取三数组（20s 轮询）→ build_prompt(three_avoid=) / create_seal(extra={\"three_avoid\":})，published 日志打印「三数共现 除对数…」。"
+    },
+    {
+     "at": "2026-11-04T00:29:30+08:00",
+     "commit": "4225b30",
+     "file": "scripts/run_kill3_tail.py",
+     "new_sha256": "0261afc28c93f7af4a4469b8604c2974f2f677a0f9cd827db9ed6c16b158ac5d",
+     "old_sha256": "88018efb8bf8b31bc7d8d7a8da22d17cabe35cb71fe7a7e132e76e6610ff5a1e",
+     "reason": "真机首期 ref=20261104005 实测：三数组由主预测管线在开奖后约 +63s 写入 state.json，晚于本任务启动（+38s），原 20s 固定等待在 +58s 超时导致该期漏发；改为按 deadline 倒推等待（reserve=75s、上限 150s），00:28:04 正常发布。"
+    },
+    {
+     "at": "2026-11-05T03:12:02+08:00",
+     "commit": "e359450",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "426d014f4590724274284fae87defa26d752f28abe57d636f6138c5a69400cdc",
+     "old_sha256": "3c1eeba3cbbacc5a864297a93e7467a856beaea1af605fc87d1966f1fc063a59",
+     "reason": "用户指令 m00469 + 两轮问卷（2026-11-05）：四手连败改跨天累计——today_stats 抽 _streak_stats()、新增 four_loss_cycles_total（按当前 RULE_VERSION 全量已核验记录跨天统计、不重叠 4/8/12），今日 four_loss_cycles 保留向后兼容；不影响选码/尾码/封存/开奖后结算，不升 RULE_VERSION。"
+    },
+    {
+     "at": "2026-11-05T03:12:02+08:00",
+     "commit": "e359450",
+     "file": "lib/kill_three_view.py",
+     "new_sha256": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
+     "old_sha256": "e4757632cf66ef865264f3043efd1025875acdc08b1c54e781bbd8b01f061d1f",
+     "reason": "同上：标签改「累计四手连败 <b>N</b> 次（自本版本上线起，跨天不重叠计数）」、脚注补口径说明，取 four_loss_cycles_total。"
+    },
+    {
+     "at": "2026-11-05T03:26:17+08:00",
+     "commit": "fb5f327",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "a96151f9c3b2be6b9c72ee3c3e9835d3e3056358d9d6a8668aa542f9050eebc4",
+     "old_sha256": "426d014f4590724274284fae87defa26d752f28abe57d636f6138c5a69400cdc",
+     "reason": "用户指令 m00595 + 问卷（2026-11-05）：KILL_THREE 位置排除依据改「近50期热码 top3 + 上期重码 + 邻码」，删冷码候选并禁止冷码/长遗漏依据，升 RULE_VERSION v14；整组结构（8 项）不变、注册基线 0.5863 沿用，旧 v13 封存只读保留。"
+    },
+    {
+     "at": "2026-11-05T04:44:42+08:00",
+     "commit": "2c34e59",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
+     "old_sha256": "a96151f9c3b2be6b9c72ee3c3e9835d3e3056358d9d6a8668aa542f9050eebc4",
+     "reason": "用户指令 m00003 + 问卷（2026-11-05）：KILL_THREE 位置段恢复「热码 top3 + 冷码 top3」并列并删除禁用冷码文案，新增【位置杀码稳定化影子】对照段（hold2/3/5/until-miss，735 期/1571 注只读回放），是否沿用上期同位置杀码由模型自主决定，升 RULE_VERSION v15；整组结构（8 项/2 注/hold3 尾码）不变，基线 0.5863 沿用，旧 v14 封存只读保留。"
+    },
+    {
+     "at": "2026-11-05T04:44:42+08:00",
+     "commit": "2c34e59",
+     "file": "scripts/run_kill3_tail.py",
+     "new_sha256": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5",
+     "old_sha256": "0261afc28c93f7af4a4469b8604c2974f2f677a0f9cd827db9ed6c16b158ac5d",
+     "reason": "用户指令 m00003 + 问卷（2026-11-05）：KILL_THREE 位置段恢复「热码 top3 + 冷码 top3」并列并删除禁用冷码文案，新增【位置杀码稳定化影子】对照段（hold2/3/5/until-miss，735 期/1571 注只读回放），是否沿用上期同位置杀码由模型自主决定，升 RULE_VERSION v15；整组结构（8 项/2 注/hold3 尾码）不变，基线 0.5863 沿用，旧 v14 封存只读保留。"
+    }
+   ],
+   "label": "三位置杀码(kill3)",
+   "min_periods": 100,
+   "rule_version": "kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid",
+   "shared": {}
+  },
+  "kill9_tail": {
+   "files": {
+    "lib/kill9_tail.py": "71fa3a69ead3cc6179cc616ad2ff322a1cc67051481e990b55d32c668c5c032a",
+    "lib/kill_nine_view.py": "75181c91a461645935b44b6389bb39e3bca850d05e120ccf4733ab4cbb360feb"
+   },
+   "freeze_hours": 72.0,
+   "freeze_ref_period": "20261105090",
+   "frozen_at": "2026-11-05T07:30:53.521085+08:00",
+   "frozen_commit": "1497b06",
+   "hash_updates": [],
+   "label": "两位置杀码(kill9)",
+   "min_periods": 100,
+   "rule_version": "kill9-tail-v4-pool-three-plus-all-form-he2he3",
+   "shared": {
+    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
+   }
+  },
+  "killer": {
+   "files": {
+    "lib/auto_r1_killer.py": "2d1ece664788687cc9bf0cf4c38ebbd28a7cdccd1055b730fac7cbe8cf86c92b",
+    "lib/auto_r1_match5.py": "ede5da3be3ea3ace61866df146546efabf1611708a6226681968943d6619a13e",
+    "lib/killer_ai_client.py": "07176330bc22bb6479ab2ebfc5869599516d5056aeefdd9b9cf283a9ef6686de",
+    "lib/killer_tail_hold.py": "715ba001f842640479f10e5edfd93e294ccb7ea7156ecac8b95faf51d63a80a7"
+   },
+   "freeze_hours": 72.0,
+   "freeze_ref_period": "20261105089",
+   "frozen_at": "2026-11-05T07:30:53.521085+08:00",
+   "frozen_commit": "1497b06",
+   "hash_updates": [],
+   "label": "智能排除(killer)",
+   "min_periods": 100,
+   "rule_version": "conditional-transition-v1",
+   "shared": {
+    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
+   }
+  },
+  "selected_six": {
+   "files": {
+    "lib/selected_six_contract.py": "15987e4cccbf0d9ad3a56cd593e5768b104df01517bc487e8abfcf679ae963cf",
+    "lib/selected_six_model.py": "34d399a07ef3b53a39cfcbf34a46b28dff66dcd9e7f19ff08a7e0df8f1ada39d",
+    "lib/selected_six_request_options.py": "a0c0f02ea079896f576bff04ce26f6129bc35229ded0cb0601e98d0e6825a313"
+   },
+   "freeze_hours": 72.0,
+   "freeze_ref_period": "20261105089",
+   "frozen_at": "2026-11-05T07:30:53.521085+08:00",
+   "frozen_commit": "1497b06",
+   "hash_updates": [],
+   "label": "独立六项",
+   "min_periods": 100,
+   "rule_version": null,
+   "shared": {
+    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
+   }
+  }
+ },
+ "updated_at": "2026-11-05T07:32:44.721730+08:00",
+ "version": 1
+}
