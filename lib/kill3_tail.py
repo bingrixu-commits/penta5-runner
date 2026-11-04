@@ -1143,6 +1143,22 @@ def _business_key(value):
     return business_start(moment)
 
 
+def _streak_stats(rows):
+    """Streak stats for settlement rows: (win, loss, max_loss, four_loss_cycles)."""
+    win = loss = max_loss = four_loss = 0
+    for item in sorted(rows, key=lambda row: str(row.get('target_period'))):
+        if item.get('group_hit') is True:
+            win += 1
+            loss = 0
+        else:
+            loss += 1
+            win = 0
+            max_loss = max(max_loss, loss)
+            if loss % 4 == 0:
+                four_loss += 1
+    return win, loss, max_loss, four_loss
+
+
 def today_stats(now=None):
     """Verified today's aggregate plus pending count; never mixes late records in."""
     now = now or beijing_now()
@@ -1152,6 +1168,7 @@ def today_stats(now=None):
     verified = [item for item in settlements
                 if item.get('verified') is True
                 and _business_key(item.get('settled_at')) == start]
+    verified_all = [item for item in settlements if item.get('verified') is True]
     seal_rule = {str(seal.get('ref_period')): seal.get('rule_version')
                  for seal in seals if isinstance(seal, dict)}
 
@@ -1202,17 +1219,9 @@ def today_stats(now=None):
                 bucket['hits'] += 1
     for bucket in avoid_stats.values():
         bucket['rate'] = (bucket['hits'] / bucket['bets']) if bucket['bets'] else None
-    win = loss = max_loss = four_loss = 0
-    for item in sorted(todays, key=lambda row: str(row.get('target_period'))):
-        if item.get('group_hit') is True:
-            win += 1
-            loss = 0
-        else:
-            loss += 1
-            win = 0
-            max_loss = max(max_loss, loss)
-            if loss % 4 == 0:
-                four_loss += 1
+    win, loss, max_loss, four_loss = _streak_stats(todays)
+    four_loss_total = _streak_stats(
+        [item for item in verified_all if _rule_version(item) == RULE_VERSION])[3]
     latest = latest_period()
     settled_targets = {str(item.get('target_period')) for item in settlements}
     pending = 0
@@ -1239,6 +1248,7 @@ def today_stats(now=None):
         'current_loss_streak': loss,
         'max_loss_streak': max_loss,
         'four_loss_cycles': four_loss,
+        'four_loss_cycles_total': four_loss_total,
         'three_avoid': {'items': THREE_AVOID_ITEMS, 'per_group': avoid_stats,
                         'merged': {'hits': avoid_merged_hits,
                                    'bets': avoid_merged_bets,
