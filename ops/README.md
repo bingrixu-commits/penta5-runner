@@ -1405,3 +1405,9 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 证据：crontab 基线 install 后 `diff ops/crontab.txt <(crontab -l)` = 0 且 attribution 行命中 1；手动 run_stats 后 panel.html `#hitrate-attribution` data-as-of=20261105091、区块 7282 字节、正文含 killer 9 项/framework/six 表与「整组 34.0%（基线 41.6%）」，`#hitrate-stability` 出现「近24期覆盖」列，版本串 v26；`ops_health_check.py --json` 31 项、overall=warn，仅 4 个已知 warn（kill3_stability 24h 内 2 次 v15 切换、evidence_backup 26.6h 超过 26h 阈值、coverage 历史缺口已标注、hitrate_stability 观察 killer/six），freeze_guards/hitrate_attribution 均 ok；`refresh_source_manifest.py --if-drift` = no-drift（auto-baseline-20261105-074623）。
 - 冻结守卫使用方式：本轮之后受控文件（如 `lib/kill3_tail.py`）再改会 WARN，必须 `python3 scripts/freeze_guard.py update --framework <k> --file <rel> --reason "..."` 留痕，或 `init --renew` 重开窗口；`freeze_guard.py status` 查看各框架 期数/小时/变更。
 - 回滚：`git revert 1d98eca 63aab0f 940b3e4 be58b99`；从 ops/crontab.txt 删 attribution 行后 `bash scripts/crontab_tool.sh install`；用 `/root/run_stats.py.bak-20261105-0729xx` 覆盖并 `pm2 restart`（如需）；`rm ops/freeze-guards.json` 即回到 kill3 单框架时代（但 ops_health 的 freeze_guards 会 WARN「无框架记录」）。
+
+### 2026-11-05 08:03 补丁：selected_six 口径版本解析（`d24d02f`）
+
+- 症状：`freeze_guard.py status` 里 selected_six 的 `rule=None`，因为 `lib/selected_six_contract.py:24` 是间接赋值 `REVISION = V7_REVISION`，旧解析器只匹配单引号字面量，导致该框架口径变更不会被 `rule_changed` 捕获（files sha 仍会 WARN）。
+- 修法：`_rule_version()` 在字面量未命中时按 `NAME = OTHER_CONST` 跳跃最多 3 层再取字面量；现在解析为 `selected-six-independent-v7-single-tail`。`ops/freeze-guards.json` 中 selected_six 的 `rule_version` 由 null 补为同值（基线 adopt，不产生 rule_changed 告警）。
+- 备份：`scripts/freeze_guard.py.bak-20261105-0801`；复验：`freeze_guard.py status` 7 框架 changed 全空、ops_health freeze_guards ok。
