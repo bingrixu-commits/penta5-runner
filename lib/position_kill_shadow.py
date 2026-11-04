@@ -25,8 +25,9 @@ END = '<!-- ' + MARKER + '_END -->'
 ANCHOR = '<!-- TAIL_STABILITY_SHADOW_END -->'
 POS_INDEX = {'q': 0, 'b': 1, 's': 2, 'g': 3}
 FRAMEWORKS = (
-    # ('kill1_tail', 'AI单位置(kill1)'),  # 2026-11-01 16:10 启用 hold3-until-miss，不再列入影子对照
-    # ('kill3_tail', 'AI三位置(kill3)'),  # kill3-tail-v11 已是 hold3-until-miss，不再列入影子对照
+    # ('kill1_tail', 'AI单位置(kill1)'),  # 2026-11-01 16:10 起确定性 hold3-until-miss，不再列入影子对照
+    # 2026-11-05 v15 起 kill3 位置改为「模型每期自主决定是否沿用」，影子重新采集并同时喂入提示词
+    ('kill3_tail', 'AI三位置(kill3)'),
 )
 POLICIES = (
     ('hold2', 2, '命中沿用·最多连用2期·失手换码'),
@@ -76,7 +77,7 @@ def _collect():
 
 
 def _actual(rows):
-    """现行 = 封存杀码（模型每期新选 + max_consecutive=3 强制换码）。"""
+    """现行 = 封存杀码（v10 起位置由模型每期自主决定，无强制换码；v15 起影子数据随提示词喂入）。"""
     n = hits = changes = 0
     prev = {}
     for _target, counted, positions, actual in rows:
@@ -173,7 +174,7 @@ def render_block(data):
                 '<h3>✅ 位置杀码稳定化已全部转正</h3>'
                 '<div style="font-size:13px;color:#475569;margin-top:4px">'
                 'kill1 已于 2026-11-01 启用 hold3-until-miss（本地确定性后处理 + position_policy 追溯）；'
-                'kill3-tail-v11 已是 hold3-until-miss。影子对照结束，不再采集。生成 '
+                'kill3 自 v15 起位置由模型每期自主决定、影子数据已随提示词喂入。暂无可回放记录。生成 '
                 + str(data.get('generated_at') or '-') + '</div>'
                 '</section>' + END)
     body = []
@@ -221,8 +222,8 @@ def render_block(data):
         + '<th>现行</th>' + policy_cells + '</tr></thead><tbody>'
         + ''.join(body) + '</tbody></table>'
         '<div class="pk-foot">单位置杀1码随机基线 90%。稳定化不会提高命中率（数学上限），只降低换码频率；'
-        '候选命中沿用可避免「命中码被每期重新选码替换」的无效换码。现行 kill3 另有 max_consecutive=3 强制换码，'
-        '是其回放命中率略低于候选直至失手档的原因之一。前瞻 n 满 50 期再按预登记判据复核，现网口径与封存一律不动。</div>'
+        '候选命中沿用可避免「命中码被每期重新选码替换」的无效换码。kill3 自 v15 起位置由模型每期自主决定（无强制换码），'
+        '本表的命中率/换码对照已同时写入 kill3 每期提示词，是否沿用由模型自行决定；前瞻 n 满 50 期再按预登记判据复核，现网口径与封存一律不动。</div>'
         '</section>\n' + END)
 
 

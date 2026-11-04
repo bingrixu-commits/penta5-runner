@@ -111,6 +111,21 @@ def main():
     rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
     previous_seal = seals[-1] if seals else None
     previous_tail = (previous_seal.get('tail') or {}) if isinstance(previous_seal, dict) else {}
+    previous_positions = (previous_seal.get('positions') or {}) if isinstance(previous_seal, dict) else {}
+    position_shadow = kill3_tail.position_hold_shadow()
+    if position_shadow:
+        _cur = position_shadow.get('current') or {}
+        _policies = position_shadow.get('policies') or {}
+        _cur_rate = _cur.get('rate')
+        _hold3 = (_policies.get('hold3') or {}).get('rate')
+        print('kill3 position shadow: replay %s periods / %s bets, 现行 %s (换码 %s), hold3 %s (换码 %s)' % (
+            position_shadow.get('sample_periods'), _cur.get('bets'),
+            ('%.2f%%' % (100 * _cur_rate)) if isinstance(_cur_rate, (int, float)) else '-',
+            _cur.get('changes'),
+            ('%.2f%%' % (100 * _hold3)) if isinstance(_hold3, (int, float)) else '-',
+            (_policies.get('hold3') or {}).get('changes')))
+    else:
+        print('kill3 position shadow: unavailable')
     panel_snapshot = panel_context.build(
         reference, target,
         kill3_stats=kill3_tail.today_stats(),
@@ -120,6 +135,8 @@ def main():
     prompt, audit = kill3_tail.build_prompt(
         reference, target, rows,
         previous_tail=previous_tail if isinstance(previous_tail, dict) else None,
+        previous_positions=previous_positions,
+        position_shadow=position_shadow,
         panel_snapshot=panel_snapshot,
         three_avoid=three_avoid)
 
@@ -136,9 +153,18 @@ def main():
         return 0
     settlements = kill3_tail.load_settlements()
     prediction = kill3_tail.apply_tail_policy(prediction, seals, settlements)
+    basis_used = kill3_tail.position_basis_flags(audit, prediction, previous_positions)
+    hold_adopted = sorted(key for key, tags in basis_used.items() if 'hold_previous' in tags)
+    print('kill3 position basis: ' + ' · '.join(
+        '%s %s' % (kill3_tail.POSITION_LABELS.get(key, key), '/'.join(tags))
+        for key, tags in basis_used.items()))
     seal = kill3_tail.create_seal(reference, target, latest.get('opentime'), prediction,
                                   prompt, audit, generated_at, meta,
-                                  extra={'three_avoid': three_avoid})
+                                  extra={'three_avoid': three_avoid,
+                                         'position_shadow': audit.get('position_shadow'),
+                                         'position_basis_used': basis_used,
+                                         'hold_adopted': hold_adopted,
+                                         'hold_policy': 'model-decided'})
     kill3_tail.save_seal(seal)
     kill3_tail.mark_published(reference)
     try:

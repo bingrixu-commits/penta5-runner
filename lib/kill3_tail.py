@@ -3,9 +3,12 @@
 口径（面板、封存与统计都按此写死）：
 - 由 DeepSeek 从 千/百/十/个 四个位置中选 3 个位置，每个位置排除 1 个数字（杀码），
   剩余的 1 个位置为「放弃」；
-- 定位依据（v14 起）：每个位置只给出近 50 期热码 top3 与上期（参考期）重码/邻码
-  （±1，0↔9 循环），模型须从中选择排除码，不得以冷码（出现次数少、当前遗漏长）/长遗漏为依据；
-  v13 及更早的热冷并列口径归档，旧封存保留原 rule_version 不再产生新记录；
+- 定位依据（v15 起）：每个位置并列给出近 50 期热码 top3 与冷码 top3（出现次数少、当前遗漏长），
+  另加上期（参考期）重码/邻码（±1，0↔9 循环）；同时给出【位置杀码稳定化影子】对照
+  （现行每期换码 / hold2 / hold3 / hold5 / hold-until-miss 的命中率与换码次数，回放本框架已结算期），
+  由模型自主决定是否沿用上期同位置杀码（采纳 hold）或换码，系统不做确定性 hold 后处理；
+  冷码/长遗漏不再被禁用，但任何依据都不得当作未来概率保证；
+  v14 的「只给热码、禁冷码」口径归档，旧封存保留原 rule_version 不再产生新记录；
 - 3 个被杀位置全部展示，其中 AI 用 display_only 指定 2 个计入整组与攻击语（counted），
   第 3 个仅展示、不计入整组与攻击语；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
@@ -81,7 +84,7 @@ THREE_AVOID_LABELS = {'threeDigitAvoid': '避开1组', 'threeDigitHit': '避开2
                       'threeDigitAvoid2': '避开3组'}
 THREE_AVOID_ITEMS = len(THREE_AVOID_KEYS)
 
-RULE_VERSION = 'kill3-tail-v14-hot-repeat-neighbor-hold3-two-counted-three-avoid'
+RULE_VERSION = 'kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
@@ -449,8 +452,119 @@ def _hot_line(ranks, limit=3):
                      for number, count, omission in ranks[:limit])
 
 
-def build_prompt(reference, target, rows, *, previous_tail=None,
-                 position_limit=None, panel_snapshot=None, three_avoid=None):
+SHADOW_POLICIES = (
+    ('hold2', 2, '命中沿用·最多连用2期·失手换码'),
+    ('hold3', 3, '命中沿用·最多连用3期·失手换码'),
+    ('hold5', 5, '命中沿用·最多连用5期·失手换码'),
+    ('hold-until-miss', 9999, '命中沿用·不设上限·失手换码'),
+)
+POSITION_INDEX = {key: index for key, _label, index in POSITIONS}
+
+
+def _shadow_rows():
+    """已结算(verified)记录 → [(target, counted, positions, actual4)]，按目标期升序。"""
+    rows = []
+    for record in load_settlements():
+        if not record.get('verified'):
+            continue
+        target = str(record.get('target_period') or '')
+        actual = record.get('actual')
+        positions = record.get('positions')
+        counted = [key for key in (record.get('counted') or []) if key in POSITION_INDEX]
+        if len(target) != 11 or not isinstance(actual, list) or len(actual) < 4:
+            continue
+        if not isinstance(positions, dict) or not counted:
+            continue
+        rows.append((target, counted, positions, [int(item) for item in actual[:4]]))
+    rows.sort(key=lambda row: row[0])
+    return rows
+
+
+def _shadow_replay(rows, hold_max=None):
+    """影子回放：hold_max=None 为现行（每期模型重新选码）；否则命中沿用、最多连用 K 期。"""
+    bets = hits = changes = 0
+    state = {}
+    previous = {}
+    for _target, counted, positions, actual in rows:
+        for key in counted:
+            kill = (positions.get(key) or {}).get('kill')
+            if kill is None:
+                continue
+            model_digit = str(kill)
+            if hold_max is None:
+                used, run = model_digit, 1
+            else:
+                item = state.get(key)
+                if item is not None and item['hit'] and item['run'] < hold_max:
+                    used, run = item['digit'], item['run'] + 1
+                else:
+                    used, run = model_digit, 1
+            hit = int(used) != actual[POSITION_INDEX[key]]
+            bets += 1
+            hits += 1 if hit else 0
+            if key in previous and previous[key] != used:
+                changes += 1
+            previous[key] = used
+            state[key] = {'digit': used, 'run': run, 'hit': hit}
+    return {'bets': bets, 'hits': hits,
+            'rate': (hits / bets) if bets else None, 'changes': changes}
+
+
+def position_hold_shadow(limit=None):
+    """位置杀码稳定化影子（只读）：现行换码 vs hold2/3/5/until-miss 的确定性回放对照。"""
+    try:
+        rows = _shadow_rows()
+    except Exception:
+        return None
+    if limit:
+        rows = rows[-limit:]
+    if not rows:
+        return None
+    payload = {
+        'sample_periods': len(rows),
+        'first_period': rows[0][0],
+        'last_period': rows[-1][0],
+        'current': _shadow_replay(rows),
+        'policies': {key: _shadow_replay(rows, hold_max) for key, hold_max, _label in SHADOW_POLICIES},
+        'policy_labels': {key: label for key, _hold_max, label in SHADOW_POLICIES},
+        'note': '只读回放；是否沿用上期杀码由模型自主决定，系统不做确定性后处理。',
+    }
+    return payload
+
+
+def position_basis_flags(audit, prediction, previous_positions=None):
+    """按提示词候选榜给每个位置的选择打依据标签（只记录，不校验、不改口径）。"""
+    hot = audit.get('hot_ranking') or {}
+    cold = audit.get('cold_ranking') or {}
+    latest = audit.get('latest_row') or []
+    previous = previous_positions if isinstance(previous_positions, dict) else {}
+    flags = {}
+    for key, value in (prediction.get('positions') or {}).items():
+        digit = int(value)
+        tags = []
+        hot_digits = [int(row[0]) for row in (hot.get(key) or []) if row]
+        cold_digits = [int(row[0]) for row in (cold.get(key) or []) if row]
+        if digit in hot_digits:
+            tags.append('hot_top3')
+        if digit in cold_digits:
+            tags.append('cold_top3')
+        index = POSITION_INDEX.get(key)
+        if index is not None and len(latest) > index:
+            base = int(latest[index])
+            if digit == base:
+                tags.append('repeat')
+            if digit in ((base - 1) % 10, (base + 1) % 10):
+                tags.append('neighbor')
+        previous_digit = previous.get(key)
+        if previous_digit is not None and int(previous_digit) == digit:
+            tags.append('hold_previous')
+        flags[key] = tags or ['other']
+    return flags
+
+
+def build_prompt(reference, target, rows, *, previous_tail=None, previous_positions=None,
+                 position_shadow=None, position_limit=None, panel_snapshot=None,
+                 three_avoid=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
@@ -463,7 +577,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         cold = rank_digits(values)
         position_hot_ranks[key] = hot
         position_cold_ranks[key] = cold
-        position_lines.append(f'· {label}：热码 {_hot_line(hot)}')
+        position_lines.append(f'· {label}：热码 {_hot_line(hot)}；冷码 {_cold_line(cold)}')
     latest = window[-1]
     latest_digits = {key: int(latest[index]) for key, _label, index in POSITIONS}
     latest_line = ' · '.join(f'{label} {latest_digits[key]}' for key, label, _index in POSITIONS)
@@ -505,6 +619,35 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
             '【面板全量上下文（同一面板其他框架最近发布/战绩；只含已发布数据，各条自带'
             ' reference/target；仅供自主决策参考，不是未来概率保证）】'
             + chr(10) + panel_context_text + chr(10) + chr(10))
+    shadow_payload = position_shadow if isinstance(position_shadow, dict) else None
+    shadow_section = ''
+    if shadow_payload:
+        current = shadow_payload.get('current') or {}
+        policies = shadow_payload.get('policies') or {}
+        labels = shadow_payload.get('policy_labels') or {}
+
+        def _rate_text(item):
+            rate = (item or {}).get('rate')
+            return ('%.2f%%' % (100.0 * rate)) if isinstance(rate, (int, float)) else '-'
+
+        shadow_rows_text = ['· 现行（每期按你的新选择自主换码）：命中率 %s，换码 %s 次'
+                            % (_rate_text(current), current.get('changes', 0))]
+        for _policy_key, _hold_max, _policy_label in SHADOW_POLICIES:
+            _item = policies.get(_policy_key) or {}
+            shadow_rows_text.append('· %s：命中率 %s，换码 %s 次'
+                                    % (labels.get(_policy_key, _policy_label),
+                                       _rate_text(_item), _item.get('changes', 0)))
+        previous_lines = []
+        for key, label, _index in POSITIONS:
+            value = (previous_positions or {}).get(key)
+            previous_lines.append('· %s：%s' % (label, ('杀 %s' % value) if value is not None else '上期弃位'))
+        shadow_section = (
+            '【位置杀码稳定化影子（只读回放：本框架已结算 %s 期 / %s 注；是否沿用由你自主决定，系统不做后处理）】\n'
+            % (shadow_payload.get('sample_periods'), current.get('bets'))
+            + '\n'.join(shadow_rows_text) + '\n'
+            + '· 上期（参考期）你的位置杀码：\n' + '\n'.join(previous_lines) + '\n'
+            + '沿用上期同位置杀码 = 采纳 hold（换码次数更少）；换新码 = 现行。稳定化不会提高命中率上限，'
+            '只减少「命中码被每期重新选码换掉」的无效换码；每个位置可自行决定沿用或换码，不得为换而换。\n\n')
     three_avoid = [group for group in (three_avoid or [])
                    if isinstance(group, dict) and _group_code(group.get('value'))]
     three_avoid_section = ''
@@ -522,7 +665,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
         f'{history}\n\n'
-        '【近50期各位置热码（出现次数多、当前遗漏短优先；仅历史统计，不代表未来概率）】\n'
+        '【近50期各位置热码 / 冷码（热码=出现次数多、遗漏短；冷码=出现次数少、当前遗漏长；均为历史统计，不代表未来概率）】\n'
         + '\n'.join(position_lines) + '\n\n'
         f'【上期开奖前四位（参考期 {reference}）】\n'
         f'· {latest_line}\n\n'
@@ -534,7 +677,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；'
-        '定位依据从该位置的近50期热码 top3、上期重码、上期邻码（±1）中自主选择，不得以上期冷码 / 长遗漏码作为定位依据；'
+        '定位依据可从该位置的近50期热码 top3、冷码 top3（出现次数少/遗漏长）、上期重码、上期邻码（±1）以及【位置杀码稳定化影子】对照中自主选择，鼓励结合冷码；'
         '其中恰好 2 个位置计入整组（攻击语只按这 2 个位置排除），'
         '第 3 个位置用 display_only 标明，只展示、不计入整组与攻击语；\n'
         '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；系统按稳定化规则决定最终封存尾码；\n'
@@ -547,7 +690,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '反向形态 = 目标期实际四位形态不等于这两个封存形态（反向排除项）；'
         '三数共现避开 = 目标期 4 球开奖号中不包含该组全部 3 个数字（3 组各算 1 项，固定给定）；\n'
         '以上 8 项（2 个计入位置 + 1 个合尾 + 2 项形态 + 三数共现避开 3 组）同时命中才算整组命中；\n'
-        '5. 热码、重码、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
+        '5. 热码、冷码、重码、遗漏与影子命中率只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄或为避开同号强行换码，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"positions":{"q":<0-9整数>,"b":<0-9整数>,"s":<0-9整数>},'
@@ -559,6 +702,10 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         'display_only 必须是 positions 的 3 个键之一；'
         '两个形态字符串都必须是 4 个字符。'
     )
+    if shadow_section:
+        _marker = prompt.find('【任务】')
+        if _marker != -1:
+            prompt = prompt[:_marker] + shadow_section + prompt[_marker:]
     if panel_section:
         _marker = prompt.find('【任务】')
         if _marker != -1:
@@ -568,13 +715,13 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         if _marker != -1:
             prompt = prompt[:_marker] + three_avoid_section + prompt[_marker:]
     audit = {
-        'version': 'kill3-tail-prompt-v14-hot-repeat-neighbor-hold3-two-counted-three-avoid',
+        'version': 'kill3-tail-prompt-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid',
         'reference': reference,
         'target': target,
         'window': WINDOW,
         'history_sha256': sha256(history.encode('utf-8')).hexdigest(),
         'rows': [[str(int(value)) for value in row] for row in window],
-        'position_basis': 'hot-repeat-neighbor',
+        'position_basis': 'hot-cold-repeat-neighbor-hold-shadow',
         'three_avoid': [{'key': group.get('key'), 'label': group.get('label'),
                         'value': _group_code(group.get('value'))}
                        for group in three_avoid],
@@ -590,6 +737,10 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         'tail_policy': TAIL_POLICY,
         'tail_hold_max': TAIL_HOLD_MAX,
         'position_limit': None,
+        'previous_positions': {key: (str((previous_positions or {}).get(key))
+                                     if (previous_positions or {}).get(key) is not None else None)
+                               for key, _label, _index in POSITIONS},
+        'position_shadow': shadow_payload,
         'panel_context_sha256': panel_context_sha,
         'panel_context': panel_snapshot if isinstance(panel_snapshot, dict) else None,
     }
