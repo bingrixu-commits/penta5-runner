@@ -304,6 +304,76 @@ def _cumulative_html():
         return ''
 
 
+DATA_DIR = Path('/root/penta5-runner/data')
+GATE_PATH = DATA_DIR / 'kill3_v16_guard.json'
+V16_RULE = 'kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop'
+GATE_BASELINE = 0.5863
+GATE_N = 150
+GATE_Z = -2.5
+GATE_RATE_FLOOR = 0.50
+
+
+def _num(value):
+    return ('%.2f' % float(value)) if isinstance(value, (int, float)) else '-'
+
+
+def _gate_html():
+    """只读：kill3 v16 预登记回滚门禁进度（数据源 data/kill3_v16_guard.json）。
+
+    门禁计算在 lib/kill3_v16_guard.py，由 scripts/ops_health_check.py 每 10 分钟写入该 JSON，
+    本函数只做展示。触发条件：n>=150 且 (z<-2.5 或 命中率<50%)；触发后按
+    ops/kill3-stability-plan.md §9 执行 scripts/kill3_v16_rollback.py --execute。
+    现行口径不是 v16 时只在门禁已落盘为 inactive 时显示一行停用说明；异常返回空串。
+    """
+    try:
+        rule = str(getattr(kill3_tail, 'RULE_VERSION', '') or '')
+        try:
+            report = json.loads(GATE_PATH.read_text(encoding='utf-8'))
+        except Exception:
+            report = None
+        if not isinstance(report, dict):
+            report = None
+        if rule != V16_RULE:
+            if report is not None:
+                n = report.get('n') if isinstance(report.get('n'), int) else 0
+                return ('<div class="k3-drop">v16 门禁停用（现行口径 ' + escape(rule or '-')
+                        + '，历史 v16 样本 ' + str(n) + ' 期）</div>')
+            return ''
+        pre_registered = ('n≥' + str(GATE_N) + ' 且 (z&lt;' + ('%.1f' % GATE_Z)
+                          + ' 或 命中率&lt;' + ('%.0f%%' % (GATE_RATE_FLOOR * 100.0))
+                          + ') 触发；触发后按 ops/kill3-stability-plan.md §9 执行 '
+                          '<code>python3 scripts/kill3_v16_rollback.py --execute</code>')
+        if report is None:
+            return ('<div class="k3-drop">预登记回滚门禁（v16）：' + pre_registered + '</div>')
+        status = str(report.get('status') or '')
+        n = report.get('n') if isinstance(report.get('n'), int) else 0
+        hits = report.get('hits') if isinstance(report.get('hits'), int) else 0
+        rate = report.get('rate')
+        expected = report.get('expected')
+        if not isinstance(expected, (int, float)):
+            expected = GATE_BASELINE
+        z = report.get('z')
+        if status == 'inactive':
+            return ('<div class="k3-drop">v16 已回滚，本门禁停用（历史 v16 样本 '
+                    + str(n) + ' 期）</div>')
+        if status == 'triggered':
+            return ('<div class="k3-acc" style="margin-top:6px;padding-top:6px;'
+                    'border-top:1px dashed #fecaca;font-size:13px;color:#b91c1c;line-height:1.7">'
+                    '<b>⚠ v16 预登记门禁已触发</b>（n=' + str(n) + '，命中率 ' + _pct(rate)
+                    + ' vs 基线 ' + _pct(expected) + '，z=' + _num(z) + '）：按 '
+                    'ops/kill3-stability-plan.md §9 执行 '
+                    '<code>python3 scripts/kill3_v16_rollback.py --execute</code> 回滚到 v15</div>')
+        verdict = str(report.get('verdict') or '')
+        return ('<div class="k3-acc" style="margin-top:6px;padding-top:6px;'
+                'border-top:1px dashed #c7d2fe;font-size:13px;color:#475569;line-height:1.7">'
+                '<b>预登记回滚门禁（v16）</b> 进度 ' + str(n) + '/' + str(GATE_N) + ' 期'
+                ' · 本版 ' + _pct(rate) + '（' + str(hits) + '/' + str(n) + '）vs 基线 '
+                + _pct(expected) + ' · z=' + _num(z) + ' · 判定「' + escape(verdict)
+                + '」（' + pre_registered + '）</div>')
+    except Exception:
+        return ''
+
+
 def render_block():
     try:
         data = kill3_tail.current_summary()
@@ -316,7 +386,7 @@ def render_block():
                 body += (f'<div class="k3-meta">最近一次：参考期 {escape(str(previous.get("ref_period", "")))}'
                          f' · 目标期 {escape(str(previous.get("target_period", "")))}</div>')
             return (f'{START}<section id="kill-three-ai"><style>{STYLE}</style>'
-                    f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}{_cumulative_html()}{_version_html()}'
+                    f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}{_cumulative_html()}{_gate_html()}{_version_html()}'
                     f'{_foot_html()}</section>{END}')
         positions = seal.get('positions') or {}
         display_only = seal.get('display_only')
@@ -413,7 +483,7 @@ def render_block():
                 f'（AI 选 3 个位置，{counted_note}）</div>'
                 f'{restrict_html}{position_html}{derive_html}'
                 f'<div class="k3-reason">理由：{reason}</div>'
-                f'{_stats_html(stats)}{_cumulative_html()}{_version_html()}'
+                f'{_stats_html(stats)}{_cumulative_html()}{_gate_html()}{_version_html()}'
                 f'<div class="k3-verify">{verify}</div>'
                 f'{_attack_html(seal)}'
                 f'{_foot_html()}</section>{END}')
