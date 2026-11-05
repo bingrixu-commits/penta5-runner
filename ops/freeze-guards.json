@@ -399,19 +399,19 @@
   },
   "kill9_tail": {
    "files": {
-    "lib/kill9_tail.py": "71fa3a69ead3cc6179cc616ad2ff322a1cc67051481e990b55d32c668c5c032a",
-    "lib/kill_nine_view.py": "75181c91a461645935b44b6389bb39e3bca850d05e120ccf4733ab4cbb360feb"
+    "lib/kill9_tail.py": "b598b3e9fb019918676355ee72b98d9747d315d9191f3698d82102f9a53cf054",
+    "lib/kill_nine_view.py": "7093cbff5bf87e27db4bdb7fd07d342653841bacc9251a8fed58997ffd3921fc"
    },
    "freeze_hours": 72.0,
-   "freeze_ref_period": "20261105090",
-   "frozen_at": "2026-11-05T07:30:53.521085+08:00",
-   "frozen_commit": "1497b06",
+   "freeze_ref_period": "20261105124",
+   "frozen_at": "2026-11-05T10:21:58.766007+08:00",
+   "frozen_commit": "a35d27b",
    "hash_updates": [],
    "label": "两位置杀码(kill9)",
    "min_periods": 100,
-   "rule_version": "kill9-tail-v4-pool-three-plus-all-form-he2he3",
+   "rule_version": "kill9-tail-v5-pool-three-all-form-three-kill-he2he3",
    "shared": {
-    "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
+    "lib/panel_context.py": "c95339a94b7d2a1e00f3bd013dd92b5c1b7e1f02a6c4b435203ac3f900d7ea75"
    }
   },
   "killer": {
@@ -452,6 +452,6 @@
    }
   }
  },
- "updated_at": "2026-11-05T10:17:59.697764+08:00",
+ "updated_at": "2026-11-05T10:21:58.766007+08:00",
  "version": 1
 }
