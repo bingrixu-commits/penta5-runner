@@ -1627,3 +1627,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 门禁：refresh_source_manifest --if-drift no-drift（当前基线 /root/backups/auto-baseline-20261105-194034）；ops_health overall=warn，manifest_drift/crontab_drift/freeze_guards ok，warn 项（kill3_stability、ledger_size、coverage、hitrate_stability）均为既有、非本次引入。
 - 备份/回滚：/root/ops/fix-runtime-observability-20261105-193805/（改前 lib/runtime_observability.py、lib/runtime_observability_view.py、ops/crontab.txt、crontab.before；原 sha256：runtime 036b6dda…、view 3e0af8fe…、crontab df93a3e3…）。回滚：git revert 023557f 5bdc599（crontab 回退后需 bash scripts/crontab_tool.sh install），或按备份覆盖后重装 crontab。
 - 未修（记录为限制）：data/ai_delivery_timing.json 自 2026-11-01 02:16 无 killer/framework/he3 事件，故三行「服务端攻击语就绪：未观测 / 本浏览器本次收到：未采集」为观测缺失而非读错，需上游遥测源；P0 无。
+
+### he3 封存账本热窗收紧（2026-11-05 19:50，292691e）
+
+- 需求：ops_health ledger_size 连续 WARN——data/he3_refine_seals.json 111.3MiB（110MiB 预警线，128MiB 为 runtime_observability 读取上限）、data/he3_refine_hit_stats.json 96.2MiB；he3 每期封存约 90KB，7 天热窗约 1230 期约 112MiB，随期数线性增长会击穿读取上限。
+- 方案：归档设施（lib/seal_archive.py 的 read_hot/read_full/archive/write_full_separated + data/archive 月度冷分片）已存在，问题只是保留窗口过长。在 lib/seal_archive.py 新增模块常量 DEFAULT_KEEP_DAYS = 2 作为 archive() 与 write_full_separated() 的默认值（hit_stats 写方不传参也自动 2 天，策略单一来源），scripts/archive_seals.py CLI 默认与 ops/crontab.txt 行内 --keep-days 同步 7→2；read_full 对冷分片+主文件透明合并，统计/面板/回放口径不变。
+- 归档执行：python3 -u scripts/archive_seals.py --target he3_refine_seals --target he3_refine_hit_stats --keep-days 2 --apply（19:47:24–19:47:41，RC=0）。seals hot attempts 1240→356 / prediction_seals 1232→355，冷分片 202610 +1113、202611 +648，archived=1761；hit_stats hot verified 1226→353，202610 +548、202611 +325，archived=873。体积 data/he3_refine_seals.json 116,817,920B→39,834,132B（112MiB→38MiB）、data/he3_refine_hit_stats.json 100,980,374B→33,107,941B（97MiB→32MiB）。
+- 完整性：归档前后用 read_full 逐期 canonical sha256 指纹对比（/tmp/digest_he3.py + compare）——seals full attempts 2367→2368、prediction_seals 2355→2356（唯一新增 20261105237 为 19:46 真实周期）、hot 356/355；hit_stats full verified 2349 不变、hot 353；missing=0 mismatch=0，RESULT: PASS。read_full 冒烟 seals 2356 / attempts 2368；freeze_guard 五框架 changed=-。
+- 门禁：刷新 manifest 后 ops_health 复验（manifest_drift/crontab_drift/ledger_size/freeze_guards OK）；下一轮 he3 因输入指纹变化冷算一次，并复查 hit_stats hot 仍约 350 期不被写方回灌。
+- 备份/回滚：/root/backups/he3-ledger-shrink-20261105/（三文件改前原件、digest_before/after、archive_run.log）；回滚 cp 备份回三文件 + bash scripts/crontab_tool.sh install；已归档冷分片无需回滚（read_full 语义等价）。
