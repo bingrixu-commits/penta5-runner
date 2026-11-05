@@ -689,6 +689,39 @@ def check_kill3_stability(ctx):
                    'current_rule_version': current_version})
 
 
+def check_kill3_v16_gate(ctx):
+    """kill3 v16 预登记回滚门禁：n>=150 且 z<-2.5 或命中率<50% 即 FAIL 并提示回滚命令。
+
+    门禁计算与 data/kill3_v16_guard.json 落盘统一在 lib/kill3_v16_guard.py；
+    面板 lib/kill_three_view.py 只读该 JSON 展示进度。现行口径非 v16 时门禁停用 (OK)。
+    """
+    root = ctx['root']
+    lib_dir = str(Path(root) / 'lib')
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    try:
+        import kill3_v16_guard
+        report = kill3_v16_guard.write_report(root)
+    except Exception as exc:
+        return _entry('kill3_v16_gate', WARN,
+                      '门禁不可用: %s: %s' % (type(exc).__name__, exc))
+    status = str(report.get('status') or '')
+    rate = report.get('rate')
+    expected = report.get('expected')
+    thresholds = report.get('thresholds') or {}
+    rate_text = '%.2f%%' % (rate * 100.0) if isinstance(rate, (int, float)) else '-'
+    expected_text = ('%.2f%%' % (expected * 100.0)
+                     if isinstance(expected, (int, float)) else '-')
+    detail = ('%s n=%d/%d rate=%s vs %s z=%s p_two=%s %s'
+              % (status, int(report.get('n') or 0),
+                 int(thresholds.get('n_trigger') or 0), rate_text, expected_text,
+                 report.get('z'), report.get('p_two'), report.get('verdict')))
+    if status == 'triggered':
+        detail += ' -> ' + str(report.get('rollback_command') or '')
+        return _entry('kill3_v16_gate', FAIL, detail, report)
+    return _entry('kill3_v16_gate', OK, detail, report)
+
+
 def _file_sha256(path):
     digest = hashlib.sha256()
     try:
@@ -1810,6 +1843,7 @@ CHECK_FUNCS = (
     check_kill10,
     check_kill11,
     check_kill3_stability,
+    check_kill3_v16_gate,
     check_freeze_guards,
     check_stat50,
     check_reference_statuses,
@@ -1842,6 +1876,7 @@ FALLBACK_NAMES = {
     'check_kill10': ('kill10_tail',),
     'check_kill11': ('kill11_tail',),
     'check_kill3_stability': ('kill3_stability',),
+    'check_kill3_v16_gate': ('kill3_v16_gate',),
     'check_freeze_guards': ('freeze_guards',),
     'check_stat50': ('stat50_seal',),
     'check_reference_statuses': tuple(name for name, _ in REFERENCE_STATUS_FILES),

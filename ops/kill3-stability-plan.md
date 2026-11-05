@@ -67,3 +67,22 @@
 - 2026-11-05 03:26 用户指令变更（冻结期内例外，口径升级 v14）：位置排除依据改为「近50期热码 top3、上期重码、上期邻码（±1）」，删除冷码候选并明确禁止以冷码/长遗漏为依据（对齐 KILL_ONE v3）；整组结构不变（8 项），注册基线 0.5863 沿用、不重注册。冻结戳按 v14 重置：frozen_at 2026-11-05T03:26:17+08:00、freeze_ref_period 20261105041、frozen_commit fb5f327；lib/kill3_tail.py sha256 426d014f…→a96151f9… 记入 hash_updates。提交 fb5f327。
 - 2026-11-05 04:44 用户指令变更（冻结期内例外，口径升级 v15）：用户 m00003「怎么这个框架开什么除什么，我是要结合冷码这期排除。还有影子数据，由模型决定采取」。位置段恢复「近50期热码 top3 + 冷码 top3」并列并删除「不得以冷码/长遗漏为依据」，保留上期重码/邻码段；提示词新增【位置杀码稳定化影子】（现行换码 vs hold2/hold3/hold5/hold-until-miss 的命中率与换码次数 + 上期各位杀码，只读回放 735 期/1571 注），是否沿用上期同位置杀码完全由模型决定，系统不做确定性 hold 后处理；seal 增加 position_shadow/position_basis_used/hold_adopted/hold_policy。整组结构（8 项/2 注）与尾码 hold3-until-miss 不变，基线 0.5863 追加同值行不重校准。冻结戳按 v15 重置：frozen_at 2026-11-05T04:44:42+08:00、freeze_ref_period 20261105056、frozen_commit 2c34e59；lib/kill3_tail.py sha256 a96151f9…→6eac93a3…、scripts/run_kill3_tail.py 0261afc2…→7c55f6ce… 记入 hash_updates。提交 2c34e59。
 - 2026-11-05 23:51 用户指令变更（冻结期内例外，影子口径恢复，非口径升级）：位置杀码稳定化影子由「已全部转正、不再采集」恢复为多档只读对照（hold2/hold3/hold5/不设上限，全部只读），面板空态与 JSON note 同步改为「是否沿用由模型自行决定」，旧文案清零；提示词影子段补齐「上期同位杀码 + 上期该位实际开奖 + 杀码命中/失手」与四档命中率/换码次数，并标注【参考信号】；seal 留痕字段统一为 position_hold_shadow / position_basis_flags / hold_adopted（旧 position_shadow / position_basis_used 保留兼容读）；全仓无按阈值自动写开关分支（kill3 路径 grep auto_promote = 0）。本次重算回放（23:51:52）：kill3 965 期/2031 注，现行 90.00%（换码 900）、hold2 89.46%/576、hold3 89.76%/434、hold5 89.27%/349、until-miss 90.00%/184；forward 654 期/1308 注。冻结戳 version 2→3（frozen_at 未重置）：lib/kill3_tail.py 6eac93a3…→1ceb7656…、scripts/run_kill3_tail.py ac37eb42…→b5b7f97d… 记入 hash_updates；受控 manifest 无 drift（auto-baseline-20261105-235246，429 文件）。提交 db5be81。
+
+## 9. kill3 v16 预登记回滚门禁（2026-11-06）
+
+- 背景：用户 m00563「就是不稳定啊，漂移太严重了」；m00593「按你的意思」→ 采用方案 A：v16 维持现网、不改口径、不暂停预测，但在任何后续数据之前先把判据写死（预登记），达标自动告警并可按脚本一键回滚 v15。
+- 预登记判据（观察起点即 v16 起算点 target 20261106001）：
+  - 样本门槛 N = 150 期（按 288 期/日约 12.5 小时连续运行）。
+  - 触发条件：n ≥ 150 且（z < -2.5 或 整组命中率 < 50%）。z 为相对 10^4 开奖空间精确枚举基线 0.5863（8 项整组）的下尾 z；门禁同时给出精确二项下尾 p_lower 与双侧 p_two 供复核。
+  - 判定档位：inactive（现行 rule_version 不是 v16）/ observe（n<150）/ passed（n≥150 未触发）/ triggered（触发）。
+  - 理由：z<-2.5 约为单侧 1% 假阳性；50% 硬底约等于基线 -8.6pp，作为比 z 更保守的兜底；n≥150 使 z 检验近似有效，且与「按整组统计」的口径一致。
+- 实现：
+  - `lib/kill3_v16_guard.py`：读 `data/kill3_tail/settlements.json`，仅取 rule_version=v16 且 verified=true 的组命中；算 n/hits/rate/Wilson 95%CI/expected/delta/z/p_lower（精确二项下尾）/p_two/thresholds/progress/verdict → 原子写 `data/kill3_v16_guard.json`；CLI `--json` / `--write`。
+  - `scripts/ops_health_check.py` 新增 `kill3_v16_gate` 探针（随 10 分钟体检）：triggered → FAIL 并附回滚命令；其余 → OK 并显示进度 n/150。
+  - `lib/kill_three_view.py` 的 kill3 卡新增只读门禁行（`_gate_html`）：显示「预登记回滚门禁（v16）：进度 n/150 期 · 本版 hits/n · z=… · 判定…」；triggered 时红字提示按本节执行回滚；v16 已回滚时灰字停用（读 rule_version 判定）。
+- 回滚执行（triggered 后，或人工判断需要时）：
+  - 预检：`python3 scripts/kill3_v16_rollback.py`（默认 dry-run，打印计划并做 `git apply -R --check` 反向补丁预检）。
+  - 执行：`python3 scripts/kill3_v16_rollback.py --execute`；门禁未 triggered 时需显式 `--force`。
+  - 脚本行为：备份 5 个文件到 `/root/ops/kill3-v16-rollback-<ts>/` → 以提交 417c472 生成反向补丁并 `git apply -R` → 断言 RULE_VERSION=v15 且 v16 专有字段清零 → py_compile → 重算冻结戳（`freeze_guard.py init --framework kill3_tail --renew` + 旧 `ops/kill3-freeze.json` 镜像）→ 写门禁 inactive → 按文件精确 `git add` 提交（不使用 `git add -A`）。
+- 回滚后口径：v16 样本按 rule_version 自然隔离，统计回到 v15 分组；整组结构与基线 0.5863 不变，无需重注册；门禁因 rule_version 不匹配自动 inactive。
+- 当前进度（2026-11-06 06:40:17 CST）：n=79、hits=33、rate=41.77%、z=-3.0424、p_two=0.0037、status=observe（离触发还差 71 期）；详见 `data/kill3_v16_guard.json` 与 ops_health 的 `kill3_v16_gate` 行。
