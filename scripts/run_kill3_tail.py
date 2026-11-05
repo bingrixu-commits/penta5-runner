@@ -150,6 +150,22 @@ def main():
     previous_seal = seals[-1] if seals else None
     previous_tail = (previous_seal.get('tail') or {}) if isinstance(previous_seal, dict) else {}
     previous_positions = (previous_seal.get('positions') or {}) if isinstance(previous_seal, dict) else {}
+    latest_numbers = list(latest.get('numbers') or [])[:4]
+    previous_hits = {}
+    for _pkey, _plabel, _pindex in kill3_tail.POSITIONS:
+        _pdigit = previous_positions.get(_pkey)
+        if _pdigit is None or len(latest_numbers) <= _pindex:
+            continue
+        try:
+            _pactual = int(latest_numbers[_pindex])
+            _pkill = int(_pdigit)
+        except (TypeError, ValueError):
+            continue
+        previous_hits[_pkey] = {'actual': str(_pactual), 'hit': _pactual != _pkill}
+    if previous_hits:
+        print('kill3 previous position hits: ' + ' · '.join(
+            '%s %s%s' % (kill3_tail.POSITION_LABELS.get(k, k), v['actual'],
+                         ' hit' if v['hit'] else ' miss') for k, v in previous_hits.items()))
     position_shadow = kill3_tail.position_hold_shadow()
     if position_shadow:
         _cur = position_shadow.get('current') or {}
@@ -176,6 +192,7 @@ def main():
         reference, target, rows,
         previous_tail=previous_tail if isinstance(previous_tail, dict) else None,
         previous_positions=previous_positions,
+        previous_hits=previous_hits,
         position_shadow=position_shadow,
         panel_snapshot=panel_snapshot,
         three_avoid=three_avoid)
@@ -201,8 +218,8 @@ def main():
     seal = kill3_tail.create_seal(reference, target, latest.get('opentime'), prediction,
                                   prompt, audit, generated_at, meta,
                                   extra={'three_avoid': three_avoid,
-                                         'position_shadow': audit.get('position_shadow'),
-                                         'position_basis_used': basis_used,
+                                         'position_hold_shadow': audit.get('position_shadow'),
+                                         'position_basis_flags': basis_used,
                                          'hold_adopted': hold_adopted,
                                          'hold_policy': 'model-decided'})
     kill3_tail.save_seal(seal)

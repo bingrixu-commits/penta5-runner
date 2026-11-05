@@ -37,7 +37,7 @@ def main():
     hold_by_pos = Counter()
     kills = 0
     for seal in seals:
-        used = seal.get('position_basis_used') or {}
+        used = seal.get('position_basis_flags') or seal.get('position_basis_used') or {}
         hold = seal.get('hold_adopted') or []
         for key, tags in used.items():
             kills += 1
@@ -74,7 +74,8 @@ def main():
         print('\n-- 逐期 --')
         for r in setts:
             src_row = seal_by_target.get(str(r.get('target_period'))) or {}
-            used = r.get('position_basis_used') or src_row.get('position_basis_used') or {}
+            used = (r.get('position_basis_flags') or r.get('position_basis_used')
+                    or src_row.get('position_basis_flags') or src_row.get('position_basis_used') or {})
             hold = r.get('hold_adopted')
             if hold is None:
                 hold = src_row.get('hold_adopted')

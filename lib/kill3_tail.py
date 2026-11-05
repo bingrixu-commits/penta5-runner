@@ -563,8 +563,8 @@ def position_basis_flags(audit, prediction, previous_positions=None):
 
 
 def build_prompt(reference, target, rows, *, previous_tail=None, previous_positions=None,
-                 position_shadow=None, position_limit=None, panel_snapshot=None,
-                 three_avoid=None):
+                 previous_hits=None, position_shadow=None, position_limit=None,
+                 panel_snapshot=None, three_avoid=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
@@ -640,12 +640,18 @@ def build_prompt(reference, target, rows, *, previous_tail=None, previous_positi
         previous_lines = []
         for key, label, _index in POSITIONS:
             value = (previous_positions or {}).get(key)
-            previous_lines.append('· %s：%s' % (label, ('杀 %s' % value) if value is not None else '上期弃位'))
+            _prev = (previous_hits or {}).get(key) or {}
+            _actual = _prev.get('actual')
+            _flag = ''
+            if _actual is not None:
+                _flag = '（上期该位开 %s · %s）' % (
+                    _actual, '杀码命中' if _prev.get('hit') else '杀码失手')
+            previous_lines.append('· %s：%s%s' % (label, ('杀 %s' % value) if value is not None else '上期弃位', _flag))
         shadow_section = (
-            '【位置杀码稳定化影子（只读回放：本框架已结算 %s 期 / %s 注；是否沿用由你自主决定，系统不做后处理）】\n'
+            '【位置杀码稳定化影子（只读回放：本框架已结算 %s 期 / %s 注）【参考信号，是否沿用由你自主决定，系统不做后处理】\n'
             % (shadow_payload.get('sample_periods'), current.get('bets'))
             + '\n'.join(shadow_rows_text) + '\n'
-            + '· 上期（参考期）你的位置杀码：\n' + '\n'.join(previous_lines) + '\n'
+            + '· 上期（参考期）你的位置杀码与命中情况：\n' + '\n'.join(previous_lines) + '\n'
             + '沿用上期同位置杀码 = 采纳 hold（换码次数更少）；换新码 = 现行。稳定化不会提高命中率上限，'
             '只减少「命中码被每期重新选码换掉」的无效换码；每个位置可自行决定沿用或换码，不得为换而换。\n\n')
     three_avoid = [group for group in (three_avoid or [])

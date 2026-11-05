@@ -1,9 +1,9 @@
 {
   "files": {
-    "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
+    "lib/kill3_tail.py": "1ceb7656faa1a5ce4ad1aa611a60471272a69655b331711b49ea10f045b77a82",
     "lib/kill_three_view.py": "df32f5d08392707b25909de47009f000ff1e353d1c6783d4c52422f65bbe1d34",
     "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
-    "scripts/run_kill3_tail.py": "ac37eb42f767b59e80c22bcdb0c585de9ded26e429d7b119562b618e13a45ab5"
+    "scripts/run_kill3_tail.py": "b5b7f97de4e23694fcdf17b0dfc1992b4631c2cd7da3ae351d53ec85e48fd6f0"
   },
   "freeze_hours": 72,
   "freeze_ref_period": "20261105056",
@@ -385,10 +385,26 @@
       "new_sha256": "df32f5d08392707b25909de47009f000ff1e353d1c6783d4c52422f65bbe1d34",
       "old_sha256": "f6fb76d6c10ca59a3f39a93e83921de2cbf8839d79e35ff92e3aeba317309551",
       "reason": "P1 只读展示：kill3 卡新增跨版本核心杀项（counted 位置+合尾，切版不清零）与近5版分段；只加展示，不动选码/封存/结算/prompt，RULE_VERSION 未变。"
+    },
+    {
+      "at": "2026-11-05T23:51:44+08:00",
+      "commit": "pending-hold-shadow-model-decide",
+      "file": "lib/kill3_tail.py",
+      "new_sha256": "1ceb7656faa1a5ce4ad1aa611a60471272a69655b331711b49ea10f045b77a82",
+      "old_sha256": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
+      "reason": "位置杀码稳定化影子恢复为多档只读对照（hold2/hold3/hold5/不设上限），提示词影子段补齐「上期同位杀码 + 是否命中」与四档结果，封存留痕字段同步为 position_hold_shadow/position_basis_flags/hold_adopted；由模型自主决定是否沿用，无自动写开关分支。候选榜/判据/封存判定不变"
+    },
+    {
+      "at": "2026-11-05T23:51:44+08:00",
+      "commit": "pending-hold-shadow-model-decide",
+      "file": "scripts/run_kill3_tail.py",
+      "new_sha256": "b5b7f97de4e23694fcdf17b0dfc1992b4631c2cd7da3ae351d53ec85e48fd6f0",
+      "old_sha256": "ac37eb42f767b59e80c22bcdb0c585de9ded26e429d7b119562b618e13a45ab5",
+      "reason": "位置杀码稳定化影子恢复为多档只读对照（hold2/hold3/hold5/不设上限），提示词影子段补齐「上期同位杀码 + 是否命中」与四档结果，封存留痕字段同步为 position_hold_shadow/position_basis_flags/hold_adopted；由模型自主决定是否沿用，无自动写开关分支。候选榜/判据/封存判定不变"
     }
   ],
   "min_periods": 100,
   "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。 2026-11-04 00:23 用户指令变更（冻结期内例外）：用户明确要求把「三数共现避开 3 组」加进本框架整组（8 项）并给出攻击语格式「除对数579-349-089」，经用户问卷确认（8 项口径 / 组序按 1-2-3 组标签 / 升 v13 替换现网 v12）直接升 v13（kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid），未走影子门禁（用户指令优先）；冻结戳按 v13 重置（frozen_at 2026-11-04T00:23:17 / freeze_ref_period 20261104004），旧 v1–v12 封存只读保留、结算口径不变。（注：ref=20261104004 已由 v12 于 00:20:50 封存，故首个 v13 封存为 ref=20261104005 → target=20261104006；freeze_ref_period 按 20261104005 起算。） 2026-11-05 03:15 用户指令例外（m00469 + 两轮问卷）：仅把「四手连败」统计展示改为跨天累计（新增 four_loss_cycles_total，旧今日字段保留），不改选码/尾码/封存/结算；kill3_tail.py 与 kill_three_view.py hash 重算并记入 hash_updates（未重置 frozen_at、未升 RULE_VERSION）。 2026-11-05 用户指令例外（m00595 + 问卷）：KILL_THREE 位置排除依据改热码/重码/邻码（v14，禁冷码/长遗漏），整组结构不变、基线沿用 0.5863，旧 v13 封存只读保留；冻结戳按 v14 重置（frozen_at 2026-11-05T03:26:17+08:00 / freeze_ref_period 20261105041）。\n- 2026-11-05 2026-11-05T04:44:42+08:00 用户指令（m00003「怎么这个框架开什么除什么，我是要结合冷码这期排除。还有影子数据，由模型决定采取」）：KILL_THREE 位置排除恢复「热码 top3 + 冷码 top3」并列（删「不得以冷码/长遗漏为依据」），保留上期重码/邻码段，并把【位置杀码稳定化影子】（现行换码 vs hold2/hold3/hold5/hold-until-miss 命中率与换码次数，回放本框架已结算 735 期/1571 注）写入提示词，是否沿用上期同位置杀码由模型自主决定，系统不做确定性 hold 后处理；seal 增加 position_shadow/position_basis_used/hold_adopted/hold_policy 审计字段。整组结构（8 项=2 计入位置+1 合尾+2 形态+3 组三数共现避开）、2 注、尾码 hold3-until-miss 均不变，基线 (8, 0.5863) 追加同值行不重校准。升 RULE_VERSION v15，冻结戳重置 (freeze_ref_period 20261105056)。commit 2c34e59。 2026-11-05 用户指令例外（m00050「排除项不动」）：仅面板只读展示（本版累计整组命中率行，commit 6a9b15a）与 hitrate_stability 基线带告警（commit 0d45d27）；kill_three_view.py hash 重算并记入 hash_updates，frozen_at 不重置、RULE_VERSION 未变。 2026-11-05 18:10: kill3 专属只读静态上下文回灌试验（m00325）：仅 runner 在 kill3 prompt 的面板段补注入退役 selected_six/six 历史静态快照（ops/kill3-frozen-context-ref20261105148.json），不升 RULE_VERSION、不改选码/尾码/8 项结构、不碰共享 lib/panel_context.py；删除该 JSON 即关闭；属实验性 prompt 上下文，不构成口径变更。",
   "rule_version": "kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid",
-  "version": 2
+  "version": 3
 }

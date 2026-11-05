@@ -171,10 +171,11 @@ def render_block(data):
     order = [name for _src, name in FRAMEWORKS if name in (data.get('frameworks') or {})]
     if not order:
         return (START + '<section id="position-kill-shadow" aria-label="位置杀码稳定化候选影子">'
-                '<h3>✅ 位置杀码稳定化已全部转正</h3>'
+                '<h3>🧪 位置杀码稳定化候选（影子·多档只读对照）</h3>'
                 '<div style="font-size:13px;color:#475569;margin-top:4px">'
+                '多档只读对照：hold2 / hold3 / hold5 / 不设上限；是否沿用上期杀码由模型自行决定，不由代码按阈值切换；当前尚无已结算回放记录。'
                 'kill1 已于 2026-11-01 启用 hold3-until-miss（本地确定性后处理 + position_policy 追溯）；'
-                'kill3 自 v15 起位置由模型每期自主决定、影子数据已随提示词喂入。暂无可回放记录。生成 '
+                'kill3 自 v15 起位置由模型每期自主决定、四档影子数据已随提示词喂入。生成 '
                 + str(data.get('generated_at') or '-') + '</div>'
                 '</section>' + END)
     body = []
