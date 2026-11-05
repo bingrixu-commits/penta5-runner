@@ -54,11 +54,6 @@ RULE_BASELINE = {
     ('kill8_tail', 'kill8-tail-v2-reverse-cold-forms'): (2, 0.8789),
     ('kill8_tail', 'kill8-tail-v3-four-reverse-cold-forms'): (4, 0.7733),
     ('kill8_tail', 'kill8-tail-v4-majority-lock-four-reverse-cold-forms'): (4, 0.7733),
-    ('kill9_tail', 'kill9-tail-v1-four-forms-he2he3'): (6, 0.71085114),
-    ('kill9_tail', 'kill9-tail-v2-size-parity-all-mixed'): (6, 0.71234352),
-    ('kill9_tail', 'kill9-tail-v3-pool-three-forms-he2he3'): (5, 0.75385763),
-    ('kill9_tail', 'kill9-tail-v4-pool-three-plus-all-form-he2he3'): (6, 0.70822528),
-    ('kill9_tail', 'kill9-tail-v5-pool-three-all-form-three-kill-he2he3'): (9, 0.51629623),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -67,7 +62,6 @@ LABELS = {
     'kill3_tail': 'AI 三位置杀码',
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill8_tail': 'AI 四反向冷形态（4 项）',
-    'kill9_tail': 'AI 四形态排除+三定位排除+二数合+三数合（9 项）',
 }
 SINGLE_BASELINES = (
     ('杀 1 码', 0.9),
@@ -262,40 +256,6 @@ def _kill8_rows():
     return [_row('kill8_tail', rule, total, hits, 'data/kill8_tail/settlements.json')]
 
 
-def _kill9_rows():
-    seals = _read(DATA / 'kill9_tail' / 'seals.json') or {}
-    settlements = _read(DATA / 'kill9_tail' / 'settlements.json') or {}
-    records = seals.get('records') if isinstance(seals, dict) else None
-    rows = settlements.get('records') if isinstance(settlements, dict) else None
-    if not records or not rows:
-        return []
-    rule = records[-1].get('rule_version')
-    if not rule:
-        return []
-    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
-                 for record in records if isinstance(record, dict)}
-    now = datetime.now(TZ)
-    business_day = _business_start(now)
-    hits = 0
-    total = 0
-    for record in rows:
-        if not isinstance(record, dict) or not record.get('verified'):
-            continue
-        if not any(key in record for key in ('prime', 'all', 'forms')):
-            continue
-        if (record.get('rule_version') != rule
-                and seal_rule.get(str(record.get('ref_period'))) != rule):
-            continue
-        day = _period_business_day(record.get('target_period'))
-        if day != business_day:
-            continue
-        total += 1
-        hits += int(bool(record.get('group_hit')))
-    if not total:
-        return []
-    return [_row('kill9_tail', rule, total, hits, 'data/kill9_tail/settlements.json')]
-
-
 def _as_of(rows):
     candidates = []
     he3 = _read(DATA / 'he3_refine_stats.json') or {}
@@ -314,7 +274,6 @@ def build():
     rows.extend(_kill3_rows())
     rows.extend(_kill1_rows())
     rows.extend(_kill8_rows())
-    rows.extend(_kill9_rows())
     now = datetime.now(TZ)
     return {
         'version': 1,

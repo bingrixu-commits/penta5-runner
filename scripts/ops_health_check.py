@@ -98,8 +98,7 @@ PROVIDER_402_LOGS = (
     'ai_job_killer.log',
     'he3_refine_cron.log',
     'kill3_tail_cron.log',
-    'kill1_tail_cron.log',
-    'kill9_tail_cron.log',)
+    'kill1_tail_cron.log',)
 PROVIDER_402_PATTERN = re.compile(r'"status"\s*:\s*402(?!\d)|HTTP\s+402(?!\d)')
 PROVIDER_402_AT_RE = re.compile(r'"at"\s*:\s*"([^"]+)"')
 PROVIDER_402_WINDOW_SECONDS = 30 * 60
@@ -108,7 +107,7 @@ PROVIDER_402_TAIL_BYTES = 8 * 1024 * 1024
 HITRATE_CUMULATIVE_JSON = 'framework_hitrate_cumulative.json'
 HITRATE_CUMULATIVE_WARN_SECONDS = 30 * 60
 HITRATE_CUMULATIVE_FAIL_SECONDS = 90 * 60
-HITRATE_CUMULATIVE_MIN_ROWS = 6
+HITRATE_CUMULATIVE_MIN_ROWS = 5
 COVERAGE_WARN = 0.95
 COVERAGE_FAIL = 0.80
 COVERAGE_MIN_ONLINE = 100
@@ -477,50 +476,6 @@ def check_kill1(ctx):
                   'missing seal for latest=%s seal_ref=%s age=%s'
                   % (ref, seal_ref or '-', age_text), {'ref': ref})
 
-
-def check_kill9(ctx):
-    """AI 四形态排除+二数合+三数合：最新已开奖期应有开奖前封存；超时未封存/未发布即告警。"""
-    latest = ctx.get('latest')
-    if not isinstance(latest, dict) or not latest.get('ref'):
-        return _entry('kill9_tail', WARN, 'latest draw unknown')
-    path = ctx['root'] / 'data' / 'kill9_tail' / 'seals.json'
-    try:
-        payload = json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError) as exc:
-        # 上线首期：开奖后 7 分钟宽限内允许 seals.json 尚未落盘（与 check_kill3 的等待窗口一致）；
-        # 超过宽限仍无/坏 seals.json 视为任务掉链。
-        opened = _parse_time(latest.get('opentime'))
-        age = None if opened is None else ctx['now'].timestamp() - opened.timestamp()
-        if isinstance(age, (int, float)) and age <= 420:
-            return _entry('kill9_tail', WARN,
-                          'waiting first seal: latest=%s age=%ss (%s)'
-                          % (str(latest.get('ref') or ''), round(age), exc))
-        return _entry('kill9_tail', FAIL, 'missing/unreadable seals.json: %s' % exc)
-    records = payload.get('records') if isinstance(payload, dict) else None
-    if not isinstance(records, list):
-        return _entry('kill9_tail', FAIL, 'seals.json has no records list')
-    seal = next((item for item in reversed(records) if isinstance(item, dict)), None)
-    ref = str(latest.get('ref') or '')
-    opened = _parse_time(latest.get('opentime'))
-    age = None if opened is None else ctx['now'].timestamp() - opened.timestamp()
-    seal_ref = str(seal.get('ref_period') or '') if isinstance(seal, dict) else ''
-    if seal_ref == ref:
-        state = str(seal.get('publication_state') or 'unknown')
-        published = seal.get('published_at')
-        if state == 'published' and published:
-            return _entry('kill9_tail', OK,
-                          'ref=%s published_at=%s' % (ref, published), {'ref': ref})
-        return _entry('kill9_tail', WARN,
-                      'ref=%s state=%s (not published)' % (ref, state), {'ref': ref})
-    # 当前期尚未封存：开奖后 7 分钟内算正常窗口，超时仍未封存视为任务掉链。
-    if isinstance(age, (int, float)) and age <= 420:
-        return _entry('kill9_tail', OK,
-                      'waiting: latest=%s seal_ref=%s age=%ss'
-                      % (ref, seal_ref or '-', round(age)), {'ref': ref})
-    age_text = _age_text(age) if isinstance(age, (int, float)) else 'unknown'
-    return _entry('kill9_tail', FAIL,
-                  'missing seal for latest=%s seal_ref=%s age=%s'
-                  % (ref, seal_ref or '-', age_text), {'ref': ref})
 
 def check_kill3_stability(ctx):
     """AI 三位置杀码稳定性：24h 规则版本切换 / 缺期槽数 / 最近 20 期发布延迟中位数。"""
@@ -1702,7 +1657,6 @@ CHECK_FUNCS = (
     check_ai_jobs,
     check_kill3,
     check_kill1,
-    check_kill9,
     check_kill3_stability,
     check_freeze_guards,
     check_stat50,
@@ -1732,7 +1686,6 @@ FALLBACK_NAMES = {
     'check_ai_jobs': ('job:framework', 'job:killer'),
     'check_kill3': ('kill3_tail',),
     'check_kill1': ('kill1_tail',),
-    'check_kill9': ('kill9_tail',),
     'check_kill3_stability': ('kill3_stability',),
     'check_freeze_guards': ('freeze_guards',),
     'check_stat50': ('stat50_seal',),
