@@ -131,7 +131,7 @@
     "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
     "lib/kill_three_view.py": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
     "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
-    "scripts/run_kill3_tail.py": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5"
+    "scripts/run_kill3_tail.py": "ac37eb42f767b59e80c22bcdb0c585de9ded26e429d7b119562b618e13a45ab5"
    },
    "freeze_hours": 72.0,
    "freeze_ref_period": "20261105056",
@@ -497,6 +497,14 @@
      "new_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
      "old_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
      "reason": "退役 kill9_tail（用户指令 m00002）：共享面板上下文移除 kill9 自观测/模型档位/注入；prompt A/B（kill8/kill3/kill1 三变体，固定 ref/target）改前改后逐字节相同"
+    },
+    {
+     "at": "2026-11-05T18:09:12.762603+08:00",
+     "commit": "c5f6094",
+     "file": "scripts/run_kill3_tail.py",
+     "new_sha256": "ac37eb42f767b59e80c22bcdb0c585de9ded26e429d7b119562b618e13a45ab5",
+     "old_sha256": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5",
+     "reason": "kill3 静态上下文回灌试验（m00325）：只读 prompt 面板段注入退役 selected_six/six 历史快照，RULE_VERSION 未变"
     }
    ],
    "label": "三位置杀码(kill3)",
@@ -541,6 +549,6 @@
    }
   }
  },
- "updated_at": "2026-11-05T17:58:53.644623+08:00",
+ "updated_at": "2026-11-05T18:09:12.764695+08:00",
  "version": 1
 }
