@@ -3,12 +3,13 @@
   "framework": {
    "files": {
     "lib/auto_r1_framework.py": "761f9cea59f0f749c60293da9a5420ad3159cff257f81c920de292bc6cfbf180",
-    "lib/auto_r1_match5.py": "ede5da3be3ea3ace61866df146546efabf1611708a6226681968943d6619a13e"
+    "lib/auto_r1_match5.py": "ede5da3be3ea3ace61866df146546efabf1611708a6226681968943d6619a13e",
+    "lib/joint_form_optimizer.py": "ae889cc29493e72007c008986545ed858e5b3f2028f01fad7f9f177c47154801"
    },
    "freeze_hours": 72.0,
-   "freeze_ref_period": "20261105089",
-   "frozen_at": "2026-11-05T07:30:53.521085+08:00",
-   "frozen_commit": "1497b06",
+   "freeze_ref_period": "20261105287",
+   "frozen_at": "2026-11-06T00:00:16.347313+08:00",
+   "frozen_commit": "bec59dd",
    "hash_updates": [
     {
      "at": "2026-11-05T10:34:54.956377+08:00",
@@ -33,6 +34,14 @@
      "new_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
      "old_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
      "reason": "退役 kill9_tail（用户指令 m00002）：共享面板上下文移除 kill9 自观测/模型档位/注入；prompt A/B（kill8/kill3/kill1 三变体，固定 ref/target）改前改后逐字节相同"
+    },
+    {
+     "at": "2026-11-06T00:00:14.626796+08:00",
+     "commit": "bec59dd",
+     "file": "lib/joint_form_optimizer.py",
+     "new_sha256": "ae889cc29493e72007c008986545ed858e5b3f2028f01fad7f9f177c47154801",
+     "old_sha256": null,
+     "reason": "纳入 framework 受控文件清单；本次仅新增 killer 反向锁定路径，_best_framework 反向锁+联合优化行为未变"
     }
    ],
    "label": "R1 框架",
@@ -136,15 +145,15 @@
   },
   "kill3_tail": {
    "files": {
-    "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
-    "lib/kill_three_view.py": "df32f5d08392707b25909de47009f000ff1e353d1c6783d4c52422f65bbe1d34",
+    "lib/kill3_tail.py": "aefe3d0b48b061d0622d55e4f5296db596152e38118112400a3baef5c5425b17",
+    "lib/kill_three_view.py": "b4a30a9b97e0d4f268794dcc0d988377613143bf5d27316a0462e3c0ac70cc56",
     "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
-    "scripts/run_kill3_tail.py": "ac37eb42f767b59e80c22bcdb0c585de9ded26e429d7b119562b618e13a45ab5"
+    "scripts/run_kill3_tail.py": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49"
    },
    "freeze_hours": 72.0,
-   "freeze_ref_period": "20261105056",
-   "frozen_at": "2026-11-05T04:44:42+08:00",
-   "frozen_commit": "1497b06",
+   "freeze_ref_period": "20261105287",
+   "frozen_at": "2026-11-06T00:00:14.687697+08:00",
+   "frozen_commit": "bec59dd",
    "hash_updates": [
     {
      "at": "2026-10-31T22:50:00+08:00",
@@ -529,24 +538,49 @@
      "new_sha256": "df32f5d08392707b25909de47009f000ff1e353d1c6783d4c52422f65bbe1d34",
      "old_sha256": "f6fb76d6c10ca59a3f39a93e83921de2cbf8839d79e35ff92e3aeba317309551",
      "reason": "P1 只读展示：跨版本核心杀项+失败分型；离线渲染 A/B 通过"
+    },
+    {
+     "at": "2026-11-06T00:00:14.286935+08:00",
+     "commit": "bec59dd",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "aefe3d0b48b061d0622d55e4f5296db596152e38118112400a3baef5c5425b17",
+     "old_sha256": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
+     "reason": "「v16 弃位取冷：新增 cold_dropped_form 按该位置近50期冷热覆盖弃位形态并写 dropped_form_cold；被杀3位反向约束/8项结构/2注/尾码不变」"
+    },
+    {
+     "at": "2026-11-06T00:00:14.358707+08:00",
+     "commit": "bec59dd",
+     "file": "lib/kill_three_view.py",
+     "new_sha256": "b4a30a9b97e0d4f268794dcc0d988377613143bf5d27316a0462e3c0ac70cc56",
+     "old_sha256": "df32f5d08392707b25909de47009f000ff1e353d1c6783d4c52422f65bbe1d34",
+     "reason": "面板同步 v16 弃位取冷展示、旧 v15 封存标注字符自选"
+    },
+    {
+     "at": "2026-11-06T00:00:14.426917+08:00",
+     "commit": "bec59dd",
+     "file": "scripts/run_kill3_tail.py",
+     "new_sha256": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49",
+     "old_sha256": "ac37eb42f767b59e80c22bcdb0c585de9ded26e429d7b119562b618e13a45ab5",
+     "reason": "request_prediction 增传 rows 以计算弃位取冷形态"
     }
    ],
    "label": "三位置杀码(kill3)",
    "min_periods": 100,
-   "rule_version": "kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid",
+   "rule_version": "kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop",
    "shared": {}
   },
   "killer": {
    "files": {
-    "lib/auto_r1_killer.py": "2d1ece664788687cc9bf0cf4c38ebbd28a7cdccd1055b730fac7cbe8cf86c92b",
+    "lib/auto_r1_killer.py": "14ee1985e013d8deb803f53864548af2ed1b0a9711132a96f2c3cc16b38e788f",
     "lib/auto_r1_match5.py": "ede5da3be3ea3ace61866df146546efabf1611708a6226681968943d6619a13e",
+    "lib/joint_form_optimizer.py": "ae889cc29493e72007c008986545ed858e5b3f2028f01fad7f9f177c47154801",
     "lib/killer_ai_client.py": "07176330bc22bb6479ab2ebfc5869599516d5056aeefdd9b9cf283a9ef6686de",
     "lib/killer_tail_hold.py": "715ba001f842640479f10e5edfd93e294ccb7ea7156ecac8b95faf51d63a80a7"
    },
    "freeze_hours": 72.0,
-   "freeze_ref_period": "20261105089",
-   "frozen_at": "2026-11-05T07:30:53.521085+08:00",
-   "frozen_commit": "1497b06",
+   "freeze_ref_period": "20261105287",
+   "frozen_at": "2026-11-06T00:00:14.780404+08:00",
+   "frozen_commit": "bec59dd",
    "hash_updates": [
     {
      "at": "2026-11-05T12:34:40.692296+08:00",
@@ -563,6 +597,22 @@
      "new_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
      "old_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
      "reason": "退役 kill9_tail（用户指令 m00002）：共享面板上下文移除 kill9 自观测/模型档位/注入；prompt A/B（kill8/kill3/kill1 三变体，固定 ref/target）改前改后逐字节相同"
+    },
+    {
+     "at": "2026-11-06T00:00:14.495300+08:00",
+     "commit": "bec59dd",
+     "file": "lib/auto_r1_killer.py",
+     "new_sha256": "14ee1985e013d8deb803f53864548af2ed1b0a9711132a96f2c3cc16b38e788f",
+     "old_sha256": "2d1ece664788687cc9bf0cf4c38ebbd28a7cdccd1055b730fac7cbe8cf86c92b",
+     "reason": "killer 形态改四位置全部反向锁定（反向取冷统一 m00208）；杀码/合尾不变，日志与 metadata 同步"
+    },
+    {
+     "at": "2026-11-06T00:00:14.562491+08:00",
+     "commit": "bec59dd",
+     "file": "lib/joint_form_optimizer.py",
+     "new_sha256": "ae889cc29493e72007c008986545ed858e5b3f2028f01fad7f9f177c47154801",
+     "old_sha256": null,
+     "reason": "killer 形态优化改反向锁定实现（新增 killer_reverse_lock，替换 16x16 穷举）；已纳入 killer 受控文件清单"
     }
    ],
    "label": "智能排除(killer)",
@@ -573,6 +623,6 @@
    }
   }
  },
- "updated_at": "2026-11-05T20:54:04.311776+08:00",
+ "updated_at": "2026-11-06T00:00:16.347313+08:00",
  "version": 1
 }

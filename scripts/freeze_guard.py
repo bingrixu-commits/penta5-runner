@@ -45,14 +45,16 @@ FRAMEWORKS = {
     'killer': {
         'label': '智能排除(killer)',
         'files': ['lib/auto_r1_killer.py', 'lib/auto_r1_match5.py',
-                  'lib/killer_ai_client.py', 'lib/killer_tail_hold.py'],
+                  'lib/killer_ai_client.py', 'lib/killer_tail_hold.py',
+                  'lib/joint_form_optimizer.py'],
         'shared': SHARED,
         'seal_path': 'data/r1_stats.json', 'seal_selector': 'prediction_seals',
         'rule_from_seal': True,
     },
     'framework': {
         'label': 'R1 框架',
-        'files': ['lib/auto_r1_framework.py', 'lib/auto_r1_match5.py'],
+        'files': ['lib/auto_r1_framework.py', 'lib/auto_r1_match5.py',
+                  'lib/joint_form_optimizer.py'],
         'shared': SHARED,
         'seal_path': 'data/r1_framework_seals.json', 'seal_selector': 'prediction_seals',
         'rule_from_seal': False,
