@@ -1723,3 +1723,21 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   - `scripts/ops_health_check.py`：`check_coverage` 新增「单框架近 24 期（约 2h）有任一缺期即 WARN」；不用绝对覆盖率判定（24h 窗口含共同历史缺口时五个框架会一起误报，首轮实测已踩到）。新增 `check_ai_manual_off(ctx)`：AI 总闸关闭 ≥15min → WARN；从 `transitions` 最后一条 disabled 起算，`auto_paused` 区分「余额欠费自动暂停」/「手动关闭」，`transitions` 缺失时同样 WARN。注册进 `CHECK_FUNCS`/`FALLBACK_NAMES`，docstring 同步；新增常量 `COVERAGE_SINGLE_RECENT_MISSES=1`、`MANUAL_OFF_WARN_SECONDS=15*60`。
 - 验证：`py_compile` 两文件 OK；`scripts/ai_balance_guard.py --dry-run` → balance 131.43、enabled=true、generation=79、action=none（阈值改动对当前无副作用）；离线假 root 单测 `check_ai_manual_off`：开启→OK、手动关闭 30min→WARN、余额欠费 30min→WARN（detail=「AI 总闸余额欠费自动暂停已 30.0m（≥15 分钟，请确认是否忘记打开）」）、手动 5min→OK、disabled 且无 transitions→WARN；`ops_health_check.py` 复跑 coverage 回到 OK（五框架 97.2–97.9%，单框架误报消失）、`ai_manual_off OK`，唯一 FAIL=`manifest_drift`（改 live 源码后未刷基线，提交后刷新即恢复）。
 - 回滚：`git revert 9a5b1fd`；或按备份 `/root/ops/harden-20261105-225735/`（`ai_balance_guard.py.bak`、`ops_health_check.py.bak`、pre.sha256）覆盖后等 cron 下一分钟加载。
+
+### P3 评估：改项数（评估后不改，2026-11-05 23:10）
+
+- 需求：用户 m00704「全部完善」——P0 阶段预留的 P3「改项数」。该项会改预测含义（=改封存口径/新 RULE_VERSION），故先只读评估再决定；评估脚本 `/tmp/p3_candidates.py`、`/tmp/p3_drawdown.py`（只读，未改任何线上文件）。
+- 方法：对 kill3 v15 全部 220 期已结算封存，按「逐封存枚举 10^4 开奖空间取均值」精确算随机基线（不单项相乘）；同时从 settlements 的逐项 `hit` 复算实际全中率，对每条口径做 burn-in 25 期的累计曲线最大回撤，并用同基线纯随机序列（4000 次模拟）给回撤分布。
+- 结果（n=220，kill3 v15）：
+
+| 口径 | 随机基线 | 实际 | 实际自峰值回撤 | 同基线随机回撤中位 | 同基线 p90 |
+|---|---|---|---|---|---|
+| 8 项（现行：2位置+合尾+2反向形态+3避开） | 58.64% | 62.27% | 10.41pp | 9.32pp | 16.67pp |
+| 6 项（去掉 2 反向形态） | 68.69% | 71.36% | 13.20pp | 8.97pp | 15.56pp |
+| 5 项（去掉 3 避开组） | 62.16% | 65.00% | 8.83pp | 9.23pp | 16.40pp |
+| 3 项（2位置+合尾） | 72.90% | 75.00% | 11.21pp | 8.67pp | 14.87pp |
+| 2 项（仅 2 位置） | 81.00% | 82.73% | 10.76pp | 7.65pp | 12.95pp |
+
+- 结论：改项数对「断崖」的改善只来自 σ=√(p(1-p)/n) 的收缩——同基线随机回撤中位最多只降 18%（8→2 项），实际样本里 6 项口径的回撤反而更大（13.20pp）；同时会把「整组命中」从产品口径（8 项全中）改成更宽松口径，对外含义变了。→ **评估结论：不划算，保持 8 项不动**；P0/P1 展示层（整组累计 + CI + 基线 + 随机回撤带、平均命中项数、核心杀项跨版累计）已覆盖「看得清」的需求。
+- 若之后仍要改：走 `upgrade-sealed-framework-revision` 完整升版（先定去掉哪几项、是否同步改 prompt，新 RULE_VERSION、两处基线表登记、冻结重置、旧版按 P1 的跨版展示迁移），不要只改结算计数。
+- 回滚：本节只加文档，无代码/数据改动。
