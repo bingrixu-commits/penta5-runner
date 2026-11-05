@@ -1,4 +1,4 @@
-"""AI 单位置 + 一合尾 + 一形态 每期任务（cron 每 5 分钟，开奖后启动）。
+"""AI 双位置 + 一合尾 每期任务（cron 每 5 分钟，开奖后启动）。
 
 流程：
 1. 等待本期开奖数据就绪（最多 55 秒）；
@@ -121,17 +121,26 @@ def main():
         kill1_tail.mark_publication_failed(reference, f'panel-write-{type(error).__name__}')
         print(f'kill1 panel publication failed: {type(error).__name__}')
         return 1
-    position_key = next(iter(prediction['positions']))
-    picked = '%s 杀%s' % (kill1_tail.POSITION_LABELS[position_key],
-                          prediction['positions'][position_key])
+    picked = ' · '.join('%s 杀%s' % (kill1_tail.POSITION_LABELS[key],
+                                      prediction['positions'][key])
+                         for key in prediction.get('counted') or [])
     print(f'kill1 published: ref={reference} target={target} rule={kill1_tail.RULE_VERSION} {picked} · '
-          f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]} · '
-          f'{kill1_tail.REVERSE_LABELS[prediction["form_type"]]} {prediction["form"]}')
+          f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]}')
     position_policy = prediction.get('position_policy') or {}
     if position_policy:
-        print('kill1 position policy: ' + str(position_policy.get('note'))
-              + ' · sealed=' + str(prediction['positions'].get(position_policy.get('key')))
-              + ' · model=' + str(position_policy.get('model_kill')))
+        items = position_policy.get('items')
+        if isinstance(items, dict) and items:
+            for key, _label, _index in kill1_tail.POSITIONS:
+                item = items.get(key)
+                if not isinstance(item, dict):
+                    continue
+                print('kill1 position policy: %s %s · sealed=%s · model=%s'
+                      % (item.get('label'), item.get('note'),
+                         item.get('sealed_kill'), item.get('model_kill')))
+        else:
+            print('kill1 position policy: ' + str(position_policy.get('note'))
+                  + ' · sealed=' + str(position_policy.get('sealed_kill'))
+                  + ' · model=' + str(position_policy.get('model_kill')))
     tail_policy = prediction.get('tail_policy') or {}
     if tail_policy:
         print('kill1 tail policy: ' + str(tail_policy.get('note'))

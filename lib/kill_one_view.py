@@ -1,21 +1,15 @@
-"""AI 单位置杀码 + 一合尾 + 一形态建议面板区块（kill1 独立框架）。
+"""AI 双位置杀码 + 一合尾建议面板区块（kill1 独立框架，v4）。
 
 数据源 data/kill1_tail/{seals,settlements}.json，由 scripts/run_kill1_tail.py 每期生成。
 与 kill3 完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
 
 命中口径（写死，面板脚注同步展示）：
-- 位置命中 = 该位置实际开奖号 != 排除码（恰好 1 个位置，1 注/期）；
+- 位置命中 = 该位置实际开奖号 != 排除码（每期 2 个不同位置各排除 1 码，共 2 注/期，两项均计入整组）；
 - 合尾命中 = 该合尾实际和值个位 != 排除码（5 种合尾选 1）；
-- 反向形态命中 = 目标期实际四位单双/大小形态 != 封存形态（反向排除项，4 字符）；
-- 整组命中 = 1 位置 + 1 合尾 + 1 项反向形态同时命中（共 3 项）；
+- 整组命中 = 2 位置 + 1 合尾同时命中（共 3 项）；
+- 位置稳定化 v4 = 两个位置各自独立 hold3-until-miss；合尾沿用 hold3-until-miss；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
-
-设计要点：
-- 自包含 section（id 见 _section_open）+ 内联样式，不依赖面板已有 CSS 类；
-- 用 START / END 起止注释标记原地替换；
-- 标记缺失时按 KILL_THREE_END -> </body> 顺序插入；
-- 任何异常原样返回 html，绝不影响整页刷新。
 """
 from datetime import datetime
 from html import escape
@@ -28,11 +22,10 @@ START = '<!-- KILL_ONE_START -->'
 END = '<!-- KILL_ONE_END -->'
 
 # 整组随机基线兜底：(项数, 精确期望命中率)。
-# 3 项 = 1 位置 + 1 合尾 + 1 项反向形态；均匀配置下 10^4 全枚举平均期望 0.7538。
-# hitrate_baseline.RULE_BASELINE[('kill1_tail', RULE_VERSION)] 未登记时使用本值。
-FALLBACK_BASELINE = (3, 0.7538)
+# 3 项 = 2 个不同位置各杀 1 码 + 1 个合尾；均匀配置下 10^4 全枚举每条配置恰 7290/10000。
+FALLBACK_BASELINE = (3, 0.729)
 
-_TITLE = '🤖 AI 单位置杀码 + 一合尾 + 一形态建议'
+_TITLE = '🤖 AI 双位置杀码 + 一合尾建议'
 
 _PARITY_OPPOSITE = {'单': '双', '双': '单'}
 _SIZE_OPPOSITE = {'大': '小', '小': '大'}
@@ -85,27 +78,16 @@ def _stats_html(stats):
     total = stats.get('total') or 0
     pending = stats.get('pending') or 0
     late = stats.get('late') or 0
+    positions = stats.get('positions') or {}
+    tail_stats = stats.get('tail') or {}
     if total:
-        positions = stats.get('positions') or {}
-        tail_stats = stats.get('tail') or {}
-        form_stats = stats.get('form') or {}
-        types = form_stats.get('types') or {}
-        type_bits = []
-        for key, short in (('reverse_parity', '单双'), ('reverse_size', '大小')):
-            entry = types.get(key) or {}
-            if isinstance(entry, dict) and entry:
-                type_bits.append('%s %s/%s' % (short, entry.get('hits'), entry.get('bets')))
-        form_detail = ('；' + ' · '.join(type_bits)) if type_bits else ''
         join = ' · '.join([
-            '整组命中率（3 项全中：1 位置 + 合尾 + 1 形态） <b>%s</b>（%s/%s 期）'
+            '整组命中率（3 项全中：2 位置 + 合尾） <b>%s</b>（%s/%s 期）'
             % (_pct(stats.get('group_rate')), stats.get('group_hits'), total),
-            '位置杀码（1 注/期，随机基线90%%） <b>%s</b>（%s/%s 注）'
+            '位置杀码（2 注/期，单项随机基线90%%） <b>%s</b>（%s/%s 注）'
             % (_pct(positions.get('rate')), positions.get('hits'), positions.get('bets')),
             '合尾杀码（随机基线90%%） <b>%s</b>（%s/%s 期）'
             % (_pct(tail_stats.get('rate')), tail_stats.get('hits'), tail_stats.get('bets')),
-            '反向形态（单双/大小按 form_type，随机基线93.75%%） <b>%s</b>（%s/%s 期%s）'
-            % (_pct(form_stats.get('rate')), form_stats.get('hits'),
-               form_stats.get('bets'), form_detail),
             '待核验 <b>%s</b> 期' % pending,
         ])
     else:
@@ -115,7 +97,7 @@ def _stats_html(stats):
         join += ' · 未计入（发布晚于开奖）%s 期' % late
     legacy = stats.get('legacy') or {}
     if legacy.get('total'):
-        join += (' · 旧口径（历史版本封存）%s 期（整组 %s 中）已归档不计入'
+        join += (' · 旧口径（v1/v2/v3 含形态封存）%s 期（整组 %s 中）已归档不计入'
                  % (legacy.get('total'), legacy.get('group_hits')))
     win = stats.get('current_win_streak') or 0
     loss = stats.get('current_loss_streak') or 0
@@ -124,10 +106,11 @@ def _stats_html(stats):
     elif loss:
         join += ' · 当前 <b style="color:#b91c1c">连败 %s 期</b>' % loss
     join += ' · 累计四手连败 <b>%s</b> 次（自本版本上线起，跨天不重叠计数）' % (stats.get('four_loss_cycles_total') or 0)
-    if total and total < 200:
-        sigma = 100.0 * math.sqrt(0.9 * 0.1 / total)
-        join += (' · 单项样本 n=%s（&lt;200 属小样本：90%% 项 1σ≈%.1fpp、2σ≈%.1fpp），'
-                 '单日单项只作波动参考' % (total, sigma, 2 * sigma))
+    bets = positions.get('bets') or 0
+    if bets and bets < 200:
+        sigma = 100.0 * math.sqrt(0.9 * 0.1 / bets)
+        join += (' · 位置单项样本 n=%s（&lt;200 属小样本：90%% 项 1σ≈%.1fpp、2σ≈%.1fpp），'
+                 '单日单项只作波动参考' % (bets, sigma, 2 * sigma))
     return '<div class="k1-stats"><span>%s</span></div>' % join
 
 
@@ -151,7 +134,7 @@ def _settlement_line(settlement):
             tail.get('label') or '', tail.get('kill', '-'),
             '命中' if tail.get('hit') is True else '未中', tail.get('actual', '-')))
     form = settlement.get('form') or {}
-    if isinstance(form, dict) and form:
+    if isinstance(form, dict) and form.get('form'):
         parts.append('%s %s %s（实际 %s）' % (
             form.get('label') or form.get('type') or '反向形态', form.get('form') or '',
             '命中' if form.get('hit') is True else '未中', form.get('actual', '-')))
@@ -165,9 +148,13 @@ def _settlement_line(settlement):
 
 
 def _form_derivation(seal):
-    """形态推导行：被杀位置取杀码形态反面，其余 3 个位置字符由 AI 自选。"""
+    """旧口径（v1/v2/v3）形态推导行：被杀位置取杀码形态反面，其余 3 个位置字符由 AI 自选。"""
     positions = seal.get('positions') or {}
-    if not isinstance(positions, dict):
+    form_type = str(seal.get('form_type') or '')
+    form = seal.get('form')
+    if not isinstance(positions, dict) or form_type not in kill1_tail.REVERSE_LABELS:
+        return ''
+    if not isinstance(form, str) or len(form) != 4:
         return ''
     parts = []
     for key, label, _index in kill1_tail.POSITIONS:
@@ -183,10 +170,58 @@ def _form_derivation(seal):
             label, positions[key], killed_parity, killed_size, reverse_parity, reverse_size))
     if not parts:
         return ''
-    form_type = str(seal.get('form_type') or '')
-    form_label = kill1_tail.REVERSE_LABELS.get(form_type, form_type or '反向形态')
+    form_label = kill1_tail.REVERSE_LABELS.get(form_type, form_type)
     return ('形态推导（%s）：%s；被杀位置取杀码形态反面；其余 3 个位置字符由 AI 自选'
             % (form_label, ' · '.join(parts)))
+
+
+def _position_policy_html(seal):
+    """双位置独立 hold3 稳定化说明（v4）；旧单条 position_policy 走兼容分支。"""
+    policy = seal.get('position_policy')
+    if not isinstance(policy, dict) or not policy:
+        return ''
+    items = policy.get('items') if isinstance(policy.get('items'), dict) else None
+    parts = []
+    if items:
+        for key, _label, _index in kill1_tail.POSITIONS:
+            item = items.get(key)
+            if not isinstance(item, dict):
+                continue
+            label = item.get('label') or kill1_tail.POSITION_LABELS.get(key, key)
+            note = str(item.get('note') or '新选').strip() or '新选'
+            bits = ['%s：%s' % (label, note)]
+            if item.get('model_kill') is not None:
+                bits.append('AI 候选 %s' % (item.get('model_kill')))
+            if item.get('sealed_kill') is not None:
+                bits.append('封存 %s' % (item.get('sealed_kill')))
+            parts.append(' · '.join(bits))
+    else:
+        label = policy.get('label') or kill1_tail.POSITION_LABELS.get(policy.get('key'), policy.get('key', ''))
+        note = str(policy.get('note') or '').strip()
+        bits = ['%s：%s' % (label, note or 'hold3-until-miss（命中自动沿用，最多自动沿用 3 期）')]
+        if policy.get('model_kill') is not None:
+            bits.append('AI 候选 %s' % policy.get('model_kill'))
+        if policy.get('sealed_kill') is not None:
+            bits.append('封存 %s' % policy.get('sealed_kill'))
+        parts.append(' · '.join(bits))
+    if not parts:
+        return ''
+    return '<div class="k1-drop">位置稳定化：%s</div>' % escape('；'.join(parts))
+
+
+def _tail_policy_html(seal):
+    """合尾 hold3 稳定化说明。"""
+    policy = seal.get('tail_policy')
+    if not isinstance(policy, dict) or not policy:
+        return ''
+    note = str(policy.get('note') or '').strip()
+    bits = ['合尾稳定化：' + (note or 'hold3-until-miss（命中自动沿用，最多自动沿用 3 期）')]
+    model_tail = policy.get('model_tail')
+    if isinstance(model_tail, dict):
+        bits.append('AI 候选 %s合尾 杀%s' % (model_tail.get('label') or '', model_tail.get('kill')))
+    if policy.get('previous_hit') is True:
+        bits.append('上期命中')
+    return '<div class="k1-drop">%s</div>' % escape(' · '.join(bits))
 
 
 def _version_html():
@@ -221,182 +256,151 @@ def _version_html():
 
 
 def render_block():
+    """渲染 kill1 面板区块（最新已发布封存 + 当日统计 + 攻击语）。"""
     try:
-        data = kill1_tail.current_summary()
-        data = data if isinstance(data, dict) else {}
-        stats = data.get('stats') or {}
-        seal = data.get('seal')
-        if not isinstance(seal, dict):
-            body = '<div class="k1-empty">本期 AI 建议尚未发布（等待开奖后计算，或本轮调用失败）。</div>'
-            previous = data.get('previous')
-            if isinstance(previous, dict):
-                body += ('<div class="k1-meta">最近一次：参考期 %s · 目标期 %s</div>'
-                         % (escape(str(previous.get('ref_period', ''))),
-                            escape(str(previous.get('target_period', '')))))
-            return ('%s%s<style>%s</style><h3>%s</h3>%s%s%s%s%s'
-                    % (START, _section_open(), STYLE, _TITLE, body,
-                       _stats_html(stats), _version_html(), _foot_html(), '</section>' + END))
-        cards = []
-        positions = seal.get('positions') or {}
-        if isinstance(positions, dict):
-            for key, label, _index in kill1_tail.POSITIONS:
-                if key not in positions:
-                    continue
-                cards.append(
-                    '<div class="k1-card"><div class="k1-pos">%s</div>'
-                    '<div class="k1-kill">%s</div>'
-                    '<div class="k1-sub">排除 1 码（计入整组）</div></div>'
-                    % (escape(str(label)), escape(str(positions.get(key, '-')))))
-        tail = seal.get('tail') or {}
-        if isinstance(tail, dict) and tail:
-            cards.append(
-                '<div class="k1-card k1-tail"><div class="k1-pos">%s合尾</div>'
-                '<div class="k1-kill">%s</div>'
-                '<div class="k1-sub">排除 1 个和尾（计入整组）</div></div>'
-                % (escape(str(tail.get('label', ''))), escape(str(tail.get('kill', '-')))))
-        form = seal.get('form')
-        form_type = str(seal.get('form_type') or '')
-        if isinstance(form, str) and len(form) == 4:
-            form_label = kill1_tail.REVERSE_LABELS.get(form_type, form_type or '反向形态')
-            cards.append(
-                '<div class="k1-card k1-pattern"><div class="k1-pos">%s</div>'
-                '<div class="k1-form">%s</div>'
-                '<div class="k1-sub">排除该四位形态（计入整组）</div></div>'
-                % (escape(str(form_label)), escape(form)))
-        reason = escape(str(seal.get('reason') or '')) or '（无）'
-        tail_policy = seal.get('tail_policy') or {}
-        if (isinstance(tail_policy, dict)
-                and tail_policy.get('reused_previous') is True
-                and '尾码按稳定化沿用上期' not in str(seal.get('reason') or '')):
-            reason += ('<span style="color:#92400e;">（尾码已按稳定化沿用上期，'
-                       '模型理由中的合尾为换码候选）</span>')
-        derivation = _form_derivation(seal)
-        derive_html = '<div class="k1-drop">%s</div>' % escape(derivation) if derivation else ''
-        policy_html = ''
-        if isinstance(tail_policy, dict) and tail_policy:
-            note = str(tail_policy.get('note') or '').strip()
-            model_tail = tail_policy.get('model_tail') or {}
-            candidate = ''
-            if isinstance(model_tail, dict) and model_tail.get('key') in kill1_tail.TAILS:
-                candidate = ('AI 候选：%s 合尾 杀 %s'
-                             % (kill1_tail.TAILS[model_tail['key']]['label'],
-                                model_tail.get('kill')))
-            bits = [escape(note) if note
-                    else 'hold3-until-miss（命中自动沿用，最多自动沿用 3 期）']
-            if candidate:
-                bits.append(escape(candidate))
-            policy_html = '<div class="k1-drop">尾码稳定化：%s</div>' % ' · '.join(bits)
-        scope_html = ('<div class="k1-drop">整组 3 项：1 位置 + 1 合尾 + 1 形态；'
-                      '位置与杀码不做连用限制（完全由模型每期自选）</div>')
-        model = seal.get('model_label') or kill1_tail.model_label()
-        meta = ('参考期 %s ｜ 目标期 %s ｜ AI 计算 %s（北京时间） ｜ %s'
-                % (escape(str(seal.get('ref_period', ''))),
-                   escape(str(seal.get('target_period', ''))),
-                   escape(_clock(seal.get('generated_at'))), escape(str(model))))
-        settlement = data.get('settlement')
-        state = seal.get('publication_state')
-        if isinstance(settlement, dict):
-            verify = _settlement_line(settlement)
-        elif state == 'published':
-            verify = '已发布（%s），等待目标期开奖核验。' % escape(_clock(seal.get('published_at')))
-        else:
-            verify = '已封存，等待发布确认。'
-        as_of = escape(str(seal.get('ref_period', '')))
-        return ('%s%s<style>%s</style><h3>%s</h3>'
-                '<div class="k1-meta">%s</div>'
-                '<div class="k1-grid">%s</div>%s%s%s'
-                '<div class="k1-reason">理由：%s</div>'
-                '%s%s<div class="k1-verify">%s</div>%s%s%s'
-                % (START, _section_open(' data-as-of="%s"' % as_of), STYLE, _TITLE,
-                   meta, ''.join(cards), scope_html, policy_html, derive_html, reason,
-                   _stats_html(stats), _version_html(), verify, _attack_html(seal),
-                   _foot_html(), '</section>' + END))
+        summary = kill1_tail.current_summary()
     except Exception:
         return ''
+    seal = (summary.get('seal') or summary.get('previous')) if isinstance(summary, dict) else None
+    if not isinstance(seal, dict):
+        return (_section_open()
+                + '<h3>' + _TITLE + '</h3>'
+                + '<div class="k1-empty">等待首期封存：cron 每 5 分钟检查，开奖后生成并发布。</div>'
+                + '</section>')
+    stats = summary.get('stats') or {}
+    settlement = summary.get('settlement')
+    reference = seal.get('ref_period')
+    target = seal.get('target_period')
+    positions = seal.get('positions') or {}
+    counted = seal.get('counted') or list(positions)
+    tail = seal.get('tail') or {}
+    form_type = str(seal.get('form_type') or '')
+    form = seal.get('form') if (
+        form_type in kill1_tail.REVERSE_LABELS
+        and isinstance(seal.get('form'), str)
+        and len(seal.get('form')) == 4
+    ) else ''
+    html = [_section_open(' data-as-of="%s"' % escape(str(reference or '')))]
+    html.append('<h3>' + _TITLE + '</h3>')
+    html.append('<div class="k1-meta">参考期 %s · 目标期 %s · AI 计算 %s（北京时间） · %s</div>'
+                % (escape(str(reference or '-')), escape(str(target or '-')),
+                   _clock(seal.get('generated_at')),
+                   escape(str(seal.get('model_label') or seal.get('model') or '-'))))
+    cards = []
+    for key, label, _index in kill1_tail.POSITIONS:
+        if key not in positions:
+            continue
+        kill = positions.get(key)
+        counted_mark = '（计入整组）' if key in counted else '（不计入整组）'
+        cards.append('<div class="k1-card"><div class="k1-pos">%s</div>'
+                     '<div class="k1-kill">%s</div>'
+                     '<div class="k1-sub">排除 1 码%s</div></div>'
+                     % (escape(label), escape(str(kill)), escape(counted_mark)))
+    if isinstance(tail, dict) and tail:
+        cards.append('<div class="k1-card k1-tail"><div class="k1-pos">%s合尾</div>'
+                     '<div class="k1-kill">%s</div>'
+                     '<div class="k1-sub">排除 1 个和尾（计入整组）</div></div>'
+                     % (escape(str(tail.get('label') or '')), escape(str(tail.get('kill', '-')))))
+    if form:
+        cards.append('<div class="k1-card k1-pattern"><div class="k1-pos">%s</div>'
+                     '<div class="k1-form">%s</div>'
+                     '<div class="k1-sub">旧口径反向形态（历史封存）</div></div>'
+                     % (escape(kill1_tail.REVERSE_LABELS.get(form_type, form_type)), escape(form)))
+    html.append('<div class="k1-grid">' + ''.join(cards) + '</div>')
+    reason = escape(str(seal.get('reason') or '').strip())
+    if reason:
+        html.append('<div class="k1-reason">理由：%s</div>' % reason)
+    html.append(_position_policy_html(seal))
+    html.append(_tail_policy_html(seal))
+    html.append(_form_derivation(seal))
+    html.append('<div class="k1-drop">整组 3 项：2 位置 + 1 合尾（两位置各 1 注、均计入整组）；'
+                '位置稳定化 v4 起两位置各自独立 hold3（命中自动沿用，最多自动沿用 3 期）；'
+                '位置与杀码不做连用限制（完全由模型每期自选）</div>')
+    html.append('<div class="k1-drop">发布 %s · 窗口 %s 期 · 关盘按开奖槽位倒推 70 秒</div>'
+                % (_clock(seal.get('published_at')), escape(str(seal.get('window') or '-'))))
+    html.append('<div class="k1-verify">' + _settlement_line(settlement) + '</div>')
+    html.append(_stats_html(stats))
+    html.append(_version_html())
+    html.append(_attack_html(seal))
+    html.append(_foot_html())
+    html.append('</section>')
+    return ''.join(html)
 
 
 def _attack_html(seal):
-    """与 kill3 同格式的攻击语 + 复制按钮（复制脚本沿用 kill3 同款，只换元素 id）。"""
-    if not isinstance(seal, dict) or not seal.get('published_at'):
-        return ''
     try:
-        text = kill1_tail.build_attack(seal)
+        attack = kill1_tail.build_attack(seal)
+        payload = {
+            'version': 1,
+            'reference_period': seal.get('ref_period'),
+            'target_period': seal.get('target_period'),
+            'published_at': seal.get('published_at'),
+            'attack': attack,
+        }
+        data = (json.dumps(payload, ensure_ascii=False)
+                .replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e'))
+        template = (
+            '<div class="k1-attack">'
+            '<div class="k1-attack-title">攻击语（复制到平台，与八项同格式）</div>'
+            '<textarea id="kill1-attack-text" readonly aria-label="AI 双位置+一合尾攻击语"'
+            ' style="width:100%;min-height:52px;margin-top:6px;padding:6px;border:1px solid #c7d2fe;'
+            'border-radius:6px;background:#fff;font:12px/1.5 monospace;color:#334155;resize:vertical">'
+            '__ATTACK__</textarea>'
+            '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">'
+            '<button id="kill1-attack-copy" type="button" '
+            'style="padding:4px 12px;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;'
+            'color:#4338ca;font-size:13px;cursor:pointer">复制攻击语</button>'
+            '<span id="kill1-copy-status" class="k1-sub"></span></div>'
+            '<script id="kill1-attack-data" type="application/json">__DATA__</script>'
+            '<script>(function(){var btn=document.getElementById("kill1-attack-copy");'
+            'if(!btn||btn.getAttribute("data-bound")){return;}btn.setAttribute("data-bound","1");'
+            'btn.addEventListener("click",function(){var t=document.getElementById("kill1-attack-text");'
+            'var s=document.getElementById("kill1-copy-status");if(!t){return;}'
+            'function done(ok){if(s){s.textContent=ok?"已复制":"复制失败，请手动选择";'
+            'setTimeout(function(){if(s){s.textContent="";}},1600);}}'
+            't.focus();t.select();try{if(navigator.clipboard&&navigator.clipboard.writeText){'
+            'navigator.clipboard.writeText(t.value).then(function(){done(true);},function(){'
+            'try{done(document.execCommand("copy"));}catch(e){done(false);}});return;}}catch(e){}'
+            'try{done(document.execCommand("copy"));}catch(e){done(false);}});})();</script>'
+            '</div>')
+        return template.replace('__ATTACK__', escape(attack)).replace('__DATA__', data)
     except Exception:
         return ''
-    payload = json.dumps({'version': 1,
-                          'reference_period': seal.get('ref_period'),
-                          'target_period': seal.get('target_period'),
-                          'published_at': seal.get('published_at'),
-                          'attack': text},
-                         ensure_ascii=False, allow_nan=False, separators=(',', ':'))
-    for old, new in (('&', '\\u0026'), ('<', '\\u003c'), ('>', '\\u003e')):
-        payload = payload.replace(old, new)
-    copy_action = (
-        "var b=document.getElementById('kill1-attack-text');if(!b)return;"
-        "var t=b.value||b.textContent||'';"
-        "var s=document.getElementById('kill1-copy-status');"
-        "var done=function(ok){if(s){s.textContent=ok?'已复制':'复制失败，请手动选择';"
-        "s.style.color=ok?'#15803d':'#b91c1c';}};"
-        "var fb=function(){var a=document.createElement('textarea');a.value=t;"
-        "a.setAttribute('readonly','');a.style.cssText='position:fixed;left:-9999px;top:0;opacity:0;';"
-        "document.body.appendChild(a);a.select();var ok=false;"
-        "try{ok=document.execCommand('copy')===true;}catch(e){}a.remove();done(ok);};"
-        "if(navigator.clipboard&&navigator.clipboard.writeText){"
-        "navigator.clipboard.writeText(t).then(function(){done(true);},fb);}else{fb();}")
-    return ('<div class="k1-attack">'
-            '<div class="k1-attack-title">攻击语（复制到平台，与八项同格式）</div>'
-            '<textarea id="kill1-attack-text" readonly rows="3" aria-label="AI 单位置+一合尾+一形态攻击语" '
-            'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
-            'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
-            + escape(text) + '</textarea>'
-            '<button id="kill1-attack-copy" type="button" onclick="' + copy_action + '" '
-            'style="padding:7px 15px;border:0;border-radius:7px;background:#4f46e5;color:#fff;cursor:pointer;">'
-            '复制攻击语</button>'
-            '<span id="kill1-copy-status" role="status" style="margin-left:8px;font-size:12px;"></span></div>'
-            '<script id="kill1-attack-data" type="application/json">' + payload + '</script>')
 
 
 def _foot_html():
-    return ('<div class="k1-foot">'
-            '由 DeepSeek 决定：从千/百/十/个中选 1 个位置排除 1 码（1 注/期）；'
-            '从 5 种合尾中选 1 种排除 1 个和尾数字（稳定化：命中自动沿用、最多自动沿用 3 期；'
-            '失手或满 3 期后由模型重选，重选可与上期同码；AI 尾项为换码候选）；'
-            '从单双反向 / 大小反向中选 1 种四位形态，被杀位置的字符必须取杀码形态反面，'
-            '其余 3 个位置字符由 AI 自选。<br>'
-            '定位依据（v2 起）：每位置近 50 期热码 top3 + 上期该位置重码 / 邻码（±1，0↔9）；'
-            '不以冷码 / 长遗漏为依据（v1 冷码口径已归档）。<br>'
-            '位置杀码稳定化（v3 起）：命中后沿用同位置杀码、最多自动沿用 3 期；失手或满 3 期后由模型重选'
-            '（重选可与上期同码）；封存写 position_policy 追溯。<br>'
-            '命中 = 该位置实际开奖号<b>不在</b>排除码上（1 个位置计入）；'
-            '合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
-            '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态。<br>'
-            '1 个位置 + 1 个合尾 + 1 项反向形态共 3 项同时命中才算整组命中；'
-            '旧口径（历史版本封存）保留但不计入本统计；'
-            '只统计开奖前发布、开奖后核验的记录；累计四手连败自本版本上线起跨天叠加：连续 4 期整组未全中记 1 次、8 期记 2 次，赢一次清零，不随 05:00 清零；北京时间 05:00 清零（用于当日命中率等当日统计）；'
-            '只使用前 4 球（千/百/十/个），第 5 球不参与；平台提前 70 秒关盘。'
-            '</div>')
+    return ('<div class="k1-foot">口径（写死）：位置杀码 = 该位置实际开奖号 ≠ 排除码'
+            '（每期 2 个不同位置各排除 1 码，两项均计入整组，共 2 注/期）；'
+            '合尾杀码 = 该合尾实际和值个位 ≠ 排除码（5 种合尾选 1）；'
+            '整组命中 = 2 位置 + 1 合尾同时命中（共 3 项）。'
+            '位置稳定化 v4：两位置各自独立 hold3-until-miss（命中自动沿用同位置同杀码，最多连续沿用 3 期，'
+            '上期未命中或满 3 期换码）；合尾沿用 hold3-until-miss。'
+            '只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；'
+            '只使用前 4 球（千/百/十/个），第 5 球不参与；关盘前 70 秒截止。'
+            'v1/v2/v3 旧封存（含形态）历史归档，不计入 v4 统计。</div>')
 
 
 def apply_kill_one_block(content, report=None):
-    """原地替换/插入 AI 单位置+一合尾+一形态区块；任何异常原样返回 content。"""
+    """把 kill1 区块原地写入面板 content（START/END 标记替换；缺失时按兜底锚点插入）。"""
     try:
-        if not isinstance(content, str) or not content:
+        if not isinstance(content, str):
             return content
-        fragment = render_block()
-        if not fragment:
-            return content
-        start = content.find(START)
-        end = content.find(END)
-        if start != -1 and end != -1 and end > start:
-            return content[:start] + fragment + content[end + len(END):]
-        for anchor in ('<!-- KILL_THREE_END -->',):
-            position = content.find(anchor)
-            if position != -1:
-                position += len(anchor)
-                return content[:position] + fragment + content[position:]
-        closing = content.rfind('</body>')
-        if closing != -1:
-            return content[:closing] + fragment + content[closing:]
-        return content + fragment
+        block = '<style>' + STYLE + '</style>' + render_block()
+        if START in content and END in content:
+            head, rest = content.split(START, 1)
+            _old, tail_part = rest.split(END, 1)
+            return head + START + block + END + tail_part
+        if '<!-- KILL_THREE_END -->' in content:
+            return content.replace('<!-- KILL_THREE_END -->',
+                                   '<!-- KILL_THREE_END -->' + START + block + END, 1)
+        marker = '</body>'
+        if marker in content:
+            return content.replace(marker, START + block + END + marker, 1)
+        return content
     except Exception:
+        if report is not None:
+            try:
+                report('kill1-block-failed')
+            except Exception:
+                pass
         return content

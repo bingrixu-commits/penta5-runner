@@ -1,7 +1,8 @@
-"""AI 单位置杀码 + 一合尾 + 一形态（独立框架，数据独立封存/统计）。
+"""AI 双位置杀码 + 一合尾（独立框架，数据独立封存/统计）。
 
 口径（面板、封存与统计都按此写死）：
-- 由 DeepSeek 从 千/百/十/个 四个位置中选 1 个位置，排除 1 个数字（杀码）；
+- 由 DeepSeek 从 千/百/十/个 四个位置中选 2 个不同位置，各排除 1 个数字（杀码），
+  两个位置都计入整组（每期 2 注）；
 - 定位依据（v2 起）：每个位置给出近 50 期热码 top3 与上期（参考期）该位置重码/邻码
   （±1，0↔9 循环），模型须从中选择排除码，不得以冷码（出现次数少、当前遗漏长）为依据；
   v1 的冷码定位口径已归档，旧封存保留原 rule_version 不再产生新记录；
@@ -9,16 +10,14 @@
 - 尾码稳定化 hold3-until-miss：上期尾码命中且自动沿用未满 3 期时沿用上期尾码；失手或自动沿用
   满 3 期后由模型本期重选（重选可与上期同码）；模型尾项在封存里记为换码候选
   （tail_policy.model_tail）；
-- 从两种四位反向形态（单双 reverse_parity / 大小 reverse_size）中选 1 种输出 4 个字符；
-  被杀位置的字符取杀码形态的反面，其余 3 个位置字符由 AI 自选；
-- 位置命中 = 该位置实际开奖号 != 杀码；
-- 合尾命中 = 该合尾实际和值个位 != 排除码；
-- 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
-- 整组命中 = 1 个位置 + 1 个合尾 + 1 项反向形态同时命中（共 3 项）；
+- 位置命中 = 该位置实际开奖号 != 杀码；合尾命中 = 该合尾实际和值个位 != 排除码；
+- 整组命中 = 2 个位置 + 1 个合尾同时命中（共 3 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
-- 位置杀码稳定化 hold3-until-miss（v3 起）：某位置杀码命中后沿用同位置同杀码、最多自动沿用 3 期；
-  失手或满 3 期后由模型重选（重选可与上期同码）；模型位置项在封存里记为换码候选
-  （position_policy.model_kill）；
+- 位置杀码稳定化 hold3-until-miss（v3 起，v4 起双位置各自独立）：某位置杀码命中后沿用同位置同杀码、
+  最多自动沿用 3 期；失手或满 3 期后由模型重选（重选可与上期同码）；两个位置互不影响；
+  模型位置项在封存里记为换码候选（position_policy.items[*].model_kill）；
+- v4 起不再预测、展示或结算四位反向形态；旧 v3 及更早封存的 form 字段与归档命中保留，
+  不计入 v4 统计；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -58,6 +57,7 @@ POSITIONS = (
     ('s', '十位', 2),
     ('g', '个位', 3),
 )
+POSITION_ORDER = tuple(key for key, _label, _index in POSITIONS)
 POSITION_LABELS = {key: label for key, label, _index in POSITIONS}
 POSITION_INDEX = {key: index for key, _label, index in POSITIONS}
 
@@ -73,8 +73,8 @@ REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 FORM_LABELS = dict(REVERSE_LABELS)
 
-RULE_VERSION = 'kill1-tail-v3-position-hold3'
-COUNTED_POSITIONS = 1
+RULE_VERSION = 'kill1-tail-v4-two-position-one-tail'
+COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
 POSITION_HOLD_MAX = 3
@@ -83,12 +83,10 @@ POSITION_POLICY = 'hold3-until-miss'
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
-    'position 必须是 {{"key":"q|b|s|g 之一","kill":0 至 9 的整数}}，恰好 1 个位置；'
-    'tail 为 {{"key": 五种之一, "kill": 0 至 9 的整数}}；'
-    'form_type 为 reverse_parity 或 reverse_size 之一；'
-    'form 为恰好 4 个对应调色板字符（单/双 或 大/小），'
-    '被杀位置对应字符必须取杀码形态的反面'
-    '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），其余 3 个位置字符自选；'
+    'positions 必须是恰好 2 个对象组成的数组，每个对象为 '
+    '\u007b\u0022key\u0022:\u0022q|b|s|g 之一\u0022,\u0022kill\u0022:0 至 9 的整数\u007d，'
+    '且两个 key 必须不同；'
+    'tail 为 \u007b\u0022key\u0022: 五种之一, \u0022kill\u0022: 0 至 9 的整数\u007d；'
     '合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
@@ -292,14 +290,28 @@ def normalize_response(response):
     """Strict local validation; never pad, default or invent anything."""
     if not isinstance(response, dict):
         raise ValueError('响应必须是 JSON 对象')
-    position = response.get('position')
-    if not isinstance(position, dict):
-        raise ValueError('position 必须是对象')
-    key = _position_key(position.get('key'))
-    number = digit(position.get('kill'))
-    if number is None:
-        raise ValueError('位置杀码必须是 0 至 9 的整数')
-    kills = {key: str(number)}
+    raw_positions = response.get('positions')
+    if isinstance(raw_positions, dict):
+        source_items = [{'key': key, 'kill': value} for key, value in raw_positions.items()]
+    elif isinstance(raw_positions, list):
+        source_items = raw_positions
+    else:
+        raise ValueError('positions 必须是数组')
+    if len(source_items) != COUNTED_POSITIONS:
+        raise ValueError('positions 必须恰好包含 %d 个位置' % COUNTED_POSITIONS)
+    kills = {}
+    for item in source_items:
+        if not isinstance(item, dict):
+            raise ValueError('positions 每项必须是对象')
+        key = _position_key(item.get('key'))
+        if key in kills:
+            raise ValueError('positions 位置不能重复')
+        number = digit(item.get('kill'))
+        if number is None:
+            raise ValueError('位置杀码必须是 0 至 9 的整数')
+        kills[key] = str(number)
+    if len(kills) != COUNTED_POSITIONS:
+        raise ValueError('positions 必须恰好包含 %d 个不同位置' % COUNTED_POSITIONS)
     tail = response.get('tail')
     if not isinstance(tail, dict):
         raise ValueError('tail 必须是对象')
@@ -312,25 +324,10 @@ def normalize_response(response):
         reason.encode('utf-8')
     except UnicodeEncodeError:
         raise ValueError('reason 必须是合法 UTF-8 文本') from None
-    form_type = str(response.get('form_type', '')).strip()
-    if form_type not in REVERSE_KEYS:
-        raise ValueError('form_type 必须是 reverse_parity 或 reverse_size 之一')
-    palette = '单双' if form_type == 'reverse_parity' else '大小'
-    palette_label = '单/双' if form_type == 'reverse_parity' else '大/小'
-    form = response.get('form')
-    if not isinstance(form, str) or len(form) != 4 or any(char not in palette for char in form):
-        raise ValueError(f'form 必须是恰好 4 个{palette_label}字符')
-    index = POSITION_INDEX[key]
-    parity_label, size_label = reverse_attributes(int(kills[key]))
-    required = parity_label if form_type == 'reverse_parity' else size_label
-    if form[index] != required:
-        raise ValueError('form 在被杀位置必须取杀码形态的反面')
     return {
-        'positions': kills,
-        'counted': [key],
+        'positions': {key: kills[key] for key in POSITION_ORDER if key in kills},
+        'counted': [key for key in POSITION_ORDER if key in kills],
         'tail': {'key': tail_key, 'label': TAILS[tail_key]['label'], 'kill': str(number)},
-        'form_type': form_type,
-        'form': form,
         'reason': reason[:200],
     }
 
@@ -422,42 +419,38 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         + '\n'.join(tail_lines) + '\n\n'
         '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【任务】\n'
-        '1. 从 千/百/十/个 四个位置中挑 1 个位置，并从该位置的近50期热码 top3、'
-        '上期重码、上期邻码（±1）中排除 1 个数字（0-9）；'
+        '1. 从 千/百/十/个 四个位置中挑 2 个不同位置，并从每个位置的近50期热码 top3、'
+        '上期重码、上期邻码（±1）中排除 1 个数字（0-9）；两个位置都计入整组，不得只给 1 个；'
         '不得以上期冷码 / 长遗漏码作为定位依据；\n'
         '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；'
         '系统按稳定化规则决定最终封存尾码；\n'
-        '3. 从两种四位反向排除形态中挑 1 种并给出 4 个字符：'
-        'form_type=reverse_parity 时写四位单双形态（单/双，按千百十个顺序），'
-        'form_type=reverse_size 时写四位大小形态（大/小）；'
-        '你选中的那个位置（被杀位置）必须取杀码形态的反面'
-        '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），其余 3 个位置字符自选；\n'
-        '4. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码；'
+        '3. 命中口径：位置 = 目标期该位置实际开奖号不等于该位置的排除码（2 个位置各计 1 注）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
-        '形态 = 目标期实际四位形态不等于你给出的这个封存形态（反向排除项）；'
-        '以上 3 项（1 个位置 + 1 个合尾 + 1 项形态）同时命中才算整组命中；\n'
+        '以上 3 项（2 个位置 + 1 个合尾）同时命中才算整组命中；\n'
+        '4. 两个位置各自独立稳定化：上期某位置命中且该位置自动沿用未满 3 期时，'
+        '系统会沿用该位置上期杀码；两个位置互不影响，你的两项均记为换码候选，可正常自主选择；\n'
         '5. 热码、重码、邻码、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
-        '{"position":{"key":"q|b|s|g","kill":<0-9整数>},'
+        '{"positions":[{"key":"q|b|s|g","kill":<0-9整数>},'
+        '{"key":"q|b|s|g","kill":<0-9整数>}],'
         '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
-        '"form_type":"reverse_parity|reverse_size","form":"<对应调色板的四个字符>",'
         '"reason":"40字以内"}\n'
-        '注意：position.key 必须从 q/b/s/g 中选恰好 1 个；form 必须恰好 4 个字符，'
-        '且被杀位置字符必须是杀码形态的反面。'
+        '注意：positions 必须恰好 2 项，key 互不相同；不需要输出形态（form_type/form）。'
     )
     if panel_section:
         _marker = prompt.find('【任务】')
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill1-tail-prompt-v2-hot-repeat',
+        'version': 'kill1-tail-prompt-v4-two-position-one-tail',
         'reference': reference,
         'target': target,
         'window': WINDOW,
         'history_sha256': sha256(history.encode('utf-8')).hexdigest(),
         'rows': [[str(int(value)) for value in row] for row in window],
         'position_basis': 'hot-repeat-neighbor',
+        'counted_positions': COUNTED_POSITIONS,
         'hot_ranking': [{'key': key, 'label': label,
                          'top': [{'number': str(number), 'count': count,
                                   'omission': omission}
@@ -472,6 +465,8 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         'previous_tail': previous_tail,
         'tail_policy': TAIL_POLICY,
         'tail_hold_max': TAIL_HOLD_MAX,
+        'position_policy': POSITION_POLICY,
+        'position_hold_max': POSITION_HOLD_MAX,
         'panel_context_sha256': panel_context_sha,
         'panel_context': panel_snapshot if isinstance(panel_snapshot, dict) else None,
     }
@@ -571,86 +566,130 @@ def apply_tail_policy(prediction, seals, settlements):
 
 
 def _position_hold_replay(seals, settlements):
-    """Deterministic replay of post-cutover seals into per-position hold state."""
+    """Replay per-position hold3 state for the current rule revision only."""
     settled = {}
-    for item in settlements or []:
-        if isinstance(item, dict) and item.get('verified'):
-            settled[str(item.get('target_period') or '')] = item
+    for item in settlements:
+        if isinstance(item, dict) and item.get('verified') is True:
+            settled[str(item.get('target_period'))] = item
     state = {}
-    for seal in seals or []:
+    for seal in seals:
         if not isinstance(seal, dict):
+            continue
+        if seal.get('rule_version') != RULE_VERSION:
             continue
         policy = seal.get('position_policy')
         if not isinstance(policy, dict):
             continue
-        counted = [key for key in (seal.get('counted') or []) if key in POSITION_INDEX]
-        if not counted:
+        items = policy.get('items')
+        if not isinstance(items, dict):
             continue
-        key = counted[0]
-        kill = (seal.get('positions') or {}).get(key)
-        item = settled.get(str(seal.get('target_period') or ''))
-        if kill is None or item is None:
+        settlement = settled.get(str(seal.get('target_period')))
+        if settlement is None:
             continue
-        hit = ((item.get('positions') or {}).get(key) or {}).get('hit') is True
-        previous = state.get(key)
-        run = (previous['run'] + 1) if (policy.get('reused_previous') and previous) else 1
-        state[key] = {'digit': str(kill), 'run': run, 'prev_hit': hit}
+        positions = seal.get('positions') or {}
+        hit_map = settlement.get('positions') or {}
+        for key in seal.get('counted') or []:
+            if key not in POSITION_INDEX:
+                continue
+            kill = digit(positions.get(key))
+            if kill is None:
+                continue
+            previous = state.get(key)
+            entry = items.get(key) if isinstance(items.get(key), dict) else {}
+            run = (previous['run'] + 1) if (entry.get('reused_previous') is True
+                                            and previous is not None) else 1
+            hit = ((hit_map.get(key) or {}).get('hit') is True)
+            state[key] = {'digit': str(kill), 'run': run, 'prev_hit': hit}
     return state
 
 
 def position_hold_state(seals, settlements):
-    """State used by the position-hold policy; read-only."""
     return {'policy': POSITION_POLICY, 'hold_max': POSITION_HOLD_MAX,
             'streaks': _position_hold_replay(seals, settlements)}
 
 
 def apply_position_policy(prediction, seals, settlements):
-    """Return a copy whose counted position kill follows hold3-until-miss."""
+    """Per-position hold3-until-miss for two independently stabilized positions.
+
+    A position keeps its previous kill when that position hit last period and has
+    not been reused three times yet; remaining slots come from the model's picks.
+    The sealed selection always has exactly two distinct positions, and the
+    model's raw picks stay in position_policy for audit.
+    """
     if not isinstance(prediction, dict):
-        raise ValueError('prediction must be an object')
-    positions = dict(prediction.get('positions') or {})
-    counted = [key for key in (prediction.get('counted') or list(positions))
-               if key in POSITION_INDEX]
-    if not counted:
-        raise ValueError('prediction has no counted position')
-    key = counted[0]
-    model_kill = str(positions.get(key))
-    streak = position_hold_state(seals, settlements)['streaks'].get(key)
-    reused = False
-    final = model_kill
-    run = 1
-    if streak and streak.get('prev_hit') is True and int(streak.get('run') or 0) < POSITION_HOLD_MAX:
-        final = streak['digit']
-        reused = True
-        run = int(streak['run']) + 1
-        note = '沿用同位上期杀码（第%s期，上期命中）' % streak.get('run')
-    elif streak and streak.get('prev_hit') is True:
-        note = '换码（同位自动沿用已满%s期，改由模型重选）' % POSITION_HOLD_MAX
-    elif streak and streak.get('prev_hit') is False:
-        note = '换码（同位上期未命中）'
-    else:
-        note = '新选（同位无沿用状态）'
-    positions[key] = final
+        raise ValueError('prediction must be a dict')
+    model_positions = {}
+    for key, value in (prediction.get('positions') or {}).items():
+        if key not in POSITION_INDEX:
+            continue
+        number = digit(value)
+        if number is None:
+            raise ValueError('模型位置杀码必须是 0 至 9 的整数')
+        model_positions[key] = str(number)
+    if len(model_positions) != COUNTED_POSITIONS:
+        raise ValueError('模型必须给出 %d 个不同位置' % COUNTED_POSITIONS)
+    streaks = position_hold_state(seals, settlements)['streaks']
+    final = {}
+    items = {}
+    notes = []
+    for key, label, _index in POSITIONS:
+        if len(final) >= COUNTED_POSITIONS:
+            break
+        streak = streaks.get(key)
+        if not isinstance(streak, dict):
+            continue
+        if streak.get('prev_hit') is not True:
+            continue
+        run = int(streak.get('run') or 0)
+        if run >= POSITION_HOLD_MAX:
+            continue
+        digit_value = str(streak.get('digit'))
+        final[key] = digit_value
+        items[key] = {
+            'key': key, 'label': label,
+            'model_kill': model_positions.get(key),
+            'sealed_kill': digit_value,
+            'reused_previous': True,
+            'run': run + 1,
+            'note': '沿用同位上期杀码（第%d期，上期命中）' % (run + 1),
+            'previous': streak,
+        }
+        notes.append('%s沿用上期杀%s' % (label, digit_value))
+    for key in model_positions:
+        if len(final) >= COUNTED_POSITIONS:
+            break
+        if key in final:
+            continue
+        label = POSITION_LABELS[key]
+        streak = streaks.get(key)
+        digit_value = model_positions[key]
+        if isinstance(streak, dict) and streak.get('prev_hit') is True:
+            note = '换码（同位自动沿用已满3期，改由模型重选）'
+        elif isinstance(streak, dict) and streak.get('prev_hit') is False:
+            note = '换码（同位上期未命中）'
+        else:
+            note = '新选（同位无沿用状态）'
+        final[key] = digit_value
+        items[key] = {
+            'key': key, 'label': label,
+            'model_kill': digit_value, 'sealed_kill': digit_value,
+            'reused_previous': False, 'run': 1, 'note': note,
+            'previous': streak if isinstance(streak, dict) else None,
+        }
+        notes.append('%s杀%s（%s）' % (label, digit_value, note))
+    if len(final) != COUNTED_POSITIONS:
+        raise ValueError('稳定化后位置数不足 %d 个' % COUNTED_POSITIONS)
     result = dict(prediction)
-    result['positions'] = positions
-    if reused and final != model_kill:
-        form = result.get('form')
-        if isinstance(form, str) and len(form) == 4:
-            form_type = result.get('form_type')
-            parity_label, size_label = reverse_attributes(int(final))
-            required = parity_label if form_type == 'reverse_parity' else size_label
-            index = POSITION_INDEX[key]
-            result['form'] = form[:index] + required + form[index + 1:]
-        original = str(result.get('reason') or '')
-        result['reason'] = ('位置杀码按稳定化沿用 %s 杀%s（AI 候选 %s）。模型原话：%s' % (
-            POSITION_LABELS[key], final, model_kill, original))[:200]
+    result['positions'] = {key: final[key] for key in POSITION_ORDER if key in final}
+    result['counted'] = [key for key in POSITION_ORDER if key in final]
     result['position_policy'] = {
-        'policy': POSITION_POLICY, 'hold_max': POSITION_HOLD_MAX,
-        'key': key, 'label': POSITION_LABELS[key],
-        'model_kill': model_kill, 'sealed_kill': final,
-        'reused_previous': reused, 'run': run, 'note': note,
-        'previous': streak,
+        'policy': POSITION_POLICY,
+        'hold_max': POSITION_HOLD_MAX,
+        'model_positions': model_positions,
+        'items': {key: items[key] for key in POSITION_ORDER if key in items},
     }
+    original = str(result.get('reason') or '')
+    result['reason'] = ('位置稳定化：' + '；'.join(notes) + '。模型原话：' + original)[:200]
     return result
 
 
@@ -858,8 +897,6 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'tail': prediction['tail'],
         'tail_policy': prediction.get('tail_policy'),
         'position_policy': prediction.get('position_policy'),
-        'form_type': prediction['form_type'],
-        'form': prediction['form'],
         'reason': prediction['reason'],
         'model': resolve_model(),
         'model_label': model_label(),
@@ -949,21 +986,22 @@ def settle_pending(snapshot=None, now=None):
         form_type = seal.get('form_type')
         kind = {'reverse_parity': 'parity', 'reverse_size': 'size'}.get(form_type)
         sealed_form = seal.get('form')
-        palette = '单双' if form_type == 'reverse_parity' else '大小'
-        if kind is not None:
+        palette = '单双' if kind == 'parity' else ('大小' if kind == 'size' else '')
+        has_form = (kind is not None and isinstance(sealed_form, str) and len(sealed_form) == 4
+                    and all(char in palette for char in sealed_form))
+        if has_form:
             actual_form = pattern_of(actual, kind)
-            form_hit = (isinstance(sealed_form, str) and len(sealed_form) == 4
-                        and all(char in palette for char in sealed_form)
-                        and actual_form != sealed_form)
+            form_hit = actual_form != sealed_form
         else:
             actual_form = None
-            form_hit = False
-        form_entry = {'type': form_type,
-                      'label': REVERSE_LABELS.get(form_type, ''),
-                      'form': sealed_form, 'actual': actual_form, 'hit': bool(form_hit)}
+            form_hit = None
+        form_entry = {'type': form_type if has_form else None,
+                      'label': REVERSE_LABELS.get(form_type, '') if has_form else '',
+                      'form': sealed_form if has_form else None,
+                      'actual': actual_form, 'hit': form_hit}
         counted = seal.get('counted') or list(positions)
         group_hit = (all(positions[key]['hit'] for key in counted if key in positions)
-                     and tail_entry['hit'] and form_entry['hit'])
+                     and tail_entry['hit'] and form_hit is not False)
         published = parse_time(seal.get('published_at'))
         drawn = parse_time(record.get('opentime'))
         verified = (seal.get('publication_state') == 'published' and published is not None
@@ -981,7 +1019,7 @@ def settle_pending(snapshot=None, now=None):
             'positions': positions,
             'counted': list(counted),
             'tail': tail_entry,
-            'form_type': form_type,
+            'form_type': form_type if has_form else None,
             'form': form_entry,
             'group_hit': bool(group_hit),
             'verified': bool(verified),
@@ -1050,20 +1088,20 @@ def today_stats(now=None):
                 per_position[key]['hits'] += 1
                 position_hits += 1
     tail_hits = sum(1 for item in todays if (item.get('tail') or {}).get('hit') is True)
-    form_hits = 0
+    form_hits = form_bets = 0
     form_types = {field: {'hits': 0, 'bets': 0, 'rate': None} for field in REVERSE_KEYS}
     for item in todays:
         entry = item.get('form') if isinstance(item.get('form'), dict) else {}
         field = item.get('form_type') or entry.get('type')
-        if field not in form_types:
-            field = None
+        has_form = bool(entry.get('form')) and field in form_types
+        if not has_form:
+            continue
+        form_bets += 1
+        form_types[field]['bets'] += 1
         if entry.get('hit') is True:
             form_hits += 1
-        if field is not None:
-            form_types[field]['bets'] += 1
-            if entry.get('hit') is True:
-                form_types[field]['hits'] += 1
-    for field, block in form_types.items():
+            form_types[field]['hits'] += 1
+    for _field, block in form_types.items():
         block['rate'] = (block['hits'] / block['bets']) if block['bets'] else None
     win, loss, max_loss, four_loss = _streak_stats(todays)
     four_loss_total = _streak_stats(
@@ -1089,8 +1127,8 @@ def today_stats(now=None):
         'per_position': per_position,
         'tail': {'hits': tail_hits, 'bets': total,
                  'rate': (tail_hits / total) if total else None},
-        'form': {'hits': form_hits, 'bets': total,
-                 'rate': (form_hits / total) if total else None,
+        'form': {'hits': form_hits, 'bets': form_bets,
+                 'rate': (form_hits / form_bets) if form_bets else None,
                  'types': form_types},
         'current_win_streak': win,
         'current_loss_streak': loss,
