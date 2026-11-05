@@ -1486,3 +1486,32 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 修法：`lib/kill9_tail.py::build_attack` 新增 `ATTACK_ORDER='1234567890'` 与 `ATTACK_POSITION_LABELS={'q':'千','b':'百','s':'十','g':'个'}`；封存含 `positions` 时先输出 4 段位置保留码，再照旧输出「除<形态>」×4 + 二数合 + 三数合 + 各；v1–v4 无 `positions` 的旧封存攻击语保持原「除…」格式不变。属显示层修改，不改封存字段/结算口径/RULE_VERSION/命中统计。
 - 校验：py_compile OK；模块测试 /tmp/test_kill9_attack.py 13/0——seal 20261105128 逐字节等于期望「千123567890百123456890十123456780个1234567890除双单双双除双单单双除小大大小除大大大大二数合0248三数合01247各」；126/127/129/130 位置段与尾部逐项一致；v1/v4 旧格式不变；非法定位码抛 ValueError。
 - 证据：修复前 `lib/kill9_tail.py` sha256 b598b3e9fb019918676355ee72b98d9747d315d9191f3698d82102f9a53cf054（备份 /root/ops/kill9-attack-fix-104725/ 含 freeze-guards.json），修复后 6ec1779362bdcb89fa8c0977948755800b12298b758b5426a88a34e6999f2343；freeze_guard 受控变更已登记。后续等 kill9 cron 下一期真实封存后，从 `panel.html` 的 `textarea#k9-attack` 复核攻击语与 `build_attack(seals[-1])` 一致。
+
+### 运行观测/模型用量读取修复 + 封存账本容量预警（2026-11-05 11:24，`4ae28b8` `1283e12` `7354a94`）
+
+由用户「全部检查各模型运行数据读取是否正确」触发：只读审计确认 4 个读取/展示问题与 2 个相邻区块缺陷，修复限于读取与展示层，不改预测语义，无需重启（cron 自动加载）。
+
+**改动**
+- `4ae28b8` 运行观测（lib/runtime_observability.py、lib/runtime_observability_view.py、lib/panel_live_refresh.py）：
+  - selected6 封存账本 469MB 超过 128MiB 读取上限，导致每分钟 invalid-source、面板 0%/缺期 77（实际约 98.7%）。collect 对 selected6 先 stat，超限时改走 `scripts/build_six_seal_index.py --if-stale` 生成的紧凑索引（复用 lib/strategy_comparison.py 同款路径）；回退失败仍按 invalid-source 显示「数据源不可读」。
+  - parse_log 完成标记补 `FRAMEWORK_PUBLISHED`/`KILLER_PUBLISHED` 行，framework「超时/策略拒绝」不再整列显示「—」（今日策略拒绝 3 可见）。
+  - he3 发布后 180s 内面板 retained 块尚未翻新时不再把 current 降级为 pending（PANEL_GRACE_SECONDS=180），消除每期 flap。
+  - selected6 标签由硬编码「Pro 七项」改为按 PENTA5_MODEL_SIX 动态档位（现为 Flash 七项）；view 删除已退役 pro4 行，active_count 改取 round.total_count → 摘要显示「完成 3/4」而非「完成—/5」；panel_live_refresh 删除 pro4 残留 selector。
+- `1283e12` 模型用量/调用推荐：调用推荐补 4 个任务的 usage key 映射（selected_six→six、he3_refine→he3、kill3_tail→kill3、kill1_tail→kill1，六任务 usage 全部非空）；KPI「成功响应」→「HTTP 200 响应」并补口径脚注；新增错误分布行（今日/近7日：服务商/限流/无效响应/欠费/超时）；burn=null 且充值后显示「充值后重新起算」；provider 错误标签「服务商错误」。
+- `7354a94` ops_health：新增 ledger_size 检查（he3_refine_seals ≥110MiB WARN、≥120MiB FAIL；selected_six 超 128MiB 仅记录；其它账本 ≥200MiB note）。
+
+**验证**
+- py_compile 7 个改动文件全部 OK；`scripts/ops_health_check.py --json`：ledger_size=ok、manifest_drift=ok（`refresh_source_manifest.py --if-drift` → `/root/backups/auto-baseline-20261105-113232/verification-manifest.json`，441 files）。
+- 观测 cron 新代码 11:28 起生效，单轮 16.3s / 39.7s（并发干扰）/ 21.4s / 11.0s / 27.7s / 21.6s，均低于 wrapper 50s 上限。
+- 11:35:46、11:37:46 两个连续真实周期：errors=[]；selected6 由 unknown→current，数字恢复（今日 80/81 发布、98.75%、missing 1 = target 20261105104 真实缺期）；framework 策略拒绝 3 可见；摘要「完成 3/4 · 异常 0」；面板 4 行无 pro4。
+- he3 宽限证据：11:32:46 status=current、panel_matches=False、published_at=11:31:46（60s<180s）不再降级 pending；11:37:46 同样 current/已发布等待面板重建。
+- 模型运行块数字经原始日志复算一致；model_call_rec.compute 六任务 usage_7d 非空（killer1050/framework1070/six1138/he3 916/kill3 718/kill1 691）。
+
+**备份 / 回滚**
+- 改动前备份：`/root/ops/fix-20261105-112457/backups/`（7 文件 + SHA256SUMS）。
+- 回滚：`git revert 7354a94 1283e12 4ae28b8`，或按 backups 覆盖后 py_compile；无需重启（cron 自动加载）。
+
+**风险 / 遗留**
+- ops_health overall 仍 fail：仅既有 hitrate_stability（kill1_tail 新口径存活 1.0h/12 期，另一窗口 kill1 v4 过渡）+ kill3_stability/coverage warn，非本轮引入。
+- selected6 主账本 469MB 仍在，观测每分钟依赖约 80MB 紧凑索引；索引重建（每期一次、--if-stale）会让个别观测轮次多 10~30s，可能被 flock 跳过该分钟（实测刷新间隔 1-2 分钟，仍小于 view 150s「旧」阈值）。若后续出现连续超时，可把 wrapper timeout 50→90，或把索引解析改为增量。
+- he3_refine_seals 101.2MiB，距 110MiB 预警线约 9MiB；selected_six_hit_stats 232.9MiB 仍按既有归档策略处理。
