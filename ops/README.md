@@ -1828,3 +1828,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结：`freeze_guard.py update` 登记 kill3_tail `lib/kill3_tail.py` aefe3d0b…→3bb8d3c0…（`6aedbe4`）；`ops/kill3-freeze.json` 同步 files sha + hash_updates 追加第 56 条（len=56）；`freeze_guard.py status` 五框架 changed=−。
 - 备份/回滚：`/root/ops/kill3-ai-16k-20261106-0135/lib__kill3_tail.py`（改前 sha aefe3d0b…）；回滚 `git revert 6aedbe4 91f10f4` 后重跑 `python3 scripts/freeze_guard.py update --framework kill3_tail --file lib/kill3_tail.py`，或直接用备份覆盖并回填 guards/legacy sha。
 - 监控（待验证）：面板累计行脚注「最多滞后约 4 期」应在下一个 kill3 周期后上屏；后续 2–3 期观察 rejection 日志是否出现 `finish_reason=length`、elapsed p90 是否下降、超时/失败是否上升，异常则按备份回滚。
+
+### kill1 面板卡展示层补丁：累计行 as_of/滞后、本版期数含待核验、缺期槽披露（2026-11-06，`3928131` + `1d48d75`）
+
+- 依据：kill1 卡只读审计（技能 audit-panel-runtime-data-reads + single-position-kill-tail-form-recommendation）：卡面逐项读数与原始账本一致（整组 130/182=71.43%、位置 321/364=88.19%、合尾 169/182=92.86%、待核验 1、连败 3、四手连败 0），无 P0/P1；仅三项展示层歧义：①累计块（`data/hitrate_stability.json`）未标 as_of 且滞后 2 期（stability 15 分钟节拍）；②「本版 183 期」为 published seals 计数、含 1 期待核验，易与 182（已核验）/180（累计快照）误读；③v4 历史缺槽 20261105137（重试指令花括号未转义 → KeyError '"key"' 整期跳过，commit 11b81c1 已修复）只在 hitrate-stability 脚注披露，kill1 卡未披露。
+- 改动（`3928131`，`lib/kill_one_view.py` +61/−8，仅展示层）：①累计行新增「数据截至 <report.as_of_period>（每 15 分钟刷新，最多滞后约 4 期/约 20 分钟；今日行按业务日实时）」，与 kill3 卡同款滞后口径；②`_version_html(stats)` 期数改为「本版 N 期，含待核验 P 期」（P 取 `today_stats.pending`，与顶部待核验同源）；③新增只读辅助 `_missing_version_targets(rule)`：按已发布封存 ref 序列（`next_period`）推算当前 rule 缺槽，卡面披露「缺期 1 槽（20261105137），不计入累计 n、不按 0 命中」。
+- 验证：`py_compile` OK；改前/改后同进程渲染 diff 仅 2 处（累计行插入 as_of 段、版本行插入「含待核验 1 期」与「缺期 1 槽…」），其余逐字节相同；旧/新渲染 1.319s→1.582s（+0.263s，新增一次 load_seals 0.195s）；`_missing_version_targets` 返回 ['20261105137']（0.202s）；`_version_html({'pending':1})` 出现「含待核验 1 期」、`{'pending':0}`/None 不出现；`<section>` 开闭各 1。
+- 冻结：`freeze_guard.py update` 登记 kill1_tail `lib/kill_one_view.py` 13c4e049…→b35f339a…（`1d48d75`）；`freeze_guard.py status` 五框架 changed=−（kill1 190/100 期、rule kill1-tail-v4-two-position-one-tail）。
+- 备份/回滚：改前备份 `/root/ops/kill1-audit-note-20261106-0205/`（`kill_one_view.py` sha 13c4e049… + 改前 `freeze-guards.json`）；回滚 `git revert 1d48d75 3928131`，再跑 `python3 scripts/freeze_guard.py update --framework kill1_tail --file lib/kill_one_view.py --reason rollback` 并按备份回填 guards sha；之后 `refresh_source_manifest.py --if-drift`。
+- 监控（待验证）：下一个 kill1 周期（cron `*/5` 开奖后 sleep 35s）由 `run_kill1_tail.py::publish_block()` 重写卡片后，`panel.html` 应出现「数据截至 202611060xx」「缺期 1 槽（20261105137）」；下 2–3 期核对 as_of 随稳定性报告前进、待核验期数与顶部一致。
