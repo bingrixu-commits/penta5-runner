@@ -1,9 +1,9 @@
 {
   "algorithm": "sha256",
   "files": {
-    "payload/runtime/memories.json": "fed4d51e328cadded3e6b95a9a04c750ea26bbb2d5e5185d5242deb0c0c3dc7d",
+    "payload/runtime/memories.json": "94b7da88014c5c2c0dbff6d13aca82b8759e8a7860132b524f294b40cef49cc0",
     "payload/runtime/USER.md": "6bc09f7683dbf157103c80f074b40164d717c13958598f1d0db3d0cfa08cd0af",
-    "payload/runtime/MEMORY.md": "388e3979332ae822634517505ca424c14e3eed873a60b8f2d80ead2782863264",
+    "payload/runtime/MEMORY.md": "649d769ad000b7706356765be5eba74e68e9a9fc2c72b75e204931ef1468c31d",
     "payload/documents/index.json": "02dbd87a6d87bb3eb0cf2d22a87efdf8dd323affa7668abf0720108a5fee366c",
     "payload/data/.dsh-memory-bodies.json": "dc6020b75bab2ed6109193aea9c3427c22d9d2b6edd223c4c8c6cd87ad0c67dd"
   }

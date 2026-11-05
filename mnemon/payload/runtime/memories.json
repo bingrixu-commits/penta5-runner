@@ -208,13 +208,16 @@
     {
       "content": "penta5-runner .env 的 PENTA5_MODEL_* 行由 scripts/model_tier_guard.py（cron 每10分钟，data/model_tier_guard.log）按余额自动全量切 flash/pro，且会增删个别键（如 KILL1/KILL2P 行可能消失）；各 task 脚本的真实模型解析有回退链（kill1: KILL1→KILLER→DEEPSEEK_MODEL；kill2p: KILL2P→KILL3→KILLER→DEEPSEEK_MODEL）。读「某任务当前用什么模型」必须按回退链解析 .env，不能只看单键。",
       "target": "memory",
-      "importance": "critical",
+      "importance": "normal",
       "created_at": "2026-10-31T21:41:51.734Z",
-      "updated_at": "2026-10-31T21:41:51.734Z",
+      "updated_at": "2026-11-05T22:19:57.213Z",
+      "branches": [
+        "ss"
+      ],
       "origin": {
         "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
         "label": "PC-20260622JLQP",
-        "at": "2026-10-31T21:41:51.734Z"
+        "at": "2026-11-05T22:19:57.213Z"
       }
     },
     {
@@ -227,6 +230,18 @@
         "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
         "label": "PC-20260622JLQP",
         "at": "2026-11-05T18:05:56.378Z"
+      }
+    },
+    {
+      "content": "a",
+      "target": "memory",
+      "importance": "normal",
+      "created_at": "2026-11-05T22:19:38.987Z",
+      "updated_at": "2026-11-05T22:19:38.987Z",
+      "origin": {
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
+        "label": "PC-20260622JLQP",
+        "at": "2026-11-05T22:19:38.987Z"
       }
     }
   ]
