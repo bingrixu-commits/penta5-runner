@@ -26,6 +26,10 @@ TZ = ZoneInfo('Asia/Shanghai')
 MAX_MEMBER = 1024 * 1024 * 1024
 # 2026-11-01: business evidence (seal/stat JSON) grew past 2GiB; data/ ~1.34GiB + RDS business-tables (system_snapshots) pushed the raw bundle over the old 2GiB bound -> raise to 3GiB (disk check needs 2*MAX_TOTAL+1GiB=7GiB, disk free ~23GiB, OK).
 MAX_TOTAL = 3 * 1024 * 1024 * 1024
+# 2026-11-05: 封存账本最大单体已达 432MiB，整棵 json.loads 时对象图可达数 GiB；
+# 超过该阈值的 JSON 只做结构哨兵+原文凭据扫描+敏感键正则，不物化对象图。
+FULL_JSON_VALIDATE_MAX = 64 * 1024 * 1024
+_WS_BYTES = b' \t\r\n'
 SAFE_CONFIG = {'LOCAL_STATE_MODE', 'ALGO_DURABLE_STORE', 'DATA_READ_MODE',
                'PENTA5_DAY_RESET_HOUR', 'PENTA5_ALGO_PROCESS_MODE',
                'PENTA5_ORCHESTRATE_FORCE_INPROCESS'}
@@ -45,6 +49,9 @@ SOURCE_EXCLUDE_DIRS = {'data', 'node_modules', '.git', '__pycache__', 'logs', 'b
 SOURCE_EXCLUDE_NAMES = {'set_new_key.py'}
 SENSITIVE_KEYS = {'password', 'api_key', 'apikey', 'authorization', 'private_key',
                   'access_token', 'refresh_token', 'client_secret'}
+CREDENTIAL_FIELD_PATTERN = re.compile(
+    rb'"(?:' + b'|'.join(key.encode() for key in sorted(SENSITIVE_KEYS)) + rb')"\s*:\s*"(?!\[redacted\])[^"]+"',
+    re.IGNORECASE)
 NODE_EXPORT = r'''
 const path=require('path');
 const {once}=require('events');
@@ -77,6 +84,263 @@ finally{if(conn)conn.release();if(pool)await pool.end();}})();
 def _canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True,
                       separators=(',', ':'), allow_nan=False).encode('utf-8')
+
+
+class _LazyBlob:
+    """已落盘的大归档成员：tar 时按需流式读取，避免整块常驻内存。"""
+    __slots__ = ('path', 'size', 'sha256')
+
+    def __init__(self, path, size, digest):
+        self.path = path
+        self.size = size
+        self.sha256 = digest
+
+
+_CANONICAL_ENCODER = json.JSONEncoder(ensure_ascii=False, sort_keys=True,
+                                      separators=(',', ':'), allow_nan=False)
+
+
+class _CanonicalRows:
+    """已按 canonical 逗号拼接落盘的行集合；写出时按字节流拼进 [...]，不物化列表。"""
+    __slots__ = ('path',)
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+
+class _CanonicalWriter:
+    """与 _canonical() 逐字节等价、但按值递归流式写出。
+
+    json.iterencode 在分块模式下会落到纯 Python 编码器（821MiB 文档实测约
+    1.2MiB/s，单次写完要十几分钟）；这里容器递归、标量/单行交给 C 编码器，
+    既保持字节等价，又把峰值内存压到一个行对象的量级。
+    """
+
+    _CHUNK = 1 << 20
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.digest = sha256()
+        self.size = 0
+        self.parts = []
+        self.pending = 0
+
+    def _flush(self):
+        if self.parts:
+            data = ''.join(self.parts).encode('utf-8')
+            self.parts.clear()
+            self.pending = 0
+            self.digest.update(data)
+            self.size += len(data)
+            self.stream.write(data)
+
+    def text(self, value):
+        self.parts.append(value)
+        self.pending += len(value)
+        if self.pending >= self._CHUNK:
+            self._flush()
+
+    def raw(self, data):
+        self._flush()
+        self.digest.update(data)
+        self.size += len(data)
+        self.stream.write(data)
+
+    def value(self, item):
+        if isinstance(item, _CanonicalRows):
+            self.raw(b'[')
+            with open(item.path, 'rb') as source:
+                for chunk in iter(lambda: source.read(8 * 1024 * 1024), b''):
+                    self.raw(chunk)
+            self.raw(b']')
+        elif isinstance(item, dict):
+            self.text('{')
+            for position, key in enumerate(sorted(item)):
+                if position:
+                    self.text(',')
+                self.text(_CANONICAL_ENCODER.encode(str(key)))
+                self.text(':')
+                self.value(item[key])
+            self.text('}')
+        elif isinstance(item, list):
+            self.text('[')
+            for position, child in enumerate(item):
+                if position:
+                    self.text(',')
+                self.value(child)
+            self.text(']')
+        else:
+            self.text(_CANONICAL_ENCODER.encode(item))
+
+    def finish(self):
+        self._flush()
+        self.stream.flush()
+        os.fsync(self.stream.fileno())
+        return self.size, self.digest.hexdigest()
+
+
+def _write_canonical(value, path):
+    """把 _canonical(value) 的等价字节流式写入 path，返回 (size, sha256)。"""
+    with open(path, 'wb') as stream:
+        writer = _CanonicalWriter(stream)
+        writer.value(value)
+        return writer.finish()
+
+
+class _RdsExport:
+    """流式导出的结果：canonical 已落盘，只回传证明字段与尺寸。"""
+    __slots__ = ('proof', 'exported_at', 'size', 'sha256', 'max_opened')
+
+    def __init__(self, proof, exported_at, size, digest, max_opened):
+        self.proof = proof
+        self.exported_at = exported_at
+        self.size = size
+        self.sha256 = digest
+        self.max_opened = max_opened
+
+
+def _check_credential_fields(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).lower() in SENSITIVE_KEYS and item not in (None, '', '[redacted]'):
+                raise ValueError('credential-field-refused')
+            _check_credential_fields(item)
+    elif isinstance(value, list):
+        for item in value:
+            _check_credential_fields(item)
+
+
+def _validate_official_draw_row(row, periods, max_opened):
+    period = row.get('period')
+    if not isinstance(period, str) or not re.fullmatch(r'[0-9]{8}(?:[0-2][0-9]{2})', period):
+        raise ValueError('rds-period-invalid')
+    index = int(period[-3:])
+    try:
+        slot = datetime.strptime(period[:8], '%Y%m%d').replace(tzinfo=TZ) + timedelta(minutes=5 * index)
+    except ValueError:
+        raise ValueError('rds-period-invalid') from None
+    if not 1 <= index <= 288 or period in periods:
+        raise ValueError('rds-period-duplicate-or-invalid')
+    periods.add(period)
+    if any(type(row.get('ball' + str(i))) is not int or not 0 <= row['ball' + str(i)] <= 9 for i in range(1, 5)):
+        raise ValueError('rds-first-four-invalid')
+    try:
+        opened = datetime.fromisoformat(str(row.get('open_time')).replace('Z', '+00:00'))
+        # api/draw_store.js::toMysqlDateTime serializes ISO UTC then removes T/Z.
+        opened = (opened.replace(tzinfo=timezone.utc).astimezone(TZ)
+                  if opened.tzinfo is None else opened.astimezone(TZ))
+    except ValueError:
+        raise ValueError('rds-open-time-invalid') from None
+    if not slot <= opened < slot + timedelta(minutes=1):
+        raise ValueError('rds-open-time-invalid')
+    return opened if max_opened is None or opened > max_opened else max_opened
+
+
+def _export_rds_streaming(root, destination):
+    """RDS 导出边读边校验边落盘：行数据只保留当前一条，canonical 直接写 destination。
+
+    2026-11-05 之前 export_draws() 会把 821MiB business-tables 解析成完整对象图
+    （实测 RSS 3.3GiB），再叠加 1.3GiB 原始证据字节，与 05:00 批次并发时触发全局
+    OOM。这里改成单遍流式：每行校验后写成 canonical 片段进 spool，最后按排序好的
+    表顺序拼成 canonical 文件，峰值只与单行大小相关。
+    """
+    destination = Path(destination)
+    spool_dir = Path(tempfile.mkdtemp(prefix='.rds-rows-', dir=destination.parent))
+    process = subprocess.Popen(['node', '-e', NODE_EXPORT, str(root)], cwd=root,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    began = time.monotonic()
+    header, tables, periods, max_opened = {}, {}, set(), None
+    streams = {}
+    complete = False
+    try:
+        try:
+            for raw in process.stdout:
+                if time.monotonic() - began > 180:
+                    raise TimeoutError('rds-readonly-export-timeout')
+                try:
+                    item = json.loads(raw)
+                except ValueError:
+                    raise ValueError('rds-export-invalid-json') from None
+                kind = item.get('type')
+                if kind == 'header':
+                    header.update({key: value for key, value in item.items() if key != 'type'})
+                elif kind == 'table' and item.get('name') in RDS_TABLES:
+                    name = item['name']
+                    if name in tables:
+                        raise ValueError('rds-export-invalid-json')
+                    path = spool_dir / (name + '.rows')
+                    streams[name] = path.open('wb')
+                    tables[name] = {'create_table': item['create_table'], 'path': path, 'count': 0}
+                elif kind == 'row' and item.get('name') in tables:
+                    name = item['name']
+                    row = item['row']
+                    _check_credential_fields(row)
+                    if name == 'official_draws':
+                        max_opened = _validate_official_draw_row(row, periods, max_opened)
+                    stream = streams[name]
+                    if tables[name]['count']:
+                        stream.write(b',')
+                    stream.write(_CANONICAL_ENCODER.encode(row).encode('utf-8'))
+                    tables[name]['count'] += 1
+                elif kind == 'complete':
+                    complete = True
+                else:
+                    raise ValueError('rds-export-invalid-json')
+            if not complete:
+                raise ValueError('rds-export-invalid-json')
+        finally:
+            for stream in streams.values():
+                stream.close()
+        if process.wait():
+            raise ValueError('rds-readonly-export-failed')
+        merged = {'version': 1, 'read_only': True}
+        merged.update(header)
+        if (merged.get('read_only') is not True or set(tables) != set(RDS_TABLES)
+                or not tables['official_draws']['count']):
+            raise ValueError('rds-export-empty-or-invalid')
+        proof = {'row_count': len(periods), 'first_period': min(periods),
+                 'last_period': max(periods), 'model_balls': [1, 2, 3, 4],
+                 'ball5_display_only': True,
+                 'table_counts': {name: tables[name]['count'] for name in RDS_TABLES}}
+        merged['tables'] = {name: {'create_table': tables[name]['create_table'],
+                                   'rows': _CanonicalRows(tables[name]['path'])}
+                            for name in RDS_TABLES}
+        with open(destination, 'wb') as stream:
+            writer = _CanonicalWriter(stream)
+            writer.value(merged)
+            size, digest = writer.finish()
+        return _RdsExport(proof, merged.get('exported_at'), size, digest, max_opened)
+    finally:
+        for stream in streams.values():
+            try:
+                stream.close()
+            except Exception:
+                pass
+        for stream in (process.stdout, process.stderr):
+            try:
+                stream.close()
+            except Exception:
+                pass
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        for path in spool_dir.glob('*'):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        try:
+            spool_dir.rmdir()
+        except OSError:
+            pass
+
+
+def _entry_len(value):
+    return value.size if isinstance(value, _LazyBlob) else len(value)
+
+
+def _entry_sha(value):
+    return value.sha256 if isinstance(value, _LazyBlob) else _hash(value)
 
 
 def _hash(data):
@@ -135,7 +399,10 @@ def _env_metadata(root):
 def _check_secrets(data, secrets, *, parsed=None):
     if any(value in data for value in secrets):
         raise ValueError('secret-content-refused')
-    if re.search(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{16,}', data):
+    # 2026-11-05: 432MiB 账本上直接跑带 \b 的交替正则会退化成 ~8s 全量扫描；
+    # 先做廉价字面量预筛（bytes.find 的双路算法），命中才跑正则，语义不变。
+    if (b'-----BEGIN ' in data or b'sk-' in data) and re.search(
+            rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{16,}', data):
         raise ValueError('secret-content-refused')
     def walk(value):
         if isinstance(value, dict):
@@ -148,6 +415,24 @@ def _check_secrets(data, secrets, *, parsed=None):
                 walk(item)
     if parsed is not None:
         walk(parsed)
+
+
+def _check_secrets_file(path, secrets):
+    """对已落盘的大 JSON 做分块凭据扫描，内存上限约一个 chunk。"""
+    overlap = max(64, max((len(value) for value in secrets), default=0))
+    pattern = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{16,}')
+    tail = b''
+    with open(path, 'rb') as stream:
+        while True:
+            chunk = stream.read(8 * 1024 * 1024)
+            if not chunk:
+                break
+            data = tail + chunk
+            if any(value in data for value in secrets):
+                raise ValueError('secret-content-refused')
+            if (b'-----BEGIN ' in data or b'sk-' in data) and pattern.search(data):
+                raise ValueError('secret-content-refused')
+            tail = data[-overlap:]
 
 
 def discover(root):
@@ -184,12 +469,36 @@ def _required_members(names, *, legacy=()):
 def _validate_json_bytes(raw, suffix, secrets):
     if len(raw) > MAX_MEMBER:
         raise ValueError('evidence-file-too-large')
-    try:
-        parsed = ([json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
-                  if suffix == '.jsonl' else json.loads(raw))
-    except (ValueError, UnicodeError):
-        raise ValueError('invalid-evidence-json') from None
-    _check_secrets(raw, secrets, parsed=parsed)
+    _check_secrets(raw, secrets)
+    if suffix == '.jsonl':
+        for line in io.BytesIO(raw):
+            if not line.strip():
+                continue
+            try:
+                parsed = json.loads(line)
+            except (ValueError, UnicodeError):
+                raise ValueError('invalid-evidence-json') from None
+            _check_secrets(line, secrets, parsed=parsed)
+        return raw
+    if len(raw) <= FULL_JSON_VALIDATE_MAX:
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, UnicodeError):
+            raise ValueError('invalid-evidence-json') from None
+        _check_secrets(raw, secrets, parsed=parsed)
+        return raw
+    # 大文件：结构哨兵 + 原文凭据扫描 + 敏感键正则（语义近似 walk，不物化对象图）。
+    # 注意：lstrip/rstrip 在带尾随换行的 432MiB 账本上会整块复制，这里用手写扫描。
+    lo, hi = 0, len(raw) - 1
+    while lo <= hi and raw[lo] in _WS_BYTES:
+        lo += 1
+    while hi >= lo and raw[hi] in _WS_BYTES:
+        hi -= 1
+    head, tail = raw[lo:lo + 1] if lo <= hi else b'', raw[hi:hi + 1] if lo <= hi else b''
+    if not ((head == b'{' and tail == b'}') or (head == b'[' and tail == b']')):
+        raise ValueError('invalid-evidence-json')
+    if CREDENTIAL_FIELD_PATTERN.search(raw):
+        raise ValueError('credential-field-refused')
     return raw
 
 
@@ -344,33 +653,47 @@ def newest_source_manifest(root, backup_base=Path('/root/backups')):
 
 
 def export_draws(root):
-    result = subprocess.run(['node', '-e', NODE_EXPORT, str(root)], cwd=root,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            timeout=60, check=False)
-    if result.returncode:
-        raise ValueError('rds-readonly-export-failed')
+    # 2026-11-05: 821MiB 的 JSONL 导出若用 subprocess.run 捕获 stdout 再 splitlines()，
+    # 会额外占用 ~1.6GiB；改为逐行流式读取（node 端本来就是一行一条记录）。
+    process = subprocess.Popen(['node', '-e', NODE_EXPORT, str(root)], cwd=root,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    began = time.monotonic()
     try:
         value = {'version': 1, 'read_only': True, 'tables': {}}
         complete = False
-        for raw in result.stdout.splitlines():
-            item = json.loads(raw)
-            if item.get('type') == 'header':
-                value.update({k: v for k, v in item.items() if k != 'type'})
-            elif item.get('type') == 'table' and item.get('name') in RDS_TABLES:
-                if item['name'] in value['tables']:
-                    raise ValueError('duplicate-rds-table')
-                value['tables'][item['name']] = {'create_table': item['create_table'], 'rows': []}
-            elif item.get('type') == 'row' and item.get('name') in value['tables']:
-                value['tables'][item['name']]['rows'].append(item['row'])
-            elif item.get('type') == 'complete':
-                complete = True
-            else:
-                raise ValueError('unexpected-rds-export-record')
-        if not complete:
-            raise ValueError('incomplete-rds-export')
-    except ValueError:
-        raise ValueError('rds-export-invalid-json') from None
-    return value
+        try:
+            for raw in process.stdout:
+                if time.monotonic() - began > 60:
+                    raise TimeoutError('rds-readonly-export-timeout')
+                item = json.loads(raw)
+                if item.get('type') == 'header':
+                    value.update({k: v for k, v in item.items() if k != 'type'})
+                elif item.get('type') == 'table' and item.get('name') in RDS_TABLES:
+                    if item['name'] in value['tables']:
+                        raise ValueError('duplicate-rds-table')
+                    value['tables'][item['name']] = {'create_table': item['create_table'], 'rows': []}
+                elif item.get('type') == 'row' and item.get('name') in value['tables']:
+                    value['tables'][item['name']]['rows'].append(item['row'])
+                elif item.get('type') == 'complete':
+                    complete = True
+                else:
+                    raise ValueError('unexpected-rds-export-record')
+            if not complete:
+                raise ValueError('incomplete-rds-export')
+        except ValueError:
+            raise ValueError('rds-export-invalid-json') from None
+        if process.wait():
+            raise ValueError('rds-readonly-export-failed')
+        return value
+    finally:
+        for stream in (process.stdout, process.stderr):
+            try:
+                stream.close()
+            except Exception:
+                pass
+        if process.poll() is None:
+            process.kill()
+            process.wait()
 
 
 def _draw_proof(value, now):
@@ -435,7 +758,7 @@ def _snapshot_metadata_proof(manifest):
         raise ValueError('backup-snapshot-metadata-invalid') from None
 
 
-def create_bundle(root, destination, source_manifest, *, exporter=export_draws, clock=None):
+def create_bundle(root, destination, source_manifest, *, exporter=_export_rds_streaming, clock=None):
     """One stable attempt. Caller schedules/retries; unstable snapshots fail closed."""
     root = Path(root).resolve()
     destination = Path(destination).resolve()
@@ -463,64 +786,89 @@ def create_bundle(root, destination, source_manifest, *, exporter=export_draws, 
     validation_completed = clock() if clock else datetime.now(TZ)
     # RDS has a separate later read-only transaction. Its draws may be newer
     # than the immutable filesystem cut; no common transaction is claimed.
-    draws = exporter(root)
-    finished = clock() if clock else datetime.now(TZ)
-    proof = _draw_proof(draws, finished)
-    db_raw = _canonical(draws)
-    _check_secrets(db_raw, secrets, parsed=draws)
-    entries['rds/business-tables.json'] = db_raw
-    entries['metadata/safe-config.json'] = _canonical(config)
-    after_sources, after_origins = _complete_sources(root, secrets)
-    if (set(after_origins) != complete_source_paths
-            or entries['metadata/source-aliases.json'] != after_sources['metadata/source-aliases.json']
-            or any(_file_hash(path) != digest for path, digest in source_origins.items())):
-        raise ValueError('sources-changed-during-backup')
-    if sum(map(len, entries.values())) > MAX_TOTAL:
-        raise ValueError('backup-too-large')
-    manifest = {'version': VERSION, 'started_at': now.isoformat(), 'completed_at': finished.isoformat(),
-                'business_timezone': 'Asia/Shanghai', 'business_reset_hour': 5,
-                'consistency': 'independent-stable-files-and-readonly-rds-snapshots',
-                'filesystem_snapshot': {'capture_started_at': capture_started.isoformat(),
-                    'capture_completed_at': capture_completed.isoformat(),
-                    'validation_completed_at': validation_completed.isoformat(),
-                    'capture_elapsed_seconds': capture_seconds,
-                    'guarantee': 'identical-path-set-and-stat-bookends-during-raw-capture'},
-                'rds_snapshot': {'transaction_started_at': draws.get('exported_at'),
-                    'export_completed_at': finished.isoformat(), 'may_be_newer_than_filesystem': True},
-                'recovery_policy': 'preserve-raw-seals-control-and-ledgers-recompute-pending-with-newer-draws-no-retro-predictions',
-                'derived_summaries_authoritative': False,
-                'display_snapshot_consistency': 'best-effort-immutable-copy-not-state-transaction',
-                'rds': proof, 'source_count': len(source_origins), 'credentials_included': False,
-                'monitored_source_count': len(monitored_origins),
-                'required_evidence': required,
-                'production_restore_supported': False,
-                'files': {name: {'sha256': _hash(raw), 'size': len(raw)} for name, raw in sorted(entries.items())}}
-    _snapshot_metadata_proof(manifest)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(prefix='.evidence-', suffix='.tar.gz', dir=destination.parent)
+    handle, rds_temporary = tempfile.mkstemp(prefix='.rds-', suffix='.json', dir=destination.parent)
     os.close(handle)
-    os.chmod(temporary, 0o600)
+    os.chmod(rds_temporary, 0o600)
     try:
-        with tarfile.open(temporary, 'w:gz', compresslevel=1) as archive:
-            for name, raw in sorted({**entries, 'backup-manifest.json': _canonical(manifest)}.items()):
-                item = tarfile.TarInfo(name); item.size = len(raw); item.mode = 0o600
-                archive.addfile(item, io.BytesIO(raw))
-        with open(temporary, 'r+b') as file:
-            os.fsync(file.fileno())
-        os.replace(temporary, destination)
-        if os.name != 'nt':
-            directory = os.open(destination.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+        exported = exporter(root, rds_temporary)
+        finished = clock() if clock else datetime.now(TZ)
+        if isinstance(exported, dict):
+            # 兼容以物化 draws 返回的旧 exporter（测试/外部调用），内存占用较高。
+            exported_at = exported.get('exported_at')
+            proof = _draw_proof(exported, finished)
+            rds_size, rds_sha = _write_canonical(exported, rds_temporary)
+            _check_secrets(b'', secrets, parsed=exported)
+            del exported
+        else:
+            # 默认流式路径：导出时已做行级校验/凭据扫描，canonical 字节数即归档大小。
+            exported_at = exported.exported_at
+            proof = exported.proof
+            rds_size, rds_sha = exported.size, exported.sha256
+            if exported.max_opened is not None and exported.max_opened > finished:
+                raise ValueError('rds-open-time-invalid')
+        _check_secrets_file(rds_temporary, secrets)
+        entries['rds/business-tables.json'] = _LazyBlob(rds_temporary, rds_size, rds_sha)
+        entries['metadata/safe-config.json'] = _canonical(config)
+        after_sources, after_origins = _complete_sources(root, secrets)
+        if (set(after_origins) != complete_source_paths
+                or entries['metadata/source-aliases.json'] != after_sources['metadata/source-aliases.json']
+                or any(_file_hash(path) != digest for path, digest in source_origins.items())):
+            raise ValueError('sources-changed-during-backup')
+        if sum(_entry_len(raw) for raw in entries.values()) > MAX_TOTAL:
+            raise ValueError('backup-too-large')
+        manifest = {'version': VERSION, 'started_at': now.isoformat(), 'completed_at': finished.isoformat(),
+                    'business_timezone': 'Asia/Shanghai', 'business_reset_hour': 5,
+                    'consistency': 'independent-stable-files-and-readonly-rds-snapshots',
+                    'filesystem_snapshot': {'capture_started_at': capture_started.isoformat(),
+                        'capture_completed_at': capture_completed.isoformat(),
+                        'validation_completed_at': validation_completed.isoformat(),
+                        'capture_elapsed_seconds': capture_seconds,
+                        'guarantee': 'identical-path-set-and-stat-bookends-during-raw-capture'},
+                    'rds_snapshot': {'transaction_started_at': exported_at,
+                        'export_completed_at': finished.isoformat(), 'may_be_newer_than_filesystem': True},
+                    'recovery_policy': 'preserve-raw-seals-control-and-ledgers-recompute-pending-with-newer-draws-no-retro-predictions',
+                    'derived_summaries_authoritative': False,
+                    'display_snapshot_consistency': 'best-effort-immutable-copy-not-state-transaction',
+                    'rds': proof, 'source_count': len(source_origins), 'credentials_included': False,
+                    'monitored_source_count': len(monitored_origins),
+                    'required_evidence': required,
+                    'production_restore_supported': False,
+                    'files': {name: {'sha256': _entry_sha(raw), 'size': _entry_len(raw)}
+                              for name, raw in sorted(entries.items())}}
+        _snapshot_metadata_proof(manifest)
+        handle, temporary = tempfile.mkstemp(prefix='.evidence-', suffix='.tar.gz', dir=destination.parent)
+        os.close(handle)
+        os.chmod(temporary, 0o600)
+        try:
+            with tarfile.open(temporary, 'w:gz', compresslevel=1) as archive:
+                merged = {**entries, 'backup-manifest.json': _canonical(manifest)}
+                for name, raw in sorted(merged.items()):
+                    item = tarfile.TarInfo(name); item.size = _entry_len(raw); item.mode = 0o600
+                    if isinstance(raw, _LazyBlob):
+                        with open(raw.path, 'rb') as source:
+                            archive.addfile(item, source)
+                    else:
+                        archive.addfile(item, io.BytesIO(raw))
+            with open(temporary, 'r+b') as file:
+                os.fsync(file.fileno())
+            os.replace(temporary, destination)
+            if os.name != 'nt':
+                directory = os.open(destination.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+        finally:
+            if Path(temporary).exists():
+                Path(temporary).unlink()
+        return {'status': 'created-unverified', 'archive': str(destination), 'archive_sha256': _file_hash(destination),
+                'file_count': len(entries), 'source_count': len(source_origins), 'rds': proof,
+                'capture_elapsed_seconds': capture_seconds,
+                'provider_calls': 0, 'production_restore': False}
     finally:
-        if Path(temporary).exists():
-            Path(temporary).unlink()
-    return {'status': 'created-unverified', 'archive': str(destination), 'archive_sha256': _file_hash(destination),
-            'file_count': len(entries), 'source_count': len(source_origins), 'rds': proof,
-            'capture_elapsed_seconds': capture_seconds,
-            'provider_calls': 0, 'production_restore': False}
+        if Path(rds_temporary).exists():
+            Path(rds_temporary).unlink()
 
 
 def verify_bundle(path, *, temporary_parent=None):

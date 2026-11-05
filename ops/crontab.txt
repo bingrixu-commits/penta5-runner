@@ -16,7 +16,7 @@
 # Independent six-to-five extra reference; original AI contracts unchanged
 # Independent Pro selected-six prospective framework
 * * * * * flock -n /var/lock/penta5-obs.lock bash -c 'sleep 45 && cd /root/penta5-runner && timeout --kill-after=3s 50 python3 -u scripts/run_runtime_observability.py >> data/runtime_observability_cron.log 2>&1'
-9 5 * * * flock -n /var/lock/penta5-evidence.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 180 python3 -u scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift >> data/source_manifest_refresh.log 2>&1 && timeout --kill-after=10s 900 python3 -u scripts/run_evidence_backup.py >> data/evidence_backup_cron.log 2>&1'
+9 5 * * * flock -n /var/lock/penta5-evidence.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 180 python3 -u scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift >> data/source_manifest_refresh.log 2>&1; timeout --kill-after=10s 900 python3 -u scripts/run_evidence_backup.py >> data/evidence_backup_cron.log 2>&1'
 17 * * * * /usr/sbin/logrotate -s /var/lib/logrotate/status /etc/logrotate.d/penta5 >> /root/penta5-runner/data/log_rotation.log 2>&1
 0 6 * * * find /root/evidence-archives -maxdepth 1 -name "evidence-*.tar.gz" -mtime +7 -delete 2>/dev/null
 */15 * * * * flock -n /var/lock/penta5-cuopt-health.lock bash -c 'cd /root/penta5-runner && python3 scripts/check_cuopt_health.py >> data/cuopt_health_cron.log 2>&1'
