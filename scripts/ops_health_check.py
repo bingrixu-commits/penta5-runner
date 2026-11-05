@@ -27,7 +27,10 @@ Collects a fixed set of probes into one JSON report plus a human table:
   provider_402       recent provider HTTP 402 in the AI job logs (<30 min -> warn)
   model_usage        derived token/cache/latency/402 summary (stale > 30 min -> warn)
   coverage           滚动发布覆盖率 coverage_24h（分母=窗口内该框架已上线期数；<95% warn；
-                     <80% 且缺口延续到窗口尾部（最近 24 期仍漏 >=3 期）才 fail，已恢复的历史缺口只 warn）
+                     <80% 且缺口延续到窗口尾部（最近 24 期仍漏 >=3 期）才 fail，已恢复的历史缺口只 warn；
+                     单框架近 24 期（约 2h）内有任一缺期也 warn（单框架缺期早发现，2026-11-05 加固；
+                     不用绝对覆盖率判定，避免所有框架共享历史缺口时一起误报））
+  ai_manual_off      AI 总闸关闭 >=15 分钟即 warn（区分手动关闭/余额欠费，避免静默跑空）
 
 Writes (atomic) data/ops_health.json, data/ops_health_state.json and appends
 data/ops_alerts.log only for *transitions* (a check newly entering warn/fail,
@@ -113,6 +116,7 @@ COVERAGE_FAIL = 0.80
 COVERAGE_MIN_ONLINE = 100
 COVERAGE_RECENT_PERIODS = 24
 COVERAGE_RECENT_FAIL_MISSES = 3
+COVERAGE_SINGLE_RECENT_MISSES = 1
 KILL3_STABILITY_WINDOW_SECONDS = 24 * 3600
 KILL3_STABILITY_LATENCY_SAMPLE = 20
 KILL3_VERSION_WARN_CHANGES = 2
@@ -1541,6 +1545,9 @@ def check_coverage(ctx):
         recent_missed = recent.get('missed')
         if not isinstance(recent_missed, int) or isinstance(recent_missed, bool):
             recent_missed = None
+        single_note = ''
+        if isinstance(recent_missed, int) and recent_missed >= COVERAGE_SINGLE_RECENT_MISSES:
+            single_note = '单框架近期缺期'
         if coverage < COVERAGE_FAIL:
             if recent_missed is None:
                 row_status = WARN
@@ -1560,6 +1567,11 @@ def check_coverage(ctx):
         else:
             row_status = OK
             note = ''
+        if row_status == OK and single_note:
+            row_status = WARN
+            note = '%s(近%d期漏%s期)' % (
+                single_note, COVERAGE_RECENT_PERIODS,
+                recent_missed if recent_missed is not None else '-')
         status = _max_status(status, row_status)
         values[key] = {'coverage_24h': coverage, 'online': online,
                        'last_missed_period': last_missed,
@@ -1580,6 +1592,7 @@ def check_coverage(ctx):
 AI_CONTROL_JSON = 'ai_api_control.json'
 AI_GUARD_JSON = 'ai_balance_guard.json'
 AI_GUARD_STALE_SECONDS = 10 * 60
+MANUAL_OFF_WARN_SECONDS = 15 * 60
 
 
 def check_ai_control(ctx):
@@ -1606,6 +1619,40 @@ def check_ai_control(ctx):
                   'AI 总闸开启 generation=%s；余额守护 age=%s balance=%s'
                   % (control.get('generation'), _age_text(age), balance),
                   {'enabled': True, 'age_seconds': int(age), 'balance': balance})
+
+
+def check_ai_manual_off(ctx):
+    """AI 总闸关闭 >=15 分钟即 warn（区分手动/余额欠费），避免静默跑空。"""
+    control, error = _load_json(ctx['root'] / 'data' / AI_CONTROL_JSON)
+    if not isinstance(control, dict):
+        return _entry('ai_manual_off', WARN, 'AI 总闸状态不可读: %s' % (error or 'invalid shape'))
+    if control.get('enabled') is not False:
+        return _entry('ai_manual_off', OK, 'AI 总闸开启（关闭监控正常）')
+    guard, _ = _load_json(ctx['root'] / 'data' / AI_GUARD_JSON)
+    auto_paused = bool(guard.get('auto_paused')) if isinstance(guard, dict) else False
+    opened = None
+    transitions = control.get('transitions')
+    if isinstance(transitions, list):
+        for item in transitions:
+            if not isinstance(item, dict):
+                continue
+            moment = _parse_time(item.get('at'))
+            if moment is None:
+                continue
+            opened = None if item.get('enabled') else moment
+    seconds = (ctx['now'] - opened).total_seconds() if opened is not None else None
+    kind = '余额欠费自动暂停' if auto_paused else '手动关闭'
+    values = {'enabled': False, 'auto_paused': auto_paused,
+              'off_seconds': None if seconds is None else int(seconds)}
+    if seconds is None:
+        return _entry('ai_manual_off', WARN,
+                      'AI 总闸%s，无法解析关闭时长（transitions 缺失）' % kind, values)
+    if seconds >= MANUAL_OFF_WARN_SECONDS:
+        return _entry('ai_manual_off', WARN,
+                      'AI 总闸%s已 %s（≥15 分钟，请确认是否忘记打开）'
+                      % (kind, _age_text(seconds)), values)
+    return _entry('ai_manual_off', OK,
+                  'AI 总闸%s %s（<15 分钟，暂不告警）' % (kind, _age_text(seconds)), values)
 
 
 def check_ledger_size(ctx):
@@ -1679,6 +1726,7 @@ CHECK_FUNCS = (
     check_hitrate_stability,
     check_hitrate_attribution,
     check_ai_control,
+    check_ai_manual_off,
     check_model_usage,
 )
 FALLBACK_NAMES = {
@@ -1708,6 +1756,7 @@ FALLBACK_NAMES = {
     'check_hitrate_stability': ('hitrate_stability',),
     'check_hitrate_attribution': ('hitrate_attribution',),
     'check_ai_control': ('ai_control',),
+    'check_ai_manual_off': ('ai_manual_off',),
     'check_model_usage': ('model_usage',),
 }
 
