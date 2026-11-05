@@ -12,10 +12,13 @@
 - 大小形态命中 = 目标期实际四位大小形态 != 封存大小形态（反向排除项）；
 - 全大/全小命中 = 目标期实际四位大小形态 != 封存全大/全小形态（反向排除项）；
 - 全单/全双命中 = 目标期实际四位单双形态 != 封存全单/全双形态（反向排除项）；
-- 整组命中 = 上述 4 项同时命中（四张卡允许出现相同形态：四个位置的排除数字全偏大时，
-  ②大小形态与③全大/全小形态必然同为「小小小小」，按口径分别计入）；
+- 整组命中 = 上述 4 项同时命中（四张卡默认自动去重：若①/②与③/④同形且①/②仍有
+  未被排除数字钉死的自由位，会把最靠前的自由位翻成反方向；四位全被钉死时允许
+  同形，按口径分别计入）；
 - ③④方向由排除数字决定（v4 多数锁定）：多数位置排除数字偏大 → 锁定全小；多数偏小 → 锁定全大；
   多数偏单 → 锁定全双；多数偏双 → 锁定全单；平票（如 2 大 2 小）或全部未填时由模型按冷热自选；
+- 去重（v5）：①/② 与 ③/④ 同形时，若①/②还有自由位，把最靠前的自由位翻成反方向
+  （只动自由位，不违反任何排除约束）；没有自由位、四位全被钉死时保留同形；
 - 无合尾、无连用限制（每期完全由模型按冷热重选，不沿用上期）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
@@ -67,7 +70,7 @@ ALL_FORM_NAMES = {'大大大大': '全大', '小小小小': '全小',
 REVERSE_LABELS = {'parity': '单双反向冷形态', 'size': '大小反向冷形态',
                   'all_size': '全大/全小反向冷形态', 'all_parity': '全单/全双反向冷形态'}
 
-RULE_VERSION = 'kill8-tail-v4-majority-lock-four-reverse-cold-forms'
+RULE_VERSION = 'kill8-tail-v5-dedupe-four-reverse-cold-forms'
 COUNTED_FORMS = 4
 POSITION_EXCLUSIONS_PATH = ROOT / 'data' / 'kill8_position_exclusions.json'
 POSITION_KEYS = ('q', 'b', 's', 'g')
@@ -351,7 +354,9 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=Non
         '约束位置必须取排除数字的反方向（排除双写单、排除单写双；排除大写小、排除小写大）；'
         '未列出的位置由你按冷热自选。'
         '全大/全小、全单/全双按 4 个位置的方向投票：明确多数时锁定该反方向全形；'
-        '平票或均无方向时由你在 2 种里按冷热自选。\n\n'
+        '平票或均无方向时由你在 2 种里按冷热自选。'
+        '去重：若①/②与③/④同形且①/②还有自由位，系统会把最靠前的自由位翻成反方向；'
+        '请优先直接给出不同的形态。\n\n'
         '【任务】\n'
         '1. 从 16 种四位单双形态中选 1 种作为本期「单双反向冷形态排除项」'
         '（严格遵守上面的单双反向约束，其余位置优先选冷）；\n'
@@ -365,7 +370,7 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=Non
         '且实际四位大小形态 != 封存大小形态，'
         '且实际四位大小形态 != 封存全大/全小形态，'
         '且实际四位单双形态 != 封存全单/全双形态；'
-        '4 项全中才算整组命中（四张卡允许出现相同形态）；\n'
+        '4 项全中才算整组命中（①/②与③/④默认自动去重，四位全被钉死时才允许同形）；\n'
         '6. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '7. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
@@ -382,7 +387,7 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=Non
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill8-prompt-v3-majority-lock-four-forms',
+        'version': 'kill8-prompt-v4-dedupe-four-forms',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -401,6 +406,24 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=Non
         'position_exclusions': dict(exclusions) if isinstance(exclusions, dict) else {},
     }
     return prompt, audit
+
+
+def _dedupe_forms(forms, constraints):
+    """①/② 与 ③/④ 同形时，在自由位翻转一个方向；无自由位时保留同形。"""
+    for kind in ('parity', 'size'):
+        field = FORM_FIELDS[kind]
+        all_field = FORM_FIELDS['all_' + kind]
+        if forms.get(field) != forms.get(all_field):
+            continue
+        free = [index for index in range(4) if index not in constraints.get(kind, {})]
+        if not free:
+            continue
+        chars = FORM_PALETTE[kind]
+        value = list(forms[field])
+        index = free[0]
+        value[index] = chars[1] if value[index] == chars[0] else chars[0]
+        forms[field] = ''.join(value)
+    return forms
 
 
 def normalize_response(response, *, exclusions=None):
@@ -436,14 +459,16 @@ def normalize_response(response, *, exclusions=None):
     forced_all_parity = constraints['all_parity']
     if forced_all_parity and all_parity_form != forced_all_parity:
         raise ValueError('all_parity_form 必须取排除数字的反方向「%s」' % forced_all_parity)
+    forms = _dedupe_forms({'parity_form': parity_form, 'size_form': size_form,
+                           'all_size_form': all_size_form,
+                           'all_parity_form': all_parity_form}, constraints)
     reason = str(response.get('reason', ''))
     try:
         reason.encode('utf-8')
     except UnicodeEncodeError:
         raise ValueError('reason 必须是合法 UTF-8 文本') from None
-    return {'parity_form': parity_form, 'size_form': size_form,
-            'all_size_form': all_size_form, 'all_parity_form': all_parity_form,
-            'reason': reason[:200]}
+    forms['reason'] = reason[:200]
+    return forms
 
 
 def resolve_model():

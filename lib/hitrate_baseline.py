@@ -54,6 +54,7 @@ RULE_BASELINE = {
     ('kill8_tail', 'kill8-tail-v2-reverse-cold-forms'): (2, 0.8789),
     ('kill8_tail', 'kill8-tail-v3-four-reverse-cold-forms'): (4, 0.7733),
     ('kill8_tail', 'kill8-tail-v4-majority-lock-four-reverse-cold-forms'): (4, 0.7733),
+    ('kill8_tail', 'kill8-tail-v5-dedupe-four-reverse-cold-forms'): (4, 0.7733),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
