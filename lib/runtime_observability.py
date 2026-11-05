@@ -1,4 +1,4 @@
-"""Bounded, read-only operational evidence for the four tracked active AI paths.
+"""Bounded, read-only operational evidence for the three tracked active AI paths.
 
 This module does not import model runners, providers, publication writers or
 secrets. Missing clock evidence stays None. It never creates predictions,
@@ -33,7 +33,8 @@ MODELS = {
     'framework': ('Flash 框架', 'r1_framework_seals.json', 'ai_job_status.json', 'ai_job_framework.log', 'R1_FRAMEWORK'),
     'he3_refine': ('三合五尾', 'he3_refine_seals.json', 'he3_refine_status.json', 'he3_refine_cron.log', 'HE3_REFINE'),
 }
-_MODEL_ENV_KEYS = {'killer': 'PENTA5_MODEL_KILLER', 'framework': 'PENTA5_MODEL_FRAMEWORK'}
+_MODEL_ENV_KEYS = {'killer': 'PENTA5_MODEL_KILLER', 'framework': 'PENTA5_MODEL_FRAMEWORK',
+                    'he3_refine': 'PENTA5_MODEL_HE3'}
 _TIER_PREFIX = {'deepseek-flash': 'Flash', 'deepseek-v4-flash': 'Flash', 'deepseek-v4-pro': 'Pro'}
 
 
@@ -51,7 +52,7 @@ def _model_tiers(root):
         key, _, value = text.partition('=')
         key = key.strip()
         if key in ('PENTA5_MODEL_KILLER', 'PENTA5_MODEL_FRAMEWORK',
-                   'PENTA5_DEEPSEEK_MODEL'):
+                   'PENTA5_MODEL_HE3', 'PENTA5_DEEPSEEK_MODEL'):
             values[key] = value.strip().strip('"').strip("'")
     result = {}
     for job, key in _MODEL_ENV_KEYS.items():

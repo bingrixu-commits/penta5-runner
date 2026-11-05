@@ -303,7 +303,7 @@ def render(summary):
     errors = _integer(round_data.get('error_count'), active_count)
     complete_text = str(completed) if completed is not None else '—'
     error_text = str(errors) if errors is not None else '—'
-    line = api_text + ' · 数据' + (latest[-3:] + '期' if latest else '—') + ' · 完成' + complete_text + '/' + str(active_count) + ' · 异常' + error_text
+    line = api_text + ' · 数据至' + (latest[-3:] + '期' if latest else '—') + ' · 完成' + complete_text + '/' + str(active_count) + ' · 异常' + error_text
     unavailable = data.get('stats_error') is not False
     warning = '<div class="rt-warning">运行摘要暂不可用；没有将缺少的证据计作零次异常或成功。</div>' if unavailable else ''
     source_note = ('数据尚未就绪，等待最新连续真实开奖。' if source.get('source_ready') is False else
@@ -331,6 +331,7 @@ def render(summary):
             +_version_appendix(data.get('version_comparison'))+
             '<div class="rt-note">手动停止不计失败；—表示暂无可核验证据。按时率只衡量发布时效，不是号码命中率。'
             '尚未关盘期次不进按时率分母；“开奖”时间不代表抓取到达时间。'
+            '策略拒绝列只统计策略校验类拒绝；输入等其它异常拒绝只计入重试。'
             '封存时间、服务端提交观测和本浏览器本次收到分别记录；观测不等于精确首次就绪，本机时间不参与正式样本。'
             '统计日按北京时间05:00起；详情可左右滚动。'
             '号码口径与全站一致：只用前4球(千/百/十/个)，第5球不参与。</div></div></details>'
