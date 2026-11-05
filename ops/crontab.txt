@@ -3,7 +3,7 @@
 0 5 * * * flock -n /var/lock/penta5-b196b01f.lock bash -c 'python3 /root/penta5-runner/reset_daily.py >> /root/reset.log 2>&1'
 */30 * * * * flock -n /var/lock/penta5-03c2b9e5.lock bash -c '/bin/bash /root/penta5-runner/guard_daily.sh >/dev/null 2>&1'
 */5 * * * * flock -n /var/lock/penta5-killer.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_ai_ready_job.py killer >> auto_r1_killer.log 2>&1'
-*/5 * * * * flock -w 30 /var/lock/penta5-he3.lock bash -c 'sleep 40 && cd /root/penta5-runner && timeout --kill-after=5s 255 python3 -u scripts/run_he3_refine.py >> data/he3_refine_cron.log 2>&1'
+*/5 * * * * bash -c 'exec 9>/var/lock/penta5-he3.lock; flock -w 30 9 || { echo "$(date -Iseconds) WARN HE3_CRON_LOCK_TIMEOUT skipped" >> /root/penta5-runner/data/he3_refine_cron.log; exit 0; }; sleep 40 && cd /root/penta5-runner && timeout --kill-after=5s 255 python3 -u scripts/run_he3_refine.py >> data/he3_refine_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-framework.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_ai_ready_job.py framework >> auto_r1_framework.log 2>&1'
 * * * * * flock -n /var/lock/penta5-balance-guard.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 45 python3 -u scripts/ai_balance_guard.py >> data/ai_balance_guard.log 2>&1'
 50 4 * * * flock -n /var/lock/penta5-config-backup.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 120 python3 -u scripts/config_backup.py >> data/config_backup_cron.log 2>&1'
