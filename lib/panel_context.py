@@ -182,7 +182,7 @@ def _kill1_self(reference, kill1_stats, kill1_previous):
     if isinstance(kill1_previous, dict):
         previous = _pick(kill1_previous, ('ref_period', 'target_period', 'rule_version',
                                           'positions', 'counted', 'tail', 'tail_policy',
-                                          'form_type', 'form',
+                                          'position_policy',
                                           'generated_at', 'published_at'))
     stats = None
     if isinstance(kill1_stats, dict):
@@ -279,7 +279,7 @@ def _ai_self_frame(kind):
     if kind == 'kill3_tail':
         fields += ['display_only', 'counted', 'reverse_parity', 'reverse_size']
     elif kind == 'kill1_tail':
-        fields += ['counted', 'form_type', 'form']
+        fields += ['counted', 'position_policy']
     elif kind == 'kill9_tail':
         fields += ['forms', 'form_kinds', 'form_pool', 'all_form', 'he2_keep', 'he3_keep']
     latest = _pick(records[-1], fields) if records else None

@@ -152,7 +152,7 @@ def _kill3_entries():
 
 
 def _kill1_entries():
-    '''kill1_tail（AI 单位置 + 一合尾 + 一形态）的尾项稳定化复盘行。'''
+    '''kill1_tail（AI 双位置 + 一合尾）的尾项稳定化复盘行。'''
     actuals = {}
     for settlement in (_read(DATA / 'kill1_tail/settlements.json', {}) or {}).get('records') or []:
         nums = settlement.get('actual')
@@ -178,7 +178,7 @@ def _kill1_entries():
 
 FRAMEWORKS = (
     ('AI三位置', _kill3_entries),
-    ('AI单位置+一合尾+一形态', _kill1_entries),
+    ('AI双位置+一合尾', _kill1_entries),
     ('固定八码', _framework_entries),
     ('七项独立v7', _six_entries),
     ('killer九项', _killer_entries),

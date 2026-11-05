@@ -16,7 +16,7 @@ const definitions=[
  {id:'selected6-attack-text',copy:'selected6-attack-copy',label:'三定位七项框架攻击语',data:'selected6-attack-data'},
  {id:'six-independent-attack-text',copy:'six-independent-attack-copy',label:'七项独立框架攻击语',data:'six-independent-attack-data'},
  {id:'kill3-attack-text',copy:'kill3-attack-copy',label:'AI三位置+一合尾攻击语',data:'kill3-attack-data'},
- {id:'kill1-attack-text',copy:'kill1-attack-copy',label:'AI单位置+一合尾+一形态攻击语',data:'kill1-attack-data'},
+ {id:'kill1-attack-text',copy:'kill1-attack-copy',label:'AI双位置+一合尾攻击语',data:'kill1-attack-data'},
  {id:'k9-attack',copy:'k9-attack-copy',label:'AI四形态+二数合+三数合攻击语'}
 ];
 const entries=new Map();
