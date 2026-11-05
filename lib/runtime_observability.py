@@ -284,8 +284,8 @@ def parse_log(text):
     result, active, attempt = {}, None, None
     def row(reference):
         return result.setdefault(reference, {'strategy_rejected': set(), 'api_timeout': set(),
-                                              'attempts': set(), 'started': False, 'finished': False,
-                                              'http': {}})
+                                              'other_rejected': set(), 'attempts': set(),
+                                              'started': False, 'finished': False, 'http': {}})
     for line in text.splitlines():
         start = re.search(r'^[A-Z_]*(?:FETCH_START|READY) ref=([0-9]{11})\b', line)
         if start and _period(start[1]):
@@ -328,8 +328,10 @@ def parse_log(text):
             row(active)['attempts'].add(number)
             if kind == 'StrategyValidationError':
                 row(active)['strategy_rejected'].add(number)
-            if kind in ('Timeout', 'ReadTimeout', 'ConnectTimeout'):
+            elif kind in ('Timeout', 'ReadTimeout', 'ConnectTimeout'):
                 row(active)['api_timeout'].add(number)
+            else:
+                row(active)['other_rejected'].add(number)
         finished = re.search(r'\bref=([0-9]{11})\b.*\bpublished=(?:True|False)\b', line)
         if finished and _period(finished[1]):
             row(finished[1])['finished'] = True
@@ -341,6 +343,7 @@ def parse_log(text):
             row(failed[1])['finished'] = True
     return {reference: {'strategy_rejected': len(value['strategy_rejected']),
                         'api_timeout': len(value['api_timeout']),
+                        'other_rejected': len(value['other_rejected']),
                         'observed_attempt': max(value['attempts']) if value['attempts'] else None,
                         'complete': value['started'] and value['finished'], 'http_attempts': value['http']}
             for reference, value in sorted(result.items())[-MAX_RECORDS:]}
@@ -468,6 +471,7 @@ def _period_row(reference, evidence, actuals, control, diagnostics, now, status=
         diagnostic['observed_attempt'] - 1 if known and type(diagnostic.get('observed_attempt')) is int else 0 if not evidenced else None)
     strategy_count = diagnostic.get('strategy_rejected', 0) if known else (0 if not evidenced else None)
     timeout_count = diagnostic.get('api_timeout', 0) if known else (0 if not evidenced else None)
+    other_count = diagnostic.get('other_rejected', 0) if known else (0 if not evidenced else None)
     if failure == 'strategy-rejected' and strategy_count == 0:
         strategy_count = None  # The kind is known, but not how many attempts failed.
     if failure == 'provider-timeout' and timeout_count == 0:
@@ -478,7 +482,8 @@ def _period_row(reference, evidence, actuals, control, diagnostics, now, status=
             'request_registered_at': registered.isoformat() if registered else None,
             'close_remaining_seconds': margin, 'status': classification, 'error_code': failure,
             'published': published is not None, 'on_time': published is not None and published < close,
-            'strategy_rejected_count': strategy_count, 'api_timeout_count': timeout_count, 'retry_count': retries}
+            'strategy_rejected_count': strategy_count, 'api_timeout_count': timeout_count,
+            'other_rejected_count': other_count, 'retry_count': retries}
 
 
 def _quality(rows):
@@ -500,6 +505,7 @@ def _quality(rows):
               'pending_count': sum(row['status'] == 'pending' for row in eligible),
               'failed_count': sum(row['status'] == 'failed' for row in eligible),
               'strategy_rejected_count': total('strategy_rejected_count'),
+              'other_rejected_count': total('other_rejected_count'),
               'api_timeout_count': total('api_timeout_count'), 'retry_count': total('retry_count'),
               'margin_under90_count': sum(row['close_remaining_seconds'] is not None and row['close_remaining_seconds'] < 90 for row in eligible),
               'durations': {key: _quantiles([row['durations_seconds'][key] for row in eligible]) for key in DURATION_KEYS},

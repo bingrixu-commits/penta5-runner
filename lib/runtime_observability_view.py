@@ -245,7 +245,8 @@ def _row(key, label, raw, day):
             + ' / 关盘余量&lt;90秒 ' + ('—' if unavailable else _count(counters.get('margin_under90_count'))) + '</div></td>'
             '<td>' + ('—' if unavailable else _rate(quality.get('recent50'))) + '</td>'
             '<td data-stats-business-date="' + day + '">' + ('— / — / —' if unavailable else ' / '.join(_count(counters.get(name)) for name in
-                ('missing_count', 'api_timeout_count', 'strategy_rejected_count'))) + '</td></tr>')
+                ('missing_count', 'api_timeout_count', 'strategy_rejected_count',
+                 'other_rejected_count'))) + '</td></tr>')
 
 
 def _availability(key,model):
@@ -326,12 +327,12 @@ def render(summary):
             +
             '<div class="rt-table-scroll" tabindex="0" aria-label="各模型运行明细，可左右滚动"><table>'
             '<thead><tr><th>模型 / 期号</th><th>状态 / 阶段证据</th><th>开奖至发布耗时</th><th>发布距关盘</th>'
-            '<th>今日按时率</th><th>最近50期按时率</th><th>今日缺期 / 超时 / 策略拒绝</th></tr></thead>'
+            '<th>今日按时率</th><th>最近50期按时率</th><th>今日缺期 / 超时 / 策略拒绝 / 其它拒绝</th></tr></thead>'
             '<tbody>' + rows + '</tbody></table></div>'
             +_version_appendix(data.get('version_comparison'))+
             '<div class="rt-note">手动停止不计失败；—表示暂无可核验证据。按时率只衡量发布时效，不是号码命中率。'
             '尚未关盘期次不进按时率分母；“开奖”时间不代表抓取到达时间。'
-            '策略拒绝列只统计策略校验类拒绝；输入等其它异常拒绝只计入重试。'
+            '策略拒绝列只统计策略校验类拒绝；其它异常拒绝单列统计（也计入重试）。'
             '封存时间、服务端提交观测和本浏览器本次收到分别记录；观测不等于精确首次就绪，本机时间不参与正式样本。'
             '统计日按北京时间05:00起；详情可左右滚动。'
             '号码口径与全站一致：只用前4球(千/百/十/个)，第5球不参与。</div></div></details>'
