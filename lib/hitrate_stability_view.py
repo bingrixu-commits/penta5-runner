@@ -78,6 +78,24 @@ def _item_note(row):
             % (float(item['avg_items']), int(item['items']), _pct(item.get('item_rate'))))
 
 
+def _model_note(row):
+    if str(row.get('key') or '') != 'killer':
+        return ''
+    split = row.get('model_split')
+    if not isinstance(split, list):
+        return ''
+    for item in split:
+        if not isinstance(item, dict):
+            continue
+        model = str(item.get('model') or '')
+        n = item.get('n')
+        if 'v4-pro' in model and isinstance(n, int) and n > 0:
+            text = ('含 %s 试跑 %s 期 %s/%s 中（样本不足，单独看不可下结论）'
+                    % (model, n, item.get('hits'), n))
+            return '<span class="hs-ci">%s</span>' % escape(text)
+    return ''
+
+
 def _cell_window(window):
     if not isinstance(window, dict):
         return '<td>-</td>'
@@ -140,7 +158,7 @@ def _row_cells(row):
             + cover_cell
             + recent_cell
             + f'<td>{lifetime}</td>'
-            + f'<td>{badge}</td>'
+            + f'<td>{badge}{_model_note(row)}</td>'
             '</tr>')
 
 
@@ -187,6 +205,20 @@ def render_block(report=None):
         f'</section>{END}')
 
 
+def _minutes(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return '-'
+    if number >= 60:
+        return '%.1f 小时' % (number / 60.0)
+    return '%.0f' % number
+
+
+def _short_key(key):
+    return {'he3_refine': 'he3', 'kill3_tail': 'kill3', 'kill1_tail': 'kill1'}.get(str(key), str(key))
+
+
 def _failure_split_html(report):
     """近 24h 失败分型脚注（只读；数据缺失返回空串）。"""
     try:
@@ -214,6 +246,35 @@ def _failure_split_html(report):
             bits.append('kill3 发布 %s 槽 / 缺槽 %s / 版本切换 %s 次'
                         % (slots.get('published_24h'), slots.get('missing_slots_24h'),
                            slots.get('version_changes_24h')))
+        egress = split.get('ai_egress')
+        if isinstance(egress, dict) and egress.get('off_windows_24h'):
+            part = ('AI 总闸近 24h 关闭 %s 次共 %s 分钟'
+                    % (egress.get('off_windows_24h'), _minutes(egress.get('off_minutes_24h'))))
+            if egress.get('balance_pause_minutes'):
+                part += '（余额欠费 %s 分钟 / 手动 %s 分钟）' % (
+                    _minutes(egress.get('balance_pause_minutes')),
+                    _minutes(egress.get('manual_off_minutes')))
+            bits.append(part)
+        missing = split.get('missing_slots')
+        if isinstance(missing, dict) and missing.get('unique_periods'):
+            part = ('近 24h 缺期 %s 期·框架（去重 %s 槽）：AI 总闸关闭 %s'
+                    % (missing.get('events'), missing.get('unique_periods'),
+                       missing.get('ai_off_events')))
+            balance_off = missing.get('balance_off_periods') or []
+            if balance_off:
+                part += '（余额欠费 %s 期）' % escape(str(len(balance_off)))
+            other = missing.get('other') or []
+            if other:
+                labels = []
+                for item in other[:4]:
+                    if not isinstance(item, dict):
+                        continue
+                    names = '/'.join(_short_key(name) for name in (item.get('frameworks') or [])[:2])
+                    labels.append(escape('%s %s' % (names, item.get('period'))))
+                if len(other) > 4:
+                    labels.append('…')
+                part += '，其它 %s 槽（%s）' % (missing.get('other_events'), '；'.join(labels))
+            bits.append(part)
         bits.append('缺期按覆盖率单列，不计入累计 n，也不按 0 命中')
         return ' 失败分型：' + '；'.join(bits) + '。'
     except Exception:

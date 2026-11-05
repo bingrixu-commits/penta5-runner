@@ -78,6 +78,7 @@ WINDOWS = {
 }
 ROLLING_WINDOWS = (('24h', 288), ('7d', 2016))
 ROLLING_RECENT_PERIODS = 24
+MISSED_LIST_LIMIT = 60
 ROLLING_DEFINITION = (
     '滚动覆盖率 coverage_24h/coverage_7d = 窗口内 verified 且计入的 target_period 数 / 窗口内该框架已上线期数；'
     'plan_hit_rate_24h/plan_hit_rate_7d = 窗口内命中数 / 窗口内已上线期数（漏期按 0 命中计入）。'
@@ -296,6 +297,7 @@ def _rolling_fields(points, launch_periods, end_index):
             'online': online, 'verified': verified, 'missed': len(missed), 'hits': hits,
             'coverage': coverage, 'plan_hit_rate': plan_rate,
             'last_missed_period': _period_from_index(missed[-1]) if missed else None,
+            'missed_periods': [_period_from_index(index) for index in missed[-MISSED_LIST_LIMIT:]],
             'recent': {'periods': ROLLING_RECENT_PERIODS, 'online': recent_online,
                        'verified': recent_online - len(recent_missed),
                        'missed': len(recent_missed), 'hits': recent_hits,

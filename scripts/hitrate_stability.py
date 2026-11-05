@@ -30,7 +30,7 @@ import json
 import os
 import sys
 import tempfile
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path('/root/penta5-runner')
@@ -47,6 +47,11 @@ CUMULATIVE = 'data/framework_hitrate_cumulative.json'
 GUARD = 'data/hitrate_guard.json'
 STATE = 'data/hitrate_stability_state.json'
 OUTPUT = 'data/hitrate_stability.json'
+AI_CONTROL = 'data/ai_api_control.json'
+BALANCE_LOG = 'data/model_usage/balance.jsonl'
+PAUSE_BALANCE_CNY = 1.00
+CST = timezone(timedelta(hours=8))
+MISSING_LIST_LIMIT = 40
 
 MIN_SAMPLE = 200
 FAST_DROP_Z100 = -2.58
@@ -62,6 +67,171 @@ STALE_MINUTES = 45
 WHITELIST = 'ops/hitrate_stability_whitelist.json'
 
 RANK = {'ok': 0, 'watch': 1, 'alert': 2}
+
+
+def _period_start(period):
+    """期号 -> 该期开奖时刻（北京时间，00:05 起每 5 分钟一期）。"""
+    text = str(period or '')
+    if len(text) != 11 or not text.isdigit():
+        return None
+    try:
+        day = date(int(text[0:4]), int(text[4:6]), int(text[6:8]))
+        slot = int(text[8:11])
+    except ValueError:
+        return None
+    if not 1 <= slot <= 288:
+        return None
+    return (datetime(day.year, day.month, day.day, tzinfo=CST)
+            + timedelta(minutes=5 * (slot - 1) + 5))
+
+
+def _balance_samples(root):
+    samples = []
+    try:
+        lines = (Path(root) / BALANCE_LOG).read_text(encoding='utf-8').splitlines()
+    except OSError:
+        return samples
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(item, dict):
+            continue
+        value = item.get('balance')
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        try:
+            moment = datetime.fromisoformat(str(item.get('at')))
+        except (TypeError, ValueError):
+            continue
+        samples.append((moment, float(value)))
+    samples.sort(key=lambda pair: pair[0])
+    return samples
+
+
+def _balance_before(samples, moment):
+    value = None
+    for at, balance in samples:
+        if at <= moment:
+            value = balance
+        else:
+            break
+    return value
+
+
+def _ai_egress(root, start, end):
+    """近 24h AI 总闸关闭窗口（含余额欠费 vs 手动关），只读。"""
+    control = _read_json(Path(root) / AI_CONTROL)
+    if not isinstance(control, dict):
+        return None
+    transitions = control.get('transitions')
+    if not isinstance(transitions, list):
+        return None
+    events = []
+    for item in transitions:
+        if not isinstance(item, dict):
+            continue
+        try:
+            moment = datetime.fromisoformat(str(item.get('at')))
+        except (TypeError, ValueError):
+            continue
+        events.append((moment, bool(item.get('enabled'))))
+    events.sort(key=lambda pair: pair[0])
+    samples = _balance_samples(root)
+    spans = []
+    opened_at = None
+    for moment, enabled in events:
+        if not enabled and opened_at is None:
+            opened_at = moment
+        elif enabled and opened_at is not None:
+            spans.append((opened_at, moment))
+            opened_at = None
+    if opened_at is not None:
+        spans.append((opened_at, datetime.now(CST)))
+    annotated, raw = [], []
+    for opened_at, closed_at in spans:
+        if opened_at >= end or closed_at <= start:
+            continue
+        balance = _balance_before(samples, opened_at)
+        cause = 'balance' if isinstance(balance, (int, float)) and balance < PAUSE_BALANCE_CNY else 'manual'
+        low, high = max(opened_at, start), min(closed_at, end)
+        annotated.append({'start': low.isoformat(), 'end': high.isoformat(),
+                          'minutes': round((high - low).total_seconds() / 60.0, 1),
+                          'cause': cause, 'balance_at_pause': balance})
+        raw.append({'start': opened_at.isoformat(), 'end': closed_at.isoformat(), 'cause': cause})
+    return {'enabled': bool(control.get('enabled')) if control.get('enabled') is not None else None,
+            'generation': control.get('generation'),
+            'windows': annotated, 'raw': raw}
+
+
+def _missing_attribution(root, raw_windows):
+    """24h 缺期按框架去重后，映射到 AI 总闸关闭窗口（其余=其它原因）。"""
+    document = _read_json(Path(root) / CUMULATIVE)
+    rows = document.get('rows') if isinstance(document, dict) else None
+    window = document.get('rolling_window') if isinstance(document, dict) else None
+    window = window if isinstance(window, dict) else {}
+    grouping, order, start_period = {}, [], None
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get('key') or '')
+        rolling = row.get('rolling') if isinstance(row.get('rolling'), dict) else {}
+        windows_map = rolling.get('windows') if isinstance(rolling.get('windows'), dict) else {}
+        window24 = windows_map.get('24h') if isinstance(windows_map.get('24h'), dict) else {}
+        if start_period is None:
+            start_period = window24.get('start_period')
+        missed = window24.get('missed_periods')
+        if not isinstance(missed, list):
+            continue
+        for period in missed:
+            period = str(period)
+            if period not in grouping:
+                grouping[period] = []
+                order.append(period)
+            if key and key not in grouping[period]:
+                grouping[period].append(key)
+    intervals = []
+    for item in raw_windows or []:
+        try:
+            intervals.append((datetime.fromisoformat(str(item['start'])),
+                              datetime.fromisoformat(str(item['end'])),
+                              item.get('cause')))
+        except (KeyError, TypeError, ValueError):
+            continue
+    ai_off, balance_off, manual_off, other = [], [], [], []
+    for period in order:
+        moment = _period_start(period)
+        if moment is None:
+            other.append({'period': period, 'frameworks': grouping[period]})
+            continue
+        low, high = moment - timedelta(minutes=5), moment
+        cause = None
+        for item_low, item_high, item_cause in intervals:
+            if item_low < high and item_high > low:
+                cause = item_cause or 'ai_off'
+                break
+        entry = {'period': period, 'frameworks': grouping[period]}
+        if cause == 'balance':
+            ai_off.append(entry)
+            balance_off.append(entry)
+        elif cause == 'manual':
+            ai_off.append(entry)
+            manual_off.append(entry)
+        else:
+            other.append(entry)
+    return {
+        'window_start': start_period,
+        'window_end': window.get('end_period'),
+        'unique_periods': len(order),
+        'events': sum(len(value) for value in grouping.values()),
+        'ai_off_periods': [item['period'] for item in ai_off][:MISSING_LIST_LIMIT],
+        'ai_off_events': sum(len(item['frameworks']) for item in ai_off),
+        'balance_off_periods': [item['period'] for item in balance_off][:MISSING_LIST_LIMIT],
+        'manual_off_periods': [item['period'] for item in manual_off][:MISSING_LIST_LIMIT],
+        'other': other[:MISSING_LIST_LIMIT],
+        'other_events': sum(len(item['frameworks']) for item in other),
+    }
 
 
 def _failure_split(root):
@@ -94,6 +264,27 @@ def _failure_split(root):
                 'p50_latency_seconds': value.get('p50_latency_seconds'),
             }
             break
+    try:
+        document = _read_json(Path(root) / CUMULATIVE) or {}
+        window = document.get('rolling_window') if isinstance(document, dict) else None
+        window = window if isinstance(window, dict) else {}
+        end = _period_start(window.get('end_period'))
+        if end is not None:
+            start = end - timedelta(minutes=5 * 287)
+            egress = _ai_egress(root, start, end)
+            if egress is not None:
+                windows = egress.get('windows') or []
+                split['ai_egress'] = {
+                    'enabled': egress.get('enabled'),
+                    'generation': egress.get('generation'),
+                    'off_windows_24h': len(windows),
+                    'off_minutes_24h': round(sum(float(item.get('minutes') or 0) for item in windows), 1),
+                    'balance_pause_minutes': round(sum(float(item.get('minutes') or 0) for item in windows if item.get('cause') == 'balance'), 1),
+                    'manual_off_minutes': round(sum(float(item.get('minutes') or 0) for item in windows if item.get('cause') != 'balance'), 1),
+                }
+                split['missing_slots'] = _missing_attribution(root, egress.get('raw') or [])
+    except Exception:
+        pass
     return split
 
 
@@ -350,6 +541,7 @@ def main(argv=None):
             'key': key,
             'label': row.get('label'),
             'items': row.get('items'),
+            'model_split': row.get('model_split'),
             'rule': rule,
             'n': n,
             'hits': row.get('hits'),
