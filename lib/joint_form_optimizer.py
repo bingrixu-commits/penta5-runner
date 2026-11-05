@@ -55,6 +55,14 @@ def apply_reverse_form(response):
     return updated, before, locked
 
 
+def killer_reverse_lock(response):
+    '''killer 四位杀码各 1 码：两条形态的 4 个字符全部取杀码形态反面（v2 起统一反向）。'''
+    return {'pattern_ds': [PARITY_OPPOSITE[digit_parity(response['k%d' % index][0])]
+                           for index in range(1, 5)],
+            'pattern_dx': [SIZE_OPPOSITE[digit_size(response['k%d' % index][0])]
+                           for index in range(1, 5)]}
+
+
 _BASE = None
 _KEEPS = None
 
@@ -212,6 +220,7 @@ def optimize_framework_response(response, root=ROOT, reverse_form=True):
 
 
 def optimize_killer_response(response, root=ROOT):
+    '''v2：killer 四位置全部反向锁定（取杀码形态反面），不再做 16x16 联合穷举。'''
     if not auto_promoted(root):
         return None
     masks = _base_masks()
@@ -226,7 +235,13 @@ def optimize_killer_response(response, root=ROOT):
     ]
     base = _and(fixed)
     ai_patterns = list(response['exclude_patterns'])
-    chosen, expected_ai, expected_opt = _best_killer(base, masks, ai_patterns)
+    lock = killer_reverse_lock(response)
+    chosen = (''.join(lock['pattern_ds']), ''.join(lock['pattern_dx']))
+    expected_ai = (base & _pattern_mask(masks, ai_patterns[0])
+                   & _pattern_mask(masks, ai_patterns[1])).bit_count() / 10000
+    expected_opt = (base & _pattern_mask(masks, chosen[0])
+                    & _pattern_mask(masks, chosen[1])).bit_count() / 10000
     updated = dict(response, exclude_patterns=[chosen[0], chosen[1]])
     return {'response': updated, 'ai_patterns': ai_patterns, 'opt_patterns': list(chosen),
+            'reverse_lock': lock,
             'expected_ai': round(expected_ai, 6), 'expected_opt': round(expected_opt, 6)}

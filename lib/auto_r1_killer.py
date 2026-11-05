@@ -313,9 +313,10 @@ try:
     if _joint_form is not None:
         r = _joint_form['response']
         joint_form_applied = True
-        print('JOINT_FORM_OPTIMIZED kind=killer ref=%s ai=%s opt=%s expected_ai=%.6f expected_opt=%.6f'
+        print('JOINT_FORM_OPTIMIZED kind=killer ref=%s ai=%s opt=%s expected_ai=%.6f expected_opt=%.6f reverse_lock=%s'
               % (period, _joint_form['ai_patterns'], _joint_form['opt_patterns'],
-                 _joint_form['expected_ai'], _joint_form['expected_opt']))
+                 _joint_form['expected_ai'], _joint_form['expected_opt'],
+                 _joint_form.get('reverse_lock')))
 except Exception as _joint_form_error:
     print('JOINT_FORM_OPTIMIZER_SKIPPED kind=killer reason=%s' % type(_joint_form_error).__name__)
 
@@ -342,6 +343,8 @@ killer_metadata = accepted_killer_response_metadata(period)
 if joint_form_applied and isinstance(killer_metadata, dict):
     killer_metadata = {key: value for key, value in killer_metadata.items() if key != 'strategy_validation'}
     killer_metadata['joint_form_optimized'] = True
+    killer_metadata['reverse_form'] = {'applied': True, 'mode': 'reverse_lock',
+                                       'lock': _joint_form.get('reverse_lock')}
 if killer_tail_hold is not None and isinstance(killer_metadata, dict):
     killer_metadata = dict(killer_metadata)
     killer_metadata['tail_hold3'] = killer_tail_hold
@@ -400,7 +403,7 @@ _he_h3 = "".join([d for d in _base_d if d != str(he_h3).strip()])
 
 killer_attack_str = f"千{_q}百{_b}十{_s}个{_g}四定千百十个合{_he_all}千百十合{_he_q3}百十个合{_he_h3}除{p1}除{p2}"
 
-joint_form_note = (' ｜ 形态：本地精确联合优化（AI 杀码/合尾杀不变）' if joint_form_applied else '')
+joint_form_note = (' ｜ 形态：四位置反向锁定（取杀码形态反面，AI 杀码/合尾杀不变）' if joint_form_applied else '')
 killer_tail_note = ''
 if killer_tail_hold is not None:
     killer_tail_note = (' ｜ 三合尾稳定化：沿用上期（第%s期）' % killer_tail_hold['previous_streak']
