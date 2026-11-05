@@ -1861,3 +1861,43 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份/回滚：改前备份 `/root/ops/kill11-polish-20261106-060133/`（`hitrate_baseline.py` sha 4505aa62…→da6e832d…、`framework_hitrate_cumulative.py` d74c4268…→fdfb4a82…，各替换 1 处、临时文件 + os.replace 原子写、py_compile OK）。回滚用 `cp -a` 将两文件覆盖回备份，再跑 `refresh_source_manifest.py --if-drift` 与一次 `ops_health`。
 - 重生成派生统计（全部自洽）：`data/hitrate_baseline.json`（as_of 20261106072，kill11 n=13 hits=10=76.92%）、`data/framework_hitrate_cumulative.json` + `hitrate.html`（rolling kill11 24h coverage 100%/online 26/plan 73.08%、last_missed None）、`data/hitrate_stability.json`（n=27/w100 74.1%/cov24 100%/ok）、`data/hitrate_guard.json`（status ok，hitrate_non_ok []）、`data/tail_hold_review.json`（kill11 行首次落地：27 期、尾码 24/27=88.89%、换码 13/27=48.1%；独立复算逐项一致，报告 `/root/ops/tail-hold-review/review-20261106-060209.md`）。
 - 验证：4 个派生 JSON + hitrate.html 中旧标签命中 0；manifest `refresh_source_manifest.py --if-drift` 后 no-drift；`ops_health` kill11_tail OK、无新增 NONOK（历史 kill3_stability/hitrate_stability WARN 不变）。
+
+### kill11 运行完善：封存账本容量预警覆盖（2026-11-06，scripts/ops_health_check.py）
+
+**背景与差距分析（与 kill1/kill10 逐项对齐）**
+
+- 已确认无差距的运行面：AI 调用 3 次重试与 NONRETRYABLE 遥测、ops_health 框架检查（check_kill11 与 check_kill1/check_kill10 同构）、hitrate_guard（drift rows 已含 kill11_tail，脚本无硬编码框架表）、hitrate_baseline、framework_hitrate_cumulative、tail_hold_review（每日 22:35）、model_usage、evidence_backup、attack_editor_view、panel_live_refresh、coverage（MIN_ONLINE=100）、freeze。
+- model_tier_guard 的 targets 只有 KILL1/KILL3 属设计；面板手动启动路由只有 kill8 有，kill1/kill10 都无，均非 kill11 缺项。
+- 唯一真实差距：`scripts/ops_health_check.py` 的 `check_ledger_size` 只对 `he3_refine_seals.json` 套 110/120MiB 阈值，其它账本只记录体积且恒 OK。而 128MiB 是 `json.load` 直读的实际上限，kill1/kill10/kill11 封存账本在逼近该上限前没有任何预警。
+
+**账本实测（2026-11-06 06:19）**
+
+| 账本 | 体积 | 条数 | 单条体积 | 增长推算 |
+| --- | --- | --- | --- | --- |
+| data/kill1_tail/seals.json | 14,040,585B | 761 | 约 18.4KB | 约 5.3MB/天 |
+| data/kill10_tail/seals.json | 950,478B | 64 | 约 14.8KB | 约 4.3MB/天 |
+| data/kill11_tail/seals.json | 545,710B | 32 | 约 17.1KB | 约 4.9MB/天，约 22-24 天逼近 110MiB |
+
+- 结构为 `{"version": ..., "records": [...]}`，其中 panel_context 占 7-8KB/条、kill11 另有 tail_policy 约 295B/条。
+- 计数注意：不能用 `grep -o ref_period` 统计期数，会被 `tail_policy.previous_ref_period` 重复计数，必须按 records 列表长度。
+
+**改动（只读监控，不影响封存/结算/口径）**
+
+- `LEDGER_SIZE_FILES` 增加 `kill1_tail/seals.json`、`kill10_tail/seals.json`、`kill11_tail/seals.json`。
+- 新增 `LEDGER_ALERT_FILES` 映射（he3/kill1/kill10/kill11 封存账本 → 中文标签）；`check_ledger_size` 改为按该映射统一套 110MiB WARN / 120MiB FAIL，告警文案通用化；`he3_refine_hit_stats.json` 保持仅记体积（其热文件已由滚动归档控制）。
+- 未改动任何阈值常量数值与原 he3 语义。
+
+**验证**
+
+- `sha256: fb7518ece6b5419a185a88ef7db79a72e1bc50d9132b210376fc9c6bbf15dd87 -> a41279a309adc80fa821627326ef2839d993d6fea2035561303ed6899d8b6033`，py_compile OK。
+- 手动 `python3 scripts/ops_health_check.py --root /root/penta5-runner`：`ledger_size` 明细 5 条，kill1_tail 13.4MiB / kill10_tail 943.1KiB / kill11_tail 549.8KiB 均带「阈值 110/120MiB」；`kill11_tail OK ref=20261106077 published_at=2026-11-06T06:26:06`。
+- 首跑 manifest_drift 为 FAIL（另一 DSH 窗口在途 `M lib/kill8_tail.py`），按流程 `refresh_source_manifest.py --if-drift` 生成 `/root/backups/auto-baseline-20261106-062847`（440 files；包含该在途改动内容，但其未进入本提交）→ 复跑 `manifest_drift OK`、overall=WARN，仅历史 `hitrate_stability` 观察 kill3_tail/kill1_tail。
+
+**备份与回滚**
+
+- 备份：`/root/ops/kill11-run-polish-20261106T062701/ops_health_check.py.bak`
+- 回滚：`cp -a /root/ops/kill11-run-polish-20261106T062701/ops_health_check.py.bak scripts/ops_health_check.py && python3 -m py_compile scripts/ops_health_check.py && python3 scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift`；或 `git revert` 本提交。
+
+**后续（本次不做）**：kill1/kill10/kill11 封存账本尚未接入滚动归档（`lib/seal_archive.py` 的 PERIOD_DICT_KEYS 只注册 he3 两个账本，读取链路仍是 `json.load` 直读），若对账本归档会破坏读取；待账本继续增长时，需先把读取链路改为 `read_full` 再注册归档与 cron。
+
+- 收尾复验（2026-11-06 06:31:37）：并发 DSH 窗口在途改动（`M lib/kill8_tail.py`、`M lib/hitrate_baseline.py`、`M lib/kill_eight_view.py`）使 manifest 再次漂移，再刷 `/root/backups/auto-baseline-20261106-063136`（440 files）后 `manifest_drift OK`；`overall=WARN` 仅历史 `hitrate_stability` 观察，`kill11_tail OK ref=20261106078`、`ledger_size OK`（kill11 seals 566.6KiB）。该三处并发改动均未进入本提交。

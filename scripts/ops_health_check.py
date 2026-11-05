@@ -132,7 +132,17 @@ KILL3_FREEZE_PERIODS = 100
 LEDGER_SIZE_FILES = (
     'he3_refine_seals.json',
     'he3_refine_hit_stats.json',
+    'kill1_tail/seals.json',
+    'kill10_tail/seals.json',
+    'kill11_tail/seals.json',
 )
+# 达到 110/120MiB 即预警的账本（对齐 128MiB json.load 读取上限）
+LEDGER_ALERT_FILES = {
+    'he3_refine_seals.json': 'he3 封存账本',
+    'kill1_tail/seals.json': 'kill1 封存账本',
+    'kill10_tail/seals.json': 'kill10 封存账本',
+    'kill11_tail/seals.json': 'kill11 封存账本',
+}
 LEDGER_HE3_WARN_BYTES = 110 * 1024 * 1024
 LEDGER_HE3_FAIL_BYTES = 120 * 1024 * 1024
 LEDGER_OTHER_NOTE_BYTES = 200 * 1024 * 1024
@@ -1764,17 +1774,18 @@ def check_ledger_size(ctx):
             continue
         total += size
         item = {'bytes': size, 'missing': False}
-        if name == 'he3_refine_seals.json':
+        alert_label = LEDGER_ALERT_FILES.get(name)
+        if alert_label:
             if size >= LEDGER_HE3_FAIL_BYTES:
                 item['status'] = FAIL
                 status = _max_status(status, FAIL)
-                note = ('he3 封存账本 %s 已达 128MiB 读取上限警戒线(>=120MiB), '
-                        '请立即为 he3 生成紧凑索引或滚动归档' % _human_bytes(size))
+                note = ('%s %s 已达 128MiB 读取上限警戒线(>=120MiB), '
+                        '请立即为该账本生成紧凑索引或滚动归档' % (alert_label, _human_bytes(size)))
             elif size >= LEDGER_HE3_WARN_BYTES:
                 item['status'] = WARN
                 status = _max_status(status, WARN)
-                note = ('he3 封存账本 %s 接近 128MiB 读取上限, '
-                        '建议为 he3 也生成紧凑索引或滚动归档' % _human_bytes(size))
+                note = ('%s %s 接近 128MiB 读取上限, '
+                        '建议为该账本生成紧凑索引或滚动归档' % (alert_label, _human_bytes(size)))
             else:
                 item['status'] = OK
                 note = '%s (阈值 110/120MiB)' % _human_bytes(size)
