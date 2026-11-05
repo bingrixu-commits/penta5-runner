@@ -247,17 +247,34 @@ except Exception as _tail_hold_error:
 # 顺序修正（2026-11-01）：必须在 tail-hold 之后执行。tail-hold 会改写 he_q3_kill/he_h3_kill，
 # 若先优化形态再改合尾，封存形态对最终合尾不是最优，按最终封存重算的审计期望会系统性高于实盘。
 joint_form_applied = False
+reverse_form = None
 try:
     from joint_form_optimizer import optimize_framework_response
     _joint_form = optimize_framework_response(r, root=os.path.dirname(os.path.dirname(SEALS_PATH)))
     if _joint_form is not None:
         r = _joint_form['response']
         joint_form_applied = True
-        print('JOINT_FORM_OPTIMIZED kind=framework ref=%s ai=%s opt=%s expected_ai=%.6f expected_opt=%.6f'
+        reverse_form = {'applied': True, 'mode': 'joint_form',
+                        'lock': _joint_form.get('reverse_lock'),
+                        'before': list(_joint_form['ai_patterns']),
+                        'after': list(_joint_form['opt_patterns'])}
+        print('JOINT_FORM_OPTIMIZED kind=framework ref=%s ai=%s opt=%s lock=%s expected_ai=%.6f expected_opt=%.6f'
               % (period, _joint_form['ai_patterns'], _joint_form['opt_patterns'],
-                 _joint_form['expected_ai'], _joint_form['expected_opt']))
+                 _joint_form.get('reverse_lock'), _joint_form['expected_ai'], _joint_form['expected_opt']))
 except Exception as _joint_form_error:
     print('JOINT_FORM_OPTIMIZER_SKIPPED kind=framework reason=%s' % type(_joint_form_error).__name__)
+if not joint_form_applied:
+    try:
+        from joint_form_optimizer import apply_reverse_form
+        _before = [r['pattern_ds'], r['pattern_dx']]
+        r, _, _lock = apply_reverse_form(r)
+        reverse_form = {'applied': True, 'mode': 'fallback', 'lock': _lock,
+                        'before': _before, 'after': [r['pattern_ds'], r['pattern_dx']]}
+        print('REVERSE_FORM_FALLBACK kind=framework ref=%s lock=%s before=%s after=%s'
+              % (period, _lock, _before, [r['pattern_ds'], r['pattern_dx']]))
+    except Exception as _reverse_error:
+        print('REVERSE_FORM_FAILED kind=framework ref=%s reason=%s'
+              % (period, type(_reverse_error).__name__))
 
 # 兜底默认值
 def get_keep_digits(kill_list):
@@ -289,7 +306,13 @@ b_pk = "".join(str(x) for x in pk.get("b", []))
 s_pk = "".join(str(x) for x in pk.get("s", []))
 g_pk = "".join(str(x) for x in pk.get("g", []))
 
-joint_form_note = (' ｜ 形态：本地精确联合优化（AI 定位杀/合尾杀/保留集不变）' if joint_form_applied else '')
+joint_form_note = ''
+if joint_form_applied and reverse_form is not None:
+    joint_form_note = ' ｜ 形态：本地精确联合优化 + 反向约束（千/百位单双/大小均取杀码反面，AI 定位杀/合尾杀/保留集不变）'
+elif joint_form_applied:
+    joint_form_note = ' ｜ 形态：本地精确联合优化（AI 定位杀/合尾杀/保留集不变）'
+elif reverse_form is not None:
+    joint_form_note = ' ｜ 形态：反向约束（千/百位单双/大小均取杀码反面）'
 tail_note = ''
 if tail_hold is not None:
     tail_note = (' ｜ 合尾稳定化：沿用上期（第%s期）' % tail_hold['previous_streak']
@@ -376,6 +399,9 @@ framework_metadata = accepted_framework_response_metadata(period)
 if joint_form_applied and isinstance(framework_metadata, dict):
     framework_metadata = {key: value for key, value in framework_metadata.items() if key != 'strategy_validation'}
     framework_metadata['joint_form_optimized'] = True
+if reverse_form is not None and isinstance(framework_metadata, dict):
+    framework_metadata = dict(framework_metadata)
+    framework_metadata['reverse_form'] = reverse_form
 if tail_hold is not None and isinstance(framework_metadata, dict):
     framework_metadata = dict(framework_metadata)
     framework_metadata['tail_hold3'] = tail_hold

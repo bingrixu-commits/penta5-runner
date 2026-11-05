@@ -19,6 +19,42 @@ ALL_PATTERNS = PARITY_PATTERNS + SIZE_PATTERNS
 HE2_KEEPS = [''.join(c) for c in itertools.combinations('02468', 4)]
 HE3_KEEPS = [''.join(c) for c in itertools.combinations('0123456789', 6)]
 FULL = (1 << 10000) - 1
+PARITY_OPPOSITE = {'单': '双', '双': '单'}
+SIZE_OPPOSITE = {'大': '小', '小': '大'}
+
+
+def digit_parity(value):
+    return '单' if int(value) % 2 else '双'
+
+
+def digit_size(value):
+    return '大' if int(value) >= 5 else '小'
+
+
+def reverse_lock(response):
+    """千位(q_kill1)/百位(b_kill1)被杀：单双与大小两种形态在 0/1 位都取杀码形态反面
+    （排除双写单、排除大写小；其余两位自由）。返回值可直接 JSON 序列化。"""
+    q, b = str(response['q_kill1']), str(response['b_kill1'])
+    return {'pattern_ds': [PARITY_OPPOSITE[digit_parity(q)], PARITY_OPPOSITE[digit_parity(b)]],
+            'pattern_dx': [SIZE_OPPOSITE[digit_size(q)], SIZE_OPPOSITE[digit_size(b)]]}
+
+
+def apply_reverse_form(response):
+    """不依赖掩码的确定性兜底：千/百位单双/大小形态均取杀码形态反面。"""
+    locked = reverse_lock(response)
+    ds = list(str(response.get('pattern_ds') or '双双双双'))
+    dx = list(str(response.get('pattern_dx') or '小小小小'))
+    if len(ds) != 4 or set(ds) - set('单双'):
+        ds = ['双'] * 4
+    if len(dx) != 4 or set(dx) - set('大小'):
+        dx = ['小'] * 4
+    before = (''.join(ds), ''.join(dx))
+    ds[0], ds[1] = locked['pattern_ds']
+    dx[0], dx[1] = locked['pattern_dx']
+    updated = dict(response, pattern_ds=''.join(ds), pattern_dx=''.join(dx))
+    return updated, before, locked
+
+
 _BASE = None
 _KEEPS = None
 
@@ -115,11 +151,18 @@ def _pattern_mask(masks, pattern):
     return masks['parity'][pattern] if pattern in PARITY_PATTERNS else masks['size'][pattern]
 
 
-def _best_framework(base, masks, ai_patterns):
+def _best_framework(base, masks, ai_patterns, lock=None):
+    ds_candidates = PARITY_PATTERNS
+    dx_candidates = SIZE_PATTERNS
+    if lock is not None:
+        ds_candidates = [p for p in ds_candidates
+                         if p[0] == lock['pattern_ds'][0] and p[1] == lock['pattern_ds'][1]]
+        dx_candidates = [p for p in dx_candidates
+                         if p[0] == lock['pattern_dx'][0] and p[1] == lock['pattern_dx'][1]]
     best = (-1, None)
-    for ds in PARITY_PATTERNS:
+    for ds in ds_candidates:
         part = base & masks['parity'][ds]
-        for dx in SIZE_PATTERNS:
+        for dx in dx_candidates:
             count = (part & masks['size'][dx]).bit_count()
             if count > best[0]:
                 best = (count, (ds, dx))
@@ -143,7 +186,7 @@ def _best_killer(base, masks, ai_patterns):
     return chosen, expected_ai, best[0] / 10000
 
 
-def optimize_framework_response(response, root=ROOT):
+def optimize_framework_response(response, root=ROOT, reverse_form=True):
     if not auto_promoted(root):
         return None
     base_masks = _base_masks()
@@ -157,11 +200,14 @@ def optimize_framework_response(response, root=ROOT):
         keeps['he3'][response['he3_keep']],
     ]
     base = _and(fixed)
-    chosen, expected_ai, expected_opt = _best_framework(base, base_masks, (response['pattern_ds'], response['pattern_dx']))
+    lock = reverse_lock(response) if reverse_form else None
+    chosen, expected_ai, expected_opt = _best_framework(
+        base, base_masks, (response['pattern_ds'], response['pattern_dx']), lock=lock)
     updated = dict(response, pattern_ds=chosen[0], pattern_dx=chosen[1])
     return {'response': updated,
             'ai_patterns': [response['pattern_ds'], response['pattern_dx']],
             'opt_patterns': list(chosen),
+            'reverse_lock': lock,
             'expected_ai': round(expected_ai, 6), 'expected_opt': round(expected_opt, 6)}
 
 
