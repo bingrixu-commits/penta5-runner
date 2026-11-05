@@ -34,8 +34,8 @@ DATA = ROOT / 'data'
 OUT = DATA / 'framework_hitrate_cumulative.json'
 MIN_SAMPLE = 200
 BASIS = '现行规则 10^4 开奖组合精确枚举校准（2026-10-31）'
-DATA_LAG_NOTE = ('账本每期刷新，as_of 与各账本可能差 ≤1 期（时序竞争：最新一期结算与报告生成并发，'
-                 '报告可能落后或超前对应账本 1 期）')
+DATA_LAG_NOTE = ('账本每期刷新；累计报告每 15 分钟生成一次（7/22/37/52 分），'
+                 'as_of 与各账本可能差 1–3 期（最新几期结算可能尚未计入；时序并发时以账本为准）')
 JOINT_FORM_BOUNDARY_NOTE = ('该时刻起 framework/killer 的 2 个反向形态改为联合优化形态（主判断不变）；'
                             'killer 自 2026-11-05 23:59 起改为四位置全部反向锁定（取杀码形态反面）；'
                             '跨分界累计趋势需谨慎解读')

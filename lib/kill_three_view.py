@@ -296,6 +296,7 @@ def _cumulative_html():
                 parts.append('分段（近 5 版）：%s' % segment_text)
         if n < 200:
             parts.append('样本不足（n&lt;200），仅作参考')
+        parts.append('数据每 15 分钟刷新，最多滞后 1–3 期（今日行按业务日实时）')
         return ('<div class="k3-acc" style="margin-top:6px;padding-top:6px;'
                 'border-top:1px dashed #c7d2fe;font-size:13px;color:#475569;line-height:1.7">'
                 + ' · '.join(parts) + '</div>')
