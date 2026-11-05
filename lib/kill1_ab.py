@@ -45,7 +45,13 @@ PROMPT_ENV = 'PENTA5_KILL1_AB_MODE'
 def _env(name, default=''):
     value = os.getenv(name)
     if value is None:
-        return default
+        # 环境变量缺失时回退到项目 .env（app_secrets.get_secret 只读该文件、不注入 os.environ），
+        # 让运维开关（如 PENTA5_KILL1_AB_PRO=0）沿用其他守卫的 .env 配置方式。
+        try:
+            from app_secrets import get_secret
+            value = get_secret(name)
+        except Exception:
+            return default
     return value.strip()
 
 
