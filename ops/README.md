@@ -1648,3 +1648,11 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 门禁：scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift → no-drift（基线 /root/backups/auto-baseline-20261105-201451）；ops_health overall=warn，30 项中仅 kill3_stability / coverage / hitrate_stability 三个既有 warn，manifest_drift / crontab_drift / freeze_guards ok。本次只改观测读取/展示/诊断层，不动预测语义、封存与结算。
 - 备份/回滚：/root/ops/fix-runtime-observability-2-20261105-200335/（backups/lib 五文件、backups/data/ai_delivery_timing.json、backups/ops/README.md、before.sha256、before/after.operational_availability.sha256）。回滚：git revert fdcdee6 c843194 6d4c509（obs cron 下一分钟周期自动用回旧代码），或按 backups 覆盖。
 - 未覆盖（限制）：浏览器侧“本浏览器本次收到”仍为未采集——服务端观测只能证明面板提交时刻，浏览器实际收到需浏览器端遥测，本次未新增；本节点关闭第一节 ai_delivery_timing 限制，P0 无。
+
+### kill8 v5 ①/② 与全形卡同形时自由位强制去重（2026-11-05 20:30，`a4fee74`）
+
+- 需求：用户 m00410「又重复了」——面板 ref 20261105244→245 四卡 单单单单 / 大小小小 / 小小小小 / 单单单单，①与④同形（服务端排除数字 {q:0,b:8} 全偶 → ①千/百钉死单、④多数锁定全单；①剩余十/个自由位被 AI 又选单，本可避免）。问卷 id=dedupe_free_positions 选「有自由位时强制不同」：被排除数字钉死的位置绝不动；同形且该卡还有自由位时，翻自由位保证四卡不同形；四位全钉死仍允许同形；只改选形逻辑，基线不变。
+- 代码（3 文件，+41/−12）：`lib/kill8_tail.py` 新增 `_dedupe_forms(forms, constraints)`——parity/size 与对应全形卡同形且存在自由位时翻最靠前的自由位；`normalize_response` 校验约束后调用去重；`build_prompt` 加去重说明与任务第 5 条口径、audit version 升 `kill8-prompt-v4-dedupe-four-forms`；`RULE_VERSION='kill8-tail-v5-dedupe-four-reverse-cold-forms'`；`lib/kill_eight_view.py` scope/foot 补去重规则与「默认自动去重」文案；`lib/hitrate_baseline.py` 追加 v5 行 (4, 0.7733)（结构未变，沿用，未重算）。
+- 验证：`/tmp/kill8_v5_test.py`（v4 用例迁移）PASS=69 FAIL=0；行为四例：0/8 → 单单双单（千/百仍钉死单，十位翻双）、1/3 → 双双单双/大大小大、四位全 0 → 允许同形、无排除 → 双双单双/大小小小；`/tmp/kill8_v5_view_probe.py` PASS=22 FAIL=0（legacy v4 渲染容错 + foot/scope 含去重文案）。
+- 真实周期（v5）：2026-11-05 20:30:47 首枚 v5 封存 ref 20261105246→247，四形态 单单双单 / 大小小小 / 小小小小 / 单单单单（①与④不再同形：十位自由位由单翻双）；20:35:50 第二枚 247→248。首枚已结算 counted_forms=4 / group_hit=True / verified=True（实际 7 7 0 8：parity 单单双单 vs 单单双双 hit、size 大小小小 vs 大大小大 hit、③④ hit），今日 total=1/group_hits=1、legacy={17 中 16}；面板 data-as-of=20261105247、4 卡、77.33%、去重文案在线。
+- 备份/回滚：/root/ops/kill8-v5-202730/（files 改前、files-after 改后、evidence 补丁/用例/探针/行为、MANIFEST）；回滚 `git revert a4fee74`；方向口径与基线未变，v4 历史封存保留为 legacy。
