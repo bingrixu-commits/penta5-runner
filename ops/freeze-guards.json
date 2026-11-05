@@ -169,7 +169,7 @@
   },
   "kill3_tail": {
    "files": {
-    "lib/kill3_tail.py": "aefe3d0b48b061d0622d55e4f5296db596152e38118112400a3baef5c5425b17",
+    "lib/kill3_tail.py": "3bb8d3c0ea2b186fe7b44c9077b8d0c6dc8abb50adef531160bf3753a3431b11",
     "lib/kill_three_view.py": "fbed94677c4053bf34ec574620ee9b2fe057899e00fa8dda3192a731ad115229",
     "lib/panel_context.py": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
     "scripts/run_kill3_tail.py": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49"
@@ -610,6 +610,14 @@
      "new_sha256": "fbed94677c4053bf34ec574620ee9b2fe057899e00fa8dda3192a731ad115229",
      "old_sha256": "ca45d40bf89348ce6170a7d72ed5585f2b527c03ce4b3d97febd06fc48439aa5",
      "reason": "累计行滞后文案按只读审计实测校正为「最多滞后约 4 期（约 20 分钟）」（stability cron 固定晚 1 期＋面板 5 分钟节拍）；仅展示层，不改选码/尾码/封存/结算/基线"
+    },
+    {
+     "at": "2026-11-06T01:41:49.215182+08:00",
+     "commit": "91f10f4",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "3bb8d3c0ea2b186fe7b44c9077b8d0c6dc8abb50adef531160bf3753a3431b11",
+     "old_sha256": "aefe3d0b48b061d0622d55e4f5296db596152e38118112400a3baef5c5425b17",
+     "reason": "AI 调用层修复：max_tokens 12288→16384（策略 kill3-high-16k-deadline-v1）并补失败响应 finish_reason/用量遥测（commit 91f10f4）"
     }
    ],
    "label": "三位置杀码(kill3)",
@@ -679,6 +687,6 @@
    }
   }
  },
- "updated_at": "2026-11-06T01:29:36.710608+08:00",
+ "updated_at": "2026-11-06T01:41:49.219876+08:00",
  "version": 1
 }
