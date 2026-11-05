@@ -1927,3 +1927,23 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 定时与进程：`crontab -l` 与版本化基线 `ops/crontab.txt` diff 一致（40 行）；pm2 10/10 online（penta5-panel-sync 重启 3696 次、uptime 6D；penta5-runner uptime 4D）。
 - 并发说明：另一 DSH 窗口在本批落地期间并行修改 `lib/hitrate_baseline.py`、`lib/kill8_tail.py`、`lib/kill_eight_view.py` 并推进冷码窗口提交（2131a39 / e87d54a / 58f3f76），不在本批落地范围，未进入本批提交；manifest 刷新按当时磁盘快照取基线，期间其继续编辑可能导致 manifest_drift 短暂 FAIL，属并发窗口行为。
 - 备份/回滚：备份 `/root/ops/kill11-run-polish-20261106T062701/ops_health_check.py.bak`；回滚 `cp -a` 回 `scripts/ops_health_check.py` 后跑 `python3 scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift`，或 `git revert 2e035d6`。
+
+### kill3 v16 预登记回滚门禁 + 累计基线口径修正（2026-11-06 06:40，`12f3ca4`/`95344a9`/`7b98f31`/`93cd39a` + 本条 ops 台账）
+
+- 需求：用户（m00563）「就是不稳定啊，漂移太严重了」、随后（m00593）「按你的意思」→ 采用方案 A（v16 维持现网、不改口径、不暂停预测，但先把判据写死并备好一键回滚 v15）+ C（展示/统计口径修正）。
+- 预登记判据（写入 `ops/kill3-stability-plan.md` §9，观察起点 target 20261106001）：N＝150 期；n≥150 且（z<-2.5 或 整组命中率<50%）→ triggered；z 相对 10^4 精确枚举基线 0.5863（8 项整组）。判据在任何后续数据之前固定，不随后验调整。
+- 改动（4 个独立提交）：
+  - `12f3ca4`：新增 `lib/kill3_v16_guard.py`（读 `data/kill3_tail/settlements.json` 按 v16 rule_version 过滤，输出 n/hits/rate/Wilson 95%CI/z/p_lower/p_two/status，原子写 `data/kill3_v16_guard.json`）；新增 `scripts/kill3_v16_rollback.py`（默认 dry-run + `git apply -R --check` 预检；`--execute` 需 gate=triggered 或 `--force`，备份 5 文件→反向应用 417c472→断言 RULE_VERSION=v15→py_compile→重算冻结戳→写门禁 inactive→按文件精确 `git add` 提交）；`scripts/ops_health_check.py` 新增 `kill3_v16_gate` 探针（triggered=FAIL 并附回滚命令）；plan 追加 §9。
+  - `95344a9`：`scripts/framework_hitrate_cumulative.py` 累计基线一律取封存/评估形态 `expected_ai`（7 处，含 `_joint_expected` 恒取 AI 形态、`_joint_expected_map` 去早退、boundary note/basis 文案）；`expected_opt` 仅保留影子 opt 对照列，不进入主判断。
+  - `7b98f31`：`lib/kill_three_view.py` kill3 卡新增只读门禁行 `_gate_html`（observe/passed 灰蓝行显示进度与 z；triggered 红字附 `scripts/kill3_v16_rollback.py --execute` 与 §9；v16 已回滚灰字停用）。
+  - `93cd39a`：冻结 hash 登记——`lib/kill_three_view.py` fbed9467…→f70ee853…，`ops/freeze-guards.json` 与 legacy `ops/kill3-freeze.json` 同步（frozen_at/冻结期未重置）。
+- 未动：kill3 选码/尾码/封存/结算与 RULE_VERSION（仍 v16）、AI 模型档位、crontab、任何预测与结算逻辑；未执行回滚、未暂停预测。
+- 验证（2026-11-06 06:39-06:42 CST）：
+  - py_compile 5 文件 OK；本地 6 状态 view 渲染与 guard 合成账本测试（observe/triggered/passed/inactive）全 PASS。
+  - gate 首跑（`python3 lib/kill3_v16_guard.py --root /root/penta5-runner --json`）：n=79、hits=33、rate=41.77%、ci95=[31.53%, 52.78%]、z=-3.0424、p_lower=0.001852、p_two=0.003704、status=observe（离触发还差 71 期）→ `data/kill3_v16_guard.json`。
+  - `python3 scripts/ops_health_check.py`：`kill3_v16_gate OK observe n=79/150 rate=41.77% vs 58.63% z=-3.0424`、`kill3_stability OK`（24h 版本切换=1、缺期=0、p50=72s）。首跑 manifest_drift 因本次改动预期 FAIL，已按流程 refresh（见收尾）。
+  - 累计 JSON 重生成（as_of=20261106079，rows=7）：rows 的 n/hits/rate 仅 he3_refine +1 期结算（392→393），其余不变；killer expected 0.423992→0.422507、p 0.013813→0.021658；framework expected 0.561551→0.559374、p 0.683603→0.869674（原 `expected_opt` 高估基线 0.2-0.7pp，修正后与独立审计口径一致）。
+  - 回滚脚本部署前在服务器做过 dry-run 预检：`git apply -R --check` 通过（未执行 `--execute`）。
+- sha256（改前→改后）：`lib/kill3_v16_guard.py`（新）79dafed4f8dc778212eb14e167d0bf75e771983534562d85e6548913e2958651；`scripts/kill3_v16_rollback.py`（新）8f0a2e6390b4f819299e9326153f7a31c6fd075194261ef6c2ffb6f86cf4ea23；`scripts/ops_health_check.py` a41279a3…→ddbce8c3…；`scripts/framework_hitrate_cumulative.py` fdfb4a82…→a905cfb3…；`lib/kill_three_view.py` fbed9467…→f70ee853…；`ops/kill3-stability-plan.md` dbad79e6…→8f1eb8e7…；`ops/freeze-guards.json` b129eae8…→bd4670f9…；`ops/kill3-freeze.json` 7aeddeec…→9e5caa5d…。
+- 备份与回滚：改动前备份 `/root/ops/kill3-v16-deploy-20261106T063925/`（5 个 .bak：kill_three_view / framework_hitrate_cumulative / ops_health_check / README / kill3-stability-plan）与 `/tmp/fwhc_old.json`（累计 JSON 旧版）。回滚本组：`git revert 93cd39a 7b98f31 95344a9 12f3ca4`；v16 口径回滚走 `python3 scripts/kill3_v16_rollback.py --execute`（仅 triggered 时）。
+- 并行窗口：`M lib/hitrate_baseline.py`、`M lib/kill8_tail.py`、`M lib/kill_eight_view.py` 三处在途改动均未进入本组提交；期间 HEAD 由 60031e9 推进至 8f033d8（他窗 kill11 台账/冷码），本组 4 个提交叠加在其上。
