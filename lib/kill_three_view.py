@@ -22,6 +22,7 @@ from datetime import datetime
 from html import escape
 import json
 import math
+from pathlib import Path
 
 import kill3_tail
 
@@ -46,6 +47,10 @@ STYLE = """
 #kill-three-ai .k3-reason{font-size:13px;color:#475569;margin-bottom:8px}
 #kill-three-ai .k3-stats{display:flex;flex-wrap:wrap;gap:18px;font-size:13px;color:#334155;border-top:1px dashed #c7d2fe;padding-top:8px}
 #kill-three-ai .k3-stats b{font-size:16px;color:#1e3a8a}
+#kill-three-ai .k3-cum{background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:6px 10px;font-size:13px;color:#1e293b;margin-bottom:6px}
+#kill-three-ai .k3-cum b{font-size:16px;color:#1e3a8a}
+#kill-three-ai .k3-cum .k3-cum-tag{font-weight:600;color:#3730a3}
+#kill-three-ai .k3-cum .k3-cum-note{color:#64748b}
 #kill-three-ai .k3-verify{margin-top:6px;font-size:13px;color:#334155}
 #kill-three-ai .k3-attack{margin-top:8px;border-top:1px dashed #c7d2fe;padding-top:8px}
 #kill-three-ai .k3-attack-title{font-size:13px;font-weight:600;color:#3730a3}
@@ -80,6 +85,58 @@ def _clock(value):
         return '-'
     return moment.strftime('%H:%M:%S')
 
+CUMULATIVE_REPORT = 'data/framework_hitrate_cumulative.json'
+
+
+def _cumulative_html():
+    """本版累计整组命中率（当前 RULE_VERSION 全量已核验记录；只读展示，不参与选码）。"""
+    try:
+        path = Path(getattr(kill3_tail, 'ROOT', '/root/penta5-runner')) / CUMULATIVE_REPORT
+        payload = json.loads(path.read_text(encoding='utf-8'))
+        row = None
+        for item in (payload.get('rows') or []) if isinstance(payload, dict) else []:
+            if isinstance(item, dict) and item.get('key') == 'kill3_tail':
+                row = item
+                break
+        if not isinstance(row, dict):
+            return ''
+        if str(row.get('rule') or '') != str(getattr(kill3_tail, 'RULE_VERSION', '')):
+            return ''
+        n, hits = row.get('n'), row.get('hits')
+        if not isinstance(n, int) or not isinstance(hits, int) or n <= 0:
+            return ''
+        rate = row.get('rate')
+        rate = float(rate) if isinstance(rate, (int, float)) else hits / float(n)
+        ci = row.get('ci95') or []
+        ci_text = ''
+        if isinstance(ci, (list, tuple)) and len(ci) == 2                 and all(isinstance(value, (int, float)) for value in ci):
+            ci_text = '，95%%CI %.1f－%.1f%%' % (ci[0] * 100.0, ci[1] * 100.0)
+        parts = ['<span class="k3-cum-tag">本版累计</span>整组命中率 '
+                 '<b>%.2f%%</b>（%d/%d 期%s）' % (rate * 100.0, hits, n, ci_text)]
+        expected, delta, p = row.get('expected'), row.get('delta'), row.get('p')
+        basis = []
+        if isinstance(expected, (int, float)):
+            basis.append('精确基线 %.2f%%' % (expected * 100.0))
+        if isinstance(delta, (int, float)):
+            basis.append('偏差 %+.2fpp' % (delta * 100.0))
+        if isinstance(p, (int, float)):
+            basis.append('p=%.3f' % p)
+        if basis:
+            parts.append(' · '.join(basis)
+                         + '<span class="k3-cum-note">（二项检验，样本&lt;200 前只作参考）</span>')
+        windows = ((row.get('rolling') or {}).get('windows') or {})             if isinstance(row.get('rolling'), dict) else {}
+        recent = ((windows.get('24h') or {}).get('recent') or {})             if isinstance(windows.get('24h'), dict) else {}
+        periods, recent_hits = recent.get('periods'), recent.get('hits')
+        if isinstance(periods, int) and periods > 0 and isinstance(recent_hits, int):
+            parts.append('近 24 期 %.1f%%（%d/%d）'
+                         % (recent_hits * 100.0 / periods, recent_hits, periods))
+        last = row.get('last_period')
+        if last:
+            parts.append('截至 ref ' + escape(str(last)))
+        return '<div class="k3-cum"><span>' + ' · '.join(parts) + '</span></div>'
+    except Exception:
+        return ''
+
 
 def _stats_html(stats):
     total = stats.get('total') or 0
@@ -103,7 +160,7 @@ def _stats_html(stats):
                        (per_avoid.get(key) or {}).get('label') or key)
             for key in getattr(kill3_tail, 'THREE_AVOID_KEYS', ()))
         join = ' · '.join([
-            f'整组命中率（{group_items} 项全中：{counted_positions} 位置 + 合尾 + 2 形态 + 三数共现 {three_avoid_items} 组） <b>{_pct(stats.get("group_rate"))}</b>'
+            f'今日整组命中率（{group_items} 项全中：{counted_positions} 位置 + 合尾 + 2 形态 + 三数共现 {three_avoid_items} 组） <b>{_pct(stats.get("group_rate"))}</b>'
             f'（{stats.get("group_hits")}/{total} 期）',
             f'位置杀码（{counted_positions} 注/期，随机基线90%） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
             f'（{stats.get("positions", {}).get("hits")}/{stats.get("positions", {}).get("bets")} 注）',
@@ -134,7 +191,7 @@ def _stats_html(stats):
         sigma = 100.0 * math.sqrt(0.9 * 0.1 / total)
         join += (f' · 单项样本 n={total}（&lt;200 属小样本：90% 项 1σ≈{sigma:.1f}pp、'
                  f'2σ≈{2 * sigma:.1f}pp），单日单项只作波动参考')
-    return f'<div class="k3-stats"><span>{join}</span></div>'
+    return _cumulative_html() + f'<div class="k3-stats"><span>{join}</span></div>'
 
 
 def _settlement_line(settlement):
@@ -390,7 +447,7 @@ def _foot_html():
             '该组 3 个数字<b>未全部</b>出现在 4 球开奖号中即命中）；<br>'
             '2 个计入位置 + 1 个合尾 + 2 项反向形态 + 三数共现 3 组共 8 项同时命中才算整组命中；'
             '旧口径（v1–v9）的封存记录保留但不计入本统计；'
-            '只统计开奖前发布、开奖后核验的记录；累计四手连败自本版本上线起跨天叠加：连续 4 期整组未全中记 1 次、8 期记 2 次，赢一次清零，不随 05:00 清零；北京时间 05:00 清零（用于当日命中率等当日统计）；只使用前 4 球（千/百/十/个），第 5 球不参与；'
+            '本版累计=当前 RULE_VERSION 首期起全部已核验记录（不随 05:00 清零，用于对照随机基线）；只统计开奖前发布、开奖后核验的记录；累计四手连败自本版本上线起跨天叠加：连续 4 期整组未全中记 1 次、8 期记 2 次，赢一次清零，不随 05:00 清零；北京时间 05:00 清零（用于当日命中率等当日统计）；只使用前 4 球（千/百/十/个），第 5 球不参与；'
             '平台提前 70 秒关盘。'
             '</div>')
 
