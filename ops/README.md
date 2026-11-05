@@ -1765,3 +1765,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 副作用：窗口越长选码越黏，相邻期 Top3 码集换码率 89.2%（30 期）→ 79.7%（100 期），连中/连败被机械拉长（100 期 Top1 最长连中 56），有效独立样本低于名义期样本。
 - 验证：`data/cold_hit_stats.json`（23:21:02，由 position_cold_daemon 每期结算后重算）windows=[100 samples 700, 80 samples 720]；panel.html 23:23 含「窗口 100 期 · 共 700 期样本」「窗口 80 期 · 共 720 期样本」。
 - 回滚：`git revert 57816f7`，daemon 下期重算 JSON，面板下个结算周期自动刷新。
+
+### 位置杀码稳定化影子恢复多档只读对照 + 提示词回灌由模型自决（2026-11-05，`db5be81`）
+
+- 需求：影子此前标注「全部转正、不再采集」，本轮恢复为 hold2/hold3/hold5/不设上限 四档只读对照，并把对照结果与上期同位杀码、命中情况一起写进提示词，由模型决定是否沿用；明确不做自动写开关。
+- 改动（`db5be81`，5 文件 +55/−14）：`lib/position_kill_shadow.py` 空态文案改「多档只读对照（hold2/hold3/hold5/不设上限）；是否沿用由模型自行决定，不由代码按阈值切换」；`lib/kill3_tail.py` 的 `build_prompt` 新增 `previous_hits` 参数，影子段输出「上期（参考期）你的位置杀码与命中情况：千位：杀 2（上期该位开 7 · 杀码命中）」并标注【参考信号】；`scripts/run_kill3_tail.py` 由上期封存 positions 与本参考期开奖算 hit/miss 传入，seal 留痕键改为 `position_hold_shadow` / `position_basis_flags` / `hold_adopted`（`scripts/kill3_v15_review.py` 新旧键兼容读）；`ops/kill3-freeze.json` version 2→3 重算受控 hash。
+- 数值（`data/position_kill_shadow.json` 23:51:52）：kill3 回放 965 期/2031 注，现行 90.00%（换码 900）；hold2 89.46%/576、hold3 89.76%/434、hold5 89.27%/349、until-miss 90.00%/184；forward 654 期/1308 注，四档 backfill 与 forward 两段均有值。
+- 真实周期：seal ref 20261105287 → target 20261105288（published 23:56:13）rule_version=v15、`position_hold_shadow`（966 期/2033 注）、`position_basis_flags` {q: cold_top3+hold_previous, b: cold_top3+hold_previous, s: cold_top3+hold_previous}、`hold_adopted`=['b','q','s']、`hold_policy`=model-decided；cron 日志 `kill3 previous position hits: 千位 5 hit · 百位 2 hit · 十位 0 hit`；该期结算已出现（target 20261105288 actual 7/8/9/8、counted q,b）。
+- 边界：无 `data/*_auto_promote.json` 写入、无按阈值切 TAIL_POLICY/RULE_VERSION 的分支（kill3 路径 grep auto_promote = 0）；kill1 仍为 2026-11-01 起的确定性 hold3-until-miss，不进影子；现网封存/统计/攻击语口径未变。
+- 回滚：`git revert db5be81` 并按 `ops/kill3-freeze.json` 上一版重算 hash；改前备份 `/root/ops/position-shadow-model-decide-20261105-235118/`（4 源文件 + freeze.json）。
