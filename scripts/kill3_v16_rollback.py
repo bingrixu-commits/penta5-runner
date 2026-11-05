@@ -46,7 +46,7 @@ FILES = ['lib/kill3_tail.py', 'lib/kill_three_view.py', 'scripts/run_kill3_tail.
 FREEZE_FILES = ['ops/freeze-guards.json', 'ops/kill3-freeze.json']
 COMMIT_MSG = ('fix(kill3): 回滚 v16 弃位取冷（预登记门禁触发）\n\n'
               '依据 ops/kill3-stability-plan.md §9：v16 已结算样本达 n=150 后 z<-2.5 或 '
-              '整组命中率<50% 即执行回滚。反向应用 %s 的 v16 语义补丁（RULE_VERSION 回 v15、'
+              '整组命中率<50%% 即执行回滚。反向应用 %s 的 v16 语义补丁（RULE_VERSION 回 v15、'
               'normalize_response 取消弃位冷热覆盖、prompt/面板文案回退），保留 91f10f4 的 '
               'max_tokens 16384 与失败日志改进；freeze Guard --renew 重开冻结窗口。\n'
               '回滚命令: scripts/kill3_v16_rollback.py --execute') % V16_COMMIT
