@@ -1432,3 +1432,11 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 体检：\`scripts/ops_health_check.py\` 新增 \`check_hitrate_verdicts\`（CHECK_FUNCS / FALLBACK_NAMES 注册）：报告缺失或 age>150min → WARN、\`confirmed\` 非空 → WARN、watch 只写 detail 不告警。\`/etc/logrotate.d/penta5\` 补 \`hitrate_attribution_cron.log\` 与 \`hitrate_verdicts_cron.log\`（备份 \`/etc/logrotate.d/penta5.bak-20261105\`，\`logrotate -d\` 已读到两个新路径）。
 - 验证：三文件 \`py_compile\` OK；手动跑脚本 → JSON 含 summary/items/windows/by_revision、as_of=20261105108；\`render_block()\` 输出含 verdict 行；面板真实重生成（09:07:03）后 \`panel.html\` 出现 \`class="ha-verdict ha-watch"\` 与「全史判定」正文（run_stats 链已吃到 view 改动，非手写面板）；\`ops_health_check.py --json\` 新增 \`hitrate_verdicts ok\`（judged=13 / pending=0 / as_of=20261105108 / 近期偏离 单双反向排除），crontab install 后 \`diff ops/crontab.txt <(crontab -l)\` = 0。
 - 回滚：\`git revert 7a7c099\`；从 \`ops/crontab.txt\` 删 verdicts 行后 \`bash scripts/crontab_tool.sh install\`；\`/etc/logrotate.d/penta5.bak-20261105\` 覆盖回去；面板下期重写即恢复（无独立数据依赖）。
+
+### 生成型页面不再计入证据基线：hitrate.html 噪声消除（2026-11-05 09:38，`68e4899`）
+
+- 症状：09:34 verdicts cron 自触发复核时 `ops_health` 报 `manifest_drift fail`（no baseline manifest matches live sources），而 09:08:18 刚刷新过 baseline（no-drift）。
+- 取证：对比 baseline `auto-baseline-20261105-090818` 的 442 行与实时 mtime，唯一变化是 `hitrate.html`（09:22:17，16,894B）；该页由 `scripts/framework_hitrate_cumulative.py:1011` 每 15 分钟调用 `lib/hitrate_page_view.write_page()` 重写（标题带 as_of 期号），且与 `panel.html` 一样被 `git update-index --skip-worktree` 标记，工作树变化不进 git status。`scripts/refresh_source_manifest.py` 的 `VOLATILE_GENERATED` 原先只含 `panel.html`，导致该页每 15 分钟必然制造 drift。
+- 修法：`VOLATILE_GENERATED = {'panel.html', 'hitrate.html'}`，并在 `_canonical()` 中对「旧 manifest 路径 ∪ 目录扫描」的并集按根目录文件名再过滤一次（避免被历史 baseline 重新带回）；docstring 的排除说明同步更新。备份 `scripts/refresh_source_manifest.py.bak-20261105-0938`。
+- 验证：`py_compile` OK；`refresh_source_manifest.py --if-drift` → `baseline-written` `auto-baseline-20261105-093809`，441 files（较 442 少 `hitrate.html`），manifest 内 hitrate.html/panel.html 计数 0；`ops_health_check.py --json` overall=warn，manifest_drift 恢复 ok，仅剩既有 kill3_stability / coverage 两条 warn；refresh 脚本写入后自带 `_source_entries` 自检通过（evidence_backup 侧可继续用新 baseline）。
+- 回滚：`git revert 68e4899`；或 `cp scripts/refresh_source_manifest.py.bak-20261105-0938 scripts/refresh_source_manifest.py` 后重跑 `--if-drift` 重建 baseline。
