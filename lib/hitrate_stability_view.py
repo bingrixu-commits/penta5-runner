@@ -174,7 +174,7 @@ def apply_hitrate_stability_block(content, report=None):
         end = content.find(END)
         if start != -1 and end != -1 and end > start:
             return content[:start] + fragment + content[end + len(END):]
-        for anchor in ('<!-- MODEL_SIGNI_START -->', '<!-- HITRATE_BASE_START -->'):
+        for anchor in ('<!-- HITRATE_BASE_START -->',):
             position = content.find(anchor)
             if position != -1:
                 return content[:position] + fragment + content[position:]

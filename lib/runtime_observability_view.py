@@ -14,7 +14,7 @@ START, END = '<!-- RUNTIME_OBSERVABILITY_START -->', '<!-- RUNTIME_OBSERVABILITY
 TZ = timezone(timedelta(hours=8))
 MODELS = (
     ('killer', 'Flash 杀码'), ('framework', 'Flash 框架'),
-    ('selected6', '七项'), ('he3_refine', '三合五尾'),
+    ('he3_refine', '三合五尾'),
 )
 STATUSES = {
     'current': '本轮已完成', 'pending': '本轮进行中', 'manual_off': '手动停止',

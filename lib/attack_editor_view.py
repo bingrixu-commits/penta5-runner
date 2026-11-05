@@ -4,24 +4,23 @@ import re
 
 SCRIPT_ID = 'penta5-attack-editor-control'
 SCRIPT = r'''<script id="penta5-attack-editor-control">
-/* all-attack-editor-v16-add-kill9 */
+/* all-attack-editor-v17-retire-selected-six */
 (function(){
 'use strict';
-const version='all-attack-editor-v16-add-kill9',previous=window.__PENTA5_ATTACK_EDITOR__;
+const version='all-attack-editor-v17-retire-selected-six',previous=window.__PENTA5_ATTACK_EDITOR__;
 if(previous&&previous.version===version){previous.check();return;}
 if(previous&&typeof previous.destroy==='function')previous.destroy();
 const definitions=[
  {id:'r1_framework_attack_text',copy:'r1_copy_btn',label:'杀码框架攻击语',kind:'framework'},
  {id:'r1_killer_attack_text',copy:'r1_killer_copy_btn',label:'深度排除攻击语',kind:'killer'},
  {id:'selected6-attack-text',copy:'selected6-attack-copy',label:'三定位七项框架攻击语',data:'selected6-attack-data'},
- {id:'six-independent-attack-text',copy:'six-independent-attack-copy',label:'七项独立框架攻击语',data:'six-independent-attack-data'},
  {id:'kill3-attack-text',copy:'kill3-attack-copy',label:'AI三位置+一合尾攻击语',data:'kill3-attack-data'},
  {id:'kill1-attack-text',copy:'kill1-attack-copy',label:'AI双位置+一合尾攻击语',data:'kill1-attack-data'},
  {id:'k9-attack',copy:'k9-attack-copy',label:'AI四形态+二数合+三数合攻击语'}
 ];
 const entries=new Map();
 const styleId='penta5-attack-editor-style',sourceAttribute='data-penta5-attack-editor-source';
-const styleText='[data-penta5-attack-editor-source="hidden"]{display:none!important;}#six-independent-attack-edit-note{display:none!important;}';
+const styleText='[data-penta5-attack-editor-source="hidden"]{display:none!important;}';
 function nodes(doc,id){return Array.from(doc.querySelectorAll('[id="'+id+'"]'));}
 function unique(doc,id){const found=nodes(doc,id);return found.length===1?found[0]:null;}
 function id(def,prefix){return 'penta5-edit-'+prefix+def.id;}
