@@ -1515,3 +1515,25 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - ops_health overall 仍 fail：仅既有 hitrate_stability（kill1_tail 新口径存活 1.0h/12 期，另一窗口 kill1 v4 过渡）+ kill3_stability/coverage warn，非本轮引入。
 - selected6 主账本 469MB 仍在，观测每分钟依赖约 80MB 紧凑索引；索引重建（每期一次、--if-stale）会让个别观测轮次多 10~30s，可能被 flock 跳过该分钟（实测刷新间隔 1-2 分钟，仍小于 view 150s「旧」阈值）。若后续出现连续超时，可把 wrapper timeout 50→90，或把索引解析改为增量。
 - he3_refine_seals 101.2MiB，距 110MiB 预警线约 9MiB；selected_six_hit_stats 232.9MiB 仍按既有归档策略处理。
+
+### kill3 本版累计命中率展示 + 基线带告警（2026-11-05 11:47，`6a9b15a` `0d45d27` `7d891e8`）
+
+由用户提问（m00002「该框架命中率，有没有办法维持住」）触发的只读取证结论：面板上的 69% 是当前 v15 的 8 项结构与 82 期小样本的上沿；按 10^4 开奖空间逐期精确枚举，v15 样本基线 58.31%、注册基线 58.63%，长期期望应按 58.63% 管理，口径不变的前提下没有可持续的增益杠杆。用户随后回复 m00050「排除项不动」⇒ 不改排除项/选码/尾码/8 项结构/封存/结算/AI prompt，也不升 RULE_VERSION，只做只读展示与告警。
+
+**改动**
+- `6a9b15a` `lib/kill_three_view.py`：新增「本版累计整组命中率」行，读 `data/framework_hitrate_cumulative.json` 的 kill3_tail 行（row.rule 必须等于 kill3_tail.RULE_VERSION，不随 05:00 清零），显示命中率/期数/95%CI/规则常量精确基线/偏差/二项 p/近 24 期/截至 ref；原整组行改为「今日整组命中率」；脚注补累计口径说明；样式 `.k3-cum` 4 条。属只读展示，选码/封存/结算/AI prompt 未动。
+- `0d45d27` `scripts/hitrate_stability.py`：新增 kill3_tail 累计 vs 规则常量基线的单侧 2σ 带（`BASELINE_BAND_KEYS=('kill3_tail',)`、n≥50 起判、z≤-2.58 alert / z≤-2.0 watch），产物 revision 升 `hitrate-stability-v2`、`out_rows` 增 `baseline_band`；其余 6 个框架不启用，避免无关框架改变全局 health。
+
+**验证**
+- A/B：新版 render 7435 chars vs 旧 6801；归一化（剥掉 k3-cum div/CSS/今日前缀/脚注新句）后与旧版逐字节相同，`ab_identical_after_normalize=true`；START/END 各 1、k3-cum 1；面板文本含 69.51%/57/82/58.63%/+10.88pp/p=0.045/ref 20261105139 全部断言通过。
+- 首版踩坑：format string 里字面 % 未转义（`95%CI %.1f`）→ `ValueError: unsupported format character 'C'` 被 try/except 吞掉、行静默为空；改为 `95%%CI %.1f` 修复，并加固为断言渲染文本与 JSON 数字一致（`/root/ops/test_kill3_cumstats.py`）。
+- stability 实跑 exit 0：`kill3_tail.baseline_band={n:82,hits:57,expected:0.5863,mean_hits:48.08,sd:4.46,z:2.0,level:ok}`，其余 6 行 null；summary 与改前一致（既有 kill1_tail 版本 churn alert + selected_six watch，非本次引入）。
+- 线上实证：真实周期 ref=20261105141 → target=20261105142（11:46:26 发布）后，panel.html 的 KILL_THREE 块 data-as-of=20261105141、块长 7420 字节，渲染「本版累计整组命中率 69.51%（57/82 期，95%CI 58.9–78.4%）· 精确基线 58.63% · 偏差 +10.88pp · p=0.045 · 近 24 期 79.2%（19/24）· 截至 ref 20261105139」；今日行为 68.29%（56/82）。
+- 冻结登记：`7d891e8` 更新 `ops/kill3-freeze.json` 的 `lib/kill_three_view.py` sha256 `fde296d8…`→`f2dbb4fd…` 并追加 hash_updates（frozen_at 不重置、RULE_VERSION 未变）。
+
+**备份 / 回滚**
+- 改动前备份 `/root/ops/kill3-cumstats-20261105-114346`（panel.html、data 快照、ROLLBACK.txt）；回滚 `git revert 6a9b15a 0d45d27 7d891e8`，或按 ROLLBACK.txt 覆盖回读。
+
+**风险 / 遗留**
+- 累计行与 2σ 带在 n<200 前只作参考（累计 JSON verdict 仍为「样本不足」）；kill3 长期期望仍按 58.63% 管理，69% 不应当作可维持水平。
+- ops_health overall 仍 fail 属既有 hitrate_stability（kill1_tail 新口径存活期 + selected_six watch）与 kill3_stability/coverage warn，非本次引入；本次未新增 alert（kill3 band 当前 ok）。
