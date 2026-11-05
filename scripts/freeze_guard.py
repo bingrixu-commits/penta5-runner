@@ -6,8 +6,8 @@
 - 守卫只做「变更检测 + 进度计时」，不阻止任何人改代码：改动必须显式留下
   hash_updates 记录（scripts/freeze_guard.py update --file ... --reason ...），
   这使「偷偷换口径」在 ops_health 里可见。
-- 期数进度不整读封存账本（selected_six_seals.json 430M / he3 97M 会拖死
-  ops_health），统一用 data/stats_draw_history.json（约 800 期、73K）计数。
+- 期数进度不整读封存账本（he3 97M 会拖死 ops_health），统一用数据目录
+  下的事件账本计数。
 
 CLI
   status                     打印每个框架的冻结状态
@@ -56,14 +56,6 @@ FRAMEWORKS = {
         'shared': SHARED,
         'seal_path': 'data/r1_framework_seals.json', 'seal_selector': 'prediction_seals',
         'rule_from_seal': False,
-    },
-    'selected_six': {
-        'label': '独立六项',
-        'files': ['lib/selected_six_contract.py', 'lib/selected_six_model.py',
-                  'lib/selected_six_request_options.py'],
-        'shared': SHARED,
-        'seal_path': 'data/selected_six_seal_index.json', 'seal_selector': 'prediction_seals',
-        'rule_source': ('lib/selected_six_contract.py', 'REVISION'),
     },
     'he3_refine': {
         'label': 'he3 精修',

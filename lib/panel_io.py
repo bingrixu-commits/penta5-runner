@@ -22,7 +22,7 @@ _DELIVERY_THREAD_LOCK = threading.Lock()
 _SOURCES = frozenset(('__main__', 'ai_job_status', 'ai_prediction_guard',
     'framework_hit_refresh', 'he3_refine_view', 'killer_hit_view',
     'selected_framework_model',
-    'selected_framework_view', 'selected_six_model', 'selected_six_view',
+    'selected_framework_view',
     'stat50_compare_view', 'stat50_position_view', 'strategy_comparison'))
 _ERROR_TYPES = frozenset(('OSError', 'IOError', 'PermissionError', 'FileNotFoundError',
     'UnicodeDecodeError', 'TypeError', 'ValueError', 'RuntimeError', 'TimeoutError',

@@ -229,7 +229,7 @@ def _record_fingerprint(records, boundary):
     Settlement can only change a pending target and the comparison anchor always
     sits at the newest real draw, so records up to ``boundary`` are immutable
     history while the small tail holds anything newer. Splitting the hash keeps
-    the historical part stable across new draws (the selected_six pattern); the
+    the historical part stable across new draws (the seal-ledger pattern); the
     tail keeps the total fingerprint exact so a new draw -- which moves the
     anchor and may settle a pending publication -- always misses the cache.
     """

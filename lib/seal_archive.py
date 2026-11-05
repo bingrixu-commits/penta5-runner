@@ -4,8 +4,7 @@
 全量重写，约 10 天涨到 ~1GB。归档不改动任何封存字段，只把超 keep_days 的
 期号按月切到 data/archive/<stem>_<YYYYMM>.json.gz，主文件只留近期窗口。
 
-安全性：封存完整性校验用 canonical json 哈希（lib/selected_six_model.py:133
-_digest 用 json.dumps(sort_keys=True, separators=(',', ':')) 后 sha256），
+安全性：封存完整性校验用 canonical json 哈希（json.dumps(sort_keys=True, separators=(',', ':')) 后 sha256），
 与文件里空格/key 顺序无关，故 json 往返重写不改变语义哈希，证据字段保值。
 
 用法：
@@ -28,8 +27,6 @@ BEIJING = timezone(timedelta(hours=8))
 
 # stem → 期号 dict key（归档/合并目标；其余字段保留在主文件）
 PERIOD_DICT_KEYS = {
-    "selected_six_seals": ("prediction_seals", "request_attempts"),
-    "selected_six_hit_stats": ("verified",),
     "he3_refine_seals": ("attempts", "prediction_seals"),
     "he3_refine_hit_stats": ("verified",),
 }

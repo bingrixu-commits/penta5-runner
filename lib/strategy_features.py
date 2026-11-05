@@ -17,27 +17,21 @@ LEGACY_KILLER_STRATEGY = 'conditional-transition-v1'
 LEGACY_FRAMEWORK_STRATEGY = 'marginal-frequency-v1'
 LEGACY_PRO4_STRATEGY = 'recent-weighted-v1'
 LEGACY_SELECTED_STRATEGY = 'joint-overlap-v1'
-LEGACY_SIX_STRATEGY = 'block-stability-v1'
 KILLER_STRATEGY = 'conditional-transition-v2'
 FRAMEWORK_STRATEGY = 'marginal-frequency-v2'
 PRO4_STRATEGY = 'recent-weighted-v2'
 ISOLATED_SELECTED_STRATEGY = 'joint-overlap-v2'
 SELECTED_STRATEGY = 'joint-overlap-v3-three-positions'
-SIX_STRATEGY = 'block-stability-v2'
-SINGLE_TAIL_SIX_STRATEGY = 'block-stability-v3-single-tail'
 STRATEGY_LABELS = {
     LEGACY_KILLER_STRATEGY: '条件转移',
     LEGACY_FRAMEWORK_STRATEGY: '总体边际频次',
     LEGACY_PRO4_STRATEGY: '近期指数加权',
     LEGACY_SELECTED_STRATEGY: '整组失败重叠',
-    LEGACY_SIX_STRATEGY: '分段稳定性',
     KILLER_STRATEGY: '条件转移（固定均匀先验）',
     FRAMEWORK_STRATEGY: '总体边际频次（排除最少计数）',
     PRO4_STRATEGY: '近期指数加权（纯加权目标）',
     ISOLATED_SELECTED_STRATEGY: '整组失败并集（完整候选）',
     SELECTED_STRATEGY: '整组失败并集（三定位固定七项）',
-    SIX_STRATEGY: '分段稳定性（最差分段优先）',
-    SINGLE_TAIL_SIX_STRATEGY: '分段稳定性（最差分段优先·单合尾）',
 }
 TAIL_POSITIONS = {
     'all': (0, 1, 2, 3), 'qbs': (0, 1, 2), 'qbg': (0, 1, 3),
@@ -156,29 +150,6 @@ def _joint(draws):
             }
 
 
-def _block_stability(draws):
-    features = {}
-    for key, sequence in _series(draws, shapes=False).items():
-        blocks = [_counts(sequence[start:start + 10], list(range(10)))
-                  for start in range(0, 50, 10)]
-        totals = [sum(block[digit] for block in blocks) for digit in range(10)]
-        means = [total / 5 for total in totals]
-        features[key] = {
-            'block_counts_oldest_first': blocks,
-            'total_counts': totals,
-            'maximum_single_block_failure_count': [max(block[digit] for block in blocks) for digit in range(10)],
-            'minimum_single_block_failure_count': [min(block[digit] for block in blocks) for digit in range(10)],
-            'across_block_count_range': [max(block[digit] for block in blocks) - min(block[digit] for block in blocks)
-                                         for digit in range(10)],
-            'across_block_count_variance': [round(sum((block[digit] - means[digit]) ** 2 for block in blocks) / 5, 6)
-                                            for digit in range(10)],
-            'zero_count_blocks': [sum(block[digit] == 0 for block in blocks) for digit in range(10)],
-        }
-    return {'window': 50, 'block_size': 10, 'block_count': 5,
-            'block_order': 'oldest-first', 'variance_divisor': 5,
-            'failure_definition': 'actual-slot-equals-excluded-digit'}, features
-
-
 def _transition_v2(draws):
     """Conditional successors with a fixed uniform prior, never a marginal prior."""
     features = {}
@@ -272,27 +243,6 @@ def _joint_v2(draws):
     }
 
 
-def _block_stability_v2(draws):
-    parameters, features = _block_stability(draws)
-    parameters = dict(parameters,
-                      selection_objective='lexicographic-minimize-worst-block-then-variance-then-total',
-                      objective_order=['maximum_single_block_failure_count',
-                                       'across_block_count_variance', 'total_counts'])
-    features['keep_row_columns'] = [
-        'keep_digits', 'maximum_block_failure_count', 'across_block_failure_variance',
-        'total_failure_count', 'block_failure_counts_oldest_first']
-    features['keep_failures'] = {}
-    for field, candidates in _keep_failure_candidates(draws).items():
-        rows = []
-        for keep, mask in candidates:
-            blocks = [((mask >> start) & 1023).bit_count() for start in range(0, 50, 10)]
-            total = sum(blocks)
-            variance = round(sum((count - total / 5) ** 2 for count in blocks) / 5, 6)
-            rows.append([keep, max(blocks), variance, total, blocks])
-        features['keep_failures'][field] = rows
-    return parameters, features
-
-
 def _joint_v3(draws):
     """The same complete bitmaps with the new three-position group definition."""
     parameters, features = _joint_v2(draws)
@@ -314,12 +264,6 @@ INSTRUCTIONS = {
                        '相同单项失败数时，失败交集越大，并集越小，不要误把低交集当作提高整组通过。'
                        'screen仅为固定筛选辅助，非强制候选；须自行选择原要求的定位、合尾、保留集和额外项目，'
                        '并核查七项共同约束，不能只看单项最冷码。二数合/三数合仍按原定义任一组合落入保留集。'),
-    LEGACY_SIX_STRATEGY: ('本模型独立采用分段稳定性思路，固定把最新连续50期划为5个连续10期区块，'
-                  '以每个位置和合尾各数字的区块计数、最大单段失败次数、跨段波动作为主依据；'
-                  '避免仅凭总体次数低就忽略某一段集中出现，或把最新段机械放大。'
-                  '自主选两个不同位置各排一码、两个不同合尾各排一码、二数合保留4码和三数合保留5码，恰好六项。'
-                  '不读取七项或其他模型号码，不从七项结果删一项，不复制七项定位或保留集。'
-                  '分段稳定只是样本内描述，不能声称下一期概率或保证命中。'),
     KILLER_STRATEGY: ('只采用条件转移方法：分别取各位置、合尾及完整形态的当前状态，'
                       '在49次相邻转移中统计该状态的历史后继；排除项以最小smoothed_descriptive_share为目标，'
                       '按原数量选择。固定均匀先验总强度10，每个状态先验份额1/状态数，不使用边际频次先验。'
@@ -348,23 +292,6 @@ INSTRUCTIONS = {
                        '允许合法同分组，不要求与其他模型异号。'
                        '保留项按任一组合合尾落入保留集即通过，须纳入完整组；不能只优化五个排除项。'
                        '不把低失败交集、单项最冷或单项失败数之和当整组目标；样本内最小并集不保证下期通过。'),
-    SIX_STRATEGY: ('只采用分段稳定方法：同50期固定分为5个连续10期区块，各区块等权。'
-                  '每项合法排除或保留候选严格按字典序最小化：先比较最大单段失败次数，'
-                  '相同再比较跨段失败次数方差，再相同才比较总失败次数；全相同允许任意合法同分项。'
-                  '定位/合尾的三项值分别来自maximum_single_block_failure_count、across_block_count_variance、total_counts；'
-                  '保留集取keep_failures对应列。保留项仍按每期任一组合合尾落入即通过，全部未落入才失败。'
-                  '自主选两不同位置各排1码、两不同合尾各排1码、二数合保留4码、三数合保留5码，恰好六项。'
-                  '不先按总体最冷筛选，不放大最新段，不叠加条件转移、近期指数权重或整组失败并集目标；'
-                  '不读取或复用其他模型当前号码。分段统计不能证明下期概率。'),
-    SINGLE_TAIL_SIX_STRATEGY: ('只采用分段稳定方法：同50期固定分为5个连续10期区块，各区块等权。'
-                  '每项合法排除或保留候选严格按字典序最小化：先比较最大单段失败次数，'
-                  '相同再比较跨段失败次数方差，再相同才比较总失败次数；全相同允许任意合法同分项。'
-                  '定位/合尾的三项值分别来自maximum_single_block_failure_count、across_block_count_variance、total_counts；'
-                  '保留集取keep_failures对应列。保留项仍按每期任一组合合尾落入即通过，全部未落入才失败。'
-                  '自主选两不同位置各排1码、一个不同合尾排1码、二数合保留4码、三数合保留5码，共五项自选；'
-                  '连同程序按两个已选定位排除码自动推导的两项四位反向形态，整组共七项。'
-                  '不先按总体最冷筛选，不放大最新段，不叠加条件转移、近期指数权重或整组失败并集目标；'
-                  '不读取或复用其他模型当前号码。分段统计不能证明下期概率。'),
 }
 
 
@@ -384,11 +311,9 @@ def build_strategy(history, reference, strategy_id, now=None):
     parameters, features = {
         LEGACY_KILLER_STRATEGY: _transition, LEGACY_FRAMEWORK_STRATEGY: _marginal,
         LEGACY_PRO4_STRATEGY: _weighted, LEGACY_SELECTED_STRATEGY: _joint,
-        LEGACY_SIX_STRATEGY: _block_stability,
         KILLER_STRATEGY: _transition_v2, FRAMEWORK_STRATEGY: _marginal_v2,
         PRO4_STRATEGY: _weighted_v2, ISOLATED_SELECTED_STRATEGY: _joint_v2,
-        SELECTED_STRATEGY: _joint_v3, SIX_STRATEGY: _block_stability_v2,
-        SINGLE_TAIL_SIX_STRATEGY: _block_stability_v2,
+        SELECTED_STRATEGY: _joint_v3,
     }[strategy_id](draws)
     return {'strategy_id': strategy_id, 'label': STRATEGY_LABELS[strategy_id],
             'reference_period': reference, 'target_period': _next_period(parsed),

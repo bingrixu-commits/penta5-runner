@@ -67,7 +67,7 @@ def _model_tiers():
             key, value = line.split('=', 1)
             env[key.strip()] = value.strip()
     for key in ('PENTA5_DEEPSEEK_MODEL', 'PENTA5_MODEL_KILLER', 'PENTA5_MODEL_FRAMEWORK',
-                'PENTA5_MODEL_HE3', 'PENTA5_MODEL_KILL3', 'PENTA5_MODEL_SIX',
+                'PENTA5_MODEL_HE3', 'PENTA5_MODEL_KILL3',
                 'PENTA5_MODEL_KILL9', 'PENTA5_MODEL_COLD'):
         if env.get(key):
             tiers[key.replace('PENTA5_MODEL_', '').replace('PENTA5_DEEPSEEK_MODEL', 'global').lower()] = env[key]
@@ -351,22 +351,10 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     if kill9_stats is not None or kill9_previous is not None:
         snapshot['kill9_self'] = _kill9_self(reference, kill9_stats, kill9_previous)
     models = _strategy_models().get('models') or {}
-    for key, label in (('killer', '智能深排 killer'), ('framework', '固定八码框架'),
-                       ('six', '七项独立框架')):
+    for key, label in (('killer', '智能深排 killer'), ('framework', '固定八码框架')):
         frame = _framework_from_strategy(key, label, models)
         if frame:
             snapshot['frameworks'][key] = frame
-    six_stats = _read(DATA / 'selected_six_stats.json', {}) or {}
-    if six_stats:
-        snapshot['frameworks']['selected_six'] = {
-            'rule': six_stats.get('rule_revision'),
-            'today': _pick(six_stats.get('overall') or {},
-                           ('hits', 'total', 'percent', 'current_win_streak', 'current_loss_streak')),
-            'cumulative': _pick(six_stats.get('cumulative') or {},
-                                ('bets', 'hits', 'rate', 'days')),
-            'latest_settled_period': six_stats.get('latest_settled_period'),
-            'pending_count': six_stats.get('pending_count'),
-        }
     he3 = _he3_frame()
     if he3:
         snapshot['frameworks']['he3_refine'] = he3

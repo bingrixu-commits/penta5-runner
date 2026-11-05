@@ -457,7 +457,7 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
                              writer=_writer(root, writer), clock=clock,
                              operation_deadline=operation_deadline)
         _status(root, 'published' if published else 'rejected', reference, clock)
-        _log(log, f'SELECTED_SIX ref={reference} target={next_period(reference)} published={published}')
+        _log(log, f'SELECTED_FRAMEWORK ref={reference} target={next_period(reference)} published={published}')
         return {'status': 'published' if published else 'rejected', 'published': published, 'ref_period': reference}
     except AICallsDisabled as error:
         if owned_attempt and getattr(error,'requests_sent',1)==0 and not response_received and reference not in seals:
@@ -480,10 +480,10 @@ def run_once(*, root=ROOT, post=None, api_key=None, loader=None, clock=beijing_n
                         'cause_code': cause_code, 'failed_at': failed_at.isoformat()}
                     atomic_json(path, ledger)
             except Exception:
-                _log(log, 'SELECTED_SIX_FAILURE_RECORD ref=%s code=diagnostic-write-failed' % reference)
+                _log(log, 'SELECTED_FRAMEWORK_FAILURE_RECORD ref=%s code=diagnostic-write-failed' % reference)
         _status(root, 'rejected' if isinstance(error, PublicationRejected) else 'failed', reference, clock,
                 code, error_type=kind, cause_code=cause_code)
-        _log(log, 'SELECTED_SIX_FAILURE ref=%s code=%s error_type=%s cause_code=%s' %
+        _log(log, 'SELECTED_FRAMEWORK_FAILURE ref=%s code=%s error_type=%s cause_code=%s' %
              (reference, code, kind, cause_code or 'none'))
         raise
 

@@ -20,7 +20,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import position_cold_report as report  # noqa: E402
-import model_significance  # noqa: E402
 import cold_hit_stats  # noqa: E402
 import real_hitrate_report  # noqa: E402
 
@@ -69,15 +68,6 @@ def main():
                     reason.append('heartbeat')
                 started = time.monotonic()
                 code = report.main()
-                signi_code = None
-                try:
-                    import contextlib as _ctx
-                    import io as _io
-                    _buffer = _io.StringIO()
-                    with _ctx.redirect_stdout(_buffer):
-                        signi_code = model_significance.main()
-                except Exception as error:
-                    print(f'significance failed: {type(error).__name__}: {error}', flush=True)
                 realhit_code = None
                 try:
                     import contextlib as _ctx2
@@ -101,7 +91,7 @@ def main():
                 last_slot = slot
                 last_run = time.monotonic()
                 stamp = datetime.now().astimezone().strftime('%H:%M:%S')
-                print(f'{stamp} regenerated rc={code} signi={signi_code} realhit={realhit_code} cold={cold_code} elapsed={elapsed:.2f}s '
+                print(f'{stamp} regenerated rc={code} realhit={realhit_code} cold={cold_code} elapsed={elapsed:.2f}s '
                       f'trigger={"+".join(reason)}', flush=True)
         except Exception as error:
             print(f'regenerate failed: {type(error).__name__}: {error}', flush=True)

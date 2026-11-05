@@ -17,7 +17,7 @@
   顶层 coverage_note 说明累计覆盖率的缺口来源（余额停跑/引入前），避免把历史缺口误判成现行掉链。
 - n < 200 判定「样本不足」，不做优劣结论；p 为双侧二项检验（方差用 p0(1-p0)/n）。
 
-数据源：data/r1_stats.json、r1_framework_hit_stats.json、selected_six_hit_stats.json、
+数据源：data/r1_stats.json、r1_framework_hit_stats.json、
 kill3_tail/settlements.json+seals.json、strategy_comparison_stats.json、*_status.json。
 只读；产物 data/framework_hitrate_cumulative.json，由 crontab 每 15 分钟刷新。
 """
@@ -43,9 +43,6 @@ RULE_BASELINE = {
     ('killer', 'conditional-transition-v2'): (9, 0.4162),
     ('killer', 'conditional-transition-v1'): (9, 0.4162),
     ('framework', 'marginal-frequency-v2'): (8, 0.5559),
-    ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
-    ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),
-    ('selected_six', 'selected-six-independent-v7-single-tail'): (7, 0.5726),
     ('he3_refine', 'he3-refine-v2-balanced'): (1, 0.9375),
     ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
     ('kill3_tail', 'kill3-tail-v4'): (5, 0.6191),
@@ -73,7 +70,6 @@ RULE_BASELINE = {
 LABELS = {
     'killer': '智能深排 killer（9 项）',
     'framework': '固定八码框架（8 项）',
-    'selected_six': '七项独立框架 selected_six（7 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
     'kill1_tail': 'AI 双位置杀码（3 项）',
@@ -82,7 +78,6 @@ LABELS = {
 WINDOWS = {
     'killer': '自账本首期累计',
     'framework': '自账本首期累计',
-    'selected_six': '当前规则版本累计',
     'he3_refine': '当前规则版本累计',
     'kill3_tail': '当前规则版本累计',
     'kill1_tail': '当前规则版本累计',
@@ -733,35 +728,6 @@ def cum_framework():
     return row
 
 
-def cum_selected_six():
-    doc = _read(DATA / 'selected_six_hit_stats.json') or {}
-    verified = list((doc.get('verified') or {}).values())
-    stats = _read(DATA / 'selected_six_stats.json') or {}
-    rule = stats.get('rule_revision') or 'selected-six-independent-v4-minimax-forms'
-    records, history, rolling = [], {}, []
-    for row in verified:
-        publication = row.get('publication') or {}
-        revision = publication.get('revision') or '(未标注)'
-        outcome = row.get('outcomes') or {}
-        if not isinstance(outcome, dict) or not outcome:
-            continue
-        joint = all(bool(v) for v in outcome.values())
-        model = _model_of(publication)
-        rolling.append((row.get('target_period'), joint))
-        if revision == rule:
-            records.append((row.get('target_period'), joint, model))
-        else:
-            bucket = history.setdefault(revision, [0, 0])
-            bucket[0] += 1
-            bucket[1] += 1 if joint else 0
-    row = _build('selected_six', rule, records, 'data/selected_six_hit_stats.json',
-                 rolling=rolling, launch=[target for target, _ in rolling])
-    row['history'] = [{'revision': revision, 'n': value[0], 'hits': value[1],
-                       'rate': round(value[1] / value[0], 6) if value[0] else None}
-                      for revision, value in sorted(history.items())]
-    return row
-
-
 def cum_he3():
     doc = _read(DATA / 'he3_refine_hit_stats.json') or {}
     verified = list((doc.get('verified') or {}).values())
@@ -892,7 +858,7 @@ def build():
     _reset_rolling_cache()
     promoted_at, promoted_moment = _joint_form_boundary()
     for name, func in (('killer', cum_killer), ('framework', cum_framework),
-                       ('selected_six', cum_selected_six), ('he3_refine', cum_he3),
+                       ('he3_refine', cum_he3),
                        ('kill3_tail', cum_kill3),
                        ('kill1_tail', cum_kill1),
                        ('kill9_tail', cum_kill9)):
@@ -902,10 +868,6 @@ def build():
                 rows.append(row)
         except Exception as error:  # keep other frameworks alive
             errors.append('%s: %s: %s' % (name, type(error).__name__, error))
-    for row in rows:
-        if row.get('key') == 'selected_six':
-            row['note'] = ((row['note'] + '；' + DATA_LAG_NOTE)
-                           if row.get('note') else DATA_LAG_NOTE)
     drift = _drift_report(rows)
     joint_baseline = None
     if promoted_moment is not None:

@@ -11,14 +11,14 @@ import json,re
 
 from ai_verified_stats import atomic_json,next_period,publication_evidence_error,prediction_outcome
 from stats_history import TZ,business_start,parse_period,parse_time,period_slot,valid_draw_record,validate_conflicting_periods
-from strategy_features import (build_strategy,STRATEGY_LABELS,KILLER_STRATEGY,FRAMEWORK_STRATEGY,PRO4_STRATEGY,SELECTED_STRATEGY,SIX_STRATEGY,
-    LEGACY_KILLER_STRATEGY,LEGACY_FRAMEWORK_STRATEGY,LEGACY_PRO4_STRATEGY,LEGACY_SELECTED_STRATEGY,LEGACY_SIX_STRATEGY,
+from strategy_features import (build_strategy,STRATEGY_LABELS,KILLER_STRATEGY,FRAMEWORK_STRATEGY,PRO4_STRATEGY,SELECTED_STRATEGY,
+    LEGACY_KILLER_STRATEGY,LEGACY_FRAMEWORK_STRATEGY,LEGACY_PRO4_STRATEGY,LEGACY_SELECTED_STRATEGY,
     ISOLATED_SELECTED_STRATEGY)
 from operational_availability import load_delivery, observation, index_delivery
 
 ROOT=Path('/root/penta5-runner')
 ORIGINAL_MODELS=('killer','framework','pro4','selected')
-MODELS=ORIGINAL_MODELS+('six',)
+MODELS=ORIGINAL_MODELS
 DISPLAY_MODELS=tuple(model for model in MODELS if model!='selected')
 def _tier_label(env_name, kind):
     try:
@@ -29,12 +29,12 @@ def _tier_label(env_name, kind):
     return ('Pro ' if 'pro' in model else 'Flash ') + kind
 
 
-LABELS={'killer':_tier_label('PENTA5_MODEL_KILLER','智能深排'),'framework':_tier_label('PENTA5_MODEL_FRAMEWORK','固定八码框架'),'pro4':'Pro 四位独立单排','selected':'Pro 自选七项','six':'Pro 自选七项（独立）'}
-STRATEGIES=dict(zip(MODELS,(LEGACY_KILLER_STRATEGY,FRAMEWORK_STRATEGY,PRO4_STRATEGY,SELECTED_STRATEGY,SIX_STRATEGY)))
-LEGACY_STRATEGIES=dict(zip(MODELS,(KILLER_STRATEGY,LEGACY_FRAMEWORK_STRATEGY,LEGACY_PRO4_STRATEGY,LEGACY_SELECTED_STRATEGY,LEGACY_SIX_STRATEGY)))
+LABELS={'killer':_tier_label('PENTA5_MODEL_KILLER','智能深排'),'framework':_tier_label('PENTA5_MODEL_FRAMEWORK','固定八码框架'),'pro4':'Pro 四位独立单排','selected':'Pro 自选七项'}
+STRATEGIES=dict(zip(MODELS,(LEGACY_KILLER_STRATEGY,FRAMEWORK_STRATEGY,PRO4_STRATEGY,SELECTED_STRATEGY)))
+LEGACY_STRATEGIES=dict(zip(MODELS,(KILLER_STRATEGY,LEGACY_FRAMEWORK_STRATEGY,LEGACY_PRO4_STRATEGY,LEGACY_SELECTED_STRATEGY)))
 SUPPORTED_STRATEGIES={model:frozenset((STRATEGIES[model],LEGACY_STRATEGIES[model])) for model in MODELS}
 SUPPORTED_STRATEGIES['selected']=SUPPORTED_STRATEGIES['selected']|{ISOLATED_SELECTED_STRATEGY}
-FILES={'killer':'r1_stats.json','framework':'r1_framework_seals.json','selected':'selected_framework_seals.json','six':'selected_six_seals.json'}
+FILES={'killer':'r1_stats.json','framework':'r1_framework_seals.json','selected':'selected_framework_seals.json'}
 POSITIONS=('q','b','s','g');POSITION_LABELS=('千位','百位','十位','个位')
 START='<!-- STRATEGY_BOARD_DERIVED_START -->';END='<!-- STRATEGY_BOARD_DERIVED_END -->'
 
@@ -45,35 +45,9 @@ def _read(path):
     value=json.loads(raw)
     if not isinstance(value,dict):raise ValueError('invalid-strategy-source')
     return value
-# six 封存 data/selected_six_seals.json 已超单文件读取上限, 证据字段不能删。
-# 超限时改读同目录紧凑索引: scripts/build_six_seal_index.py 在字节流里定位
-# "prediction_seals" 对象后只做等价搬运, 每个 seal 的全部字段原样保留, 后续
-# validate_publication 的 seal_sha256/card_html 等校验强度不变; 索引按源文件
-# size+mtime 自动重建, 重建或读取失败时保留原 oversized 报错与 source_error 行为。
-SIX_SEAL_INDEX='selected_six_seal_index.json'
-MAX_STRATEGY_SOURCE=128*1024*1024
-SIX_SEAL_INDEX_TIMEOUT=60
-
-def _refresh_six_seal_index(path):
-    import subprocess,sys
-    root=Path(path).parent.parent
-    script=root/'scripts'/'build_six_seal_index.py'
-    if not script.is_file():raise ValueError('missing-six-seal-indexer')
-    completed=subprocess.run([sys.executable,str(script),'--root',str(root),'--if-stale'],
-        capture_output=True,text=True,timeout=SIX_SEAL_INDEX_TIMEOUT,cwd=str(root))
-    if completed.returncode!=0:raise ValueError('six-seal-index-build-failed')
 
 def _read_strategy_source(model,path):
-    if model!='six':return _read(path)
-    try:size=path.stat().st_size
-    except OSError:return _read(path)
-    if size<=MAX_STRATEGY_SOURCE:return _read(path)
-    try:
-        _refresh_six_seal_index(path)
-        return _read(path.parent/SIX_SEAL_INDEX)
-    except Exception as error:
-        print('six seal index unavailable: '+type(error).__name__,flush=True)
-        raise ValueError('oversized-strategy-source') from None
+    return _read(path)
 
 def _strategy(seal,model):
     if model in ('killer','framework'):
@@ -114,7 +88,7 @@ def _publication(seal,model,now,actuals,root):
             raise ValueError('shared-advice-not-independent')
     else:
         from publication_validation_cache import validate_publication as cached_publication
-        cache_model={'pro4':'pro4','six':'selected6','selected':'selected7'}[model]
+        cache_model={'pro4':'pro4','selected':'selected7'}[model]
         cached_publication(cache_model,seal,reference,now,root=root)
         proof=seal;history=seal['history']
     identity=strategy.get('strategy_id') if isinstance(strategy,dict) else None
@@ -130,7 +104,6 @@ def _publication(seal,model,now,actuals,root):
     if model=='killer':positions={key:response['k'+str(i+1)][0] for i,key in enumerate(POSITIONS)}
     elif model=='framework':positions={'q':response['q_kill1'],'b':response['b_kill1']}
     elif model=='pro4':positions={key:response['k'+str(i+1)][0] for i,key in enumerate(POSITIONS)}
-    elif model=='six':positions=dict(response['selected_positions'])
     else:
         positions=dict(response['selected_positions']);extra=response.get('extra_exclusion')
         if extra and extra['kind']=='position':positions[extra['key']]=extra['digit']
@@ -222,9 +195,6 @@ def _outcomes(entry,model,digits):
         from framework_hit_stats import _outcomes as outcomes
         return outcomes(entry['proof']['response'],digits)
     if model=='pro4':return {key:digits[i]!=entry['positions'][key] for i,key in enumerate(POSITIONS)}
-    if model=='six':
-        from selected_six_contract import outcomes
-        return outcomes(entry['proof']['response'],digits,revision=entry['proof']['revision'])
     from selected_framework_contract import outcomes
     return outcomes(entry['proof']['response'],digits,revision=entry['proof']['revision'])
 
@@ -234,7 +204,7 @@ def _decision_audit(entry,model,strategy,history):
     slots=dict(entry['positions'])
     if model=='killer':slots.update(all=response['he_all'],qbs=response['he_q3'],bsg=response['he_h3'])
     elif model=='framework':slots.update(qbs=response['he_q3_kill'],bsg=response['he_h3_kill'])
-    elif model in ('selected','six'):
+    elif model=='selected':
         slots.update(response['selected_tails'])
         extra=response.get('extra_exclusion')
         if extra and extra['kind']=='tail':slots[extra['key']]=extra['digit']
@@ -255,7 +225,7 @@ def _decision_audit(entry,model,strategy,history):
                          prior_weight=round(10/(item['conditional_n']+10),6))
         checks.append(check)
     for field in ('he2_keep','he3_keep'):
-        if field not in response or model not in ('framework','six'):continue
+        if field not in response or model not in ('framework',):continue
         if model=='framework':
             score={keep:-covered for keep,covered in features['keep_coverage'][field]}
         else:
@@ -341,11 +311,7 @@ def build_comparison(snapshot,*,root=ROOT,ledgers=None,delivery=None):
                     if business_start(parse_time(actual['opentime'])).strftime('%Y-%m-%d')!=day:continue
                     if publication_evidence_error(entry['proof'],actual):raise ValueError('late-strategy-evidence')
                     result=_outcomes(entry,model,actual['numbers'])
-                    if model=='six':
-                        from selected_six_contract import item_count as six_item_count
-                        expected_count=six_item_count(entry['proof']['revision'])
-                    else:
-                        expected_count=dict(killer=9,framework=8,pro4=4,selected=7)[model]
+                    expected_count=dict(killer=9,framework=8,pro4=4,selected=7)[model]
                     if not isinstance(result,dict) or len(result)!=expected_count or any(type(value) is not bool for value in result.values()):raise ValueError('invalid-strategy-outcomes')
                     publications[model][target]=entry
                     closed_series[model].append((target,all(result.values())))
@@ -359,7 +325,6 @@ def build_comparison(snapshot,*,root=ROOT,ledgers=None,delivery=None):
         info['position_hits']=sum(item['hits'] for item in info['positions'].values());info['position_total']=sum(item['total'] for item in info['positions'].values())
         models[model]=info
     common=_paired_publications(publications,ORIGINAL_MODELS,actuals,conflicts)
-    split_common=_paired_publications(publications,('six','selected'),actuals,conflicts)
     # Panel commits continue after this actual-draw snapshot was frozen. Read
     # the structurally verified log without treating a later commit as damage
     # to all older evidence. observation() enforces ready <= frozen now per row.
@@ -367,15 +332,15 @@ def build_comparison(snapshot,*,root=ROOT,ledgers=None,delivery=None):
     version_comparison={'version':1,'updated_at':now.isoformat(),'biz_date':day,
         'scope':'five-validated-position-strategies; HE3 is a different task',
         'cohorts':{name:_version_cohorts(publications,cohort,actuals,conflicts,delivery,now)
-                   for name,cohort in (('six_seven',('six','selected')),('flash',('killer','framework')),
+                   for name,cohort in (('flash',('killer','framework')),
                                        ('original_four',ORIGINAL_MODELS))}}
     return {'version':1,'policy':'strategy-isolation-v2','biz_date':day,'updated_at':now.isoformat(),'models':models,
-            'common':common,'six_seven_common':split_common,
+            'common':common,
             'version_comparison':version_comparison,
             'stats_error':False,'latest_known_closed_period':latest}
 
 def _paired_publications(publications,models,actuals,conflicts):
-    """Preserve the original four-policy cohort; six/seven has a separate join."""
+    """Preserve the original four-policy cohort."""
     cohort=set().union(*(set(publications[model]) for model in models))
     matched_targets=[];matched_samples=0;no_position=0;hash_conflicts=0
     paired={model:{'hits':0,'total':0,'positions':{key:{'hits':0,'total':0} for key in POSITIONS}} for model in models}
@@ -441,7 +406,7 @@ def render_version_comparison(value,identity='strategy-version-comparison'):
 
 def _valid_version_comparison(value):
     """Fail closed on corrupted derived counters, targets or version vectors."""
-    expected={'six_seven':('six','selected'),'flash':('killer','framework'),'original_four':ORIGINAL_MODELS}
+    expected={'flash':('killer','framework'),'original_four':ORIGINAL_MODELS}
     count=lambda number,limit:type(number)is int and 0<=number<=limit
     try:
         if (not isinstance(value,dict) or type(value.get('version'))is not int or value['version']!=1

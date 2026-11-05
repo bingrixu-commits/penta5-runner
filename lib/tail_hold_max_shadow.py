@@ -1,6 +1,6 @@
 """合尾杀码「稳定化」hold_max 多档候选影子（只读，不改现网封存/统计/攻击语）。
 
-覆盖 5 个合尾框架：AI双位置(kill1)、AI三位置(kill3)、七项独立 v7、固定八码、killer 九项。
+覆盖 4 个合尾框架：AI双位置(kill1)、AI三位置(kill3)、固定八码、killer 九项。
 候选策略 holdK-until-miss：本组尾码命中后继续沿用，最多连用 K 期；失手或满 K 期改用模型本期新选。
 同时对照 hold2 / hold3 / hold5 / hold-until-miss（不设上限）。
 
@@ -36,13 +36,11 @@ TAIL_LABELS = {'all': '千百十个', 'qbs': '千百十', 'qbg': '千百个',
                'qsg': '千十个', 'bsg': '百十个'}
 KILLER_FIELDS = (('he_all', 'all'), ('he_q3', 'qbs'), ('he_h3', 'bsg'))
 FRAMEWORK_FIELDS = (('he_q3_kill', 'qbs'), ('he_h3_kill', 'bsg'))
-SIX_REVISION = 'selected-six-independent-v7-single-tail'
 
 # (框架 id, 面板名, 分组粒度, 沿用是否要求上一封存目标期与当前参考期连续)
 FRAMEWORKS = (
     ('kill1_tail', 'AI双位置(kill1)', 'single', False),
     ('kill3_tail', 'AI三位置(kill3)', 'single', False),
-    ('six', '七项独立v7', 'single', True),
     ('framework', '固定八码框架', 'pair', True),
     ('killer', 'killer九项', 'triple', True),
 )
@@ -171,47 +169,6 @@ def _framework_rows(actuals):
     return _dedupe(rows)
 
 
-def _six_rows(actuals):
-    doc = _read(DATA / 'selected_six_seal_index.json', {}) or {}
-    seals = doc.get('prediction_seals') or {}
-    rows = []
-    for ref in sorted(seals):
-        seal = seals.get(ref)
-        if not isinstance(seal, dict) or seal.get('revision') != SIX_REVISION:
-            continue
-        target = _period(seal.get('target_period'))
-        nums = actuals.get(target) if target else None
-        if nums is None:
-            continue
-        response = seal.get('response') if isinstance(seal.get('response'), dict) else {}
-        tails = response.get('selected_tails')
-        if not isinstance(tails, dict) or len(tails) != 1:
-            continue
-        key, kill = next(iter(tails.items()))
-        if key not in TAIL_KEYS:
-            continue
-        try:
-            sealed = ((key, _digit(kill)),)
-        except (TypeError, ValueError):
-            continue
-        hold = (seal.get('model_metadata') or {}).get('tail_policy') if isinstance(seal.get('model_metadata'), dict) else None
-        model = sealed
-        has_hold = False
-        if isinstance(hold, dict) and isinstance(hold.get('model_tail'), dict):
-            pick = hold['model_tail']
-            pick_key = str(pick.get('key') or '')
-            pick_key = pick_key[5:] if pick_key.startswith('tail_') else pick_key
-            if pick_key in TAIL_KEYS:
-                try:
-                    model = ((pick_key, _digit(pick.get('kill'))),)
-                    has_hold = True
-                except (TypeError, ValueError):
-                    model = sealed
-                    has_hold = False
-        rows.append(_row(target, nums, sealed, model, has_hold, ref=ref))
-    return _dedupe(rows)
-
-
 def _kill_rows(src):
     settlements = _read(DATA / src / 'settlements.json', {}) or {}
     actuals = {}
@@ -268,7 +225,6 @@ def _collect():
     actuals, killer_rows = _r1_data()
     collected = {'killer': killer_rows}
     collected['framework'] = _framework_rows(actuals)
-    collected['six'] = _six_rows(actuals)
     collected['kill3_tail'] = _kill_rows('kill3_tail')
     collected['kill1_tail'] = _kill_rows('kill1_tail')
     result = {}

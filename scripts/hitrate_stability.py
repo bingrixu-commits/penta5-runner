@@ -237,7 +237,7 @@ def main(argv=None):
 
     guard = _read_json(root / GUARD, {}) or {}
     guard_missing = ((guard.get('missing') or {}).get('models') or {}) if isinstance(guard, dict) else {}
-    key_alias = {'framework': 'framework', 'he3': 'he3_refine', 'six': 'selected_six'}
+    key_alias = {'framework': 'framework', 'he3': 'he3_refine', }
 
     state = _read_json(root / STATE, {}) or {}
     state_rows = state.get('rows') if isinstance(state.get('rows'), dict) else {}

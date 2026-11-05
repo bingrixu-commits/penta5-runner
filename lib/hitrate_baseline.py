@@ -32,9 +32,6 @@ RULE_BASELINE = {
     ('killer', 'conditional-transition-v2'): (9, 0.4162),
     ('killer', 'conditional-transition-v1'): (9, 0.4162),
     ('framework', 'marginal-frequency-v2'): (8, 0.5559),
-    ('selected_six', 'selected-six-independent-v4-minimax-forms'): (8, 0.5160),
-    ('selected_six', 'selected-six-independent-v6-panel-context'): (8, 0.5160),
-    ('selected_six', 'selected-six-independent-v7-single-tail'): (7, 0.5726),
     ('he3_refine', 'he3-refine-v2-balanced'): (1, 0.9375),
     ('he3_refine', 'he3-refine-v3-panel-context'): (1, 0.9375),
     ('kill3_tail', 'kill3-tail-v4'): (5, 0.6191),
@@ -64,7 +61,6 @@ RULE_BASELINE = {
 LABELS = {
     'killer': '智能深排 killer（9 项）',
     'framework': '固定八码框架（8 项）',
-    'selected_six': '七项独立框架 selected_six（7 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
     'kill1_tail': 'AI 双位置杀码（3 项）',
@@ -147,20 +143,6 @@ def _strategy_rows():
         row = _row(key, rule, n, hits, 'data/strategy_comparison_stats.json')
         rows.append(row)
     return rows
-
-
-def _selected_six_row():
-    stats = _read(DATA / 'selected_six_stats.json')
-    if not isinstance(stats, dict):
-        return []
-    overall = stats.get('overall') or {}
-    n = overall.get('total')
-    hits = overall.get('hits')
-    rule = stats.get('rule_revision')
-    if not isinstance(n, int) or not isinstance(hits, int) or not rule:
-        return []
-    row = _row('selected_six', rule, n, hits, 'data/selected_six_stats.json')
-    return [row]
 
 
 def _he3_row():
@@ -314,9 +296,6 @@ def _kill9_rows():
 
 def _as_of(rows):
     candidates = []
-    six = _read(DATA / 'selected_six_stats.json') or {}
-    if six.get('latest_settled_period'):
-        candidates.append(str(six['latest_settled_period']))
     he3 = _read(DATA / 'he3_refine_stats.json') or {}
     if he3.get('latest_settled_period'):
         candidates.append(str(he3['latest_settled_period']))
@@ -329,7 +308,6 @@ def _as_of(rows):
 def build():
     rows = []
     rows.extend(_strategy_rows())
-    rows.extend(_selected_six_row())
     rows.extend(_he3_row())
     rows.extend(_kill3_rows())
     rows.extend(_kill1_rows())

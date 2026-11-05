@@ -176,60 +176,6 @@ def framework_baseline(seal, item):
     return None
 
 
-def six_baseline(seal, item):
-    response = seal.get('response') if isinstance(seal.get('response'), dict) else {}
-    revision = str(seal.get('revision') or '')
-    legacy_reverse = revision.endswith('v3-minimax-reverse')
-    if item.startswith('position_'):
-        key = item[len('position_'):]
-        kills = response.get('selected_positions') if isinstance(response.get('selected_positions'), dict) else {}
-        digit = _digit(kills.get(key))
-        if digit is None or key not in POSITION_KEYS:
-            return None
-        return _kill_pos(POSITION_KEYS.index(key), digit)
-    if item.startswith('tail_'):
-        key = item[len('tail_'):]
-        tails = response.get('selected_tails') if isinstance(response.get('selected_tails'), dict) else {}
-        digit = _digit(tails.get(key))
-        if digit is None or key not in TAIL_POSITIONS:
-            return None
-        return _kill_sum(key, digit)
-    if item == 'he2_keep':
-        return _keep_intersect(PAIR_COUNT, response.get('he2_keep'))
-    if item == 'he3_keep':
-        return _keep_intersect(TRIPLE_COUNT, response.get('he3_keep'))
-    if item in ('reverse_parity', 'reverse_size'):
-        if legacy_reverse:
-            kills = response.get('selected_positions') if isinstance(response.get('selected_positions'), dict) else {}
-            if not kills:
-                return None
-            odds = 1.0
-            for key, kill in kills.items():
-                digit = _digit(kill)
-                if digit is None:
-                    return None
-                if item == 'reverse_parity':
-                    ok_even = (digit % 2 == 0)
-                    want_even = (digit % 2 == 1)
-                    # (actual even) == (kill odd) -> count digits satisfying
-                    keep = POS_COUNT[POSITION_KEYS.index(key)][0] * 0
-                    count = 0
-                    for value in range(10):
-                        if ((value % 2 == 0) == want_even):
-                            count += POS_COUNT[POSITION_KEYS.index(key)][value]
-                    odds *= count / float(TOTAL)
-                else:
-                    want_small = digit < 5
-                    count = 0
-                    for value in range(10):
-                        if ((value >= 5) == want_small):
-                            count += POS_COUNT[POSITION_KEYS.index(key)][value]
-                    odds *= count / float(TOTAL)
-            return odds
-        return _pattern_excl(response.get(item))
-    return None
-
-
 def _model_tier(seal):
     meta = seal.get('model_metadata') if isinstance(seal.get('model_metadata'), dict) else {}
     for key in ('requested_model', 'returned_model', 'model'):
@@ -240,8 +186,6 @@ def _model_tier(seal):
 
 
 def _rule(seal, key):
-    if key == 'six':
-        return str(seal.get('revision') or '-')
     if key == 'killer':
         audit = seal.get('model_context_audit') if isinstance(seal.get('model_context_audit'), dict) else {}
         body = audit.get('body') if isinstance(audit.get('body'), dict) else {}
@@ -254,17 +198,13 @@ def _outcomes_for(key, seal, numbers):
     if key == 'killer':
         from ai_verified_stats import prediction_outcome
         return prediction_outcome(seal, list(numbers))
-    if key == 'framework':
-        from framework_hit_stats import _outcomes
-        return _outcomes(seal.get('response') or {}, list(numbers))
-    from selected_six_contract import outcomes as six_outcomes
-    return six_outcomes(seal.get('response') or {}, list(numbers), revision=str(seal.get('revision') or ''))
+    from framework_hit_stats import _outcomes
+    return _outcomes(seal.get('response') or {}, list(numbers))
 
 
 def _seals(root, key):
     path = {'killer': 'data/r1_stats.json',
-            'framework': 'data/r1_framework_seals.json',
-            'six': 'data/selected_six_seals.json'}[key]
+            'framework': 'data/r1_framework_seals.json'}[key]
     payload = json.loads((root / path).read_text(encoding='utf-8'))
     seals = payload.get('prediction_seals') if isinstance(payload, dict) else None
     return seals if isinstance(seals, dict) else {}
@@ -323,11 +263,10 @@ def main(argv=None):
               'basis': '单项命中率 vs 每期封存参数在 10^4 开奖空间上的精确枚举基线均值；'
                        '整组基线取 hitrate_baseline 登记值；z 为二项近似',
               'frameworks': {}, 'attention': []}
-    baselines = {'killer': killer_baseline, 'framework': framework_baseline, 'six': six_baseline}
-    names = {'killer': ('智能排除', 'killer'), 'framework': ('R1 框架', 'framework'),
-             'six': ('独立六项', 'selected_six')}
+    baselines = {'killer': killer_baseline, 'framework': framework_baseline}
+    names = {'killer': ('智能排除', 'killer'), 'framework': ('R1 框架', 'framework')}
 
-    for key in ('killer', 'framework', 'six'):
+    for key in ('killer', 'framework'):
         seals = _seals(root, key)
         order = list(ORDER.get(key) or ())
         rows = []

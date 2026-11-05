@@ -40,8 +40,6 @@ TASKS = (
      'env_chain': ('PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL')},
     {'key': 'framework', 'usage_key': 'framework', 'label': '固定八码框架（8 项）',
      'env_chain': ('PENTA5_MODEL_FRAMEWORK', 'PENTA5_DEEPSEEK_MODEL')},
-    {'key': 'selected_six', 'usage_key': 'six', 'label': '七项独立框架 selected_six（7 项）',
-     'env_chain': ('PENTA5_MODEL_SIX', 'PENTA5_DEEPSEEK_MODEL')},
     {'key': 'he3_refine', 'usage_key': 'he3', 'label': '合尾 he3（剩余 5 码）',
      'env_chain': ('PENTA5_MODEL_HE3', 'PENTA5_DEEPSEEK_MODEL')},
     {'key': 'kill3_tail', 'usage_key': 'kill3', 'label': 'AI 三位置杀码',

@@ -10,7 +10,6 @@ Collects a fixed set of probes into one JSON report plus a human table:
   kill3_freeze       freeze stamp: rule_version + monitored source hashes unchanged, period progress
   stat50_seal        max prediction_seals key in data/stat50_compare_seals.json
   he3_refine         reference_period lag + status
-  selected_six       reference_period lag + status
   panel_html         panel.html mtime age (warn > 10 min, fail > 30 min)
   evidence_backup    /root/evidence-archives/latest-verified.json age + archive file
   manifest_drift     evidence_backup.newest_source_manifest() still matches live sources
@@ -87,7 +86,6 @@ FAILED_STATES = frozenset(('failed', 'error', 'errored', 'timeout', 'killed',
 PAUSE_MARKER = 'data/ai_api_paused.json'
 REFERENCE_STATUS_FILES = (
     ('he3_refine', 'he3_refine_status.json'),
-    ('selected_six', 'selected_six_status.json'),
 )
 
 DEEPSEEK_ENV_KEYS = ('PENTA5_FRAMEWORK_API_KEY', 'DEEPSEEK_API_KEY', 'PENTA5_KILLER_API_KEY')
@@ -98,7 +96,6 @@ BALANCE_WARN_CNY = 3.0
 PROVIDER_402_LOGS = (
     'ai_job_framework.log',
     'ai_job_killer.log',
-    'selected_six_cron.log',
     'he3_refine_cron.log',
     'kill3_tail_cron.log',
     'kill1_tail_cron.log',
@@ -128,9 +125,7 @@ KILL3_FREEZE_JSON = 'ops/kill3-freeze.json'
 KILL3_FREEZE_HOURS = 72
 KILL3_FREEZE_PERIODS = 100
 LEDGER_SIZE_FILES = (
-    'selected_six_seals.json',
     'he3_refine_seals.json',
-    'selected_six_hit_stats.json',
     'he3_refine_hit_stats.json',
 )
 LEDGER_HE3_WARN_BYTES = 110 * 1024 * 1024
@@ -1382,10 +1377,6 @@ STABILITY_STALE_MINUTES = 45
 ATTRIBUTION_REPORT_JSON = 'hitrate_attribution.json'
 ATTRIBUTION_STALE_MINUTES = 40
 
-VERDICTS_JSON = 'hitrate_verdicts.json'
-VERDICTS_STALE_MINUTES = 150
-
-
 def check_hitrate_stability(ctx):
     """命中率稳定性/断崖护栏：读 data/hitrate_stability.json（scripts/hitrate_stability.py）。
 
@@ -1465,7 +1456,7 @@ def check_hitrate_attribution(ctx):
             'frameworks=%d' % len(frameworks)]
     if age_minutes is not None:
         bits.append('age=%.1fmin' % age_minutes)
-    for key in ('killer', 'six'):
+    for key in ('killer', 'framework'):
         data = frameworks.get(key) if isinstance(frameworks.get(key), dict) else {}
         if data:
             bits.append('%s=%s/%s' % (key, _pct_text(data.get('group_rate')),
@@ -1483,52 +1474,6 @@ def check_hitrate_attribution(ctx):
                       '归因报告过期(%.1fmin>%dmin): %s' % (age_minutes, ATTRIBUTION_STALE_MINUTES, detail),
                       value)
     return _entry('hitrate_attribution', OK, detail, value)
-
-
-def check_hitrate_verdicts(ctx):
-    """全史判定：读 data/hitrate_verdicts.json（scripts/hitrate_verdicts.py，每小时跑）。
-
-    判定口径 n>=200 + Bonferroni α + delta<=-3pp；只有 confirmed-deficit 才 WARN，
-    watch（近期窗口显著但全史未确认）只记录不告警，避免把短期波动当持续亏损。
-    """
-    path = ctx['root'] / 'data' / VERDICTS_JSON
-    payload, error = _load_json(path)
-    if not isinstance(payload, dict):
-        return _entry('hitrate_verdicts', WARN,
-                      '全史判定报告缺失/不可读（cron 应每小时跑 scripts/hitrate_verdicts.py）: %s'
-                      % (error or 'invalid shape'))
-    summary = payload.get('summary') if isinstance(payload.get('summary'), dict) else {}
-    confirmed = summary.get('confirmed') if isinstance(summary.get('confirmed'), list) else []
-    watch = summary.get('watch') if isinstance(summary.get('watch'), list) else []
-    pending = summary.get('pending')
-    if not isinstance(pending, int):
-        pending = len(pending) if isinstance(pending, list) else 0
-    judged = payload.get('family_size')
-    generated = _parse_time(payload.get('generated_at'))
-    age_minutes = None
-    if generated is not None:
-        try:
-            age_minutes = (ctx['now'] - generated).total_seconds() / 60.0
-        except TypeError:
-            age_minutes = None
-    bits = ['judged=%s' % judged, 'pending=%s' % pending,
-            'as_of=%s' % (payload.get('as_of_period') or '-')]
-    if age_minutes is not None:
-        bits.append('age=%.1fmin' % age_minutes)
-    if confirmed:
-        bits.append('确认亏损 ' + ','.join(str(name) for name in confirmed[:4]))
-    if watch:
-        bits.append('近期偏离 ' + ','.join(str(name) for name in watch[:4]))
-    value = {'judged': judged, 'confirmed': confirmed, 'watch': watch,
-             'age_minutes': age_minutes, 'as_of_period': payload.get('as_of_period')}
-    detail = ' · '.join(bits)
-    if confirmed:
-        return _entry('hitrate_verdicts', WARN, '全史确认持续亏损: ' + detail, value)
-    if age_minutes is not None and age_minutes > VERDICTS_STALE_MINUTES:
-        return _entry('hitrate_verdicts', WARN,
-                      '全史判定报告过期(%.1fmin>%dmin): %s' % (age_minutes, VERDICTS_STALE_MINUTES, detail),
-                      value)
-    return _entry('hitrate_verdicts', OK, detail, value)
 
 
 FREEZE_GUARDS_JSON = 'ops/freeze-guards.json'
@@ -1709,7 +1654,7 @@ def check_ai_control(ctx):
 
 
 def check_ledger_size(ctx):
-    """封存账本容量: he3 seal 逼近 128MiB 读取上限需预警; selected_six 已超限属已知, 仅记录。"""
+    """封存账本容量: he3 seal 逼近 128MiB 读取上限需预警。"""
     entries = {}
     total = 0
     missing = []
@@ -1739,10 +1684,6 @@ def check_ledger_size(ctx):
             else:
                 item['status'] = OK
                 note = '%s (阈值 110/120MiB)' % _human_bytes(size)
-        elif name == 'selected_six_seals.json' and size > 128 * 1024 * 1024:
-            item['status'] = OK
-            note = ('%s (已知超 128MiB 读取上限, 运行观测已加紧凑索引回退, 仅记录)'
-                    % _human_bytes(size))
         else:
             item['status'] = OK
             note = _human_bytes(size)
@@ -1783,7 +1724,6 @@ CHECK_FUNCS = (
     check_coverage,
     check_hitrate_stability,
     check_hitrate_attribution,
-    check_hitrate_verdicts,
     check_ai_control,
     check_model_usage,
 )
@@ -1814,7 +1754,6 @@ FALLBACK_NAMES = {
     'check_coverage': ('coverage',),
     'check_hitrate_stability': ('hitrate_stability',),
     'check_hitrate_attribution': ('hitrate_attribution',),
-    'check_hitrate_verdicts': ('hitrate_verdicts',),
     'check_ai_control': ('ai_control',),
     'check_model_usage': ('model_usage',),
 }

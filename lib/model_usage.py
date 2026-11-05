@@ -31,7 +31,6 @@ USAGE_DIR = 'data/model_usage'
 SOURCE_LOGS = (
     ('framework', 'data/ai_job_framework.log'),
     ('killer', 'data/ai_job_killer.log'),
-    ('six', 'data/selected_six_cron.log'),
     ('he3', 'data/he3_refine_cron.log'),
     ('kill3', 'data/kill3_tail_cron.log'),
     ('kill1', 'data/kill1_tail_cron.log'),

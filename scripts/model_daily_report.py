@@ -26,14 +26,6 @@ BASELINE = 0.9
 # 每个模型:账本文件 + 指标提取规则(语义均已与账本 outcomes 反验一致)
 MODELS = (
     {
-        'model': 'selected_six',
-        'ledger': 'selected_six_hit_stats.json',
-        'metrics': {
-            'position_q': ('selected_positions', 'q', 0),
-            'position_s': ('selected_positions', 's', 2),
-        },
-    },
-    {
         'model': 'r1_framework',
         'ledger': 'r1_framework_hit_stats.json',
         # 2026-10-30: framework 已按 PENTA5_MODEL_FRAMEWORK 可在 flash/pro 间切换;

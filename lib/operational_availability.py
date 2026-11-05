@@ -8,7 +8,7 @@ from stats_history import TZ, parse_period, period_slot
 
 KINDS = {'killer': 'killer', 'framework': 'framework', 'pro4': 'pro4',
          'selected': 'selected7', 'selected7': 'selected7',
-         'six': 'selected6', 'selected6': 'selected6', 'he3_refine': 'he3_refine'}
+         'he3_refine': 'he3_refine'}
 
 
 def stamp(value):
@@ -36,9 +36,6 @@ def seal_identity(model, seal):
                     if identity is not None else None)
         elif kind == 'selected7':
             from selected_framework_attack import build_attack
-            text = build_attack(seal.get('response'), revision=seal.get('revision'))
-        elif kind == 'selected6':
-            from selected_six_view import build_attack
             text = build_attack(seal.get('response'), revision=seal.get('revision'))
     except (ImportError, ValueError, TypeError, KeyError, OverflowError):
         text = None

@@ -31,11 +31,9 @@ DURATION_KEYS = ('source_to_input', 'input_to_request', 'request_to_response',
 MODELS = {
     'killer': ('Flash 杀码', 'r1_stats.json', 'ai_job_status.json', 'ai_job_killer.log', 'R1_KILLER'),
     'framework': ('Flash 框架', 'r1_framework_seals.json', 'ai_job_status.json', 'ai_job_framework.log', 'R1_FRAMEWORK'),
-    'selected6': ('七项', 'selected_six_seals.json', 'selected_six_status.json', 'selected_six_cron.log', 'SELECTED_SIX_INDEPENDENT'),
     'he3_refine': ('三合五尾', 'he3_refine_seals.json', 'he3_refine_status.json', 'he3_refine_cron.log', 'HE3_REFINE'),
 }
-_MODEL_ENV_KEYS = {'killer': 'PENTA5_MODEL_KILLER', 'framework': 'PENTA5_MODEL_FRAMEWORK',
-                    'selected6': 'PENTA5_MODEL_SIX'}
+_MODEL_ENV_KEYS = {'killer': 'PENTA5_MODEL_KILLER', 'framework': 'PENTA5_MODEL_FRAMEWORK'}
 _TIER_PREFIX = {'deepseek-flash': 'Flash', 'deepseek-v4-flash': 'Flash', 'deepseek-v4-pro': 'Pro'}
 
 
@@ -52,7 +50,7 @@ def _model_tiers(root):
             continue
         key, _, value = text.partition('=')
         key = key.strip()
-        if key in ('PENTA5_MODEL_KILLER', 'PENTA5_MODEL_FRAMEWORK', 'PENTA5_MODEL_SIX',
+        if key in ('PENTA5_MODEL_KILLER', 'PENTA5_MODEL_FRAMEWORK',
                    'PENTA5_DEEPSEEK_MODEL'):
             values[key] = value.strip().strip('"').strip("'")
     result = {}
@@ -128,25 +126,7 @@ def _read(path, limit=MAX_JSON_BYTES, *, text=False):
                       parse_constant=lambda value: (_ for _ in ()).throw(ValueError('runtime-invalid-json-number')))
 
 
-SIX_LEDGER = 'selected_six_seals.json'
-SIX_SEAL_INDEX = 'selected_six_seal_index.json'
-SIX_SEAL_INDEX_TIMEOUT = 60
 PANEL_GRACE_SECONDS = 180
-
-
-def _six_ledger_fallback(root):
-    """Read the bounded compact index when the six ledger exceeds the read limit."""
-    source = Path(root) / 'data' / SIX_LEDGER
-    index = source.parent / SIX_SEAL_INDEX
-    script = Path(root) / 'scripts' / 'build_six_seal_index.py'
-    if script.is_file():
-        completed = subprocess.run(
-            [sys.executable, str(script), '--root', str(root), '--if-stale'],
-            capture_output=True, text=True, timeout=SIX_SEAL_INDEX_TIMEOUT,
-            cwd=str(root))
-        if completed.returncode != 0:
-            raise ValueError('six-seal-index-build-failed')
-    return _read(index)
 
 
 def _recent_publication(row, now):
@@ -227,8 +207,7 @@ def _eligible(control, reference, now, evidenced=False):
 def _error_kind(value):
     text = value.lower() if isinstance(value, str) else ''
     if text in ('selected-seven-operation-window-passed', 'selected-seven-insufficient-operation-budget',
-                'operation-window-closed','operation-window-insufficient-budget',
-                'selected-six-operation-window-passed','selected-six-insufficient-operation-budget'):
+                'operation-window-closed','operation-window-insufficient-budget'):
         return 'operation-window'
     if 'strategy' in text:
         return 'strategy-rejected'
@@ -394,8 +373,7 @@ def _panel_targets(html):
     parser = _Panel()
     parser.feed(html)
     result = {}
-    for model, identity in (('selected6', 'six-independent-attack-data'),
-                             ('he3_refine', 'he3-retained-data')):
+    for model, identity in (('he3_refine', 'he3-retained-data'),):
         values = parser.scripts.get(identity, [])
         data = values[0] if len(values) == 1 and isinstance(values[0], dict) else {}
         result[model] = _period(data.get('target_period'))
@@ -669,13 +647,6 @@ def collect(*, root=ROOT, clock=beijing_now):
     evidence, statuses, diagnostics, starts, unavailable = {}, {}, {}, {}, []
     for key, (_, filename, status_file, logfile, _) in MODELS.items():
         document = None
-        if key == 'selected6':
-            try:
-                if (root / 'data' / filename).stat().st_size > MAX_JSON_BYTES:
-                    document = _six_ledger_fallback(root)
-            except (OSError, ValueError, TypeError, KeyError, OverflowError,
-                    subprocess.SubprocessError):
-                document = None
         if document is None:
             document = read('data/' + filename, optional=True)
         try:

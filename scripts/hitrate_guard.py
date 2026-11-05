@@ -27,8 +27,6 @@ LOG_NAME = 'hitrate_guard.log'
 MIN_SAMPLE = 200
 MISSING_LOOKBACK = 100
 PENDING_GRACE_MINUTES = 20
-FALLBACK_WINDOW_HOURS = 24
-FAILURE_WINDOW_HOURS = 2
 DRIFT_STALE_MINUTES = 45
 DRIFT_PATH = 'data/framework_hitrate_cumulative.json'
 
@@ -77,38 +75,6 @@ def _stamp(reference):
         return period_slot(reference)
     except Exception:
         return None
-
-
-def _fallback_events(root, now, watermark=None):
-    current = _period((_read_json(root / 'data/state.json', {}) or {}).get('latestRecord', {}).get('period'))
-    fallback_cutoff = (now - timedelta(hours=FALLBACK_WINDOW_HOURS))
-    failure_cutoff = (now - timedelta(hours=FAILURE_WINDOW_HOURS))
-    fallbacks = 0
-    failures = 0
-    last_fallback = None
-    for name in ('selected_six_cron.log', 'selected_six_cron.log.1'):
-        try:
-            lines = (root / 'data' / name).read_text(encoding='utf-8', errors='replace').splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            if 'SELECTED_SIX_LOCAL_MINIMAX_FALLBACK' in line:
-                match = re.search(r'SELECTED_SIX_LOCAL_MINIMAX_FALLBACK ref=([0-9]{11})', line)
-                reference = _period(match.group(1)) if match else None
-                stamp = _stamp(reference) if reference else None
-                if stamp is not None and stamp >= fallback_cutoff and (watermark is None or stamp >= watermark):
-                    fallbacks += 1
-                    if last_fallback is None or reference > last_fallback:
-                        last_fallback = reference
-                continue
-            if 'SELECTED_SIX_INDEPENDENT_FAILURE' in line:
-                match = re.search(r'SELECTED_SIX_INDEPENDENT_FAILURE ref=([0-9]{11})', line)
-                reference = _period(match.group(1)) if match else None
-                stamp = _stamp(reference) if reference else None
-                if stamp is not None and stamp >= failure_cutoff and (watermark is None or stamp >= watermark):
-                    failures += 1
-    return {'fallbacks_24h': fallbacks, 'final_failures_2h': failures,
-            'last_fallback_ref': last_fallback, 'current_reference': current}
 
 
 def _verified_periods(root, relative):
@@ -184,7 +150,6 @@ def _classified_missing(root, now, watermark):
     models = {}
     for key, relative in (
             ('framework', 'data/r1_framework_hit_stats.json'),
-            ('six', 'data/selected_six_hit_stats.json'),
             ('he3', 'data/he3_refine_hit_stats.json')):
         have = _verified_periods(root, relative)
         missing = [period for period in reference if period not in have]
@@ -230,7 +195,6 @@ def _missing_legacy(root, now, watermark):
     models = {}
     for key, relative in (
             ('framework', 'data/r1_framework_hit_stats.json'),
-            ('six', 'data/selected_six_hit_stats.json'),
             ('he3', 'data/he3_refine_hit_stats.json')):
         have = _verified_periods(root, relative)
         missing = [period for period in reference if period not in have]
@@ -339,10 +303,6 @@ def main(argv=None):
     if not isinstance(watermark, str):
         watermark = checked_at.isoformat()
 
-    six = _fallback_events(root, checked_at, _stamp_iso(watermark))
-    six_status = 'warn' if six['final_failures_2h'] else 'ok'
-    raise_status(six_status)
-    six['status'] = six_status
     missing = _missing(root, checked_at, _stamp_iso(watermark))
     for result in (missing.get('models') or {}).values():
         raise_status(result['status'])
@@ -358,7 +318,7 @@ def main(argv=None):
              'status': overall,
              'latest_reference': baseline.get('as_of_period'),
              'drift': drift,
-             'hitrate': rows, 'six': six, 'missing': missing,
+             'hitrate': rows, 'missing': missing,
              'balance': {'last_balance': last_balance, 'status': balance_status}}
     _atomic_json(state_path, state)
     if overall != 'ok' or previous.get('status') != overall:
@@ -369,7 +329,6 @@ def main(argv=None):
                                 'non_ok': [row['key'] for row in drift['rows']
                                            if row['status'] not in ('ok', 'insufficient', 'high', 'unknown')]},
                       'hitrate_non_ok': [row['key'] for row in rows if row['status'] not in ('ok', 'insufficient', 'unknown')],
-                      'six': {'fallbacks_24h': six['fallbacks_24h'], 'failures_2h': six['final_failures_2h']},
                       'missing_alert': {key: value['alert_count'] for key, value in (missing.get('models') or {}).items()},
                       'missing_split': {key: {'switch_off': value.get('switch_off_count', 0),
                                               'unexplained': value.get('unexplained_count', 0),

@@ -101,39 +101,6 @@ def main():
 
     total_bets = total_hits = 0
 
-    # selected_six
-    path = DATA / 'selected_six_hit_stats.json'
-    if path.exists():
-        by_rev, daily, mismatch, count = scan_ledger(path)
-        report['cross_checks'].append({'file': path.name, 'verified': count,
-                                       'mismatch': mismatch})
-        for revision in sorted(by_rev, key=lambda r: -sum(v[0] for v in by_rev[r].values())):
-            buckets = by_rev[revision]
-            bets = sum(v[0] for v in buckets.values())
-            hits = sum(v[1] for v in buckets.values())
-            total_bets += bets
-            total_hits += hits
-            item = entry(f'selected_six / {revision}', bets, hits)
-            if item:
-                report['totals'].append(item)
-            # 只有样本足够的版本才进分位置明细
-            if bets >= 100:
-                for key, _ in POSITIONS:
-                    if key in buckets:
-                        sub = entry(f'{revision} · {LABELS[key]}', buckets[key][0], buckets[key][1])
-                        if sub:
-                            sub['revision'] = revision
-                            sub['position'] = key
-                            report['by_position'].append(sub)
-        report['daily'] = [{'biz': biz, 'bets': v[0], 'hits': v[1],
-                            'rate': round(v[1] / v[0], 6)}
-                           for biz, v in sorted(daily.items()) if biz and v[0] > 0][-7:]
-
-    if total_bets:
-        overall = entry('selected_six 全部版本', total_bets, total_hits)
-        if overall:
-            report['totals'].append(overall)
-
     # r1_framework(字段名不同:q_kill1 / b_kill1)
     path = DATA / 'r1_framework_hit_stats.json'
     if path.exists():

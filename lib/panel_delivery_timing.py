@@ -23,7 +23,6 @@ MODELS = {
     'killer': ('R1_KILLER', 'r1_killer_attack_text', None),
     'framework': ('R1_FRAMEWORK', 'r1_framework_attack_text', None),
     'selected7': ('SELECTED_FRAMEWORK', 'selected6-attack-text', 'selected6-attack-data'),
-    'selected6': ('SELECTED_SIX_INDEPENDENT', 'six-independent-attack-text', 'six-independent-attack-data'),
     'he3_refine': ('HE3_REFINE', None, 'he3-refine-active'),
 }
 FIELDS = ('model','reference_period','target_period','source_card_sha256','attack_sha256','scope')
@@ -91,7 +90,7 @@ def extract_identity(model, html, *, _parsed=None, _require_available=False, _ob
         if not match:
             match=re.search(r'(?:最新)?参考期号\s*[:：]\s*([0-9]{11})',re.sub('<[^>]+>',' ',card))
         reference=match.group(1) if match else None
-    elif model in ('selected7','selected6'):
+    elif model == 'selected7':
         node=parser.one(data_id)
         try: payload=json.loads(''.join(node['text'])) if node else None
         except (ValueError,TypeError): return None
@@ -126,7 +125,7 @@ def extract_identity(model, html, *, _parsed=None, _require_available=False, _ob
         if not node: return None
         attack=''.join(node['text']).strip()
         if not attack: return None
-        if model in ('selected7','selected6') and payload.get('attack')!=attack: return None
+        if model == 'selected7' and payload.get('attack')!=attack: return None
     identity={'model':model,'reference_period':reference,'target_period':next_period(reference),
               'source_card_sha256':_hash(card.strip().encode()),
               'attack_sha256':_hash(attack.encode()) if attack is not None else None,

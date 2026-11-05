@@ -658,9 +658,9 @@ SCRIPT = """<script id="selected6-control">
       if(card)attr(card,'data-selected6-current',valid?'true':'false');
     }
   }
-  var old=window.__PENTA5_SELECTED_SIX__;
+  var old=window.__PENTA5_SELECTED_FRAMEWORK_VIEW__;
   if(old){if(old.timer!=null)clearInterval(old.timer);if(typeof old.check==='function'){window.removeEventListener('pageshow',old.check);document.removeEventListener('visibilitychange',old.check);document.removeEventListener('penta5:panel-updated',old.check);}}
-  var state={version:version,check:check,timer:null};window.__PENTA5_SELECTED_SIX__=state;
+  var state={version:version,check:check,timer:null};window.__PENTA5_SELECTED_FRAMEWORK_VIEW__=state;
   window.addEventListener('pageshow',check);document.addEventListener('visibilitychange',check);document.addEventListener('penta5:panel-updated',check);state.timer=setInterval(check,1000);check();
 })();
 </script>"""

@@ -24,12 +24,11 @@ from stats_history import TZ, parse_period
 DOMAIN='penta5-published-validation-v1'
 MAX_TICKETS=4096
 MAX_BYTES=8*1024*1024
-_MODELS={'selected7':'selected_framework_model','selected6':'selected_six_model'}
+_MODELS={'selected7':'selected_framework_model'}
 _DEPENDENCIES=(
     'publication_validation_cache.py',
     'selected_framework_model.py','selected_framework_contract.py','selected_framework_view.py',
-    'selected_six_model.py','selected_six_contract.py','selected_six_view.py',
-    'selected_request_options.py','selected_six_request_options.py','selected_strategy_validation.py',
+    'selected_request_options.py','selected_strategy_validation.py',
     'ai_strategy_validation.py','stat50_compare.py','ai_verified_stats.py','stats_history.py',
     'position_input_features.py','strategy_features.py','selected_framework_attack.py',
     'selected_single_view.py','ai_prediction_guard.py','ai_model_context.py',

@@ -9,15 +9,13 @@ from functools import lru_cache
 from hashlib import sha256
 
 import selected_framework_contract as seven_contract
-import selected_six_contract as six_contract
 
 
-_CONTRACTS = {'selected': seven_contract, 'six': six_contract}
+_CONTRACTS = {'selected': seven_contract}
 _POSITIONS = ('q', 'b', 's', 'g')
 _TAILS = ('all', 'qbs', 'qbg', 'qsg', 'bsg')
 _CURRENT_REVISIONS = {
     'selected': 'selected-seven-v6-three-positions',
-    'six': six_contract.REVISION,
 }
 
 
@@ -74,8 +72,6 @@ def _build_cached(model, revision, positions, tails, he2_keep, he3_keep, pattern
         blocked = False
         for index, kill in positions:
             if isinstance(kill, str):
-                # Current six-item rule narrows a selected position to the
-                # intersection of the two derived reverse-form digit classes.
                 if str(digits[index]) not in kill:
                     blocked = True
                     break
@@ -98,22 +94,17 @@ def _build_cached(model, revision, positions, tails, he2_keep, he3_keep, pattern
 def build_coverage(model, response, revision):
     """Validate one current response and return bounded-cached exact coverage.
 
-    ``model`` is ``selected`` (three-position seven-item framework) or ``six``
-    (independent six-item framework). Legacy revisions are deliberately rejected
-    so simulated accounting cannot silently reinterpret an older rule cohort.
+    ``model`` is ``selected`` (three-position seven-item framework). Legacy
+    revisions are deliberately rejected so simulated accounting cannot silently
+    reinterpret an older rule cohort.
     """
     if (not isinstance(model, str) or model not in _CONTRACTS
             or not isinstance(revision, str) or revision != _CURRENT_REVISIONS[model]):
         raise ValueError('unsupported-framework-coverage-model-or-revision')
     normalized = _CONTRACTS[model].validate_response(response, revision=revision)
     patterns = ()
-    if model == 'six' and revision == _CURRENT_REVISIONS['six']:
-        positions = tuple((_POSITIONS.index(key), kill)
-                          for key, kill in normalized['selected_positions'].items())
-        patterns = (normalized['reverse_parity'], normalized['reverse_size'])
-    else:
-        positions = tuple((_POSITIONS.index(key), kill)
-                          for key, kill in normalized['selected_positions'].items())
+    positions = tuple((_POSITIONS.index(key), kill)
+                      for key, kill in normalized['selected_positions'].items())
     tails = tuple((_TAILS.index(key), kill)
                   for key, kill in normalized['selected_tails'].items())
     return _build_cached(model, revision, positions, tails,
