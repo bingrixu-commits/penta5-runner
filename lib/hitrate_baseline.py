@@ -57,6 +57,8 @@ RULE_BASELINE = {
     ('kill8_tail', 'kill8-tail-v4-majority-lock-four-reverse-cold-forms'): (4, 0.7733),
     ('kill8_tail', 'kill8-tail-v5-dedupe-four-reverse-cold-forms'): (4, 0.7733),
     ('kill10_tail', 'kill10-tail-v1-he2-he3'): (2, 0.92022400),
+    # KILL11_ENUM_PLACEHOLDER: 已由 10^4 开奖 x 16000 配置精确枚举确认 120,600,000/160,000,000=0.75375，按项目口径登记 4 位 0.7538
+    ('kill11_tail', 'kill11-tail-v1-one-position-one-form'): (3, 0.7538),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -66,6 +68,7 @@ LABELS = {
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill8_tail': 'AI 四反向冷形态（4 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
+    'kill11_tail': 'AI 单位置杀码 + 单双形态（3 项）',
 }
 SINGLE_BASELINES = (
     ('杀 1 码', 0.9),
@@ -294,6 +297,40 @@ def _kill10_rows():
     return [_row('kill10_tail', rule, total, hits, 'data/kill10_tail/settlements.json')]
 
 
+def _kill11_rows():
+    seals = _read(DATA / 'kill11_tail' / 'seals.json') or {}
+    settlements = _read(DATA / 'kill11_tail' / 'settlements.json') or {}
+    records = seals.get('records') if isinstance(seals, dict) else None
+    rows = settlements.get('records') if isinstance(settlements, dict) else None
+    if not records or not rows:
+        return []
+    rule = records[-1].get('rule_version')
+    if not rule:
+        return []
+    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
+                 for record in records if isinstance(record, dict)}
+    now = datetime.now(TZ)
+    business_day = _business_start(now)
+    hits = 0
+    total = 0
+    for record in rows:
+        if not isinstance(record, dict) or not record.get('verified'):
+            continue
+        if 'counted' not in record:
+            continue
+        if (record.get('rule_version') != rule
+                and seal_rule.get(str(record.get('ref_period'))) != rule):
+            continue
+        day = _period_business_day(record.get('target_period'))
+        if day != business_day:
+            continue
+        total += 1
+        hits += int(bool(record.get('group_hit')))
+    if not total:
+        return []
+    return [_row('kill11_tail', rule, total, hits, 'data/kill11_tail/settlements.json')]
+
+
 def _as_of(rows):
     candidates = []
     he3 = _read(DATA / 'he3_refine_stats.json') or {}
@@ -313,6 +350,7 @@ def build():
     rows.extend(_kill1_rows())
     rows.extend(_kill8_rows())
     rows.extend(_kill10_rows())
+    rows.extend(_kill11_rows())
     now = datetime.now(TZ)
     return {
         'version': 1,
