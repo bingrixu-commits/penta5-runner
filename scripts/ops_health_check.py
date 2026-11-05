@@ -23,6 +23,7 @@ Collects a fixed set of probes into one JSON report plus a human table:
   data_tmp           stale data/tmp* leftovers (age > 10 min; warn > 2 / > 100 MiB)
   crontab_drift      live crontab vs reviewed ops/crontab.txt snapshot
   evidence_size      evidence archive + runtime observability directory sizes
+  ledger_size        data ledger file sizes vs the 128 MiB observability read limit
   deepseek_balance   DeepSeek key total_balance (>=8 CNY ok, 3-8 warn, <3 fail)
   provider_402       recent provider HTTP 402 in the AI job logs (<30 min -> warn)
   model_usage        derived token/cache/latency/402 summary (stale > 30 min -> warn)
@@ -126,6 +127,15 @@ KILL3_LATENCY_FAIL_SECONDS = 300
 KILL3_FREEZE_JSON = 'ops/kill3-freeze.json'
 KILL3_FREEZE_HOURS = 72
 KILL3_FREEZE_PERIODS = 100
+LEDGER_SIZE_FILES = (
+    'selected_six_seals.json',
+    'he3_refine_seals.json',
+    'selected_six_hit_stats.json',
+    'he3_refine_hit_stats.json',
+)
+LEDGER_HE3_WARN_BYTES = 110 * 1024 * 1024
+LEDGER_HE3_FAIL_BYTES = 120 * 1024 * 1024
+LEDGER_OTHER_NOTE_BYTES = 200 * 1024 * 1024
 
 
 def _one_line(text):
@@ -1698,6 +1708,54 @@ def check_ai_control(ctx):
                   {'enabled': True, 'age_seconds': int(age), 'balance': balance})
 
 
+def check_ledger_size(ctx):
+    """封存账本容量: he3 seal 逼近 128MiB 读取上限需预警; selected_six 已超限属已知, 仅记录。"""
+    entries = {}
+    total = 0
+    missing = []
+    details = []
+    status = OK
+    for name in LEDGER_SIZE_FILES:
+        path = ctx['root'] / 'data' / name
+        try:
+            size = path.stat().st_size
+        except OSError:
+            entries[name] = {'bytes': None, 'missing': True}
+            missing.append(name)
+            continue
+        total += size
+        item = {'bytes': size, 'missing': False}
+        if name == 'he3_refine_seals.json':
+            if size >= LEDGER_HE3_FAIL_BYTES:
+                item['status'] = FAIL
+                status = _max_status(status, FAIL)
+                note = ('he3 封存账本 %s 已达 128MiB 读取上限警戒线(>=120MiB), '
+                        '请立即为 he3 生成紧凑索引或滚动归档' % _human_bytes(size))
+            elif size >= LEDGER_HE3_WARN_BYTES:
+                item['status'] = WARN
+                status = _max_status(status, WARN)
+                note = ('he3 封存账本 %s 接近 128MiB 读取上限, '
+                        '建议为 he3 也生成紧凑索引或滚动归档' % _human_bytes(size))
+            else:
+                item['status'] = OK
+                note = '%s (阈值 110/120MiB)' % _human_bytes(size)
+        elif name == 'selected_six_seals.json' and size > 128 * 1024 * 1024:
+            item['status'] = OK
+            note = ('%s (已知超 128MiB 读取上限, 运行观测已加紧凑索引回退, 仅记录)'
+                    % _human_bytes(size))
+        else:
+            item['status'] = OK
+            note = _human_bytes(size)
+            if size >= LEDGER_OTHER_NOTE_BYTES:
+                note += ' (>=200MiB, 仅记录)'
+        entries[name] = item
+        details.append('%s=%s' % (name, note))
+    if missing:
+        details.append('missing: ' + ','.join(missing))
+    return _entry('ledger_size', status, '; '.join(details),
+                  {'bytes': total, 'files': entries})
+
+
 CHECK_FUNCS = (
     check_latest_draw,
     check_ai_jobs,
@@ -1718,6 +1776,7 @@ CHECK_FUNCS = (
     check_data_tmp,
     check_crontab,
     check_evidence_size,
+    check_ledger_size,
     check_deepseek_balance,
     check_provider_402,
     check_hitrate_cumulative,
@@ -1748,6 +1807,7 @@ FALLBACK_NAMES = {
     'check_data_tmp': ('data_tmp',),
     'check_crontab': ('crontab_drift',),
     'check_evidence_size': ('evidence_size',),
+    'check_ledger_size': ('ledger_size',),
     'check_deepseek_balance': ('deepseek_balance',),
     'check_provider_402': ('provider_402',),
     'check_hitrate_cumulative': ('hitrate_cumulative',),
