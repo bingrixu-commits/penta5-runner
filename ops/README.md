@@ -1599,6 +1599,7 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 真实周期（2026-11-05 18:00 手动 run）：data/kill8_position_exclusions.json 临时设 {"q":"5","b":"6","s":"7","g":"9"}（4 位置全偏大 → 锁全小；5/7/9 单、6 双 → 3 单 1 双 → 锁全双）；封存 ref=20261105216 → target=20261105217，published_at=18:00:37；forms parity=双单双双、size=小小小小、all_size=小小小小、all_parity=双双双双；攻击语「除双单双双除小小小小除小小小小除双双双双」；面板 KILL_EIGHT 区块 4 卡、含「多数锁定」文案、基线 77.33%、data-as-of=20261105216。同日 17:5x 另一 v4 封存 ref=20261105215→216 已按 counted_forms=4、group_hit=True、4 子项全 hit 结算（今日 v4 total=1/group_hits=1；v3 历史封存计 legacy=7 期、全中）。验证后排除数字已还原为 {"q":"9","b":"2","s":"","g":""}。
 - 备份 `/root/ops/kill8-v4-175342/`（files 改动前、files-after 改动后、evidence：patch/测试/探针、MANIFEST.txt sha256）；回滚 `git revert 615b3e1`。v3 历史封存（`kill8-tail-v3-four-reverse-cold-forms`）保留为 legacy，不计入 v4 统计。
 - 显示修正（`3da4488`）：卡片副标题原把 FORM_LABELS（「单双形态」等）再拼「形态」，渲染成「单双形态形态」；模板改为标签只渲染一次（「排除该四位单双形态（计入整组）」）。不改口径/基线/RULE_VERSION。2026-11-05 18:11 手动 run（ref 20261105218→219，exclusion {"q":"9","b":"2"}）后 panel.html KILL_EIGHT 区块 4 卡副标题正常、无「形态形态」；封存 forms parity=双单双单 size=小大大小 all_size=小小小小 all_parity=双双双双；旧封存 20261105216→217 亦已按 counted_forms=4 结算全 hit。
+- 输入源提示（`4d026e4`）：面板输入区顶部新增一行「本期计算使用排除数字：千 X · 百 X · 十 X · 个 X（输入框仅为浏览器本地记忆；点「启动本框架」后按输入框重新计算）」，数值从封存 position_exclusions 读取，避免浏览器本地记忆与服务端实际输入不一致造成误读；纯展示，不改口径/基线。
 
 ### kill3 专属静态上下文回灌试验（2026-11-05 18:10，`c5f6094` `75ebe96`）
 
