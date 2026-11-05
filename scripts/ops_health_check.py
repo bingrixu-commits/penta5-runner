@@ -1372,6 +1372,9 @@ STABILITY_STALE_MINUTES = 45
 ATTRIBUTION_REPORT_JSON = 'hitrate_attribution.json'
 ATTRIBUTION_STALE_MINUTES = 40
 
+VERDICTS_JSON = 'hitrate_verdicts.json'
+VERDICTS_STALE_MINUTES = 150
+
 
 def check_hitrate_stability(ctx):
     """命中率稳定性/断崖护栏：读 data/hitrate_stability.json（scripts/hitrate_stability.py）。
@@ -1470,6 +1473,52 @@ def check_hitrate_attribution(ctx):
                       '归因报告过期(%.1fmin>%dmin): %s' % (age_minutes, ATTRIBUTION_STALE_MINUTES, detail),
                       value)
     return _entry('hitrate_attribution', OK, detail, value)
+
+
+def check_hitrate_verdicts(ctx):
+    """全史判定：读 data/hitrate_verdicts.json（scripts/hitrate_verdicts.py，每小时跑）。
+
+    判定口径 n>=200 + Bonferroni α + delta<=-3pp；只有 confirmed-deficit 才 WARN，
+    watch（近期窗口显著但全史未确认）只记录不告警，避免把短期波动当持续亏损。
+    """
+    path = ctx['root'] / 'data' / VERDICTS_JSON
+    payload, error = _load_json(path)
+    if not isinstance(payload, dict):
+        return _entry('hitrate_verdicts', WARN,
+                      '全史判定报告缺失/不可读（cron 应每小时跑 scripts/hitrate_verdicts.py）: %s'
+                      % (error or 'invalid shape'))
+    summary = payload.get('summary') if isinstance(payload.get('summary'), dict) else {}
+    confirmed = summary.get('confirmed') if isinstance(summary.get('confirmed'), list) else []
+    watch = summary.get('watch') if isinstance(summary.get('watch'), list) else []
+    pending = summary.get('pending')
+    if not isinstance(pending, int):
+        pending = len(pending) if isinstance(pending, list) else 0
+    judged = payload.get('family_size')
+    generated = _parse_time(payload.get('generated_at'))
+    age_minutes = None
+    if generated is not None:
+        try:
+            age_minutes = (ctx['now'] - generated).total_seconds() / 60.0
+        except TypeError:
+            age_minutes = None
+    bits = ['judged=%s' % judged, 'pending=%s' % pending,
+            'as_of=%s' % (payload.get('as_of_period') or '-')]
+    if age_minutes is not None:
+        bits.append('age=%.1fmin' % age_minutes)
+    if confirmed:
+        bits.append('确认亏损 ' + ','.join(str(name) for name in confirmed[:4]))
+    if watch:
+        bits.append('近期偏离 ' + ','.join(str(name) for name in watch[:4]))
+    value = {'judged': judged, 'confirmed': confirmed, 'watch': watch,
+             'age_minutes': age_minutes, 'as_of_period': payload.get('as_of_period')}
+    detail = ' · '.join(bits)
+    if confirmed:
+        return _entry('hitrate_verdicts', WARN, '全史确认持续亏损: ' + detail, value)
+    if age_minutes is not None and age_minutes > VERDICTS_STALE_MINUTES:
+        return _entry('hitrate_verdicts', WARN,
+                      '全史判定报告过期(%.1fmin>%dmin): %s' % (age_minutes, VERDICTS_STALE_MINUTES, detail),
+                      value)
+    return _entry('hitrate_verdicts', OK, detail, value)
 
 
 FREEZE_GUARDS_JSON = 'ops/freeze-guards.json'
@@ -1675,6 +1724,7 @@ CHECK_FUNCS = (
     check_coverage,
     check_hitrate_stability,
     check_hitrate_attribution,
+    check_hitrate_verdicts,
     check_ai_control,
     check_model_usage,
 )
@@ -1704,6 +1754,7 @@ FALLBACK_NAMES = {
     'check_coverage': ('coverage',),
     'check_hitrate_stability': ('hitrate_stability',),
     'check_hitrate_attribution': ('hitrate_attribution',),
+    'check_hitrate_verdicts': ('hitrate_verdicts',),
     'check_ai_control': ('ai_control',),
     'check_model_usage': ('model_usage',),
 }
