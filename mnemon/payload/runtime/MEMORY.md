@@ -31,3 +31,5 @@ penta5-runner 2026-10-31 上线「模型运行观测层」：lib/model_usage.py 
 penta5-runner：面板「整组命中率 vs 随机期望（累计·版本锁定）」大表已于 2026-11-01 移到独立页 /hitrate（cron 每15min 重写 hitrate.html，面板只留 hitrate-base-entry 入口），不要再加回主面板。提交 598000f/b3bede4，备份 /root/ops/hitrate-page-20261101-044355/。
 §
 penta5-runner .env 的 PENTA5_MODEL_* 行由 scripts/model_tier_guard.py（cron 每10分钟，data/model_tier_guard.log）按余额自动全量切 flash/pro，且会增删个别键（如 KILL1/KILL2P 行可能消失）；各 task 脚本的真实模型解析有回退链（kill1: KILL1→KILLER→DEEPSEEK_MODEL；kill2p: KILL2P→KILL3→KILLER→DEEPSEEK_MODEL）。读「某任务当前用什么模型」必须按回退链解析 .env，不能只看单键。
+§
+w'q
