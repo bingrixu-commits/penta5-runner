@@ -112,7 +112,7 @@
   "kill1_tail": {
    "files": {
     "lib/kill1_tail.py": "15aa543642283ec553f5686c07b5a9278ccaab44fa3fd0fc852b52d976581714",
-    "lib/kill_one_view.py": "13c4e0492554239ef2059b28c12b191117e7e0a32292d5e42107bf05f471c40d"
+    "lib/kill_one_view.py": "b35f339a914364765013d4934685d74a87f5d9673021f4ae7bb6837490ce9751"
    },
    "freeze_hours": 72.0,
    "freeze_ref_period": "20261105123",
@@ -158,6 +158,14 @@
      "new_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
      "old_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
      "reason": "新增独立框架 kill10_tail（二数合 he2 + 三数合 he3，整组 2 项）：lib/panel_context.py 仅增量（_model_tiers 加 PENTA5_MODEL_KILL10、_kill10_self()、_ai_self_frame kill10_tail 分支、_ai_self_frames 加 kill10、build 加 kill10_stats/kill10_previous 与 kill10_self 注入、超限 pop 加 kill10_self）；A/B（旧=HEAD 模块副本，固定 now fixture）：无参数 build()+prompt_text() 新旧逐字节相同，kill3/kill1 入参路径唯一差异 = other_ai_self 多出 kill10 帧（extra_panel_input 设计内增项，同 kill9 先例），kill3_self/kill1_self 与其余键逐字节相同；kill10_self 仅在传入 kill10 参数时出现。kill3 RULE_VERSION v16 与口径未变。"
+    },
+    {
+     "at": "2026-11-06T02:06:56.051192+08:00",
+     "commit": "3928131",
+     "file": "lib/kill_one_view.py",
+     "new_sha256": "b35f339a914364765013d4934685d74a87f5d9673021f4ae7bb6837490ce9751",
+     "old_sha256": "13c4e0492554239ef2059b28c12b191117e7e0a32292d5e42107bf05f471c40d",
+     "reason": "kill1 面板卡展示层：累计行 as_of/滞后标注、本版期数含待核验、缺期槽披露（commit 3928131）"
     }
    ],
    "label": "单位置杀码(kill1)",
@@ -687,6 +695,6 @@
    }
   }
  },
- "updated_at": "2026-11-06T01:41:49.219876+08:00",
+ "updated_at": "2026-11-06T02:06:56.052928+08:00",
  "version": 1
 }
