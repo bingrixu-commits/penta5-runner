@@ -2,8 +2,8 @@
  "files": {
   "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
   "lib/kill_three_view.py": "f2dbb4fd72dbe9df64553d5e4daa7f926ef283b462e8483d9382a853dd79c433",
-  "scripts/run_kill3_tail.py": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5",
-  "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
+  "lib/panel_context.py": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+  "scripts/run_kill3_tail.py": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5"
  },
  "freeze_hours": 72,
  "freeze_ref_period": "20261105056",
@@ -310,24 +310,24 @@
    "at": "2026-11-05T03:26:17+08:00",
    "commit": "fb5f327",
    "file": "lib/kill3_tail.py",
-   "old_sha256": "426d014f4590724274284fae87defa26d752f28abe57d636f6138c5a69400cdc",
    "new_sha256": "a96151f9c3b2be6b9c72ee3c3e9835d3e3056358d9d6a8668aa542f9050eebc4",
+   "old_sha256": "426d014f4590724274284fae87defa26d752f28abe57d636f6138c5a69400cdc",
    "reason": "用户指令 m00595 + 问卷（2026-11-05）：KILL_THREE 位置排除依据改「近50期热码 top3 + 上期重码 + 邻码」，删冷码候选并禁止冷码/长遗漏依据，升 RULE_VERSION v14；整组结构（8 项）不变、注册基线 0.5863 沿用，旧 v13 封存只读保留。"
   },
   {
    "at": "2026-11-05T04:44:42+08:00",
    "commit": "2c34e59",
    "file": "lib/kill3_tail.py",
-   "old_sha256": "a96151f9c3b2be6b9c72ee3c3e9835d3e3056358d9d6a8668aa542f9050eebc4",
    "new_sha256": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
+   "old_sha256": "a96151f9c3b2be6b9c72ee3c3e9835d3e3056358d9d6a8668aa542f9050eebc4",
    "reason": "用户指令 m00003 + 问卷（2026-11-05）：KILL_THREE 位置段恢复「热码 top3 + 冷码 top3」并列并删除禁用冷码文案，新增【位置杀码稳定化影子】对照段（hold2/3/5/until-miss，735 期/1571 注只读回放），是否沿用上期同位置杀码由模型自主决定，升 RULE_VERSION v15；整组结构（8 项/2 注/hold3 尾码）不变，基线 0.5863 沿用，旧 v14 封存只读保留。"
   },
   {
    "at": "2026-11-05T04:44:42+08:00",
    "commit": "2c34e59",
    "file": "scripts/run_kill3_tail.py",
-   "old_sha256": "0261afc28c93f7af4a4469b8604c2974f2f677a0f9cd827db9ed6c16b158ac5d",
    "new_sha256": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5",
+   "old_sha256": "0261afc28c93f7af4a4469b8604c2974f2f677a0f9cd827db9ed6c16b158ac5d",
    "reason": "用户指令 m00003 + 问卷（2026-11-05）：KILL_THREE 位置段恢复「热码 top3 + 冷码 top3」并列并删除禁用冷码文案，新增【位置杀码稳定化影子】对照段（hold2/3/5/until-miss，735 期/1571 注只读回放），是否沿用上期同位置杀码由模型自主决定，升 RULE_VERSION v15；整组结构（8 项/2 注/hold3 尾码）不变，基线 0.5863 沿用，旧 v14 封存只读保留。"
   },
   {
@@ -337,6 +337,14 @@
    "new_sha256": "f2dbb4fd72dbe9df64553d5e4daa7f926ef283b462e8483d9382a853dd79c433",
    "old_sha256": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
    "reason": "只读展示行：面板新增「本版累计整组命中率」（读 framework_hitrate_cumulative 的 kill3_tail 行，row.rule 必须等于 RULE_VERSION）+ 今日前缀 + 脚注 + 4 条 .k3-cum CSS；选码/尾码/8 项结构/封存/结算/AI prompt 未变，不升 RULE_VERSION（用户 m00050「排除项不动」）。A/B 归一化后新旧 render 逐字节相同；真实周期 ref 20261105141→target 20261105142 已渲染该行。"
+  },
+  {
+   "at": "2026-11-05T12:34:40.692296+08:00",
+   "commit": "988b221",
+   "file": "lib/panel_context.py",
+   "new_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+   "old_sha256": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38",
+   "reason": "退役 selected_six（七项独立框架，用户指令 m00002）：lib/panel_context.py 移除 frameworks.selected_six 块与 model_tiers.six 环境档位；固定 fixture REF=20261105148/TGT=20261105149 的 build()+prompt_text() A/B 证明新旧 snapshot 仅这两处删除、其余逐字节相同（prompt sha 6d77b883daca8d72→a66a08e1f3647f45），kill3/kill1/kill9/he3/killer 口径、封存、结算与攻击语均未变。"
   }
  ],
  "min_periods": 100,
