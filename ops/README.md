@@ -1947,3 +1947,11 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - sha256（改前→改后）：`lib/kill3_v16_guard.py`（新）79dafed4f8dc778212eb14e167d0bf75e771983534562d85e6548913e2958651；`scripts/kill3_v16_rollback.py`（新）8f0a2e6390b4f819299e9326153f7a31c6fd075194261ef6c2ffb6f86cf4ea23；`scripts/ops_health_check.py` a41279a3…→ddbce8c3…；`scripts/framework_hitrate_cumulative.py` fdfb4a82…→a905cfb3…；`lib/kill_three_view.py` fbed9467…→f70ee853…；`ops/kill3-stability-plan.md` dbad79e6…→8f1eb8e7…；`ops/freeze-guards.json` b129eae8…→bd4670f9…；`ops/kill3-freeze.json` 7aeddeec…→9e5caa5d…。
 - 备份与回滚：改动前备份 `/root/ops/kill3-v16-deploy-20261106T063925/`（5 个 .bak：kill_three_view / framework_hitrate_cumulative / ops_health_check / README / kill3-stability-plan）与 `/tmp/fwhc_old.json`（累计 JSON 旧版）。回滚本组：`git revert 93cd39a 7b98f31 95344a9 12f3ca4`；v16 口径回滚走 `python3 scripts/kill3_v16_rollback.py --execute`（仅 triggered 时）。
 - 并行窗口：`M lib/hitrate_baseline.py`、`M lib/kill8_tail.py`、`M lib/kill_eight_view.py` 三处在途改动均未进入本组提交；期间 HEAD 由 60031e9 推进至 8f033d8（他窗 kill11 台账/冷码），本组 4 个提交叠加在其上。
+
+### GitHub 远端积压推送落地（2026-11-06 06:43，远端 main 40fcf26）
+
+- 背景：服务器无交互式 git 凭证，本地长期领先 GitHub origin/main，积压提交自 2026-11-05 06:32 的 13168cc 起累计 126 个；本次 fetch 时远端 main 为 905d6e4，本地 HEAD 为 40fcf26，HEAD...origin/main = 125/0（无远端独有提交，可 fast-forward）。
+- 方式：沿用 2026-11-05 已创建并注册的服务器专用 deploy key /root/.ssh/penta5_deploy_ed25519（ed25519、无口令、私钥仅存服务器），remote 走 SSH 别名 github-penta5（HostName github.com、User git、IdentitiesOnly yes）；ssh -T git@github-penta5 返回 successfully authenticated，本机 token 未打印、未写入服务器或仓库。
+- 推送：git push origin main 成功（905d6e4..93cd39a main -> main），随后其他窗口推进的 40fcf26 已在远端；本台账提交后再次推送，远端 main 与本地 HEAD 同步，ahead 0/0。
+- 验证：git rev-parse HEAD 与 git ls-remote origin refs/heads/main 相同；git rev-list --left-right --count HEAD...origin/main 为 0 0；工作树仅余另一窗口在途的 M lib/hitrate_baseline.py、M lib/kill8_tail.py、M lib/kill_eight_view.py（未提交、未推送，不属本批）。
+- 备份/回滚：本次为纯 fast-forward 推送，无合并、无冲突、未强推；如需回退远端可在 GitHub 侧 git reset --hard 905d6e4 后强推（不推荐），或 git revert 对应提交后再推。
