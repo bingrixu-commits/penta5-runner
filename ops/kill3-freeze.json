@@ -1,7 +1,7 @@
 {
  "files": {
   "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
-  "lib/kill_three_view.py": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
+  "lib/kill_three_view.py": "f2dbb4fd72dbe9df64553d5e4daa7f926ef283b462e8483d9382a853dd79c433",
   "scripts/run_kill3_tail.py": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5",
   "lib/panel_context.py": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38"
  },
@@ -329,10 +329,18 @@
    "old_sha256": "0261afc28c93f7af4a4469b8604c2974f2f677a0f9cd827db9ed6c16b158ac5d",
    "new_sha256": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5",
    "reason": "用户指令 m00003 + 问卷（2026-11-05）：KILL_THREE 位置段恢复「热码 top3 + 冷码 top3」并列并删除禁用冷码文案，新增【位置杀码稳定化影子】对照段（hold2/3/5/until-miss，735 期/1571 注只读回放），是否沿用上期同位置杀码由模型自主决定，升 RULE_VERSION v15；整组结构（8 项/2 注/hold3 尾码）不变，基线 0.5863 沿用，旧 v14 封存只读保留。"
+  },
+  {
+   "at": "2026-11-05T11:47:44+08:00",
+   "commit": "6a9b15a",
+   "file": "lib/kill_three_view.py",
+   "new_sha256": "f2dbb4fd72dbe9df64553d5e4daa7f926ef283b462e8483d9382a853dd79c433",
+   "old_sha256": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
+   "reason": "只读展示行：面板新增「本版累计整组命中率」（读 framework_hitrate_cumulative 的 kill3_tail 行，row.rule 必须等于 RULE_VERSION）+ 今日前缀 + 脚注 + 4 条 .k3-cum CSS；选码/尾码/8 项结构/封存/结算/AI prompt 未变，不升 RULE_VERSION（用户 m00050「排除项不动」）。A/B 归一化后新旧 render 逐字节相同；真实周期 ref 20261105141→target 20261105142 已渲染该行。"
   }
  ],
  "min_periods": 100,
- "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。 2026-11-04 00:23 用户指令变更（冻结期内例外）：用户明确要求把「三数共现避开 3 组」加进本框架整组（8 项）并给出攻击语格式「除对数579-349-089」，经用户问卷确认（8 项口径 / 组序按 1-2-3 组标签 / 升 v13 替换现网 v12）直接升 v13（kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid），未走影子门禁（用户指令优先）；冻结戳按 v13 重置（frozen_at 2026-11-04T00:23:17 / freeze_ref_period 20261104004），旧 v1–v12 封存只读保留、结算口径不变。（注：ref=20261104004 已由 v12 于 00:20:50 封存，故首个 v13 封存为 ref=20261104005 → target=20261104006；freeze_ref_period 按 20261104005 起算。） 2026-11-05 03:15 用户指令例外（m00469 + 两轮问卷）：仅把「四手连败」统计展示改为跨天累计（新增 four_loss_cycles_total，旧今日字段保留），不改选码/尾码/封存/结算；kill3_tail.py 与 kill_three_view.py hash 重算并记入 hash_updates（未重置 frozen_at、未升 RULE_VERSION）。 2026-11-05 用户指令例外（m00595 + 问卷）：KILL_THREE 位置排除依据改热码/重码/邻码（v14，禁冷码/长遗漏），整组结构不变、基线沿用 0.5863，旧 v13 封存只读保留；冻结戳按 v14 重置（frozen_at 2026-11-05T03:26:17+08:00 / freeze_ref_period 20261105041）。\n- 2026-11-05 2026-11-05T04:44:42+08:00 用户指令（m00003「怎么这个框架开什么除什么，我是要结合冷码这期排除。还有影子数据，由模型决定采取」）：KILL_THREE 位置排除恢复「热码 top3 + 冷码 top3」并列（删「不得以冷码/长遗漏为依据」），保留上期重码/邻码段，并把【位置杀码稳定化影子】（现行换码 vs hold2/hold3/hold5/hold-until-miss 命中率与换码次数，回放本框架已结算 735 期/1571 注）写入提示词，是否沿用上期同位置杀码由模型自主决定，系统不做确定性 hold 后处理；seal 增加 position_shadow/position_basis_used/hold_adopted/hold_policy 审计字段。整组结构（8 项=2 计入位置+1 合尾+2 形态+3 组三数共现避开）、2 注、尾码 hold3-until-miss 均不变，基线 (8, 0.5863) 追加同值行不重校准。升 RULE_VERSION v15，冻结戳重置 (freeze_ref_period 20261105056)。commit 2c34e59。",
+ "policy": "冻结期内改变选码/计数/尾码/统计口径必须先走影子+门禁；源码 hash 或 RULE_VERSION 一旦变化，ops_health kill3_freeze 会 WARN，经批准变更后需重算 hash 并更新本文件（见 ops/kill3-stability-plan.md）。2026-11-01 04:10 用户明确指令恢复「3 位置展示 / 2 个计入」（v9，保留尾码 hold3），属用户指令例外：旧 v1–v8 封存只读保留、冻结戳按 v9 重置（frozen_at 04:10:43 / freeze_ref_period 20261101050）。 2026-11-04 00:23 用户指令变更（冻结期内例外）：用户明确要求把「三数共现避开 3 组」加进本框架整组（8 项）并给出攻击语格式「除对数579-349-089」，经用户问卷确认（8 项口径 / 组序按 1-2-3 组标签 / 升 v13 替换现网 v12）直接升 v13（kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid），未走影子门禁（用户指令优先）；冻结戳按 v13 重置（frozen_at 2026-11-04T00:23:17 / freeze_ref_period 20261104004），旧 v1–v12 封存只读保留、结算口径不变。（注：ref=20261104004 已由 v12 于 00:20:50 封存，故首个 v13 封存为 ref=20261104005 → target=20261104006；freeze_ref_period 按 20261104005 起算。） 2026-11-05 03:15 用户指令例外（m00469 + 两轮问卷）：仅把「四手连败」统计展示改为跨天累计（新增 four_loss_cycles_total，旧今日字段保留），不改选码/尾码/封存/结算；kill3_tail.py 与 kill_three_view.py hash 重算并记入 hash_updates（未重置 frozen_at、未升 RULE_VERSION）。 2026-11-05 用户指令例外（m00595 + 问卷）：KILL_THREE 位置排除依据改热码/重码/邻码（v14，禁冷码/长遗漏），整组结构不变、基线沿用 0.5863，旧 v13 封存只读保留；冻结戳按 v14 重置（frozen_at 2026-11-05T03:26:17+08:00 / freeze_ref_period 20261105041）。\n- 2026-11-05 2026-11-05T04:44:42+08:00 用户指令（m00003「怎么这个框架开什么除什么，我是要结合冷码这期排除。还有影子数据，由模型决定采取」）：KILL_THREE 位置排除恢复「热码 top3 + 冷码 top3」并列（删「不得以冷码/长遗漏为依据」），保留上期重码/邻码段，并把【位置杀码稳定化影子】（现行换码 vs hold2/hold3/hold5/hold-until-miss 命中率与换码次数，回放本框架已结算 735 期/1571 注）写入提示词，是否沿用上期同位置杀码由模型自主决定，系统不做确定性 hold 后处理；seal 增加 position_shadow/position_basis_used/hold_adopted/hold_policy 审计字段。整组结构（8 项=2 计入位置+1 合尾+2 形态+3 组三数共现避开）、2 注、尾码 hold3-until-miss 均不变，基线 (8, 0.5863) 追加同值行不重校准。升 RULE_VERSION v15，冻结戳重置 (freeze_ref_period 20261105056)。commit 2c34e59。 2026-11-05 用户指令例外（m00050「排除项不动」）：仅面板只读展示（本版累计整组命中率行，commit 6a9b15a）与 hitrate_stability 基线带告警（commit 0d45d27）；kill_three_view.py hash 重算并记入 hash_updates，frozen_at 不重置、RULE_VERSION 未变。",
  "rule_version": "kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid",
  "version": 2
 }
