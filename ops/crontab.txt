@@ -3,7 +3,6 @@
 0 5 * * * flock -n /var/lock/penta5-b196b01f.lock bash -c 'python3 /root/penta5-runner/reset_daily.py >> /root/reset.log 2>&1'
 */30 * * * * flock -n /var/lock/penta5-03c2b9e5.lock bash -c '/bin/bash /root/penta5-runner/guard_daily.sh >/dev/null 2>&1'
 */5 * * * * flock -n /var/lock/penta5-killer.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_ai_ready_job.py killer >> auto_r1_killer.log 2>&1'
-*/5 * * * * flock -n /var/lock/penta5-six.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 295 python3 -u scripts/run_selected_six.py >> data/selected_six_cron.log 2>&1'
 */5 * * * * flock -w 30 /var/lock/penta5-he3.lock bash -c 'sleep 40 && cd /root/penta5-runner && timeout --kill-after=5s 255 python3 -u scripts/run_he3_refine.py >> data/he3_refine_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-framework.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_ai_ready_job.py framework >> auto_r1_framework.log 2>&1'
 * * * * * flock -n /var/lock/penta5-balance-guard.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 45 python3 -u scripts/ai_balance_guard.py >> data/ai_balance_guard.log 2>&1'
@@ -13,8 +12,6 @@
 # Prospective same-input Flash / Pro comparison
 # Fixed 50-draw statistical candidates; no model API calls
 1,6,11,16,21,26,31,36,41,46,51,56 * * * * flock -n /var/lock/penta5-stat50.lock bash -c 'sleep 20 && cd /root/penta5-runner && timeout 45 python3 -u scripts/run_stat50_compare.py >> data/stat50_compare_cron.log 2>&1'
-# Independent six-to-five extra reference; original AI contracts unchanged
-# Independent Pro selected-six prospective framework
 * * * * * flock -n /var/lock/penta5-obs.lock bash -c 'sleep 45 && cd /root/penta5-runner && timeout --kill-after=3s 50 python3 -u scripts/run_runtime_observability.py >> data/runtime_observability_cron.log 2>&1'
 9 5 * * * flock -n /var/lock/penta5-evidence.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 180 python3 -u scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift >> data/source_manifest_refresh.log 2>&1; timeout --kill-after=10s 900 python3 -u scripts/run_evidence_backup.py >> data/evidence_backup_cron.log 2>&1'
 17 * * * * /usr/sbin/logrotate -s /var/lib/logrotate/status /etc/logrotate.d/penta5 >> /root/penta5-runner/data/log_rotation.log 2>&1
@@ -22,7 +19,6 @@
 */15 * * * * flock -n /var/lock/penta5-cuopt-health.lock bash -c 'cd /root/penta5-runner && python3 scripts/check_cuopt_health.py >> data/cuopt_health_cron.log 2>&1'
 55 4 * * * flock -n /var/lock/penta5-manifest.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 180 python3 -u scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift >> data/source_manifest_refresh.log 2>&1'
 */10 * * * * flock -n /var/lock/penta5-health.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 120 python3 -u scripts/ops_health_check.py --root /root/penta5-runner >> data/ops_health_cron.log 2>&1'
-40 */6 * * * flock -n /var/lock/penta5-settled-report.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 300 python3 -u scripts/strategy_settled_report.py >> data/strategy_settled_cron.log 2>&1'
 25 * * * * flock -n /var/lock/penta5-model-daily.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 300 python3 -u scripts/model_daily_report.py >> data/model_daily_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-kill3t.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill3_tail.py >> data/kill3_tail_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-kill1t.lock bash -c 'sleep 35 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill1_tail.py >> data/kill1_tail_cron.log 2>&1'
@@ -32,7 +28,6 @@
 7,22,37,52 * * * * flock -n /var/lock/penta5-hitrate-cumulative.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 240 python3 -u scripts/framework_hitrate_cumulative.py >> data/framework_hitrate_cumulative_cron.log 2>&1'
 13,28,43,58 * * * * flock -n /var/lock/penta5-hitrate-stability.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 90 python3 -u scripts/hitrate_stability.py >> data/hitrate_stability_cron.log 2>&1'
 6,16,26,36,46,56 * * * * flock -n /var/lock/penta5-hitrate-attribution.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 120 python3 -u scripts/hitrate_attribution.py >> data/hitrate_attribution_cron.log 2>&1'
-34 * * * * flock -n /var/lock/penta5-hitrate-verdicts.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 300 python3 -u scripts/hitrate_verdicts.py >> data/hitrate_verdicts_cron.log 2>&1'
 2,7,12,17,22,27,32,37,42,47,52,57 * * * * flock -n /var/lock/penta5-joint-form.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 90 python3 -u scripts/run_joint_form_shadow.py --root /root/penta5-runner >> data/joint_form_shadow_cron.log 2>&1 && timeout --kill-after=3s 20 python3 -u scripts/update_joint_form_shadow_panel.py --root /root/penta5-runner >> data/joint_form_shadow_cron.log 2>&1'
 4,14,24,34,44,54 * * * * flock -n /var/lock/penta5-joint-guard.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=3s 30 python3 -u scripts/joint_form_promotion_gate.py >> data/joint_form_promotion_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-tail-shadow.lock bash -c 'sleep 50 && cd /root/penta5-runner && timeout --kill-after=3s 90 python3 -u scripts/run_tail_stability_shadow.py >> data/tail_stability_shadow_cron.log 2>&1'
@@ -41,4 +36,4 @@
 */5 * * * * flock -n /var/lock/penta5-tail-holdmax.lock bash -c 'sleep 45 && cd /root/penta5-runner && timeout --kill-after=3s 180 python3 -u scripts/run_tail_hold_max_shadow.py >> data/tail_hold_max_shadow_cron.log 2>&1'
 
 # seal/hit_stats 滚动归档：每天把超 7 天期号按月压到 data/archive/*.json.gz，主文件留近期窗口（read_full 透明合并冷分片）
-30 3 * * * flock -n /var/lock/penta5-seal-archive.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 600 python3 -u scripts/archive_seals.py --target he3_refine_seals --target selected_six_seals --keep-days 7 --apply >> data/seal_archive_cron.log 2>&1'
+30 3 * * * flock -n /var/lock/penta5-seal-archive.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 600 python3 -u scripts/archive_seals.py --target he3_refine_seals --keep-days 7 --apply >> data/seal_archive_cron.log 2>&1'
