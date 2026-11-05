@@ -67,7 +67,7 @@ def _model_tiers():
             key, value = line.split('=', 1)
             env[key.strip()] = value.strip()
     for key in ('PENTA5_DEEPSEEK_MODEL', 'PENTA5_MODEL_KILLER', 'PENTA5_MODEL_FRAMEWORK',
-                'PENTA5_MODEL_HE3', 'PENTA5_MODEL_KILL3',
+                'PENTA5_MODEL_HE3', 'PENTA5_MODEL_KILL3', 'PENTA5_MODEL_KILL10',
                 'PENTA5_MODEL_COLD'):
         if env.get(key):
             tiers[key.replace('PENTA5_MODEL_', '').replace('PENTA5_DEEPSEEK_MODEL', 'global').lower()] = env[key]
@@ -196,6 +196,24 @@ def _kill1_self(reference, kill1_stats, kill1_previous):
     return {'previous': previous, 'today': stats, 'reference': reference}
 
 
+def _kill10_self(reference, kill10_stats, kill10_previous):
+    previous = None
+    if isinstance(kill10_previous, dict):
+        previous = _pick(kill10_previous, ('ref_period', 'target_period', 'rule_version',
+                                           'he2_keep', 'he3_keep',
+                                           'generated_at', 'published_at'))
+    stats = None
+    if isinstance(kill10_stats, dict):
+        stats = _pick(kill10_stats, ('total', 'group_hits', 'group_rate',
+                                     'he2_keep', 'he3_keep',
+                                     'current_win_streak', 'current_loss_streak',
+                                     'max_loss_streak', 'four_loss_cycles',
+                                     'pending', 'latest_period'))
+    if previous is None and stats is None:
+        return None
+    return {'previous': previous, 'today': stats, 'reference': reference}
+
+
 def _cold_stats_frame():
     """Compact snapshot of the restored cold-code statistics blocks (read-only)."""
     observation = _read(DATA / 'cold_observation.json', {}) or {}
@@ -260,6 +278,8 @@ def _ai_self_frame(kind):
         fields += ['display_only', 'counted', 'reverse_parity', 'reverse_size']
     elif kind == 'kill1_tail':
         fields += ['counted', 'position_policy']
+    elif kind == 'kill10_tail':
+        fields += ['he2_keep', 'he3_keep']
     latest = _pick(records[-1], fields) if records else None
     settlements = _read(DATA / kind / 'settlements.json', {}) or {}
     verified = [item for item in (settlements.get('records') or [])
@@ -273,7 +293,8 @@ def _ai_self_frame(kind):
 
 
 def _ai_self_frames():
-    return {'kill3': _ai_self_frame('kill3_tail'), 'kill1': _ai_self_frame('kill1_tail')}
+    return {'kill3': _ai_self_frame('kill3_tail'), 'kill1': _ai_self_frame('kill1_tail'),
+            'kill10': _ai_self_frame('kill10_tail')}
 
 
 def _three_avoid2():
@@ -307,6 +328,7 @@ def _three_avoid2():
 
 def build(reference, target, *, kill3_stats=None, kill3_previous=None,
           kill1_stats=None, kill1_previous=None,
+          kill10_stats=None, kill10_previous=None,
           extra_panel_input=False, now=None):
     moment = now or datetime.now().astimezone()
     snapshot = {
@@ -324,6 +346,8 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     }
     if kill1_stats is not None or kill1_previous is not None:
         snapshot['kill1_self'] = _kill1_self(reference, kill1_stats, kill1_previous)
+    if kill10_stats is not None or kill10_previous is not None:
+        snapshot['kill10_self'] = _kill10_self(reference, kill10_stats, kill10_previous)
     models = _strategy_models().get('models') or {}
     for key, label in (('killer', '智能深排 killer'), ('framework', '固定八码框架')):
         frame = _framework_from_strategy(key, label, models)
@@ -344,7 +368,7 @@ def build(reference, target, *, kill3_stats=None, kill3_previous=None,
     payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if len(payload) > limit:
         for key in ('panel_cumulative', 'panel_hitrate_10p', 'kill3_self', 'kill1_self',
-                    'cold_stats', 'other_ai_self', 'three_avoid2'):
+                    'kill10_self', 'cold_stats', 'other_ai_self', 'three_avoid2'):
             snapshot.pop(key, None)
             payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
             if len(payload) <= limit:

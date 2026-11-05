@@ -34,6 +34,7 @@ SOURCE_LOGS = (
     ('he3', 'data/he3_refine_cron.log'),
     ('kill3', 'data/kill3_tail_cron.log'),
     ('kill1', 'data/kill1_tail_cron.log'),
+    ('kill10', 'data/kill10_tail_cron.log'),
 )
 
 MAX_READ_BYTES = 4 * 1024 * 1024

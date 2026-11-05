@@ -33,7 +33,7 @@ _WS_BYTES = b' \t\r\n'
 SAFE_CONFIG = {'LOCAL_STATE_MODE', 'ALGO_DURABLE_STORE', 'DATA_READ_MODE',
                'PENTA5_DAY_RESET_HOUR', 'PENTA5_ALGO_PROCESS_MODE',
                'PENTA5_ORCHESTRATE_FORCE_INPROCESS'}
-JSON_DIRS = ('ai_model_inputs', 'stat50_position_verified', 'kill3_tail', 'kill1_tail')
+JSON_DIRS = ('ai_model_inputs', 'stat50_position_verified', 'kill3_tail', 'kill1_tail', 'kill10_tail')
 REQUIRED_DATA = frozenset('data/' + name for name in (
     'ai_api_control.json', 'ai_api_control_audit.jsonl', 'state.json', 'stats_draw_history.json',
     'r1_stats.json', 'r1_framework_seals.json',
