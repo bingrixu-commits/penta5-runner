@@ -1749,3 +1749,9 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 验证：`py_compile` OK；`systemctl restart penta5-position-cold.service` → active；23:02:24 起每期重算 `data/position_cold_report.json`（23:11:08 as_of 20261105278，windows [100 第2冷 20261105177~276、80 第1冷 20261105197~276]）；面板 23:11:10 自动刷新（as_of 20261105277，大小 377914B）后含「最近 100 期 · 第2冷」「最近 80 期 · 第1冷」，旧「最近 30/20 期」标签计数 0（冷码观察仍「近30期」、冷码杀号战绩仍 100/80）。
 - 备份/回滚：`/tmp/position_cold_report.py.bak-20261105-230223`（pre sha256 `3a969b295d71df351795a45d4e857900…`）。回滚 `git revert e82b5c5` + `systemctl restart penta5-position-cold.service`（JSON 下期重算，面板下个结算周期自动更新）。
 
+### 冷码观察窗口：近30期（每日05:00清零）→ 跨日100期滚动窗口（2026-11-05 23:21，`dc2eae4`）
+
+- 需求：用户确认把「冷码观察」拉长为跨日 100 期（去掉每日 05:00 清零），使早 8 点面板也满窗稳定。
+- 改动（`dc2eae4`，2 文件 +38/−35）：`lib/cold_observation.py` `WINDOW_SIZE` 30→100、`REVISION` `cold-observation-v4-30-first`→`cold-observation-v5-100-crossday`，`build_observation` 由「当前业务日（05:00 起）最近 ≤30 期」改为「最近 100 期滚动窗口」（按 5 分钟期槽连续、跨自然日；缺期/冲突仍显式报错 `cold-history-gap` / `cold-conflicting-records`，窗口外旧冲突不污染）。`lib/cold_observation_view.py` 同步 REVISION、校验上限 100、标题「冷码观察 · 近100期每项第1名」、meta「跨日滚动窗口（每日 05:00 不清零） · 实际 N 期，最多100期」、note 与失败文案。
+- 验证：`py_compile` OK；`refresh_cold_observation` 重算 `data/cold_observation.json`（revision v5-100-crossday、window_size 100、sample_count 100、样本 20261105181~20261105280 连续 100 期，跨度 495 分钟）；独立复算 4 位置冷码（千2/百1/十5/个2）与 JSON 一致；面板 23:21:33 自动重建后含「冷码观察 · 近100期每项第1名」「跨日滚动窗口（每日 05:00 不清零）」，旧「近30期/最多30期」计数 0，`COLD_OBSERVATION` 区块标记 1/1 配平。冷码描述性统计不进 AI 上下文（`panel_context` 的 `extra_panel_input` 默认 False，全仓无 True 调用），本次不改任何预测语义。
+- 回滚：`git revert dc2eae4`（JSON 与面板在下一结算周期自动恢复旧口径）；改前备份 `/tmp/cold_observation.py.bak-20261105-232010`、`/tmp/cold_observation_view.py.bak-20261105-232010`。之后 `python3 scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift`。
