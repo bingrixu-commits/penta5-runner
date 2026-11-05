@@ -1917,3 +1917,13 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份/回滚：改前备份 `/tmp/*.bak-20261106-063350`（cold_hit_stats / position_cold_report / cold_observation / cold_observation_view 四个文件）；回滚 `git revert 58f3f76 e87d54a 2131a39` + `systemctl restart penta5-position-cold.service`（JSON 下期重算、面板下个结算周期自动恢复），或按备份覆盖后重启。
 - 并行窗口：`M lib/kill8_tail.py`、`M lib/hitrate_baseline.py`、`M lib/kill_eight_view.py` 三处在途改动均未进入本组提交。
 - 收尾复验（2026-11-06 06:38）：`python3 scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift` → 新基线 `/root/backups/auto-baseline-20261106-063810` 后 `manifest_drift OK`；`python3 scripts/ops_health_check.py --root /root/penta5-runner` 19 项 `overall=WARN`，唯一 WARN 为历史 `hitrate_stability`（as_of=20261106076 · age=10.3min · 观察 kill3_tail/kill1_tail），其余 OK（panel_html mtime 06:38:19、kill11 seals 583.4KiB、余额 58.87 CNY）。并发窗口三处在途改动仍未进入本组提交。
+
+### kill11 运行完善部署落地（2026-11-06，commit 2e035d6）
+
+- 落地对象：`scripts/ops_health_check.py` 封存账本容量监控扩展（LEDGER_SIZE_FILES 增加 kill1/kill10/kill11 封存账本；新增 LEDGER_ALERT_FILES 标签；对 4 个封存账本统一套 110MiB WARN / 120MiB FAIL 阈值，其余账本仅记体积）与 `ops/README.md` 运行完善台账；两者同属 commit `2e035d6`（chore(ops): 封存账本容量监控扩展到 kill1/kill10/kill11）。
+- 提交=磁盘：磁盘 `scripts/ops_health_check.py` sha256 `a41279a3...` 与 `git show HEAD:scripts/ops_health_check.py` 完全一致；文件 89709B、mtime 2026-11-06 06:27。
+- 无需重启：cron 每期新起 python 解释器直读磁盘，改动即生效。证据：cron 自身在 06:30:02 与 06:40:01 两次运行的日志已打印补丁后的 `ledger_size` 行（5 个账本：he3_refine_seals 41.4MiB、he3_refine_hit_stats 34.7MiB、kill1_tail/seals 13.4MiB、kill10_tail/seals 943.1→973.0KiB、kill11_tail/seals 549.8→583.4KiB，封存账本均带「阈值 110/120MiB」）；06:40:16 由 cron 生成的 `data/ops_health.json` 中 `ledger_size` 为 ok。
+- 面板链路：pm2 `penta5-panel-sync` 直读磁盘 `panel.html`（`penta5_backend_runner.js:15226` 为 `return path.join(__dirname, "panel.html")`），3010 由 node 监听、nginx `/etc/nginx/conf.d/penta5.conf` 由 3001 转发；落地时 `data-as-of=20261106078`、版本串 `all-attack-editor-v20-add-kill11`、KILL_ELEVEN 区块计数 1。
+- 定时与进程：`crontab -l` 与版本化基线 `ops/crontab.txt` diff 一致（40 行）；pm2 10/10 online（penta5-panel-sync 重启 3696 次、uptime 6D；penta5-runner uptime 4D）。
+- 并发说明：另一 DSH 窗口在本批落地期间并行修改 `lib/hitrate_baseline.py`、`lib/kill8_tail.py`、`lib/kill_eight_view.py` 并推进冷码窗口提交（2131a39 / e87d54a / 58f3f76），不在本批落地范围，未进入本批提交；manifest 刷新按当时磁盘快照取基线，期间其继续编辑可能导致 manifest_drift 短暂 FAIL，属并发窗口行为。
+- 备份/回滚：备份 `/root/ops/kill11-run-polish-20261106T062701/ops_health_check.py.bak`；回滚 `cp -a` 回 `scripts/ops_health_check.py` 后跑 `python3 scripts/refresh_source_manifest.py --root /root/penta5-runner --backup-base /root/backups --if-drift`，或 `git revert 2e035d6`。
