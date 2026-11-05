@@ -83,11 +83,14 @@ function createKill8RunHandler(options) {
     }
     if (req.method === 'GET') {
       send(res, 200, {ok: true, running: running, last_start: lastStart,
-        last_exit_code: lastExitCode, can_run: true});
+        last_exit_code: lastExitCode, can_run: role === 'admin'});
       return true;
     }
-    // POST = trigger the run. A logged-in viewer is sufficient; the action is
-    // a single paid AI call already guarded by webSecurity + same-origin login.
+    // POST = trigger the run (a real paid AI call). Admin only.
+    if (role !== 'admin') {
+      send(res, 403, {ok: false, error: 'admin-required'});
+      return true;
+    }
     if (running) {
       send(res, 409, {ok: false, error: 'run-busy'});
       return true;
