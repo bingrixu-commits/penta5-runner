@@ -1973,3 +1973,9 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 验证：\`node --check\` + \`py_compile\` OK；mock \`web_security.guardRequest\`/\`spawn\` 单测 viewer GET can_run=false、POST 403 且 spawn=0，admin GET true、POST 200 started spawn=1；\`pm2 restart penta5-runner\` 后真实 HTTP：viewer POST 403 \`{"ok":false,"error":"admin-required"}\`、viewer GET can_run=false、admin Basic GET can_run=true，\`data/kill8_run.log\` 无新增（未触发付费）；面板 06:56:29 自然重生成（395,920B）已含 v2 标记 1 处、管理员提示 3 处。
 - 备份/回滚：\`kill8_run_routes.js.bak-k8auth-20261106-065547\`、\`lib/kill_eight_view.py.bak-k8auth-20261106-065547\`、\`panel.html.bak-k8auth-20261106-065547\`；回滚 \`cp\` 回备份 + \`pm2 restart penta5-runner\`，或 \`git revert 3867ee5\`。
 - 未动：AI 总闸 admin 鉴权（原本即 admin-only）、kill8 封存/结算口径、crontab、v16（保持观察）。
+### 恢复 kill8 面板手动启动（2026-11-06 07:16）
+
+- 依据：用户 07:11「改手动启动」。3867ee5 把 /api/kill8-run 的 POST 收紧为仅 admin 后，viewer 账号登录的运营页面按钮变灰、无法手动启动。
+- 改动：kill8_run_routes.js GET can_run 对已通过登录鉴权的 admin/viewer 均返回 true，POST 去掉 admin-only 403；lib/kill_eight_view.py 运行键 JS 升 kill8-run-v3，去掉非 admin 禁用与「仅管理员可启动」文案；panel.html 当期生成物同步补丁。
+- 边界不变：未登录请求仍是 401；ai_control（AI 总闸）等其它付费/控制类接口仍 admin-only。
+- 回滚：git revert 本提交；或 git checkout 3867ee5 -- kill8_run_routes.js lib/kill_eight_view.py（回到 admin-only）。

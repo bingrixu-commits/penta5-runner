@@ -83,14 +83,10 @@ function createKill8RunHandler(options) {
     }
     if (req.method === 'GET') {
       send(res, 200, {ok: true, running: running, last_start: lastStart,
-        last_exit_code: lastExitCode, can_run: role === 'admin'});
+        last_exit_code: lastExitCode, can_run: true});
       return true;
     }
-    // POST = trigger the run (a real paid AI call). Admin only.
-    if (role !== 'admin') {
-      send(res, 403, {ok: false, error: 'admin-required'});
-      return true;
-    }
+    // POST = trigger the run (a real paid AI call). Any authenticated panel account may start manually.
     if (running) {
       send(res, 409, {ok: false, error: 'run-busy'});
       return true;
