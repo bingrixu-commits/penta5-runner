@@ -8,6 +8,13 @@
       "until": "2026-11-06T10:30:00+08:00",
       "reason": "kill1 v4 双位置+一合尾有意升级（2026-11-05 10:16 首封存 / 10:28 首次观测），过渡期 churn 告警已登记降噪；24h 后阈值本身也会自愈",
       "registered_at": "2026-11-05T19:39:31+08:00"
+    },
+    {
+      "key": "kill3_tail",
+      "rule": "kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop",
+      "until": "2026-11-07T02:00:00+08:00",
+      "reason": "kill3 v16 弃位形态按冷热取冷的有意升级（2026-11-06 00:01 首封存 / 00:13 首次观测），过渡期 churn 告警已登记降噪；24h 后阈值本身也会自愈",
+      "registered_at": "2026-11-06T01:16:08+08:00"
     }
   ]
 }
