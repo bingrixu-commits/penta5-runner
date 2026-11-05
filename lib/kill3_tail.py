@@ -57,7 +57,7 @@ STATE_PATH = ROOT / 'data' / 'state.json'
 WINDOW = 50
 CLOSE_SECONDS = 70
 MIN_REQUEST_SECONDS = 20.0
-MAX_TOKENS = 12288
+MAX_TOKENS = 16384
 REASONING_EFFORT = 'high'
 NONRETRYABLE_HTTP_STATUSES = frozenset((400, 401, 402, 422))
 
@@ -1060,7 +1060,7 @@ def _metadata(reference, attempt, model, api_key, envelope, elapsed):
         'reasoning_effort': REASONING_EFFORT,
         'max_tokens': MAX_TOKENS,
         'elapsed_seconds': round(max(0.0, float(elapsed)), 3),
-        'request_policy_version': 'kill3-high-12k-deadline-v1',
+        'request_policy_version': 'kill3-high-16k-deadline-v1',
     }
 
 
@@ -1114,6 +1114,7 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
     last_error = 'no-attempt'
     last_status = None
     attempts_used = 0
+    envelope = None
     for attempt in (1, 2, 3):
         attempts_used = attempt
         require_ai_enabled(clock=beijing_now)
@@ -1158,13 +1159,26 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
                 status = None
             last_status = status
             status_note = '' if status is None else f'; http_status={status}'
-            log(f'kill3 attempt {attempt}/3 rejected; error_type={last_error}{status_note}; not published.')
+            detail = str(error)[:100]
+            response_note = ''
+            if isinstance(envelope, dict):
+                failure_choices = envelope.get('choices')
+                failure_choice = (failure_choices[0]
+                                  if isinstance(failure_choices, list) and failure_choices
+                                  and isinstance(failure_choices[0], dict) else {})
+                failure_usage = (envelope.get('usage')
+                                 if isinstance(envelope.get('usage'), dict) else {})
+                response_note = '; finish_reason=%s; completion_tokens=%s; reasoning_tokens=%s' % (
+                    failure_choice.get('finish_reason'),
+                    failure_usage.get('completion_tokens'),
+                    failure_usage.get('reasoning_tokens'))
+            log(f'kill3 attempt {attempt}/3 rejected; error_type={last_error}{status_note}; '
+                f'detail={detail}{response_note}; not published.')
             if status in NONRETRYABLE_HTTP_STATUSES:
                 log(f'kill3 nonretryable provider HTTP {status}; stop retries; not published.')
                 break
             if attempt == 3:
                 break
-            detail = str(error)[:100]
             messages = [{'role': 'user', 'content': prompt},
                         {'role': 'user', 'content': RETRY_INSTRUCTION.format(error=detail)}]
             pause = max(0.0, min(4.0, (deadline - beijing_now()).total_seconds() - 25.0))
