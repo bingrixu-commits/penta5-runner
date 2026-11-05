@@ -24,10 +24,10 @@ from cold_observation import _group, POSITION_KEYS, DIGITS  # noqa: E402
 ROOT = Path('/root/penta5-runner')
 OUT_JSON = ROOT / 'data/position_cold_report.json'
 OUT_TEXT = ROOT / 'data/position_cold_report.txt'
-WINDOWS = (30, 20)
-# 30 期取第 2 冷:面板上方「冷码观察 · 近30期每项第1名」已经给了第 1 冷,
-# 这里再给第 1 冷属于重复;20 期上方没有,仍取第 1 冷。
-RANK_BY_WINDOW = {30: 2, 20: 1}
+WINDOWS = (100, 80)
+# 100 期取第 2 冷:面板上方「冷码观察 · 近30期每项第1名」已覆盖第 1 冷,
+# 长窗口再给第 1 冷偏重复;80 期上方没有对应窗口,仍取第 1 冷。
+RANK_BY_WINDOW = {100: 2, 80: 1}
 LABELS = {'q': '千位', 'b': '百位', 's': '十位', 'g': '个位'}
 
 
