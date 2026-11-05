@@ -2017,3 +2017,13 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 余额：07:17 实查 17.25 CNY；按近 5 分钟约 14 元/小时，距 5 元 `ai_balance_guard` 暂停线约 50 分钟（高峰约 52 元/小时时仅约 15 分钟），继续常驻建议先充值。
 - 未动：kill3 选码/尾码/封存/结算与 RULE_VERSION（仍 v16）、其它框架模型档位、crontab、AI 总闸。
 - 回滚：`cd /root/penta5-runner && cp -a /root/backups/.env.kill3-pro-trial.20261106-070919 .env`（cron 热读，无需重启；守卫已 disabled 不会回写）。
+
+## 2026-11-06 07:42 kill1 v5 回退：恢复 v4「定位排除二码 + 一合尾」（2 位置 + 1 合尾，整组 3 项，精确基线 72.90%）
+
+- 用户纠正（m00664）：「我要的是定位排除二码加一个合尾」。与 2026-11-05 kill1 v4 台账中 m00002 原话「定位排除俩个，加一个合尾」→「2 个不同位置各杀 1 码 + 1 个合尾」同一口径；确认 v5 单位置降项不是用户要的口径，立即整组回退，v5 不再累积。
+- 处置（工作树干净时执行）：`git revert --no-edit 4fb7717 0a9981e` → 提交 `5c9c5de`（revert v5 代码 11 文件）+ `f2da317`（revert v5 冻结重登记）；`b5d7712` 的 v5 上线台账保留为历史记录，本回退另起本节。回退后 `lib/kill1_tail.py` 恢复 `RULE_VERSION='kill1-tail-v4-two-position-one-tail'`、`COUNTED_POSITIONS=2`；`lib/kill_one_view.py` 标题恢复「🤖 AI 双位置杀码 + 一合尾建议」、`FALLBACK_BASELINE=(3,0.729)`；hitrate_baseline / framework_hitrate_cumulative / model_call_rec / tail_hold_max_shadow / attack_editor_view / run_kill1_tail / ops_health_check / tail_hold_review / kill1_ab_report 全部回 v4 口径；11 文件 `py_compile` 全绿。
+- 冻结恢复：两个受冻结文件 sha256 回到已登记值 `15aa543642283ec5…`（lib/kill1_tail.py）与 `b35f339a91436476…`（lib/kill_one_view.py）；`freeze_guard.py status` → `kill1_tail ref=20261105123 periods=256/100 hours=21.3/72 changed=- rule=kill1-tail-v4-two-position-one-tail`，无需重登记。
+- v5 痕迹归档：账本保留 6 条 v5 封存（ref 20261106086–091），6 条已结算（5 命中 1 未中，83.33%，样本极小不作结论），按「旧口径」保留、不计入 v4 统计；`settle_pending` 仍按封存自身 `counted` 口径补完（v5 target 20261106092 已结算 verified=True group_hit=False）。回退时快照备份 `/root/ops/kill1-v5-rollback-20261106-073518/`。
+- 真实周期验证（回退后首次 cron，07:40:35 周期）：封存 ref=20261106092 → target=20261106093，`published_at=2026-11-06T07:40:48.908496+08:00`，`rule_version=kill1-tail-v4-two-position-one-tail`，`positions={'q':'5','s':'9'}`、`counted=['q','s']`、tail 千百十个杀 7；日志「kill1 published: … 千位 杀5 · 十位 杀9 · 千百十个合尾 杀7」「kill1 position policy: 千位 沿用同位上期杀码（第3期，上期命中）· 十位 沿用同位上期杀码（第2期，上期命中）」——双位置独立 hold3 恢复正常。面板 `#kill-one-ai` data-as-of=20261106092、标题「AI 双位置杀码 + 一合尾建议」、双位置卡 + 合尾卡、注数「2 注/期」，v5 的单位置文案与「整组 2 项」已消失。
+- 当前口径下的战绩（07:42 快照）：v4 累计封存 251 条、已结算 250 条、整组命中 184 条（73.60%，精确基线 72.90%）；今日 v4 位置 54 注 52 中（96.30%）、合尾 26/27。
+- 回滚路径：若将来确需 v5，`git revert 5c9c5de f2da317`（同时恢复 v5 冻结登记）；本次回退本身可用 `git revert <本提交>` 撤销。
