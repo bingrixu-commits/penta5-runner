@@ -105,17 +105,25 @@ def render_block(report=None):
     paused = guard.get('auto_paused')
     guard_text = '自动守护：已暂停' if paused is True else '自动守护：在线'
     error_parts = []
-    labels = {'payment': '欠费类402', 'rate_limit': '限流429', 'timeout': '超时', 'invalid_response': '无效响应'}
+    labels = {'payment': '欠费类402', 'rate_limit': '限流429', 'timeout': '超时', 'invalid_response': '无效响应',
+              'provider': '服务商错误'}
     for key, label in labels.items():
         if errors.get(key):
             error_parts.append('%s×%d' % (label, errors[key]))
     error_text = ('近7日错误：' + '、'.join(error_parts)) if error_parts else '近7日无错误'
+    burn = balance.get('burn_1h_cny')
+    if isinstance(burn, (int, float)) and not isinstance(burn, bool):
+        burn_chip = '近1h燃耗 ¥%.3f/h' % burn
+    elif balance.get('recharged_recently') is True:
+        burn_chip = '近1h燃耗 充值后重新起算'
+    else:
+        burn_chip = '近1h燃耗 待重算'
     chips = ('<span class="mc-chip">余额 %s</span>'
-             '<span class="mc-chip">近1h燃耗 ¥%.3f/h</span>'
+             '<span class="mc-chip">%s</span>'
              '<span class="mc-chip">余额可跑 %s</span>'
              '<span class="mc-chip%s">%s</span>'
              '<span class="mc-chip">%s</span>' % (
-                 balance_text, balance.get('burn_1h_cny') or 0.0, runway_text,
+                 balance_text, burn_chip, runway_text,
                  ' warn' if paused is True else '', guard_text, error_text))
     return (
         f'{START}<section id="model-call-rec" data-as-of="{report.get("as_of_period") or ""}">'

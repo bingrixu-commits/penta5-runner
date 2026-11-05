@@ -132,6 +132,8 @@ def render(summary, *, now=None):
     tokens = today.get('tokens') if isinstance(today.get('tokens'), dict) else {}
     latency = today.get('latency') if isinstance(today.get('latency'), dict) else {}
     errors = today.get('errors') if isinstance(today.get('errors'), dict) else {}
+    last7d = summary.get('last7d') if isinstance(summary.get('last7d'), dict) else {}
+    last7d_errors = last7d.get('errors') if isinstance(last7d.get('errors'), dict) else {}
     balance = summary.get('balance') if isinstance(summary.get('balance'), dict) else {}
     health = summary.get('health') if isinstance(summary.get('health'), dict) else {}
     by_model = today.get('by_model') if isinstance(today.get('by_model'), dict) else {}
@@ -141,7 +143,7 @@ def render(summary, *, now=None):
     biz_date = escape(str(summary.get('biz_date') or ''))
 
     kpis = [
-        _kpi('成功响应', _num(today.get('responses'))),
+        _kpi('HTTP 200 响应', _num(today.get('responses'))),
         _kpi('尝试', _num(today.get('attempts'))),
         _kpi('重试', _num(today.get('retries'))),
         _kpi('HTTP 402', _num(errors.get('payment') or 0), bool(errors.get('payment'))),
@@ -168,6 +170,8 @@ def render(summary, *, now=None):
         balance_sub += ' · 近期(%.0f分钟)约 %s/h' % (burn_span * 60, _money(burn))
     elif _is_number(burn):
         balance_sub += ' · 近1h约 %s/h' % _money(burn)
+    elif balance.get('recharged_recently') is True:
+        balance_sub += ' · 充值后重新起算'
     else:
         balance_sub += ' · 烧钱速率待样本积累'
     runway = balance.get('runway_hours')
@@ -196,6 +200,19 @@ def render(summary, *, now=None):
         notice = '<div class="mu-ok">运行平稳：今日无异常信号</div>'
     else:
         notice = '<div class="mu-note">今日暂无已落日志的模型调用（AI 开关关闭或余额守护暂停时属正常）</div>'
+    error_labels = (('provider', '服务商'), ('rate_limit', '限流429'),
+                    ('invalid_response', '无效响应'), ('payment', '欠费402'),
+                    ('timeout', '超时'))
+    def _error_text(row):
+        return '、'.join('%s×%s' % (label, _num(row.get(key)))
+                         for key, label in error_labels if _is_number(row.get(key)) and row.get(key))
+    today_error_text = _error_text(errors)
+    last7d_error_text = _error_text(last7d_errors)
+    if today_error_text or last7d_error_text:
+        error_text = ' · '.join(part for part in (
+            ('今日 ' + today_error_text) if today_error_text else '',
+            ('近7日 ' + last7d_error_text) if last7d_error_text else '') if part)
+        notice += '<div class="mu-note">错误分布：%s</div>' % escape(error_text)
 
     window_rows = ''
     for label, key in (('今日', 'today'), ('昨日', 'yesterday'), ('近7日', 'last7d')):
@@ -239,6 +256,7 @@ def render(summary, *, now=None):
             window_table +
             details +
             '<div class="mu-foot">口径：只统计已写入日志的调用，未落日志的请求不估算；'
+            '「成功响应」按 HTTP 200 计，包含被策略校验拒绝的 attempt；'
             '缓存命中率 = 缓存命中输入 token /（命中 + 未命中）输入 token；延迟为 provider 返回的 '
             'elapsed_seconds（不含排队与重试间隔）；余额来自 DeepSeek 余额接口经 ai_balance_guard '
             '的每分钟快照，扣费速率为相邻快照差值推算，充值后自动重新起算。</div>'

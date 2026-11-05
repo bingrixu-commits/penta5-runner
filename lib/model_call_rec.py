@@ -36,17 +36,17 @@ MIN_DIFF_PP = 2.0
 P_THRESHOLD = 0.05
 
 TASKS = (
-    {'key': 'killer', 'label': '智能深排 killer（9 项）',
+    {'key': 'killer', 'usage_key': 'killer', 'label': '智能深排 killer（9 项）',
      'env_chain': ('PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL')},
-    {'key': 'framework', 'label': '固定八码框架（8 项）',
+    {'key': 'framework', 'usage_key': 'framework', 'label': '固定八码框架（8 项）',
      'env_chain': ('PENTA5_MODEL_FRAMEWORK', 'PENTA5_DEEPSEEK_MODEL')},
-    {'key': 'selected_six', 'label': '七项独立框架 selected_six（7 项）',
+    {'key': 'selected_six', 'usage_key': 'six', 'label': '七项独立框架 selected_six（7 项）',
      'env_chain': ('PENTA5_MODEL_SIX', 'PENTA5_DEEPSEEK_MODEL')},
-    {'key': 'he3_refine', 'label': '合尾 he3（剩余 5 码）',
+    {'key': 'he3_refine', 'usage_key': 'he3', 'label': '合尾 he3（剩余 5 码）',
      'env_chain': ('PENTA5_MODEL_HE3', 'PENTA5_DEEPSEEK_MODEL')},
-    {'key': 'kill3_tail', 'label': 'AI 三位置杀码',
+    {'key': 'kill3_tail', 'usage_key': 'kill3', 'label': 'AI 三位置杀码',
      'env_chain': ('PENTA5_MODEL_KILL3', 'PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL')},
-    {'key': 'kill1_tail', 'label': 'AI 双位置杀码（3 项）',
+    {'key': 'kill1_tail', 'usage_key': 'kill1', 'label': 'AI 双位置杀码（3 项）',
      'env_chain': ('PENTA5_MODEL_KILL1', 'PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL')},
 )
 
@@ -192,8 +192,9 @@ def compute(write=True):
         if alt_rate is None and alt_n:
             alt_rate = round(alt_hits / alt_n, 6)
         decision, reason = _decide(current_model, cur_n, cur_rate, alt_model, alt_n, alt_rate)
-        usage7 = ((usage.get('last7d') or {}).get('by_task') or {}).get(key) or {}
-        usage_today = ((usage.get('today') or {}).get('by_task') or {}).get(key) or {}
+        usage_key = spec.get('usage_key') or key
+        usage7 = ((usage.get('last7d') or {}).get('by_task') or {}).get(usage_key) or {}
+        usage_today = ((usage.get('today') or {}).get('by_task') or {}).get(usage_key) or {}
         tasks.append({
             'key': key,
             'label': spec['label'],
@@ -235,6 +236,7 @@ def compute(write=True):
             'balance': balance.get('balance'),
             'at': balance.get('at'),
             'burn_1h_cny': balance.get('burn_1h_cny'),
+            'recharged_recently': balance.get('recharged_recently'),
             'runway_hours': balance.get('runway_hours'),
         },
         'guard': {
