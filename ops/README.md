@@ -1901,3 +1901,19 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 **后续（本次不做）**：kill1/kill10/kill11 封存账本尚未接入滚动归档（`lib/seal_archive.py` 的 PERIOD_DICT_KEYS 只注册 he3 两个账本，读取链路仍是 `json.load` 直读），若对账本归档会破坏读取；待账本继续增长时，需先把读取链路改为 `read_full` 再注册归档与 cron。
 
 - 收尾复验（2026-11-06 06:31:37）：并发 DSH 窗口在途改动（`M lib/kill8_tail.py`、`M lib/hitrate_baseline.py`、`M lib/kill_eight_view.py`）使 manifest 再次漂移，再刷 `/root/backups/auto-baseline-20261106-063136`（440 files）后 `manifest_drift OK`；`overall=WARN` 仅历史 `hitrate_stability` 观察，`kill11_tail OK ref=20261106078`、`ledger_size OK`（kill11 seals 566.6KiB）。该三处并发改动均未进入本提交。
+
+
+### 冷码窗口回短：100/80 → 70/50（2026-11-06 06:40，`2131a39`/`e87d54a`/`58f3f76` + 本条 ops 台账）
+
+- 需求：用户（m00002）「100期窗口过长了，。50 70都够用了」——把「冷码杀号战绩」与「位置冷码」两张卡的滚动窗口 100/80 改短为 70/50。
+- 口径决策：冷码观察同批由 100 缩为 70 期（`WINDOW_SIZE=70`）。用户问卷 Q2 点的是 50，但 50 期与「位置冷码 50 期·第1冷」同窗同排序（同为 `_group` 次数升序/遗漏降序，四位置会选出同一批号码、面板重复），且 Q1 自定义「都取第一个」指向长窗 70；如需 50 只需改 `lib/cold_observation.py` 的 `WINDOW_SIZE` 与 `REVISION` 两行。
+- 改动（4 文件，3 个独立提交）：
+  - `2131a39` `scripts/cold_hit_stats.py:27` `WINDOWS = (100, 80)` → `(70, 50)`（samples 730 / 750）。
+  - `e87d54a` `scripts/position_cold_report.py:27-30` `WINDOWS=(100,80)` → `(70,50)`、`RANK_BY_WINDOW={100: 2, 80: 1}` → `{70: 2, 50: 1}`（长窗第 2 冷 / 短窗第 1 冷保持不变，注释同步）。
+  - `58f3f76` `lib/cold_observation.py:11-12` `REVISION` → `cold-observation-v6-70-crossday`、`WINDOW_SIZE=70`（docstring 同步）；`lib/cold_observation_view.py` 同 revision、`_integer(maximum=WINDOW_SIZE)`、`window_size != WINDOW_SIZE` 校验与兜底、标题/meta/note 全部由 `WINDOW_SIZE` 派生（不再硬编码 100）。
+- 未动：`scripts/cold_backtest.py:27 WINDOWS=(30,20)`（不在面板显示）；kill1/kill11 卡「窗口 50 期 · 关盘按开奖槽位倒推 70 秒」属运行窗口，与滚动统计窗口无关。
+- 验证（真实开奖周期 20261106079）：`systemctl restart penta5-position-cold.service` 后 06:34:03 active、首轮 rc=0；`data/cold_hit_stats.json` windows=[(70,730),(50,750)]；`data/position_cold_report.json` windows=[(70, 第2冷, 20261106010~079),(50, 第1冷, 20261106030~079)]；`data/cold_observation.json` revision=v6-70-crossday、window_size=70、sample_count=70、first=20261106010、last/ref=20261106079。panel.html 06:36:34 自动重建后含「窗口 70 期 · 共 730 期样本」「窗口 50 期 · 共 750 期样本」「最近 70 期 · 第2冷 · 20261106010~20261106079」「最近 50 期 · 第1冷 · 20261106030~20261106079」「冷码观察 · 近70期每项第1名」「跨日滚动窗口（每日 05:00 不清零） · 实际 70 期，最多70期」；旧 100/80、近100期标签计数均为 0。冷码块不进 AI 上下文（`extra_panel_input` 默认 False），无预测语义变更。
+- sha256（改后）：`scripts/cold_hit_stats.py` 945da7a762c378fe4044d9ab22321fa539b38cd51a92c32ad1e4bef30fdbee86；`scripts/position_cold_report.py` efaf516f6036b56ff783bcbcdd18d5f1534da40f575d5592fd4ae257ad8f3851；`lib/cold_observation.py` eb56351b90c7b1968427c2f2c311dd4198f89b1a7d69af3e4eff5f40e00b3b1e；`lib/cold_observation_view.py` a25665e9e795b4c1f27cb908b474e90c6fa87fa4af8378cfc3cd61a0779721ca。
+- 备份/回滚：改前备份 `/tmp/*.bak-20261106-063350`（cold_hit_stats / position_cold_report / cold_observation / cold_observation_view 四个文件）；回滚 `git revert 58f3f76 e87d54a 2131a39` + `systemctl restart penta5-position-cold.service`（JSON 下期重算、面板下个结算周期自动恢复），或按备份覆盖后重启。
+- 并行窗口：`M lib/kill8_tail.py`、`M lib/hitrate_baseline.py`、`M lib/kill_eight_view.py` 三处在途改动均未进入本组提交。
+- 收尾复验（2026-11-06 06:38）：`python3 scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift` → 新基线 `/root/backups/auto-baseline-20261106-063810` 后 `manifest_drift OK`；`python3 scripts/ops_health_check.py --root /root/penta5-runner` 19 项 `overall=WARN`，唯一 WARN 为历史 `hitrate_stability`（as_of=20261106076 · age=10.3min · 观察 kill3_tail/kill1_tail），其余 OK（panel_html mtime 06:38:19、kill11 seals 583.4KiB、余额 58.87 CNY）。并发窗口三处在途改动仍未进入本组提交。
