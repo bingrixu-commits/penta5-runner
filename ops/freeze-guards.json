@@ -50,13 +50,21 @@
      "new_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
      "old_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
      "reason": "新增独立框架 kill10_tail（二数合 he2 + 三数合 he3，整组 2 项）：lib/panel_context.py 仅增量（_model_tiers 加 PENTA5_MODEL_KILL10、_kill10_self()、_ai_self_frame kill10_tail 分支、_ai_self_frames 加 kill10、build 加 kill10_stats/kill10_previous 与 kill10_self 注入、超限 pop 加 kill10_self）；A/B（旧=HEAD 模块副本，固定 now fixture）：无参数 build()+prompt_text() 新旧逐字节相同，kill3/kill1 入参路径唯一差异 = other_ai_self 多出 kill10 帧（extra_panel_input 设计内增项，同 kill9 先例），kill3_self/kill1_self 与其余键逐字节相同；kill10_self 仅在传入 kill10 参数时出现。kill3 RULE_VERSION v16 与口径未变。"
+    },
+    {
+     "at": "2026-11-06T03:43:35+08:00",
+     "commit": "f1d04f5",
+     "file": "lib/panel_context.py",
+     "new_sha256": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc",
+     "old_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
+     "reason": "新增独立框架 kill11_tail（单位置杀码 + 单双反向形态 + 一合尾，整组 3 项）：lib/panel_context.py 仅增量（_model_tiers 加 PENTA5_MODEL_KILL11、_kill11_self()、_ai_self_frame kill11_tail 分支、_ai_self_frames 加 kill11、build 加 kill11_stats/kill11_previous 与 kill11_self 注入、超限 pop 加 kill11_self）；A/B v2（旧=HEAD 模块副本，固定 now fixture，AB_RESULT pass 7 fail 0）：4 场景 default/kill1/kill10/rich 唯一差异 = model_tiers 多 kill11: deepseek-flash（rich 另有 other_ai_self 多 kill11 帧，extra_panel_input 设计内增项，同 kill9/kill10 先例），其余键逐字节相同、prompt 去掉 model_tiers 后逐字节相同；kill11_self 仅在传入 kill11 参数时出现。kill3 RULE_VERSION v16 与口径未变。"
     }
    ],
    "label": "R1 框架",
    "min_periods": 100,
    "rule_version": "marginal-frequency-v2",
    "shared": {
-    "lib/panel_context.py": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63"
+    "lib/panel_context.py": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc"
    }
   },
   "he3_refine": {
@@ -100,13 +108,21 @@
      "new_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
      "old_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
      "reason": "新增独立框架 kill10_tail（二数合 he2 + 三数合 he3，整组 2 项）：lib/panel_context.py 仅增量（_model_tiers 加 PENTA5_MODEL_KILL10、_kill10_self()、_ai_self_frame kill10_tail 分支、_ai_self_frames 加 kill10、build 加 kill10_stats/kill10_previous 与 kill10_self 注入、超限 pop 加 kill10_self）；A/B（旧=HEAD 模块副本，固定 now fixture）：无参数 build()+prompt_text() 新旧逐字节相同，kill3/kill1 入参路径唯一差异 = other_ai_self 多出 kill10 帧（extra_panel_input 设计内增项，同 kill9 先例），kill3_self/kill1_self 与其余键逐字节相同；kill10_self 仅在传入 kill10 参数时出现。kill3 RULE_VERSION v16 与口径未变。"
+    },
+    {
+     "at": "2026-11-06T03:43:35+08:00",
+     "commit": "f1d04f5",
+     "file": "lib/panel_context.py",
+     "new_sha256": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc",
+     "old_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
+     "reason": "新增独立框架 kill11_tail（单位置杀码 + 单双反向形态 + 一合尾，整组 3 项）：lib/panel_context.py 仅增量（_model_tiers 加 PENTA5_MODEL_KILL11、_kill11_self()、_ai_self_frame kill11_tail 分支、_ai_self_frames 加 kill11、build 加 kill11_stats/kill11_previous 与 kill11_self 注入、超限 pop 加 kill11_self）；A/B v2（旧=HEAD 模块副本，固定 now fixture，AB_RESULT pass 7 fail 0）：4 场景 default/kill1/kill10/rich 唯一差异 = model_tiers 多 kill11: deepseek-flash（rich 另有 other_ai_self 多 kill11 帧，extra_panel_input 设计内增项，同 kill9/kill10 先例），其余键逐字节相同、prompt 去掉 model_tiers 后逐字节相同；kill11_self 仅在传入 kill11 参数时出现。kill3 RULE_VERSION v16 与口径未变。"
     }
    ],
    "label": "he3 精修",
    "min_periods": 100,
    "rule_version": "he3-refine-v3-panel-context",
    "shared": {
-    "lib/panel_context.py": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63"
+    "lib/panel_context.py": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc"
    }
   },
   "kill1_tail": {
@@ -166,20 +182,28 @@
      "new_sha256": "b35f339a914364765013d4934685d74a87f5d9673021f4ae7bb6837490ce9751",
      "old_sha256": "13c4e0492554239ef2059b28c12b191117e7e0a32292d5e42107bf05f471c40d",
      "reason": "kill1 面板卡展示层：累计行 as_of/滞后标注、本版期数含待核验、缺期槽披露（commit 3928131）"
+    },
+    {
+     "at": "2026-11-06T03:43:35+08:00",
+     "commit": "f1d04f5",
+     "file": "lib/panel_context.py",
+     "new_sha256": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc",
+     "old_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
+     "reason": "新增独立框架 kill11_tail（单位置杀码 + 单双反向形态 + 一合尾，整组 3 项）：lib/panel_context.py 仅增量（_model_tiers 加 PENTA5_MODEL_KILL11、_kill11_self()、_ai_self_frame kill11_tail 分支、_ai_self_frames 加 kill11、build 加 kill11_stats/kill11_previous 与 kill11_self 注入、超限 pop 加 kill11_self）；A/B v2（旧=HEAD 模块副本，固定 now fixture，AB_RESULT pass 7 fail 0）：4 场景 default/kill1/kill10/rich 唯一差异 = model_tiers 多 kill11: deepseek-flash（rich 另有 other_ai_self 多 kill11 帧，extra_panel_input 设计内增项，同 kill9/kill10 先例），其余键逐字节相同、prompt 去掉 model_tiers 后逐字节相同；kill11_self 仅在传入 kill11 参数时出现。kill3 RULE_VERSION v16 与口径未变。"
     }
    ],
    "label": "单位置杀码(kill1)",
    "min_periods": 100,
    "rule_version": "kill1-tail-v4-two-position-one-tail",
    "shared": {
-    "lib/panel_context.py": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63"
+    "lib/panel_context.py": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc"
    }
   },
   "kill3_tail": {
    "files": {
     "lib/kill3_tail.py": "3bb8d3c0ea2b186fe7b44c9077b8d0c6dc8abb50adef531160bf3753a3431b11",
     "lib/kill_three_view.py": "fbed94677c4053bf34ec574620ee9b2fe057899e00fa8dda3192a731ad115229",
-    "lib/panel_context.py": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
+    "lib/panel_context.py": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc",
     "scripts/run_kill3_tail.py": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49"
    },
    "freeze_hours": 72.0,
@@ -626,6 +650,14 @@
      "new_sha256": "3bb8d3c0ea2b186fe7b44c9077b8d0c6dc8abb50adef531160bf3753a3431b11",
      "old_sha256": "aefe3d0b48b061d0622d55e4f5296db596152e38118112400a3baef5c5425b17",
      "reason": "AI 调用层修复：max_tokens 12288→16384（策略 kill3-high-16k-deadline-v1）并补失败响应 finish_reason/用量遥测（commit 91f10f4）"
+    },
+    {
+     "at": "2026-11-06T03:43:35+08:00",
+     "commit": "f1d04f5",
+     "file": "lib/panel_context.py",
+     "new_sha256": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc",
+     "old_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
+     "reason": "新增独立框架 kill11_tail（单位置杀码 + 单双反向形态 + 一合尾，整组 3 项）：lib/panel_context.py 仅增量（_model_tiers 加 PENTA5_MODEL_KILL11、_kill11_self()、_ai_self_frame kill11_tail 分支、_ai_self_frames 加 kill11、build 加 kill11_stats/kill11_previous 与 kill11_self 注入、超限 pop 加 kill11_self）；A/B v2（旧=HEAD 模块副本，固定 now fixture，AB_RESULT pass 7 fail 0）：4 场景 default/kill1/kill10/rich 唯一差异 = model_tiers 多 kill11: deepseek-flash（rich 另有 other_ai_self 多 kill11 帧，extra_panel_input 设计内增项，同 kill9/kill10 先例），其余键逐字节相同、prompt 去掉 model_tiers 后逐字节相同；kill11_self 仅在传入 kill11 参数时出现。kill3 RULE_VERSION v16 与口径未变。"
     }
    ],
    "label": "三位置杀码(kill3)",
@@ -685,16 +717,24 @@
      "new_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
      "old_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
      "reason": "新增独立框架 kill10_tail（二数合 he2 + 三数合 he3，整组 2 项）：lib/panel_context.py 仅增量（_model_tiers 加 PENTA5_MODEL_KILL10、_kill10_self()、_ai_self_frame kill10_tail 分支、_ai_self_frames 加 kill10、build 加 kill10_stats/kill10_previous 与 kill10_self 注入、超限 pop 加 kill10_self）；A/B（旧=HEAD 模块副本，固定 now fixture）：无参数 build()+prompt_text() 新旧逐字节相同，kill3/kill1 入参路径唯一差异 = other_ai_self 多出 kill10 帧（extra_panel_input 设计内增项，同 kill9 先例），kill3_self/kill1_self 与其余键逐字节相同；kill10_self 仅在传入 kill10 参数时出现。kill3 RULE_VERSION v16 与口径未变。"
+    },
+    {
+     "at": "2026-11-06T03:43:35+08:00",
+     "commit": "f1d04f5",
+     "file": "lib/panel_context.py",
+     "new_sha256": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc",
+     "old_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
+     "reason": "新增独立框架 kill11_tail（单位置杀码 + 单双反向形态 + 一合尾，整组 3 项）：lib/panel_context.py 仅增量（_model_tiers 加 PENTA5_MODEL_KILL11、_kill11_self()、_ai_self_frame kill11_tail 分支、_ai_self_frames 加 kill11、build 加 kill11_stats/kill11_previous 与 kill11_self 注入、超限 pop 加 kill11_self）；A/B v2（旧=HEAD 模块副本，固定 now fixture，AB_RESULT pass 7 fail 0）：4 场景 default/kill1/kill10/rich 唯一差异 = model_tiers 多 kill11: deepseek-flash（rich 另有 other_ai_self 多 kill11 帧，extra_panel_input 设计内增项，同 kill9/kill10 先例），其余键逐字节相同、prompt 去掉 model_tiers 后逐字节相同；kill11_self 仅在传入 kill11 参数时出现。kill3 RULE_VERSION v16 与口径未变。"
     }
    ],
    "label": "智能排除(killer)",
    "min_periods": 100,
    "rule_version": "conditional-transition-v1",
    "shared": {
-    "lib/panel_context.py": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63"
+    "lib/panel_context.py": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc"
    }
   }
  },
- "updated_at": "2026-11-06T02:06:56.052928+08:00",
+ "updated_at": "2026-11-06T03:43:35+08:00",
  "version": 1
 }
