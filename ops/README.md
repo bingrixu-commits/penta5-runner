@@ -1656,3 +1656,19 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 验证：`/tmp/kill8_v5_test.py`（v4 用例迁移）PASS=69 FAIL=0；行为四例：0/8 → 单单双单（千/百仍钉死单，十位翻双）、1/3 → 双双单双/大大小大、四位全 0 → 允许同形、无排除 → 双双单双/大小小小；`/tmp/kill8_v5_view_probe.py` PASS=22 FAIL=0（legacy v4 渲染容错 + foot/scope 含去重文案）。
 - 真实周期（v5）：2026-11-05 20:30:47 首枚 v5 封存 ref 20261105246→247，四形态 单单双单 / 大小小小 / 小小小小 / 单单单单（①与④不再同形：十位自由位由单翻双）；20:35:50 第二枚 247→248。首枚已结算 counted_forms=4 / group_hit=True / verified=True（实际 7 7 0 8：parity 单单双单 vs 单单双双 hit、size 大小小小 vs 大大小大 hit、③④ hit），今日 total=1/group_hits=1、legacy={17 中 16}；面板 data-as-of=20261105247、4 卡、77.33%、去重文案在线。
 - 备份/回滚：/root/ops/kill8-v5-202730/（files 改前、files-after 改后、evidence 补丁/用例/探针/行为、MANIFEST）；回滚 `git revert a4fee74`；方向口径与基线未变，v4 历史封存保留为 legacy。
+
+### 命中率展示层 P0（2026-11-05 20:44，`3f7cb69` + 紧随的 chore(ops) 提交）
+
+- 需求：用户 m00001「聊聊，一运行久命中率就下降问题」→ m00075「有没有办法杜绝这种断崖试下跌」→ m00112「修复完善」。确认只做 P0 只读展示：不动选码/封存/结算/prompt/RULE_VERSION；6a9b15a 那版累计行曾被回退（c72ff75），故先给方案再落地。
+- 结论依据（只读分析）：命中率随运行时长"下降"是 ①小样本向精确基线回归 ②三类假断崖（05:00 清零 / 换 rule_version 清零 / 漏发按 0 命中）③二元化度量太粗。随机模拟（p=0.5863, n=178）：累计曲线最大回撤中位 9.3pp、p90 16.3pp；n=2939 中位 10.4pp（取极值机会更多，不随 n 缩小）。项级度量（framework 平均 7.42/8、92.8%；kill3 7.53/8、94.3%）最大回撤 2.1/2.9pp，约为整组的 1/3.6；69.57%→56.98% 的 12.6pp 段落落差在 80% power 下每侧约需 236 期才能判别。
+- 改动（`3f7cb69`，5 文件 +449/−6）：
+  - 新增 `lib/hitrate_display.py`：`build_display_metrics()` 只读派生 `drawdown`（自本版峰值回撤 + 同 n 纯随机最大回撤中位/p90/P≥观测，seed 20261107，burn-in 25 期）与 `item_stats`（平均命中项数/项级命中率/逐期项数分布）；序列按累计 `as_of_period` 截断使 n 与累计行一致；kill3 8 项 = 2 counted 位置 + 合尾 + 2 反向形态 + 3 三数避让，kill1 3 项 = 2 位置 + 合尾。
+  - `scripts/hitrate_stability.py`：报告行合并上述字段（try-import，异常只跳过展示，不影响护栏判定）。
+  - `lib/kill_three_view.py`：kill3 卡新增「本版累计（跨天不清零）」行（整组%/95%CI/精确基线/偏差/p/自峰值回撤与随机参照/平均命中项数/n<200 提示），今日口径行不变。
+  - `lib/framework_hit_view.py`：framework 卡 notice 后新增「累计口径」行（CRLF 保持，diff 仅新增行）。
+  - `lib/hitrate_stability_view.py`：累计列补 Δ±pp·p 与回撤（随机中位），首列补平均命中项数，脚注解释回撤/随机中位。
+- 验证：`/tmp/offline_check.py` 用备份 .bak 旧模块做只加不改 A/B——摘除新增行后 kill3（6817B）、framework（7435B）渲染与旧版**逐字节一致**；stability 表去新增片段后一致；panel 副本 30 个区块标签配平、无未闭合。`py_compile` 全过；stability 单轮 0.80s（cron timeout 90s）。
+- 线上生效（未重启，面板由 `/root/run_stats.py` 每期重生成）：20:38:17 自动刷新后 `panel.html` 已含三处新行——kill3 `本版累计 62.03%（116/187 期，95%CI 54.9%–68.7%）· 基线 58.63% · +3.40pp · p=0.345 · 回撤 9.1pp（随机中位 9.8pp）· 平均命中 7.53/8（94.1%）`；framework `55.95%（1651/2951）`；稳定性表 kill3/framework/kill1 三行含 `回撤 x.xpp（随机中位 y.yp）` 与 `平均命中`。20:44 数据刷到 kill3 n=190 62.63%、framework n=2954 55.92%。
+- 冻结/门禁：`ops/freeze-guards.json` kill3_tail 的 `lib/kill_three_view.py` fde296d8…→f6fb76d6…（`freeze_guard.py update`，五框架 changed=−）；`ops/kill3-freeze.json` 同步 sha + hash_updates 追加（frozen_at 不重置、RULE_VERSION 未变）。`refresh_source_manifest.py --if-drift` → baseline `/root/backups/auto-baseline-20261105-204004`（429 文件）；`ops_health` overall=warn，仅既有 coverage / hitrate_stability(kill1 白名单观察) / kill3_stability 三项，freeze_guards、manifest_drift 均 OK。
+- 备份/回滚：`/root/ops/hitrate-display-20261105-202016/`（5 个改前文件 .bak + pre.sha256）。回滚 `git revert 3f7cb69 <本节 ops 提交>`；或用备份覆盖 5 文件、`git checkout ops/freeze-guards.json ops/kill3-freeze.json` 后重跑 `python3 scripts/freeze_guard.py status`。
+- 未做（需用户拍板）：P1 版本切换不清零重标定 + 失败分型；P2 覆盖率补跑 + killer v4-pro 0/11 核查；P3 改项数。
