@@ -183,8 +183,41 @@ def render_block(report=None):
         '</tr></thead><tbody>' + rows_html + '</tbody></table>'
         '<div class="hs-foot">断崖规则：24h 覆盖率&lt;80% 且尾部仍漏≥3 期；滚动100期 z≤-2.58 且 300 期 z≤-1.0；'
         '口径切换后存活&lt;24h 或 &lt;30 期。「24h 窗口覆盖」会把窗口内历史缺口一并计入；'
-        '「近 24 期覆盖」只看最近 24 期，判断缺口是否仍在发生；覆盖率低时命中率样本同样不完整，请结合 n 解读。自峰值回撤=当前累计率相对历史累计峰值（剔除前 25 期）的回落；随机中位=同 n 纯随机序列最大回撤中位数，用于区分真实断崖与随机波动。</div>'
+        '「近 24 期覆盖」只看最近 24 期，判断缺口是否仍在发生；覆盖率低时命中率样本同样不完整，请结合 n 解读。自峰值回撤=当前累计率相对历史累计峰值（剔除前 25 期）的回落；随机中位=同 n 纯随机序列最大回撤中位数，用于区分真实断崖与随机波动。' + _failure_split_html(report) + '</div>'
         f'</section>{END}')
+
+
+def _failure_split_html(report):
+    """近 24h 失败分型脚注（只读；数据缺失返回空串）。"""
+    try:
+        summary = report.get('summary') if isinstance(report, dict) else None
+        split = summary.get('failure_split') if isinstance(summary, dict) else None
+        if not isinstance(split, dict):
+            return ''
+        bits = []
+        calls = split.get('model_calls')
+        if isinstance(calls, dict):
+            errors = calls.get('errors') if isinstance(calls.get('errors'), dict) else {}
+            error_text = '、'.join('%s %s' % (escape(str(key)), escape(str(value)))
+                                   for key, value in sorted(errors.items(),
+                                                            key=lambda item: -int(item[1] or 0))
+                                   if value)
+            part = ('近 24h 模型调用 %s 响应 / %s 异常'
+                    % (calls.get('responses'), calls.get('error_total')))
+            if error_text:
+                part += '（%s）' % error_text
+            if calls.get('retries'):
+                part += '，重试 %s' % calls.get('retries')
+            bits.append(part)
+        slots = split.get('kill3_slots')
+        if isinstance(slots, dict):
+            bits.append('kill3 发布 %s 槽 / 缺槽 %s / 版本切换 %s 次'
+                        % (slots.get('published_24h'), slots.get('missing_slots_24h'),
+                           slots.get('version_changes_24h')))
+        bits.append('缺期按覆盖率单列，不计入累计 n，也不按 0 命中')
+        return ' 失败分型：' + '；'.join(bits) + '。'
+    except Exception:
+        return ''
 
 
 def apply_hitrate_stability_block(content, report=None):

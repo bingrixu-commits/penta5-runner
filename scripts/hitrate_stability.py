@@ -64,6 +64,39 @@ WHITELIST = 'ops/hitrate_stability_whitelist.json'
 RANK = {'ok': 0, 'watch': 1, 'alert': 2}
 
 
+def _failure_split(root):
+    """近 24h 失败分型（只读派生）：模型调用异常类型 + kill3 发布/缺槽/版本切换。"""
+    split = {}
+    usage = _read_json(Path(root) / 'data' / 'model_usage' / 'summary.json') or {}
+    today = usage.get('today') if isinstance(usage, dict) else None
+    if isinstance(today, dict):
+        errors = today.get('errors') if isinstance(today.get('errors'), dict) else {}
+        errors = {str(key): value for key, value in errors.items()
+                  if isinstance(value, int) and value > 0}
+        split['model_calls'] = {
+            'attempts': today.get('attempts'),
+            'responses': today.get('responses'),
+            'retries': today.get('retries'),
+            'errors': errors,
+            'error_total': sum(errors.values()),
+        }
+    health = _read_json(Path(root) / 'data' / 'ops_health.json') or {}
+    checks = health.get('checks') if isinstance(health, dict) else None
+    if isinstance(checks, list):
+        for item in checks:
+            if not isinstance(item, dict) or item.get('name') != 'kill3_stability':
+                continue
+            value = item.get('value') if isinstance(item.get('value'), dict) else {}
+            split['kill3_slots'] = {
+                'published_24h': value.get('published_24h'),
+                'missing_slots_24h': value.get('missing_slots_24h'),
+                'version_changes_24h': value.get('version_changes_24h'),
+                'p50_latency_seconds': value.get('p50_latency_seconds'),
+            }
+            break
+    return split
+
+
 def _read_json(path, default=None):
     try:
         return json.loads(Path(path).read_text(encoding='utf-8'))
@@ -375,6 +408,9 @@ def main(argv=None):
         'summary': {'status': status, 'alerts': alerts, 'watch': watch, 'whitelisted': whitelisted,
                     'alert_count': len(alerts), 'watch_count': len(watch)},
     }
+    failure_split = _failure_split(root)
+    if failure_split:
+        report['summary']['failure_split'] = failure_split
     _atomic_json(root / OUTPUT, report)
     _atomic_json(root / STATE, next_state)
 

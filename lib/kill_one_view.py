@@ -15,6 +15,7 @@ from datetime import datetime
 from html import escape
 import json
 import math
+from pathlib import Path
 
 import kill1_tail
 
@@ -255,6 +256,66 @@ def _version_html():
         return ''
 
 
+def _cumulative_html():
+    """只读：本版累计 + 跨版本核心杀项（切版不清零）；数据源 data/hitrate_stability.json。"""
+    try:
+        path = Path('/root/penta5-runner/data/hitrate_stability.json')
+        report = json.loads(path.read_text(encoding='utf-8'))
+        rows = report.get('rows') if isinstance(report, dict) else None
+        if not isinstance(rows, list):
+            return ''
+        rule = str(getattr(kill1_tail, 'RULE_VERSION', '') or '')
+        row = next((item for item in rows if isinstance(item, dict)
+                    and item.get('key') == 'kill1_tail'), None)
+        if not row or str(row.get('rule') or '') != rule:
+            return ''
+        n = row.get('n')
+        hits = row.get('hits')
+        rate = row.get('rate')
+        if not isinstance(n, int) or n < 1 or not isinstance(hits, int) or rate is None:
+            return ''
+        ci = row.get('ci95')
+        ci_text = ('，95%%CI %.1f%%–%.1f%%' % (ci[0] * 100.0, ci[1] * 100.0)
+                   if isinstance(ci, (list, tuple)) and len(ci) >= 2 else '')
+        parts = ['<b>本版累计（跨天不清零）</b>',
+                 '整组 <b>%.2f%%</b>（%d/%d 期%s）'
+                 % (float(rate) * 100.0, hits, n, ci_text)]
+        if row.get('expected') is not None:
+            parts.append('精确基线 %.2f%%' % (float(row['expected']) * 100.0))
+        if row.get('delta') is not None:
+            parts.append('偏差 %+.2fpp' % (float(row['delta']) * 100.0))
+        if row.get('p') is not None:
+            parts.append('二项 p=%.3f' % float(row['p']))
+        item = row.get('item_stats') if isinstance(row.get('item_stats'), dict) else {}
+        if item.get('items') and item.get('avg_items') is not None:
+            parts.append('平均命中 %.2f/%d 项（项级 %.1f%%）'
+                         % (float(item['avg_items']), int(item['items']),
+                            float(item.get('item_rate') or 0) * 100.0))
+        versions = row.get('versions') if isinstance(row.get('versions'), dict) else {}
+        core = versions.get('core') if isinstance(versions.get('core'), dict) else {}
+        segments = versions.get('segments') if isinstance(versions.get('segments'), list) else []
+        if core.get('item_total') and core.get('item_rate') is not None:
+            parts.append('<b>跨版本核心杀项（切版不清零）</b> %d/%d 项 = <b>%.2f%%</b>'
+                         '（基线 90.0%%，%d 期）'
+                         % (int(core['item_hits']), int(core['item_total']),
+                            float(core['item_rate']) * 100.0,
+                            int(core.get('periods') or 0)))
+            if segments:
+                parts.append('分段（近 5 版）：' + ' · '.join(
+                    '%s %d期 %.1f%%'
+                    % (str(segment.get('rule') or '').replace('kill1-tail-', ''),
+                       int(segment.get('n') or 0),
+                       float(segment.get('core_rate') or 0.0) * 100.0)
+                    for segment in segments[-5:]))
+        if n < 200:
+            parts.append('样本不足（n<200），仅作参考')
+        return ('<div class="k1-acc" style="margin-top:6px;padding-top:6px;'
+                'border-top:1px dashed #c7d2fe;font-size:13px;color:#475569;line-height:1.7">'
+                + ' · '.join(parts) + '</div>')
+    except Exception:
+        return ''
+
+
 def render_block():
     """渲染 kill1 面板区块（最新已发布封存 + 当日统计 + 攻击语）。"""
     try:
@@ -320,6 +381,7 @@ def render_block():
                 % (_clock(seal.get('published_at')), escape(str(seal.get('window') or '-'))))
     html.append('<div class="k1-verify">' + _settlement_line(settlement) + '</div>')
     html.append(_stats_html(stats))
+    html.append(_cumulative_html())
     html.append(_version_html())
     html.append(_attack_html(seal))
     html.append(_foot_html())

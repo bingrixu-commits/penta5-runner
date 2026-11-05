@@ -272,6 +272,24 @@ def _cumulative_html():
             parts.append('平均命中 %.2f/%d 项（项级 %.1f%%）'
                          % (float(item['avg_items']), int(item['items']),
                             float(item.get('item_rate') or 0) * 100.0))
+        versions = row.get('versions') if isinstance(row.get('versions'), dict) else {}
+        core = versions.get('core') if isinstance(versions.get('core'), dict) else {}
+        segments = versions.get('segments') if isinstance(versions.get('segments'), list) else []
+        if core.get('item_total') and core.get('item_rate') is not None:
+            parts.append('<b>跨版本核心杀项（切版不清零）</b> %d/%d 项 = <b>%.2f%%</b>'
+                         '（基线 90.0%%，%d 期，均 %.2f 项/期）'
+                         % (int(core['item_hits']), int(core['item_total']),
+                            float(core['item_rate']) * 100.0,
+                            int(core.get('periods') or 0),
+                            float(core.get('avg_items') or 0.0)))
+            if segments:
+                segment_text = ' · '.join(
+                    '%s %d期 %.1f%%'
+                    % (str(segment.get('rule') or '').replace('kill3-tail-', ''),
+                       int(segment.get('n') or 0),
+                       float(segment.get('core_rate') or 0.0) * 100.0)
+                    for segment in segments[-5:])
+                parts.append('分段（近 5 版）：%s' % segment_text)
         if n < 200:
             parts.append('样本不足（n&lt;200），仅作参考')
         return ('<div class="k3-acc" style="margin-top:6px;padding-top:6px;'

@@ -248,6 +248,67 @@ def _metrics(series, expected):
     return result
 
 
+def _settlement_version_rows(root, folder):
+    """全部 verified+计入记录（跨版本）：[(target_period, rule, joint_hit, item_hits, item_total)]。"""
+    payload = _read(root / 'data' / folder / 'settlements.json') or {}
+    seals = _read(root / 'data' / folder / 'seals.json') or {}
+    seal_rule = {}
+    for record in (seals.get('records') or []):
+        if isinstance(record, dict) and record.get('ref_period'):
+            seal_rule[str(record.get('ref_period'))] = record.get('rule_version')
+    rows = []
+    for record in (payload.get('records') or []):
+        if not isinstance(record, dict):
+            continue
+        if not record.get('verified') or 'counted' not in record:
+            continue
+        rule = record.get('rule_version') or seal_rule.get(str(record.get('ref_period'))) or 'unknown'
+        counted = record.get('counted') or []
+        positions = record.get('positions') or {}
+        tail = record.get('tail') or {}
+        item_hits = sum(1 for position in counted
+                        if isinstance(positions.get(position), dict)
+                        and positions[position].get('hit'))
+        if isinstance(tail, dict) and tail.get('hit'):
+            item_hits += 1
+        rows.append((record.get('target_period'), str(rule),
+                     bool(record.get('group_hit')), item_hits, len(counted) + 1))
+    return rows
+
+
+def _version_stats(rows):
+    """跨版本分段 + 核心杀项（计入位置 + 合尾）项级累计：切版不清零、整组按各版基线重标定。"""
+    segments, by_rule = [], {}
+    core_hits = core_total = 0
+    for period, rule, joint, item_hits, item_total in rows:
+        core_hits += item_hits
+        core_total += item_total
+        segment = by_rule.get(rule)
+        if segment is None:
+            segment = {'rule': rule, 'n': 0, 'hits': 0,
+                       'first_period': period, 'last_period': period,
+                       'core_hits': 0, 'core_total': 0}
+            by_rule[rule] = segment
+            segments.append(segment)
+        segment['n'] += 1
+        segment['hits'] += 1 if joint else 0
+        segment['last_period'] = period
+        segment['core_hits'] += item_hits
+        segment['core_total'] += item_total
+    for segment in segments:
+        segment['rate'] = (round(segment['hits'] / segment['n'], 6)
+                           if segment['n'] else None)
+        segment['core_rate'] = (round(segment['core_hits'] / segment['core_total'], 6)
+                                if segment['core_total'] else None)
+    periods = len(rows)
+    return {
+        'core': {'periods': periods, 'item_hits': core_hits, 'item_total': core_total,
+                 'item_rate': round(core_hits / core_total, 6) if core_total else None,
+                 'avg_items': round(core_total / periods, 4) if periods else None},
+        'segments': segments,
+    }
+
+
 def build_display_metrics(rows, as_of=None, root=None):
     """rows: framework_hitrate_cumulative.json 的 rows；as_of: 报告 as_of_period（截断到同一期）。
 
@@ -283,6 +344,16 @@ def build_display_metrics(rows, as_of=None, root=None):
             metrics = _metrics(series, expected.get(key))
         except Exception:
             metrics = {}
+        if metrics and key in ('kill3_tail', 'kill1_tail'):
+            try:
+                version_rows = _settlement_version_rows(root, key)
+                if as_of:
+                    version_cutoff = str(as_of).zfill(11)
+                    version_rows = [item for item in version_rows
+                                    if str(item[0] or '').zfill(11) <= version_cutoff]
+                metrics['versions'] = _version_stats(version_rows)
+            except Exception:
+                pass
         if metrics:
             result[key] = metrics
     return result
