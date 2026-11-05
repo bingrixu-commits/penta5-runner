@@ -16,9 +16,6 @@
   version-churn  : 观测到口径切换且新口径存活 < 24h 或 < 30 期           -> alert
                    存活 < 72h 或 < 100 期                                -> watch
 
-  baseline-band  : kill3_tail 当前版本累计 z=(hits-n*p0)/sqrt(n*p0*(1-p0)) <= -2.58 -> alert；
-                   <= -2.0 -> watch（n>=50 才判，p0 为规则常量基线，其它框架 expected 含模型分界不适用）
-
 单日样本只有约 22 期（1 sigma 约 +-10pp），因此本报告只把滚动窗口与累计显著性
 当作结论口径，单日百分比仅作展示。
 
@@ -26,7 +23,6 @@
 """
 import argparse
 import json
-import math
 import os
 import sys
 import tempfile
@@ -55,10 +51,6 @@ CHURN_ALERT_PERIODS = 30
 CHURN_WATCH_HOURS = 72.0
 CHURN_WATCH_PERIODS = 100
 STALE_MINUTES = 45
-BASELINE_BAND_MIN_N = 50
-BASELINE_BAND_ALERT_Z = -2.58
-BASELINE_BAND_WATCH_Z = -2.0
-BASELINE_BAND_KEYS = ('kill3_tail',)
 
 RANK = {'ok': 0, 'watch': 1, 'alert': 2}
 
@@ -129,29 +121,7 @@ def _coverage_note(coverage_24h, recent):
         return '24h 窗口含历史缺口，近 %d 期已全部核验（缺口不再发生）' % online
     return ''
 
-def _baseline_band(key, n, hits, expected, expected_basis):
-    """累计 vs 规则常量基线的单侧事件带（仅 kill3_tail；n>=50 才判）。"""
-    if key not in BASELINE_BAND_KEYS:
-        return None
-    if not isinstance(n, int) or not isinstance(hits, int) or n < BASELINE_BAND_MIN_N:
-        return None
-    p0 = _num(expected)
-    if p0 is None or not 0.0 < p0 < 1.0:
-        return None
-    mean = n * p0
-    sd = math.sqrt(n * p0 * (1.0 - p0))
-    if sd <= 0:
-        return None
-    z = (hits - mean) / sd
-    level = ('alert' if z <= BASELINE_BAND_ALERT_Z
-             else 'watch' if z <= BASELINE_BAND_WATCH_Z else 'ok')
-    return {'n': n, 'hits': hits, 'expected': p0, 'mean_hits': round(mean, 2),
-            'sd': round(sd, 2), 'z': round(z, 2), 'level': level,
-            'basis': str(expected_basis or 'rule-constant'),
-            'note': '单侧向下带（高于基线不告警）；仅起始开关框架 + 规则常量基线参与'}
-
-
-def _judge(coverage_24h, recent, w100, w300, n, churn, band=None):
+def _judge(coverage_24h, recent, w100, w300, n, churn):
     reasons = []
     level = 'ok'
 
@@ -165,12 +135,6 @@ def _judge(coverage_24h, recent, w100, w300, n, churn, band=None):
             and isinstance(missed, int) and missed >= COVERAGE_TAIL_MISSES:
         reasons.append('覆盖断崖: 24h 覆盖率 %s，窗口尾部仍漏 %d 期' % (_pct(coverage_24h), missed))
         raise_level('alert')
-
-    if isinstance(band, dict) and band.get('level') in ('alert', 'watch'):
-        limit = BASELINE_BAND_ALERT_Z if band.get('level') == 'alert' else BASELINE_BAND_WATCH_Z
-        reasons.append('累计低于随机基线: n=%d 命中 %d，期望 %.1f±%.1f，z=%.2f(<=%.2f)'
-                       % (band['n'], band['hits'], band['mean_hits'], band['sd'], band['z'], limit))
-        raise_level(band['level'])
 
     if w100 and w100.get('full') and isinstance(w100.get('n'), int) and w100['n'] >= 100:
         z100, z300 = w100.get('z'), (w300 or {}).get('z')
@@ -288,9 +252,7 @@ def main(argv=None):
         w100 = _window(drift_by_key.get(key), 100)
         w300 = _window(drift_by_key.get(key), 300)
         w500 = _window(drift_by_key.get(key), 500)
-        band = _baseline_band(key, n, row.get('hits'), row.get('expected'),
-                              row.get('expected_basis'))
-        level, reasons = _judge(coverage_24h, recent, w100, w300, n, churn, band)
+        level, reasons = _judge(coverage_24h, recent, w100, w300, n, churn)
         usable = isinstance(n, int) and n >= MIN_SAMPLE
 
         guard_row = guard_missing.get(key_alias.get(key, key)) if isinstance(guard_missing, dict) else None
@@ -323,7 +285,6 @@ def main(argv=None):
             'w500': w500,
             'switch_off_count': switch_off,
             'churn': churn,
-            'baseline_band': band,
             'stat_usable': usable,
             'cliff': {'level': level, 'reasons': reasons},
             'verdict': _verdict(level, usable),
@@ -336,7 +297,7 @@ def main(argv=None):
     status = 'fail' if alerts else ('warn' if watch else 'ok')
     report = {
         'version': 1,
-        'revision': 'hitrate-stability-v2',
+        'revision': 'hitrate-stability-v1',
         'generated_at': now_iso,
         'as_of_period': cumulative.get('as_of_period'),
         'basis': '滚动窗口 100/200/300/500 期 + 累计显著性；单日 n 约 22 期(1 sigma 约 +-10pp)，'
@@ -348,11 +309,7 @@ def main(argv=None):
                        'coverage_cliff': COVERAGE_CLIFF,
                        'coverage_tail_misses': COVERAGE_TAIL_MISSES,
                        'churn_alert_hours': CHURN_ALERT_HOURS,
-                       'churn_alert_periods': CHURN_ALERT_PERIODS,
-                       'baseline_band_min_n': BASELINE_BAND_MIN_N,
-                       'baseline_band_alert_z': BASELINE_BAND_ALERT_Z,
-                       'baseline_band_watch_z': BASELINE_BAND_WATCH_Z,
-                       'baseline_band_keys': list(BASELINE_BAND_KEYS)},
+                       'churn_alert_periods': CHURN_ALERT_PERIODS},
         'rows': out_rows,
         'summary': {'status': status, 'alerts': alerts, 'watch': watch,
                     'alert_count': len(alerts), 'watch_count': len(watch)},

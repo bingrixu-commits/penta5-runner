@@ -1564,3 +1564,10 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结登记：`ops/kill3-freeze.json` 与 `ops/freeze-guards.json` 的 `kill3_tail.files['lib/kill_three_view.py']` 由 `f2dbb4fd…` 回退为 `fde296d8…`，追加 hash_updates（frozen_at 不重置、RULE_VERSION 未变）。
 - 备份 `/root/ops/kill3-revert-20261105-171827`（view、两个 freeze json、README、panel.html、ROLLBACK.txt）。
 - 回退前现况（17:14）：累计 n=148 命中 95 = 64.19%（p=0.170，z=1.37 baseline_band ok），今日 63.95%（94/147）；长期期望仍按 58.63% 管理，本次未改口径。
+
+### kill3 相关改动全部恢复（2026-11-05 17:33，本 commit）
+
+- 用户指令 m00259「恢复早上高命中的时候，你动过的，恢复回去」：把本窗口今天为 kill3 加的改动全部撤回。`0d45d27` 的「累计 vs 规则常量基线单侧 2σ 带」已反向应用（`git apply -R`），`scripts/hitrate_stability.py` 回到 `hitrate-stability-v1`，`data/hitrate_stability.json` 重新生成后不再含 `baseline_band`；`6a9b15a` 的面板累计展示已于 `c72ff75` 回退。
+- 现在 kill3 的运行时（选码/尾码/8 项结构/封存/结算/AI prompt）与改动前完全一致；`ops/kill3-freeze.json` view hash 已是原值 `fde296d8…`，frozen_at/RULE_VERSION 未变。
+- 说明：命中的数字不能靠回退恢复——本窗口的改动只有展示与监控，不参与预测；中午 12:31–12:38 另一窗口 selected_six 退役改了共享 `lib/panel_context.py`（kill3 prompt 上下文少 selected_six/six 两段），那是本窗口之外、且数据已删无法原样恢复的改动，未动。
+- 回滚本 commit：`git revert <this>` 即可重新启用基线带告警。
