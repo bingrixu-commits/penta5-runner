@@ -2,7 +2,7 @@
  "files": {
   "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
   "lib/kill_three_view.py": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
-  "lib/panel_context.py": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+  "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
   "scripts/run_kill3_tail.py": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5"
  },
  "freeze_hours": 72,
@@ -353,6 +353,14 @@
    "new_sha256": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
    "old_sha256": "f2dbb4fd72dbe9df64553d5e4daa7f926ef283b462e8483d9382a853dd79c433",
    "reason": "回退只读累计展示（revert 6a9b15a）：面板 KILL_THREE 恢复改动前外观，选码/尾码/8 项结构/封存/结算/AI prompt 未变，不升 RULE_VERSION（用户 m00187）"
+  },
+  {
+   "at": "2026-11-05T17:58:53.644623+08:00",
+   "commit": "ad4bcb7",
+   "file": "lib/panel_context.py",
+   "new_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
+   "old_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+   "reason": "退役 kill9_tail（用户指令 m00002）：共享面板上下文移除 kill9 自观测/模型档位/注入；prompt A/B（kill8/kill3/kill1 三变体，固定 ref/target）改前改后逐字节相同"
   }
  ],
  "min_periods": 100,

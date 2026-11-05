@@ -25,13 +25,21 @@
      "new_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
      "old_sha256": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38",
      "reason": "退役 selected_six（七项独立框架，用户指令 m00002）：lib/panel_context.py 移除 frameworks.selected_six 块与 model_tiers.six 环境档位；固定 fixture REF=20261105148/TGT=20261105149 的 build()+prompt_text() A/B 证明新旧 snapshot 仅这两处删除、其余逐字节相同（prompt sha 6d77b883daca8d72→a66a08e1f3647f45），kill3/kill1/kill9/he3/killer 口径、封存、结算与攻击语均未变。"
+    },
+    {
+     "at": "2026-11-05T17:58:53.644623+08:00",
+     "commit": "ad4bcb7",
+     "file": "lib/panel_context.py",
+     "new_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
+     "old_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+     "reason": "退役 kill9_tail（用户指令 m00002）：共享面板上下文移除 kill9 自观测/模型档位/注入；prompt A/B（kill8/kill3/kill1 三变体，固定 ref/target）改前改后逐字节相同"
     }
    ],
    "label": "R1 框架",
    "min_periods": 100,
    "rule_version": "marginal-frequency-v2",
    "shared": {
-    "lib/panel_context.py": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946"
+    "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a"
    }
   },
   "he3_refine": {
@@ -59,13 +67,21 @@
      "new_sha256": "d70da3fe095b75079ecf6a386ee2ccd28d2fb7622c3eb9eb1b46d8397c7edeb9",
      "old_sha256": "05059c01feb06cffda358bba05acf66c2d4d84ebdb74ab27d8fcacb45eb7616b",
      "reason": "退役 selected_six：lib/he3_refine_stats.py 仅注释 \"(the selected_six pattern)\" 改为 \"(the seal-ledger pattern)\"，无任何计算/口径/封存变化（py_compile + diff 确认）。"
+    },
+    {
+     "at": "2026-11-05T17:58:53.644623+08:00",
+     "commit": "ad4bcb7",
+     "file": "lib/panel_context.py",
+     "new_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
+     "old_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+     "reason": "退役 kill9_tail（用户指令 m00002）：共享面板上下文移除 kill9 自观测/模型档位/注入；prompt A/B（kill8/kill3/kill1 三变体，固定 ref/target）改前改后逐字节相同"
     }
    ],
    "label": "he3 精修",
    "min_periods": 100,
    "rule_version": "he3-refine-v3-panel-context",
    "shared": {
-    "lib/panel_context.py": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946"
+    "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a"
    }
   },
   "kill1_tail": {
@@ -93,20 +109,28 @@
      "new_sha256": "15aa543642283ec553f5686c07b5a9278ccaab44fa3fd0fc852b52d976581714",
      "old_sha256": "3cf792f9a2b6eb65fa3f3a24292451ad06cd1ddc30d2fa772fd8c638172d0744",
      "reason": "修复 v4 RETRY_INSTRUCTION 花括号未双写（KeyError \"key\"）导致重试路径整期跳过；仅恢复 {{ }} 双花括号，运行时重试文案与 v4 意图逐字符一致，不改变规则/封存/结算语义；py_compile + format 渲染验证通过，配套代码提交见 frozen_commit 指向的 HEAD。"
+    },
+    {
+     "at": "2026-11-05T17:58:53.644623+08:00",
+     "commit": "ad4bcb7",
+     "file": "lib/panel_context.py",
+     "new_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
+     "old_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+     "reason": "退役 kill9_tail（用户指令 m00002）：共享面板上下文移除 kill9 自观测/模型档位/注入；prompt A/B（kill8/kill3/kill1 三变体，固定 ref/target）改前改后逐字节相同"
     }
    ],
    "label": "单位置杀码(kill1)",
    "min_periods": 100,
    "rule_version": "kill1-tail-v4-two-position-one-tail",
    "shared": {
-    "lib/panel_context.py": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946"
+    "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a"
    }
   },
   "kill3_tail": {
    "files": {
     "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
     "lib/kill_three_view.py": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
-    "lib/panel_context.py": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+    "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
     "scripts/run_kill3_tail.py": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5"
    },
    "freeze_hours": 72.0,
@@ -465,46 +489,20 @@
      "new_sha256": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
      "old_sha256": "f2dbb4fd72dbe9df64553d5e4daa7f926ef283b462e8483d9382a853dd79c433",
      "reason": "回退只读累计展示（revert 6a9b15a）：面板 KILL_THREE 恢复改动前外观，选码/尾码/8 项结构/封存/结算/AI prompt 未变，不升 RULE_VERSION（用户 m00187）"
+    },
+    {
+     "at": "2026-11-05T17:58:53.644623+08:00",
+     "commit": "ad4bcb7",
+     "file": "lib/panel_context.py",
+     "new_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
+     "old_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+     "reason": "退役 kill9_tail（用户指令 m00002）：共享面板上下文移除 kill9 自观测/模型档位/注入；prompt A/B（kill8/kill3/kill1 三变体，固定 ref/target）改前改后逐字节相同"
     }
    ],
    "label": "三位置杀码(kill3)",
    "min_periods": 100,
    "rule_version": "kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid",
    "shared": {}
-  },
-  "kill9_tail": {
-   "files": {
-    "lib/kill9_tail.py": "6ec1779362bdcb89fa8c0977948755800b12298b758b5426a88a34e6999f2343",
-    "lib/kill_nine_view.py": "7093cbff5bf87e27db4bdb7fd07d342653841bacc9251a8fed58997ffd3921fc"
-   },
-   "freeze_hours": 72.0,
-   "freeze_ref_period": "20261105124",
-   "frozen_at": "2026-11-05T10:21:58.766007+08:00",
-   "frozen_commit": "a35d27b",
-   "hash_updates": [
-    {
-     "at": "2026-11-05T10:48:23.605301+08:00",
-     "commit": "4e2deed",
-     "file": "lib/kill9_tail.py",
-     "new_sha256": "6ec1779362bdcb89fa8c0977948755800b12298b758b5426a88a34e6999f2343",
-     "old_sha256": "b598b3e9fb019918676355ee72b98d9747d315d9191f3698d82102f9a53cf054",
-     "reason": "v5 攻击语显示修正：定位排除改用位置保留码，不改封存/结算/基线"
-    },
-    {
-     "at": "2026-11-05T12:34:40.692296+08:00",
-     "commit": "988b221",
-     "file": "lib/panel_context.py",
-     "new_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
-     "old_sha256": "c95339a94b7d2a1e00f3bd013dd92b5c1b7e1f02a6c4b435203ac3f900d7ea75",
-     "reason": "退役 selected_six（七项独立框架，用户指令 m00002）：lib/panel_context.py 移除 frameworks.selected_six 块与 model_tiers.six 环境档位；固定 fixture REF=20261105148/TGT=20261105149 的 build()+prompt_text() A/B 证明新旧 snapshot 仅这两处删除、其余逐字节相同（prompt sha 6d77b883daca8d72→a66a08e1f3647f45），kill3/kill1/kill9/he3/killer 口径、封存、结算与攻击语均未变。"
-    }
-   ],
-   "label": "两位置杀码(kill9)",
-   "min_periods": 100,
-   "rule_version": "kill9-tail-v5-pool-three-all-form-three-kill-he2he3",
-   "shared": {
-    "lib/panel_context.py": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946"
-   }
   },
   "killer": {
    "files": {
@@ -525,16 +523,24 @@
      "new_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
      "old_sha256": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38",
      "reason": "退役 selected_six（七项独立框架，用户指令 m00002）：lib/panel_context.py 移除 frameworks.selected_six 块与 model_tiers.six 环境档位；固定 fixture REF=20261105148/TGT=20261105149 的 build()+prompt_text() A/B 证明新旧 snapshot 仅这两处删除、其余逐字节相同（prompt sha 6d77b883daca8d72→a66a08e1f3647f45），kill3/kill1/kill9/he3/killer 口径、封存、结算与攻击语均未变。"
+    },
+    {
+     "at": "2026-11-05T17:58:53.644623+08:00",
+     "commit": "ad4bcb7",
+     "file": "lib/panel_context.py",
+     "new_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
+     "old_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
+     "reason": "退役 kill9_tail（用户指令 m00002）：共享面板上下文移除 kill9 自观测/模型档位/注入；prompt A/B（kill8/kill3/kill1 三变体，固定 ref/target）改前改后逐字节相同"
     }
    ],
    "label": "智能排除(killer)",
    "min_periods": 100,
    "rule_version": "conditional-transition-v1",
    "shared": {
-    "lib/panel_context.py": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946"
+    "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a"
    }
   }
  },
- "updated_at": "2026-11-05T17:19:54+08:00",
+ "updated_at": "2026-11-05T17:58:53.644623+08:00",
  "version": 1
 }

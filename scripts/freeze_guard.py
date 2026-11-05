@@ -79,13 +79,6 @@ FRAMEWORKS = {
         'seal_path': 'data/kill1_tail/seals.json', 'seal_selector': 'records',
         'rule_source': ('lib/kill1_tail.py', 'RULE_VERSION'),
     },
-    'kill9_tail': {
-        'label': '两位置杀码(kill9)',
-        'files': ['lib/kill9_tail.py', 'lib/kill_nine_view.py'],
-        'shared': SHARED,
-        'seal_path': 'data/kill9_tail/seals.json', 'seal_selector': 'records',
-        'rule_source': ('lib/kill9_tail.py', 'RULE_VERSION'),
-    },
 }
 
 
