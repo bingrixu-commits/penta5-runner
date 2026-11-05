@@ -74,7 +74,7 @@ LABELS = {
     'kill3_tail': 'AI 三位置杀码',
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
-    'kill11_tail': 'AI 单位置杀码 + 单双形态（3 项）',
+    'kill11_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
 }
 WINDOWS = {
     'killer': '自账本首期累计',
