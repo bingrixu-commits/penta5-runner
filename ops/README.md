@@ -1691,3 +1691,10 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份/回滚：`/root/ops/hitrate-p1-20261105-205154/`（5 个改前 .bak + pre.sha256，路径另存 /tmp/hitrate_p1_backup_dir）。回滚 `git revert <本节 ops 提交> bfd8414`；或按备份覆盖 5 文件 + `git checkout ops/freeze-guards.json ops/kill3-freeze.json` 后重跑 `python3 scripts/freeze_guard.py status`。
 - 未做（需用户拍板）：P2 覆盖率补跑 + killer v4-pro 0/11 核查；P3 改项数。
 
+
+### 冷码杀号战绩窗口拉长（2026-11-05 21:00，`57816f7`）
+
+- 需求：用户（m00002）「窗口给我拉长50-100期」，经确认取 100 / 80 期（各 +70 / +60）。
+- 改动：`scripts/cold_hit_stats.py:27` `WINDOWS = (30, 20)` → `(100, 80)`（唯一 1 行）；展示层 `lib/cold_hit_stats_view.py` 从 `data/cold_hit_stats.json` 动态读 window/samples，无需改视图；systemd 守护 `penta5-position-cold.service` 已 restart 以加载新常量（否则守护进程按旧常量覆盖 JSON）。`scripts/position_cold_report.py:27`、`scripts/cold_backtest.py:27` 的同名 WINDOWS 未动（分属冷码观察/回测）。
+- 验证：改后 `data/cold_hit_stats.json` as_of=20261105251、records=800、windows=[(100,700),(80,720)]，窗口100 Top1/2/3=90.04%/80.32%/70.32%、窗口80=90.56%/81.04%/71.32%（理论 90/80/70）；面板 20:56:56 自动刷新（`penta5-panel-sync` 每期结算后生成），两份卡片为「窗口 100 期 · 共 700 期样本」「窗口 80 期 · 共 720 期样本」，最多连中 16/17、最多连败 7/7、当前连中 3/3，与 JSON 一致，旧窗口 30/20 标签已消失。
+- 回滚：`git revert 57816f7` + `systemctl restart penta5-position-cold.service`；或用备份 `/tmp/cold_hit_stats.py.bak-20261105-205512` 覆盖后重启。
