@@ -1,6 +1,7 @@
 """Render verified framework rates beside, never inside, immutable served cards."""
 from datetime import date
 from html import escape
+from pathlib import Path
 import json
 import re
 
@@ -197,6 +198,59 @@ SCRIPT = """<script id="r1-framework-hit-script">
 </script>"""
 
 
+def _cumulative_line():
+    """只读累计口径行（数据源 data/hitrate_stability.json）；缺失/异常返回空串。"""
+    try:
+        report = json.loads(Path('/root/penta5-runner/data/hitrate_stability.json')
+                            .read_text(encoding='utf-8'))
+        rows = report.get('rows') if isinstance(report, dict) else None
+        if not isinstance(rows, list):
+            return ''
+        row = next((item for item in rows
+                    if isinstance(item, dict) and item.get('key') == 'framework'), None)
+        if not row:
+            return ''
+        n = row.get('n')
+        hits = row.get('hits')
+        rate = row.get('rate')
+        expected = row.get('expected')
+        if not isinstance(n, int) or n < 1 or not isinstance(hits, int) or rate is None:
+            return ''
+        ci = row.get('ci95')
+        ci_text = ('，95%%CI %.1f%%–%.1f%%' % (ci[0] * 100.0, ci[1] * 100.0)
+                   if isinstance(ci, (list, tuple)) and len(ci) >= 2 else '')
+        parts = ['<b>累计口径</b>（自账本首期，跨天不清零）',
+                 '整组 <b>%.2f%%</b>（%d/%d 期%s）' % (float(rate) * 100.0, hits, n, ci_text)]
+        if expected is not None:
+            parts.append('精确基线 %.2f%%' % (float(expected) * 100.0))
+        delta = row.get('delta')
+        p = row.get('p')
+        if delta is not None:
+            parts.append('偏差 %+.2fpp' % (float(delta) * 100.0))
+        if p is not None:
+            parts.append('二项 p=%.3f' % float(p))
+        drawdown = row.get('drawdown') if isinstance(row.get('drawdown'), dict) else {}
+        random_ref = drawdown.get('random') if isinstance(drawdown.get('random'), dict) else {}
+        if drawdown.get('n') == n and drawdown.get('current_dd_pp') is not None:
+            text = ('自峰值回撤 %.1fpp（峰值 %.1f%% 在 n=%s）'
+                    % (float(drawdown['current_dd_pp']),
+                       float(drawdown.get('peak_rate') or 0) * 100.0,
+                       drawdown.get('peak_n')))
+            if random_ref.get('median_pp') is not None:
+                text += ('；同 n 纯随机序列最大回撤中位 %.1fpp / p90 %.1fpp，P≥该回撤 %.0f%%'
+                         % (float(random_ref['median_pp']), float(random_ref['p90_pp']),
+                            float(random_ref.get('p_ge_observed') or 0) * 100.0))
+            parts.append(text)
+        item = row.get('item_stats') if isinstance(row.get('item_stats'), dict) else {}
+        if item.get('items') and item.get('avg_items') is not None:
+            parts.append('平均命中 %.2f/%d 项（项级 %.1f%%）'
+                         % (float(item['avg_items']), int(item['items']),
+                            float(item.get('item_rate') or 0) * 100.0))
+        return '<br>' + ' · '.join(parts)
+    except Exception:
+        return ''
+
+
 def render_stats_block(summary):
     """Return an independent metadata block plus safe, repeatable DOM badges."""
     data = _summary(summary)
@@ -204,6 +258,7 @@ def render_stats_block(summary):
     for old, replacement in [('&', '\\u0026'), ('<', '\\u003c'), ('>', '\\u003e'),
                               ('\u2028', '\\u2028'), ('\u2029', '\\u2029')]:
         encoded = encoded.replace(old, replacement)
+    cumulative_line = _cumulative_line()
     rolling_line = (('<br>滚动口径（最近' + str(data['rolling']['window']) + '个已验证期）：整组8项全过 '
                     + '%.2f%%' % data['rolling']['overall']['percent']
                     + '（' + str(data['rolling']['overall']['hits']) + '/' + str(data['rolling']['overall']['total']) + '期）')
@@ -225,7 +280,7 @@ def render_stats_block(summary):
            + '尚无有效核验，当前连续段已中断。</b>'
            if data['overall']['available'] and data['overall']['current_streak_interrupted'] else '')
         + ('<br><b style="color:#b45309;">有' + str(data['conflict_count']) + '期开奖号码存在冲突，未计入命中率，等待复核。</b>' if data['conflict_count'] else '')
-        + rolling_line
+        + rolling_line + cumulative_line
         + '</div>')
     if data['stats_error']:
         notice = ('<div id="r1_framework_stats_notice" data-stats-business-date="' + escape(data['biz_date'], quote=True)

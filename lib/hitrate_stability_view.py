@@ -70,6 +70,14 @@ def _num(value):
         return None
 
 
+def _item_note(row):
+    item = row.get('item_stats') if isinstance(row.get('item_stats'), dict) else {}
+    if not item.get('items') or item.get('avg_items') is None or item.get('item_rate') is None:
+        return ''
+    return ('<span class="hs-ci">平均命中 %.2f/%d 项（项级 %s）</span>'
+            % (float(item['avg_items']), int(item['items']), _pct(item.get('item_rate'))))
+
+
 def _cell_window(window):
     if not isinstance(window, dict):
         return '<td>-</td>'
@@ -89,7 +97,21 @@ def _row_cells(row):
     w100 = row.get('w100') if isinstance(row.get('w100'), dict) else None
     w300 = row.get('w300') if isinstance(row.get('w300'), dict) else None
     n = row.get('n')
-    cumulative = f'<b>{_pct(row.get("rate"))}</b><span class="hs-ci">n={n if n is not None else "-"}</span>'
+    extra_lines = []
+    delta = _num(row.get('delta'))
+    p_value = _num(row.get('p'))
+    if delta is not None and p_value is not None:
+        extra_lines.append(f'<span class="hs-ci">Δ{delta * 100:+.2f}pp · p={p_value:.3f}</span>')
+    drawdown = row.get('drawdown') if isinstance(row.get('drawdown'), dict) else {}
+    random_ref = drawdown.get('random') if isinstance(drawdown.get('random'), dict) else {}
+    if drawdown.get('current_dd_pp') is not None and drawdown.get('n') == n:
+        text = f'回撤 {float(drawdown["current_dd_pp"]):.1f}pp'
+        if random_ref.get('median_pp') is not None:
+            text += f'（随机中位 {float(random_ref["median_pp"]):.1f}pp）'
+        extra_lines.append(f'<span class="hs-ci">{text}</span>')
+    cumulative = (f'<b>{_pct(row.get("rate"))}</b>'
+                  f'<span class="hs-ci">n={n if n is not None else "-"}</span>'
+                  + ''.join(extra_lines))
     churn = row.get('churn') if isinstance(row.get('churn'), dict) else {}
     if churn.get('observed_change') and churn.get('age_hours') is not None:
         lifetime = f'{churn["age_hours"]:.1f}h'
@@ -109,7 +131,8 @@ def _row_cells(row):
     ci = _ci(w100.get('ci95')) if w100 else ''
     return ('<tr>'
             f'<td>{escape(str(row.get("label") or row.get("key") or "-"))}'
-            f'<span class="hs-ci">{escape(str(row.get("rule") or ""))}</span></td>'
+            f'<span class="hs-ci">{escape(str(row.get("rule") or ""))}</span>'
+            f'{_item_note(row)}</td>'
             + _cell_window(w100).replace('<td', f'<td title="{escape(ci)}"', 1)
             + _cell_window(w300)
             + f'<td>{cumulative}</td>'
@@ -160,7 +183,7 @@ def render_block(report=None):
         '</tr></thead><tbody>' + rows_html + '</tbody></table>'
         '<div class="hs-foot">断崖规则：24h 覆盖率&lt;80% 且尾部仍漏≥3 期；滚动100期 z≤-2.58 且 300 期 z≤-1.0；'
         '口径切换后存活&lt;24h 或 &lt;30 期。「24h 窗口覆盖」会把窗口内历史缺口一并计入；'
-        '「近 24 期覆盖」只看最近 24 期，判断缺口是否仍在发生；覆盖率低时命中率样本同样不完整，请结合 n 解读。</div>'
+        '「近 24 期覆盖」只看最近 24 期，判断缺口是否仍在发生；覆盖率低时命中率样本同样不完整，请结合 n 解读。自峰值回撤=当前累计率相对历史累计峰值（剔除前 25 期）的回落；随机中位=同 n 纯随机序列最大回撤中位数，用于区分真实断崖与随机波动。</div>'
         f'</section>{END}')
 
 

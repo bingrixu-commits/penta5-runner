@@ -38,6 +38,10 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'lib'))
 
 from stats_history import beijing_now
+try:
+    from hitrate_display import build_display_metrics
+except Exception:  # 展示派生缺失不影响护栏判定
+    build_display_metrics = None
 
 CUMULATIVE = 'data/framework_hitrate_cumulative.json'
 GUARD = 'data/hitrate_guard.json'
@@ -247,6 +251,15 @@ def main(argv=None):
     state_rows = state.get('rows') if isinstance(state.get('rows'), dict) else {}
     next_state = {'version': 2, 'updated_at': now_iso, 'rows': {}}
 
+    display_metrics = {}
+    if build_display_metrics is not None:
+        try:
+            display_metrics = build_display_metrics(
+                rows_in, as_of=cumulative.get('as_of_period'), root=root)
+        except Exception as exc:
+            print('hitrate_stability: display metrics skipped: %s' % exc)
+            display_metrics = {}
+
     out_rows = []
     whitelisted = []
     alerts, watch = [], []
@@ -332,6 +345,7 @@ def main(argv=None):
             'cliff': {'level': level, 'reasons': reasons},
             'verdict': _verdict(level, usable),
         })
+        out_rows[-1].update(display_metrics.get(key) or {})
         if whitelist_entry:
             whitelisted.append({'key': key, 'rule': rule, 'until': whitelist_entry.get('until')})
         if level == 'alert':

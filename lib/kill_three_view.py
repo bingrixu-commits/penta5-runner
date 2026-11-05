@@ -20,6 +20,7 @@
 """
 from datetime import datetime
 from html import escape
+from pathlib import Path
 import json
 import math
 
@@ -218,6 +219,68 @@ def _version_html():
         return ''
 
 
+def _cumulative_html():
+    """只读：本版累计命中率 + 回撤参照 + 项级命中（数据源 data/hitrate_stability.json）。
+
+    与 _stats_html 的今日口径并列展示、不替代；只统计开奖前已发布、开奖后核验的记录，
+    整组 = 8 项同时命中。载荷缺失/版本不符/异常时返回空串，页面保持原样。
+    """
+    try:
+        path = Path('/root/penta5-runner/data/hitrate_stability.json')
+        report = json.loads(path.read_text(encoding='utf-8'))
+        rows = report.get('rows') if isinstance(report, dict) else None
+        if not isinstance(rows, list):
+            return ''
+        rule = str(getattr(kill3_tail, 'RULE_VERSION', '') or '')
+        row = next((item for item in rows if isinstance(item, dict)
+                    and item.get('key') == 'kill3_tail'), None)
+        if not row or str(row.get('rule') or '') != rule:
+            return ''
+        n = row.get('n')
+        hits = row.get('hits')
+        rate = row.get('rate')
+        expected = row.get('expected')
+        if not isinstance(n, int) or n < 1 or not isinstance(hits, int) or rate is None:
+            return ''
+        ci = row.get('ci95')
+        ci_text = ('，95%%CI %.1f%%–%.1f%%' % (ci[0] * 100.0, ci[1] * 100.0)
+                   if isinstance(ci, (list, tuple)) and len(ci) >= 2 else '')
+        parts = ['<b>本版累计（跨天不清零）</b>',
+                 '整组 <b>%.2f%%</b>（%d/%d 期%s）' % (float(rate) * 100.0, hits, n, ci_text)]
+        if expected is not None:
+            parts.append('精确基线 %.2f%%' % (float(expected) * 100.0))
+        delta = row.get('delta')
+        p = row.get('p')
+        if delta is not None:
+            parts.append('偏差 %+.2fpp' % (float(delta) * 100.0))
+        if p is not None:
+            parts.append('二项 p=%.3f' % float(p))
+        drawdown = row.get('drawdown') if isinstance(row.get('drawdown'), dict) else {}
+        random_ref = drawdown.get('random') if isinstance(drawdown.get('random'), dict) else {}
+        if drawdown.get('n') == n and drawdown.get('current_dd_pp') is not None:
+            text = ('自峰值回撤 %.1fpp（峰值 %.1f%% 在 n=%s）'
+                    % (float(drawdown['current_dd_pp']),
+                       float(drawdown.get('peak_rate') or 0) * 100.0,
+                       drawdown.get('peak_n')))
+            if random_ref.get('median_pp') is not None:
+                text += ('；同 n 纯随机序列最大回撤中位 %.1fpp / p90 %.1fpp，P≥该回撤 %.0f%%'
+                         % (float(random_ref['median_pp']), float(random_ref['p90_pp']),
+                            float(random_ref.get('p_ge_observed') or 0) * 100.0))
+            parts.append(text)
+        item = row.get('item_stats') if isinstance(row.get('item_stats'), dict) else {}
+        if item.get('items') and item.get('avg_items') is not None:
+            parts.append('平均命中 %.2f/%d 项（项级 %.1f%%）'
+                         % (float(item['avg_items']), int(item['items']),
+                            float(item.get('item_rate') or 0) * 100.0))
+        if n < 200:
+            parts.append('样本不足（n&lt;200），仅作参考')
+        return ('<div class="k3-acc" style="margin-top:6px;padding-top:6px;'
+                'border-top:1px dashed #c7d2fe;font-size:13px;color:#475569;line-height:1.7">'
+                + ' · '.join(parts) + '</div>')
+    except Exception:
+        return ''
+
+
 def render_block():
     try:
         data = kill3_tail.current_summary()
@@ -230,7 +293,7 @@ def render_block():
                 body += (f'<div class="k3-meta">最近一次：参考期 {escape(str(previous.get("ref_period", "")))}'
                          f' · 目标期 {escape(str(previous.get("target_period", "")))}</div>')
             return (f'{START}<section id="kill-three-ai"><style>{STYLE}</style>'
-                    f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}{_version_html()}'
+                    f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}{_cumulative_html()}{_version_html()}'
                     f'{_foot_html()}</section>{END}')
         positions = seal.get('positions') or {}
         display_only = seal.get('display_only')
@@ -327,7 +390,7 @@ def render_block():
                 f'（AI 选 3 个位置，{counted_note}）</div>'
                 f'{restrict_html}{position_html}{derive_html}'
                 f'<div class="k3-reason">理由：{reason}</div>'
-                f'{_stats_html(stats)}{_version_html()}'
+                f'{_stats_html(stats)}{_cumulative_html()}{_version_html()}'
                 f'<div class="k3-verify">{verify}</div>'
                 f'{_attack_html(seal)}'
                 f'{_foot_html()}</section>{END}')
