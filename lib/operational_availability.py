@@ -11,6 +11,11 @@ KINDS = {'killer': 'killer', 'framework': 'framework', 'pro4': 'pro4',
          'he3_refine': 'he3_refine'}
 
 
+# Panel commits can trail the seal publication timestamp by a few milliseconds
+# (the card identity is still hash-bound); allow only bounded ordering slack.
+PUBLISH_ORDER_SLACK = timedelta(seconds=5)
+
+
 def stamp(value):
     if not isinstance(value, str) or len(value) > 64:
         return None
@@ -124,7 +129,7 @@ def observation(model, seal, delivery, now, *, identity=None):
         expected_id=sha256(json.dumps(event_identity,ensure_ascii=False,sort_keys=True,
                            separators=(',',':'),allow_nan=False).encode()).hexdigest()
         if (not isinstance(event_id, str) or re.fullmatch('[0-9a-f]{64}', event_id) is None
-                or event_id!=expected_id or ready is None or not published <= ready <= now):
+                or event_id!=expected_id or ready is None or not published - PUBLISH_ORDER_SLACK <= ready <= now):
             continue
         matches.append((ready, event_id, event))
     if not matches:
