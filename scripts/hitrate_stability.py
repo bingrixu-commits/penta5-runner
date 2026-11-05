@@ -19,6 +19,10 @@
 单日样本只有约 22 期（1 sigma 约 +-10pp），因此本报告只把滚动窗口与累计显著性
 当作结论口径，单日百分比仅作展示。
 
+已登记有意升版的过渡期豁免：ops/hitrate_stability_whitelist.json（按 key + rule
+精确匹配、until 未过期）。仅把该框架「版本切换过渡期」的 churn 告警降级为观察(watch)，
+不抑制覆盖断崖 / 短期陡降等其他护栏；过期或无法解析的条目自动失效。
+
 任何异常都以 exit 0 结束；只写 data/ 下的派生文件。
 """
 import argparse
@@ -51,6 +55,7 @@ CHURN_ALERT_PERIODS = 30
 CHURN_WATCH_HOURS = 72.0
 CHURN_WATCH_PERIODS = 100
 STALE_MINUTES = 45
+WHITELIST = 'ops/hitrate_stability_whitelist.json'
 
 RANK = {'ok': 0, 'watch': 1, 'alert': 2}
 
@@ -75,6 +80,36 @@ def _atomic_json(path, value):
         handle.close()
     os.chmod(temporary, 0o644)
     os.replace(temporary, path)
+
+
+def _load_whitelist(root, now):
+    document = _read_json(root / WHITELIST, {}) or {}
+    entries = document.get('entries') if isinstance(document, dict) else None
+    active, expired, ignored = [], [], []
+    if isinstance(entries, list):
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get('key') or '')
+            rule = str(item.get('rule') or '')
+            until = item.get('until')
+            if not key or not rule or not until or item.get('enabled') is False:
+                ignored.append({'key': key, 'rule': rule, 'until': until,
+                                'reason': '条目缺少 key/rule/until 或已禁用'})
+                continue
+            try:
+                expiry = datetime.fromisoformat(str(until))
+            except (TypeError, ValueError):
+                ignored.append({'key': key, 'rule': rule, 'until': until,
+                                'reason': 'until 无法解析，不启用'})
+                continue
+            record = {'key': key, 'rule': rule, 'until': str(until),
+                      'reason': str(item.get('reason') or '')}
+            if now >= expiry:
+                expired.append(record)
+            else:
+                active.append(record)
+    return active, expired, ignored
 
 
 def _num(value):
@@ -121,7 +156,7 @@ def _coverage_note(coverage_24h, recent):
         return '24h 窗口含历史缺口，近 %d 期已全部核验（缺口不再发生）' % online
     return ''
 
-def _judge(coverage_24h, recent, w100, w300, n, churn):
+def _judge(coverage_24h, recent, w100, w300, n, churn, whitelist_entry=None):
     reasons = []
     level = 'ok'
 
@@ -154,10 +189,13 @@ def _judge(coverage_24h, recent, w100, w300, n, churn):
         periods = periods if isinstance(periods, int) else None
         if (hours is not None and hours < CHURN_ALERT_HOURS) or \
                 (periods is not None and periods < CHURN_ALERT_PERIODS):
-            reasons.append('口径清零风险: 现行口径仅存活 %s / %s 期'
-                           % ('%.1fh' % hours if hours is not None else '-',
-                              periods if periods is not None else '-'))
-            raise_level('alert')
+            detail = ('口径清零风险: 现行口径仅存活 %s / %s 期'
+                      % ('%.1fh' % hours if hours is not None else '-',
+                         periods if periods is not None else '-'))
+            if whitelist_entry:
+                detail += '（已登记有意升版，过渡期降级观察）'
+            reasons.append(detail)
+            raise_level('watch' if whitelist_entry else 'alert')
         elif (hours is not None and hours < CHURN_WATCH_HOURS) or \
                 (periods is not None and periods < CHURN_WATCH_PERIODS):
             reasons.append('口径存活偏短: %s / %s 期'
@@ -201,6 +239,8 @@ def main(argv=None):
 
     guard = _read_json(root / GUARD, {}) or {}
     guard_missing = ((guard.get('missing') or {}).get('models') or {}) if isinstance(guard, dict) else {}
+    whitelist_active, whitelist_expired, whitelist_ignored = _load_whitelist(root, now)
+    whitelist_by_key = {(item['key'], item['rule']): item for item in whitelist_active}
     key_alias = {'framework': 'framework', 'he3': 'he3_refine', }
 
     state = _read_json(root / STATE, {}) or {}
@@ -208,6 +248,7 @@ def main(argv=None):
     next_state = {'version': 2, 'updated_at': now_iso, 'rows': {}}
 
     out_rows = []
+    whitelisted = []
     alerts, watch = [], []
     for row in rows_in:
         key = str(row['key'])
@@ -249,10 +290,11 @@ def main(argv=None):
             except (TypeError, ValueError):
                 pass
 
+        whitelist_entry = whitelist_by_key.get((key, rule))
         w100 = _window(drift_by_key.get(key), 100)
         w300 = _window(drift_by_key.get(key), 300)
         w500 = _window(drift_by_key.get(key), 500)
-        level, reasons = _judge(coverage_24h, recent, w100, w300, n, churn)
+        level, reasons = _judge(coverage_24h, recent, w100, w300, n, churn, whitelist_entry)
         usable = isinstance(n, int) and n >= MIN_SAMPLE
 
         guard_row = guard_missing.get(key_alias.get(key, key)) if isinstance(guard_missing, dict) else None
@@ -285,10 +327,13 @@ def main(argv=None):
             'w500': w500,
             'switch_off_count': switch_off,
             'churn': churn,
+            'whitelist': whitelist_entry,
             'stat_usable': usable,
             'cliff': {'level': level, 'reasons': reasons},
             'verdict': _verdict(level, usable),
         })
+        if whitelist_entry:
+            whitelisted.append({'key': key, 'rule': rule, 'until': whitelist_entry.get('until')})
         if level == 'alert':
             alerts.append({'key': key, 'label': row.get('label'), 'reasons': reasons})
         elif level == 'watch':
@@ -297,7 +342,7 @@ def main(argv=None):
     status = 'fail' if alerts else ('warn' if watch else 'ok')
     report = {
         'version': 1,
-        'revision': 'hitrate-stability-v1',
+        'revision': 'hitrate-stability-v2',
         'generated_at': now_iso,
         'as_of_period': cumulative.get('as_of_period'),
         'basis': '滚动窗口 100/200/300/500 期 + 累计显著性；单日 n 约 22 期(1 sigma 约 +-10pp)，'
@@ -310,8 +355,10 @@ def main(argv=None):
                        'coverage_tail_misses': COVERAGE_TAIL_MISSES,
                        'churn_alert_hours': CHURN_ALERT_HOURS,
                        'churn_alert_periods': CHURN_ALERT_PERIODS},
+        'whitelist': {'path': WHITELIST, 'active': whitelist_active,
+                      'expired': whitelist_expired, 'ignored': whitelist_ignored},
         'rows': out_rows,
-        'summary': {'status': status, 'alerts': alerts, 'watch': watch,
+        'summary': {'status': status, 'alerts': alerts, 'watch': watch, 'whitelisted': whitelisted,
                     'alert_count': len(alerts), 'watch_count': len(watch)},
     }
     _atomic_json(root / OUTPUT, report)

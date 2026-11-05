@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "note": "已登记的有意口径升级：按 key + rule 精确匹配，until 前把「版本切换过渡期」的 churn 告警降级为观察(watch)，不抑制覆盖断崖/短期陡降等其他护栏；过期自动失效，可长期保留作台账。",
+  "entries": [
+    {
+      "key": "kill1_tail",
+      "rule": "kill1-tail-v4-two-position-one-tail",
+      "until": "2026-11-06T10:30:00+08:00",
+      "reason": "kill1 v4 双位置+一合尾有意升级（2026-11-05 10:16 首封存 / 10:28 首次观测），过渡期 churn 告警已登记降噪；24h 后阈值本身也会自愈",
+      "registered_at": "2026-11-05T19:39:31+08:00"
+    }
+  ]
+}
