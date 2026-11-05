@@ -1964,3 +1964,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 门禁：py_compile 三文件通过；kill8_v6_test.py PASS=107；kill8_v6_view_probe.py PASS=32；golden_compare.py PASS=48；枚举 v6 基线 0.7724761962890625→登记 0.7725（v2/v3/v5 复算自证一致）。
 - 真实周期：ref 20261106081→20261106082 published 2026-11-06T06:45:46，四形态 单单双单 / 小大小小 / 单单单单 / 小大双单；面板区块 START/END 各 1 处、4 卡、口径串与 77.25% 基线已随 run_kill8_tail.py 真实写出。
 - 回滚：git checkout f9a9622 -- lib/kill8_tail.py lib/kill_eight_view.py lib/hitrate_baseline.py；kill8 为手动触发（无 cron），回滚后手动跑一次 scripts/run_kill8_tail.py 刷面板；v6 封存按 legacy 渲染、不重算历史。
+
+### 面板运行类按钮收紧为仅 admin（2026-11-06 06:57，\`3867ee5\` + 本提交（台账））
+
+- 需求：用户（m00891）「落地」承接上一轮提议——把面板 viewer 可触发的付费 AI 运行类按钮收紧为仅 admin。
+- 审计：\`penta5_backend_runner.js\` 在 17228-17229 先调 \`handleAiControlRequest\`/\`handleKill8RunRequest\`（早于 17348 通用门禁，绕过 \`isViewerAllowedRequest\` 白名单）；\`ai_control_routes.js\` 的 POST 本来就 admin-only（403 admin-required），\`kill8_run_routes.js\` 原注释「A logged-in viewer is sufficient」→ viewer 可 POST 触发 \`scripts/run_kill8_tail.py\`（真实 DeepSeek 付费调用）。\`/backdelete-generate\` 纯计算、\`/claude*\` 页面 viewer 仅 GET；无其他 viewer 可触发的 spawn 路由（\`four_throw_http.js\` 全仓无挂载）。
+- 变更：\`kill8_run_routes.js\` GET \`can_run\` 改为 \`role === 'admin'\`；POST 在 running 检查前加 admin 门（403 \`admin-required\`）；\`lib/kill_eight_view.py\` 运行键 JS 升 \`kill8-run-v2\`，非 admin 禁用按钮并提示「仅管理员可启动本框架」，403 文案同；\`panel.html\` 当期生成物同步补丁（skip-worktree，随 run_stats 自然重生成）。
+- 验证：\`node --check\` + \`py_compile\` OK；mock \`web_security.guardRequest\`/\`spawn\` 单测 viewer GET can_run=false、POST 403 且 spawn=0，admin GET true、POST 200 started spawn=1；\`pm2 restart penta5-runner\` 后真实 HTTP：viewer POST 403 \`{"ok":false,"error":"admin-required"}\`、viewer GET can_run=false、admin Basic GET can_run=true，\`data/kill8_run.log\` 无新增（未触发付费）；面板 06:56:29 自然重生成（395,920B）已含 v2 标记 1 处、管理员提示 3 处。
+- 备份/回滚：\`kill8_run_routes.js.bak-k8auth-20261106-065547\`、\`lib/kill_eight_view.py.bak-k8auth-20261106-065547\`、\`panel.html.bak-k8auth-20261106-065547\`；回滚 \`cp\` 回备份 + \`pm2 restart penta5-runner\`，或 \`git revert 3867ee5\`。
+- 未动：AI 总闸 admin 鉴权（原本即 admin-only）、kill8 封存/结算口径、crontab、v16（保持观察）。
