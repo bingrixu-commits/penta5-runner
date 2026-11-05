@@ -8,7 +8,7 @@ import re
 from stats_history import TZ, beijing_now, business_start, parse_period
 
 ROOT = Path('/root/penta5-runner')
-REVISION = 'cold-observation-v4-30-first'
+REVISION = 'cold-observation-v5-100-crossday'
 MARKER = 'COLD_OBSERVATION'
 START, END = '<!-- COLD_OBSERVATION_START -->', '<!-- COLD_OBSERVATION_END -->'
 ANCHOR = 'PENTA5_STATS_PANEL'
@@ -20,7 +20,7 @@ _MARKERS = re.compile(r'<!--\s*([A-Z][A-Z0-9_]*)_(START|END)\s*-->')
 _OWN_ID = re.compile(r'\bid\s*=\s*[\'\"]cold-observation[\'\"]', re.I)
 
 
-def _integer(value, maximum=30):
+def _integer(value, maximum=100):
     return type(value) is int and 0 <= value <= maximum
 
 
@@ -88,7 +88,7 @@ def _validated(summary):
             or not day_valid or beginning is None or updated is None
             or beginning.strftime('%Y-%m-%d') != day or beginning.time().isoformat() != '05:00:00'
             or not beginning <= updated < beginning + timedelta(days=1)
-            or not _integer(summary.get('sample_count')) or summary.get('window_size') != 30
+            or not _integer(summary.get('sample_count')) or summary.get('window_size') != 100
             or type(summary.get('window_size')) is not int):
         return None
     count = summary['sample_count']
@@ -148,7 +148,7 @@ def _card(group, label, key):
     cold = ''.join(_item(items[value]) for value in group['cold'])
     expanded = ''.join(_item(item) for item in group['items'])
     if not cold:
-        cold = '<div class="cold-meta">本统计日暂无开奖样本，等待更新。</div>'
+        cold = '<div class="cold-meta">暂无开奖样本，等待更新。</div>'
         expanded = '<div class="cold-meta">暂无样本，暂不显示出现次数与遗漏。</div>'
     return ('<article class="cold-card" data-cold-group="' + key + '"><div class="cold-label"><b>'
             + label + '</b><span class="cold-latest">最新：' + latest + '</span></div>'
@@ -158,7 +158,7 @@ def _card(group, label, key):
 
 
 def render_observation(summary):
-    """Render a data-only observation section with a shared 05:00 day guard."""
+    """Render a data-only observation section with a fixed rolling window."""
     checked = _validated(summary)
     if checked is None:
         return (START + '\n<section id="cold-observation" role="status" style="margin:12px auto;'
@@ -172,15 +172,15 @@ def render_observation(summary):
         groups.append('<h4>' + title + '</h4><div class="cold-grid">'
                       + ''.join(_card(data[family][spec[0]], spec[1], family + '-' + spec[0]) for spec in labels)
                       + '</div>')
-    period_range = (data['first_period'] + ' ～ ' + data['last_period']) if data['sample_count'] else '本统计日暂无样本'
+    period_range = (data['first_period'] + ' ～ ' + data['last_period']) if data['sample_count'] else '暂无可用样本'
     return (START + '\n<section id="cold-observation" data-stats-business-date="' + escape(data['biz_date'], quote=True)
-            + '">' + _STYLE + '<h3>冷码观察 · 近30期每项第1名</h3><div class="cold-meta">'
-            + escape(data['biz_date']) + ' 05:00起（北京时间） · 实际 ' + str(data['sample_count'])
-            + ' 期，最多30期<br>样本范围：' + escape(period_range) + '<br>最新开奖参考期：'
+            + '">' + _STYLE + '<h3>冷码观察 · 近100期每项第1名</h3><div class="cold-meta">'
+            + '跨日滚动窗口（每日 05:00 不清零） · 实际 ' + str(data['sample_count'])
+            + ' 期，最多100期<br>样本范围：' + escape(period_range) + '<br>最新开奖参考期：'
             + escape(data['reference_period'] or '—') + ' · 更新：' + checked['updated'] + '（北京时间）</div>'
-            + ''.join(groups) + '<div class="cold-note">每个项目每期只显示近30期冷码总排序第1名：先按出现次数从少到多，再按当前遗漏由长到短，仍并列时按固定顺序排序，最后取整个列表第1个。'
+            + ''.join(groups) + '<div class="cold-note">每个项目每期只显示近100期冷码总排序第1名：先按出现次数从少到多，再按当前遗漏由长到短，仍并列时按固定顺序排序，最后取整个列表第1个。'
             '“遗漏 ≥N”表示这N期样本中未出现，窗口之前不作推断。只使用前4球；大小以0—4为小、5—9为大。'
-            '<br>每日北京时间05:00清零，未满30期按实际样本统计。冷码只描述历史样本，不代表下期更容易或更难出现。</div>'
+            '<br>取最近100期（跨日滚动，每日 05:00 不清零），未满100期按实际样本统计。冷码只描述历史样本，不代表下期更容易或更难出现。</div>'
             '</section>\n' + END)
 
 
@@ -237,7 +237,7 @@ def _failure_summary(snapshot, code='cold-observation-view-invalid-data'):
     return {'version': 1, 'revision': REVISION, 'stats_error': True, 'error_code': code,
             'biz_date': start.strftime('%Y-%m-%d'), 'business_start': start.isoformat(),
             'updated_at': now.isoformat(), 'reference_period': None, 'first_period': None,
-            'last_period': None, 'sample_count': 0, 'window_size': 30, 'history_sha256': None,
+            'last_period': None, 'sample_count': 0, 'window_size': 100, 'history_sha256': None,
             'positions': {}, 'tails': {}, 'shapes': {}}
 
 

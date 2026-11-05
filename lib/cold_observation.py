@@ -1,16 +1,15 @@
 """Pure, validated daily cold-code observations; never generates predictions."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 from itertools import product
 import json
 
-from ai_verified_stats import next_period
 from stats_history import (TZ, beijing_now, business_start, parse_time, period_slot,
                            valid_draw_record, validate_conflicting_periods)
 
 VERSION = 1
-REVISION = 'cold-observation-v4-30-first'
-WINDOW_SIZE = 30
+REVISION = 'cold-observation-v5-100-crossday'
+WINDOW_SIZE = 100
 POSITION_KEYS = ('q', 'b', 's', 'g')
 TAIL_INDEXES = {
     'all': (0, 1, 2, 3), 'qbs': (0, 1, 2), 'qbg': (0, 1, 3),
@@ -73,13 +72,16 @@ def _group(values, samples, periods):
 
 
 def build_observation(snapshot):
-    """Observe the current 05:00 business day's last at most 30 real draws.
+    """Observe the last at most 100 real draws across natural days.
 
-    Source rows are revalidated and normalized without modifying the snapshot.
-    Conflicts and gaps in the selected window produce an explicit empty error
-    result. Older conflicts outside that window do not contaminate valid recent
-    observations. Identical first-four copies collapse; their earliest validated
-    opening time is retained so input ordering cannot change the evidence hash.
+    The window is a rolling 100-period span that does not reset at the 05:00
+    business-day boundary, so the card stays fully populated right after
+    midnight instead of only late in the day. Source rows are revalidated and
+    normalized without modifying the snapshot. Conflicts and gaps in the
+    selected window produce an explicit empty error result; older conflicts
+    outside that window do not contaminate it. Identical first-four copies
+    collapse; their earliest validated opening time is retained so input
+    ordering cannot change the evidence hash.
     """
     if not isinstance(snapshot, dict):
         return _base(beijing_now(), error='cold-invalid-snapshot')
@@ -121,19 +123,20 @@ def build_observation(snapshot):
     unconflicted = [row for row in ordered if row['period'] not in conflicts]
     reference = unconflicted[-1]['period'] if unconflicted else None
     result = _base(now, reference)
-    start = business_start(now)
-    relevant = {row['period'] for row in ordered
-                if start <= parse_time(row['opentime']) <= now}
-    # A rejected identity can be absent from snapshot.records. Keep a slot in
-    # the candidate window for it, so removing a conflict cannot conceal a gap.
-    relevant.update(period for period in conflicts if start <= period_slot(period) <= now)
-    selected_periods = sorted(relevant, key=period_slot)[-WINDOW_SIZE:]
-    if any(period in conflicts for period in selected_periods):
-        return _base(now, reference, 'cold-conflicting-records')
-    selected = [records[period] for period in selected_periods]
-    if any(next_period(left['period']) != right['period']
-           for left, right in zip(selected, selected[1:])):
-        return _base(now, reference, 'cold-history-gap')
+    slots = {period_slot(row['period']): row['period'] for row in ordered}
+    conflict_slots = {period_slot(period) for period in conflicts}
+    last_slot = max([*slots, *conflict_slots], default=None)
+    selected = []
+    if last_slot is not None:
+        step = timedelta(minutes=5)
+        expected = [last_slot - step * offset for offset in range(WINDOW_SIZE)][::-1]
+        # A rejected identity can be absent from snapshot.records. Keep its slot
+        # in the candidate window, so removing a conflict cannot conceal a gap.
+        if any(slot in conflict_slots for slot in expected):
+            return _base(now, reference, 'cold-conflicting-records')
+        if any(slot not in slots for slot in expected):
+            return _base(now, reference, 'cold-history-gap')
+        selected = [records[slots[slot]] for slot in expected]
 
     periods = [row['period'] for row in selected]
     numbers = [row['numbers'] for row in selected]
