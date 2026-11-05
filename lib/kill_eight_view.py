@@ -343,6 +343,15 @@ def _attack_html(seal):
             '<label>%s<input id="%s" inputmode="numeric" maxlength="10" '
             'autocomplete="off" placeholder="要排除的数字，如 8" '
             'aria-label="%s排除数字"></label>' % (label, input_id, label))
+    used = seal.get('position_exclusions') if isinstance(seal, dict) else None
+    used_html = ''
+    if isinstance(used, dict):
+        parts = []
+        for key, name in (('q', '千'), ('b', '百'), ('s', '十'), ('g', '个')):
+            digits = str(used.get(key) or '')
+            parts.append('%s %s' % (name, escape(digits) if digits else '—'))
+        used_html = ('<div class="k8-meta">本期计算使用排除数字：%s（输入框仅为浏览器本地记忆；'
+                     '点「启动本框架」后按输入框重新计算）</div>' % ' · '.join(parts))
     posinput = ('<div class="k8-posinput">'
                 '<div class="k8-posinput-title">✏️ 位置排除数字（你手动填，决定形态反方向）</div>'
                 '<div class="k8-posinput-grid">%s</div>'
@@ -399,7 +408,7 @@ def _attack_html(seal):
               'style="padding:7px 15px;border:0;border-radius:7px;background:#4f46e5;color:#fff;cursor:pointer;">'
               '复制完整攻击语</button>'
               '<span id="k8-copy-status" role="status" style="margin-left:8px;font-size:12px;"></span></div>')
-    return data_div + posinput + attack + script
+    return data_div + used_html + posinput + attack + script
 
 
 def _foot_html():
