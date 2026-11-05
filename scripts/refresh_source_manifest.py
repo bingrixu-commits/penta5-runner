@@ -28,9 +28,10 @@ Deliberate exclusions (same policy as evidence_backup._complete_sources):
   * directories data, node_modules, .git, backups, logs, __pycache__ and any
     dot-directory;
   * .env*, *.pem, *.key and set_new_key.py (credential material);
-  * panel.html, a generated display snapshot rewritten by the panel refresh
-    loop (evidence_backup archives it as snapshots/panel.html, not as a
-    source).  Tracking its bytes here would report drift every few minutes.
+  * panel.html and hitrate.html, generated display snapshots rewritten by the
+    panel refresh loop (every few minutes) and the /hitrate page loop (every
+    15 minutes).  evidence_backup archives panel.html as snapshots/panel.html,
+    not as a source.  Tracking either file here would report drift constantly.
 
 Writes are atomic (temp file + os.replace, mode 0600) and are verified again by
 calling newest_source_manifest()/_source_entries() after the rename.  Every
@@ -57,7 +58,7 @@ EXCLUDE_DIRS = {'data', 'node_modules', '.git', '__pycache__', 'logs', 'backups'
 EXCLUDE_NAMES = {'set_new_key.py'}
 EXCLUDE_SUFFIXES = {'.pem', '.key'}
 # Generated display snapshot, rewritten on every panel refresh; see docstring.
-VOLATILE_GENERATED = {'panel.html'}
+VOLATILE_GENERATED = {'panel.html', 'hitrate.html'}
 # The only path outside the repo that evidence_backup's allow-list accepts.
 RUN_STATS = Path('/root/run_stats.py')
 # evidence_backup._source_entries refuses manifests with fewer rows.
@@ -114,6 +115,8 @@ def _manifest_paths(root, backup_base):
 def _canonical(paths, root):
     kept, missing, outside = set(), 0, 0
     for path in paths:
+        if path.name in VOLATILE_GENERATED and path.parent == Path(root):
+            continue
         try:
             if path.is_symlink() or not path.is_file():
                 missing += 1
