@@ -225,9 +225,44 @@ def _tail_policy_html(seal):
     return '<div class="k1-drop">%s</div>' % escape(' · '.join(bits))
 
 
-def _version_html():
-    """口径追溯行：rule_version、自 ref 起期数、整组精确基线（未登记回退 FALLBACK_BASELINE）。"""
+def _missing_version_targets(rule):
+    """当前 rule 已发布封存目标期的缺槽（按每期序列推算）；仅供卡面披露，不改统计。"""
     try:
+        refs = set()
+        targets = set()
+        for seal in kill1_tail.load_seals():
+            if not isinstance(seal, dict):
+                continue
+            if str(seal.get('rule_version') or '') != rule:
+                continue
+            if seal.get('publication_state') != 'published':
+                continue
+            ref = str(seal.get('ref_period') or '')
+            target = str(seal.get('target_period') or '')
+            if len(ref) == 11:
+                refs.add(ref)
+            if len(target) == 11:
+                targets.add(target)
+        if not refs or not targets:
+            return []
+        cursor = kill1_tail.next_period(min(refs))
+        end = kill1_tail.next_period(max(refs))
+        missing = []
+        guard = 0
+        while cursor and end and cursor <= end and guard < 20000:
+            if cursor not in targets:
+                missing.append(cursor)
+            cursor = kill1_tail.next_period(cursor)
+            guard += 1
+        return missing
+    except Exception:
+        return []
+
+
+def _version_html(stats=None):
+    """口径追溯行：rule_version、自 ref 起期数（含待核验）、缺期披露、整组精确基线（未登记回退 FALLBACK_BASELINE）。"""
+    try:
+        stats = stats if isinstance(stats, dict) else {}
         rule = str(getattr(kill1_tail, 'RULE_VERSION', '') or '')
         info = {}
         try:
@@ -246,8 +281,22 @@ def _version_html():
         parts = ['口径 ' + escape(rule)]
         first = info.get('first_ref')
         if first:
-            parts.append('自 ref ' + escape(str(first)) + ' 起（本版 '
-                         + str(int(info.get('count') or 0)) + ' 期）')
+            count = int(info.get('count') or 0)
+            detail = '本版 %d 期' % count
+            try:
+                pending = int(stats.get('pending') or 0)
+            except (TypeError, ValueError):
+                pending = 0
+            if pending:
+                detail += '，含待核验 %d 期' % pending
+            parts.append('自 ref ' + escape(str(first)) + ' 起（' + detail + '）')
+        missing = _missing_version_targets(rule)
+        if missing:
+            shown = '；'.join(missing[:3])
+            if len(missing) > 3:
+                shown += '；等'
+            parts.append('缺期 %d 槽（%s），不计入累计 n、不按 0 命中'
+                         % (len(missing), escape(shown)))
         parts.append('整组精确基线 %.2f%%（%d 项）'
                      % (float(baseline[1]) * 100.0, int(baseline[0])))
         parts.append('kill1 独立框架：与 kill3 独立封存 / 结算 / 统计')
@@ -277,9 +326,13 @@ def _cumulative_html():
         ci = row.get('ci95')
         ci_text = ('，95%%CI %.1f%%–%.1f%%' % (ci[0] * 100.0, ci[1] * 100.0)
                    if isinstance(ci, (list, tuple)) and len(ci) >= 2 else '')
-        parts = ['<b>本版累计（跨天不清零）</b>',
-                 '整组 <b>%.2f%%</b>（%d/%d 期%s）'
-                 % (float(rate) * 100.0, hits, n, ci_text)]
+        as_of = report.get('as_of_period') if isinstance(report, dict) else None
+        parts = ['<b>本版累计（跨天不清零）</b>']
+        if as_of:
+            parts.append('数据截至 <b>%s</b>（每 15 分钟刷新，最多滞后约 4 期/约 20 分钟；'
+                         '今日行按业务日实时）' % escape(str(as_of)))
+        parts.append('整组 <b>%.2f%%</b>（%d/%d 期%s）'
+                     % (float(rate) * 100.0, hits, n, ci_text))
         if row.get('expected') is not None:
             parts.append('精确基线 %.2f%%' % (float(row['expected']) * 100.0))
         if row.get('delta') is not None:
@@ -382,7 +435,7 @@ def render_block():
     html.append('<div class="k1-verify">' + _settlement_line(settlement) + '</div>')
     html.append(_stats_html(stats))
     html.append(_cumulative_html())
-    html.append(_version_html())
+    html.append(_version_html(stats))
     html.append(_attack_html(seal))
     html.append(_foot_html())
     html.append('</section>')
