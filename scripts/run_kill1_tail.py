@@ -65,6 +65,27 @@ def _acquire_job_lock():
         raise SystemExit(0)
 
 
+# --- kill1 pro-vs-flash 影子 A/B 挂钩（只读；任何异常都不影响主体发布） ---
+def _ab_record_raw_and_shadow(prediction, meta, reference, target, prompt):
+    """落 flash 原始预测到 A/B 台账，并 spawn pro 影子；本函数永不抛异常。"""
+    import os
+    try:
+        import kill1_ab
+        kill1_ab.record_flash_raw(
+            prediction, meta, reference, target, prompt,
+            log=lambda message: print(message))
+        kill1_ab.spawn_pro_shadow(
+            prompt, reference, target,
+            log=lambda message: print(message))
+    except Exception as error:
+        try:
+            print('kill1 ab hook failed: %s: %s'
+                  % (type(error).__name__, str(error)[:120]))
+        except Exception:
+            pass
+# --- A/B 挂钩结束 ---
+
+
 def main():
     _acquire_job_lock()
     require_ai_enabled()
@@ -103,6 +124,7 @@ def main():
     except Exception as error:
         print(f"kill1 request failed: {type(error).__name__}: {str(error)[:140]}")
         return 1
+    _ab_record_raw_and_shadow(prediction, meta, reference, target, prompt)
     fresh = load_snapshot(persist=False)
     rejection = publication_rejection(reference, fresh, beijing_now())
     if rejection:
