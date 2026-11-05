@@ -63,6 +63,7 @@ RULE_BASELINE = {
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v3-position-hold3'): (3, 0.7538),
+    ('kill1_tail', 'kill1-tail-v4-two-position-one-tail'): (3, 0.729),
     ('kill9_tail', 'kill9-tail-v1-four-forms-he2he3'): (6, 0.71085114),
     ('kill9_tail', 'kill9-tail-v2-size-parity-all-mixed'): (6, 0.71234352),
     ('kill9_tail', 'kill9-tail-v3-pool-three-forms-he2he3'): (5, 0.75385763),
@@ -74,7 +75,7 @@ LABELS = {
     'selected_six': '七项独立框架 selected_six（7 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
-    'kill1_tail': 'AI 单位置杀码（3 项）',
+    'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill9_tail': 'AI 四形态排除+二数合+三数合（6 项）',
 }
 WINDOWS = {
