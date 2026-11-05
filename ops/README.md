@@ -2001,3 +2001,19 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 收尾复验（2026-11-06 07:13–07:17）：`refresh_source_manifest.py --root /root/penta5-runner --if-drift` → 新基线 /root/backups/auto-baseline-20261106-071340（442 文件）；`ops_health_check.py` freeze_guards OK（5 框架变更 0）、manifest_drift OK、kill1 覆盖率 OK；仅 2 条非 OK 均为既有/环境项：hitrate_stability 历史 as_of=20261106085（age 0.7min，切版观察项，07:28 起为 v5 行）、model_usage 余额警告（18.12 CNY，按近 1h 速率仅够约 0.3h，与本改动无关，属余额问题）。
 - 备份/回滚：改前 11 文件备份 `/root/ops/kill1-v5-20261106-071019/`（扁平命名 lib__*.py、scripts__*.py）；回滚 `git revert 4fb7717 0a9981e`（代码+冻结一起回滚），或按备份覆盖后 `python3 scripts/freeze_guard.py --root /root/penta5-runner init --framework kill1_tail --renew` 重新登记；v5 已产生的封存/结算记录按 rule_version 独立归档，不影响回滚后 v4 统计。
 - 并行窗口：本批期间 HEAD 由 f1afd81 推进至 7031235（他窗 kill1 A/B 影子开关改 .env、PENTA5_KILL1_AB_PRO=0）与 4fb7717/0a9981e（本批）；工作树在本批提交后干净。
+
+### kill3 AI 模型档位切 deepseek-v4-pro（2026-11-06 07:09 试跑 / 07:20 落地，本条台账为唯一提交）
+
+- 需求：用户对面板 kill3 卡「AI 三位置杀码 + 一合尾建议」（原 DeepSeek-V4.1-Flash）发「这个框架给我换pro模型试试」（m00002），首期 pro 成功后回复「落地」（m00065）→ 结论：**部分常驻**（只升 kill3，其余 10 个模型键保持 flash）。
+- 变更（仅 .env 一行，`.env` 已被 .gitignore 忽略、不入库）：第 84 行 `PENTA5_MODEL_KILL3=deepseek-flash` → `deepseek-v4-pro`；备份 `/root/backups/.env.kill3-pro-trial.20261106-070919`；sha256 `e5e23465…` → `73ddd599…`；`PENTA5_DEEPSEEK_MODEL` 与其余 10 键未动；`get_secret` / `resolve_model()` / `model_label()` 实测返回 `deepseek-v4-pro` / `deepseek-v4-pro` / `DeepSeek-V4-Pro`。
+- 守卫：`data/model_tier_guard.json` 保持 `enabled=false`，`targets` 由 ["KILL1","KILL3"] 收缩为 ["KILL3"]（升档方向只含本次任务），`flash_below_balance=-1.0` 不变；备份 `/root/ops/model-tier-guard/model_tier_guard.json.bak-20261106071848`；cron 每 10 分钟 `--dry-run` 均输出 `{"decision":"disabled"}`，`.env` sha256 未变。
+- 真实周期（2/2 成功，requested=returned=deepseek-v4-pro，finish_reason=stop）：
+  - ref `20261106086` → target `20261106087`：AI start 07:11:01.6 / complete 07:12:24.0，elapsed **82.398s**，usage{prompt 5079, completion 8322, reasoning 8250}，published `2026-11-06T07:12:26.675343+08:00`，deadline 07:13:50（余量约 84s）。
+  - ref `20261106087` → target `20261106088`：AI start 07:16:11.3 / complete 07:17:15.7，elapsed **64.443s**，usage{prompt 4998, completion 6297, reasoning 6218}，published `2026-11-06T07:17:18.273729+08:00`，deadline 07:18:50（余量约 92s）。
+  - 封存 `data/kill3_tail/seals.json` 最近 2 条 `model` 与 `model_metadata.requested_model` 双侧一致；`panel.html` kill3 卡 meta「参考期 20261106087｜目标期 20261106088｜AI 计算 07:17:15｜DeepSeek-V4-Pro」。
+  - 首期 pro 预测（ref 086→target 087）已结算 `group_hit=false`（百位杀1 撞 actual 1、合尾杀3 撞 actual 3；十位/个位/两形态/三数共现命中）——n=1 不作结论。
+- 时延判据：`kill3` cron 每 5 分钟一期，单请求 `max(10,min(90,remaining-10))`（read timeout 非总时限），发布窗口 ref 开奖 +230s；历史 pro 最慢 159.3s，当前 64-82s 有余量但长尾超约 156-158s 会迟到，需继续观察。
+- 样本与结论：pro n=2（历史 pro 样本 294 期仅作耗时参考，非 v16 口径）；命中率尚无结论，模型对比仍按 `data/model_call_rec.json` 门槛（两档各 ≥200、差 ≥2pp、p<0.05）。
+- 余额：07:17 实查 17.25 CNY；按近 5 分钟约 14 元/小时，距 5 元 `ai_balance_guard` 暂停线约 50 分钟（高峰约 52 元/小时时仅约 15 分钟），继续常驻建议先充值。
+- 未动：kill3 选码/尾码/封存/结算与 RULE_VERSION（仍 v16）、其它框架模型档位、crontab、AI 总闸。
+- 回滚：`cd /root/penta5-runner && cp -a /root/backups/.env.kill3-pro-trial.20261106-070919 .env`（cron 热读，无需重启；守卫已 disabled 不会回写）。
