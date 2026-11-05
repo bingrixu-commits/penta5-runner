@@ -24,7 +24,7 @@ from cold_observation import POSITION_KEYS, DIGITS  # noqa: E402
 ROOT = Path('/root/penta5-runner')
 OUT_PATH = ROOT / 'data/cold_hit_stats.json'
 LABELS = {'q': '千位', 'b': '百位', 's': '十位', 'g': '个位'}
-WINDOWS = (100, 80)
+WINDOWS = (70, 50)
 TOPS = (1, 2, 3)
 
 
