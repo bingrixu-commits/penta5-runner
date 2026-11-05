@@ -1,4 +1,4 @@
-"""AI 双反向冷形态排除建议面板区块（kill8 独立框架）。
+"""AI 四反向冷形态排除建议面板区块（kill8 独立框架）。
 
 数据源 data/kill8_tail/{seals,settlements}.json，由 scripts/run_kill8_tail.py 每期生成（手动触发）。
 与 kill1 / kill3 完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
@@ -7,7 +7,11 @@
 - 位置排除数字由用户手动完成，不进本框架计算；
 - 单双形态命中 = 目标期实际四位单双形态 != 封存单双形态（反向排除项，4 字符）；
 - 大小形态命中 = 目标期实际四位大小形态 != 封存大小形态（反向排除项，4 字符）；
-- 整组命中 = 单双 + 大小 2 项同时命中；
+- 全大/全小命中 = 目标期实际四位大小形态 != 封存全大/全小形态（反向排除项，4 字符）；
+- 全单/全双命中 = 目标期实际四位单双形态 != 封存全单/全双形态（反向排除项，4 字符）；
+- 整组命中 = 上述 4 项同时命中（四张卡允许出现相同形态）；
+- ③④方向：四个位置的排除数字全部同向时锁定唯一形态（全偏大→全小、全偏小→全大、
+  全偏单→全双、全偏双→全单），方向混杂或未填时由 AI 在 2 种里按冷热自选；
 - 无合尾、无连用限制；只统计开奖前已发布、开奖后按真实开奖核验的记录；
 - 北京时间 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与。
 
@@ -28,11 +32,16 @@ START = '<!-- KILL_EIGHT_START -->'
 END = '<!-- KILL_EIGHT_END -->'
 
 # 整组随机基线兜底：(项数, 精确期望命中率)。
-# 2 项 = 单双反向冷形态 + 大小反向冷形态；均匀配置下 10^4 全枚举平均期望 (15/16)^2 = 0.8789。
+# 4 项 = 单双反向冷形态 + 大小反向冷形态 + 全大/全小反向冷形态 + 全单/全双反向冷形态；
+# 均匀配置口径下 10^4 开奖空间精确枚举平均期望 = 0.7733（精确 0.77330566）。
 # hitrate_baseline.RULE_BASELINE[('kill8_tail', RULE_VERSION)] 未登记时使用本值。
-FALLBACK_BASELINE = (2, 0.8789)
+FALLBACK_BASELINE = (4, 0.7733)
 
-_TITLE = '🤖 AI 双反向冷形态排除建议'
+_SETTLE_ITEMS = (('parity', '单双形态'), ('size', '大小形态'),
+                 ('all_size', '全大/全小形态'), ('all_parity', '全单/全双形态'))
+
+_TITLE = '🤖 AI 四反向冷形态排除建议'
+
 
 STYLE = """
 #kill-eight-ai{box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;padding:14px;border:1px solid #c7d2fe;border-radius:12px;background:#f8faff;color:#334155;font:14px/1.6 sans-serif;min-width:0;overflow-wrap:anywhere}
@@ -94,13 +103,21 @@ def _stats_html(stats):
     if total:
         parity = stats.get('parity') or {}
         size = stats.get('size') or {}
+        all_size = stats.get('all_size') or {}
+        all_parity = stats.get('all_parity') or {}
         join = ' · '.join([
-            '整组命中率（2 项全中：单双 + 大小） <b>%s</b>（%s/%s 期）'
+            '整组命中率（4 项全中：单双 + 大小 + 全大/全小 + 全单/全双）'
+            ' <b>%s</b>（%s/%s 期）'
             % (_pct(stats.get('group_rate')), stats.get('group_hits'), total),
             '单双冷形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
             % (_pct(parity.get('rate')), parity.get('hits'), parity.get('bets')),
             '大小冷形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
             % (_pct(size.get('rate')), size.get('hits'), size.get('bets')),
+            '全大/全小冷形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
+            % (_pct(all_size.get('rate')), all_size.get('hits'), all_size.get('bets')),
+            '全单/全双冷形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
+            % (_pct(all_parity.get('rate')), all_parity.get('hits'),
+               all_parity.get('bets')),
             '待核验 <b>%s</b> 期' % pending,
         ])
     else:
@@ -118,11 +135,14 @@ def _stats_html(stats):
         join += ' · 当前 <b style="color:#15803d">连中 %s 期</b>' % win
     elif loss:
         join += ' · 当前 <b style="color:#b91c1c">连败 %s 期</b>' % loss
-    join += ' · 累计四手连败 <b>%s</b> 次（自本版本上线起，跨天不重叠计数）' % (stats.get('four_loss_cycles_total') or 0)
+    join += (' · 累计四手连败 <b>%s</b> 次（自本版本上线起，跨天不重叠计数）'
+             % (stats.get('four_loss_cycles_total') or 0))
     if total and total < 200:
-        sigma = 100.0 * math.sqrt(0.9375 * 0.0625 / total)
-        join += (' · 单项样本 n=%s（&lt;200 属小样本：93.75%% 项 1σ≈%.1fpp、2σ≈%.1fpp），'
-                 '单日单项只作波动参考' % (total, sigma, 2 * sigma))
+        sigma_group = 100.0 * math.sqrt(0.7733 * (1 - 0.7733) / total)
+        sigma_item = 100.0 * math.sqrt(0.9375 * 0.0625 / total)
+        join += (' · 样本 n=%s（&lt;200 属小样本：整组 77.33%% 1σ≈%.1fpp、2σ≈%.1fpp；'
+                 '单项 93.75%% 1σ≈%.1fpp、2σ≈%.1fpp），单日只作波动参考'
+                 % (total, sigma_group, 2 * sigma_group, sigma_item, 2 * sigma_item))
     return '<div class="k8-stats"><span>%s</span></div>' % join
 
 
@@ -130,16 +150,12 @@ def _settlement_line(settlement):
     if not isinstance(settlement, dict):
         return '已发布，等待目标期开奖核验。'
     parts = ['目标期已开奖：' + ''.join(str(value) for value in (settlement.get('actual') or []))]
-    parity = settlement.get('parity') or {}
-    if isinstance(parity, dict) and parity:
-        parts.append('单双形态 %s %s（实际 %s）' % (
-            parity.get('form', '-'),
-            '命中' if parity.get('hit') is True else '未中', parity.get('actual', '-')))
-    size = settlement.get('size') or {}
-    if isinstance(size, dict) and size:
-        parts.append('大小形态 %s %s（实际 %s）' % (
-            size.get('form', '-'),
-            '命中' if size.get('hit') is True else '未中', size.get('actual', '-')))
+    for key, label in _SETTLE_ITEMS:
+        item = settlement.get(key) or {}
+        if isinstance(item, dict) and item:
+            parts.append('%s %s %s（实际 %s）' % (
+                label, item.get('form', '-'),
+                '命中' if item.get('hit') is True else '未中', item.get('actual', '-')))
     if settlement.get('verified') is not True:
         parts.append('发布晚于开奖，未计入统计')
     else:
@@ -198,24 +214,27 @@ def render_block():
                        _attack_html(None), _stats_html(stats), _version_html(),
                        _foot_html(), '</section>' + END))
         cards = []
-        parity_form = seal.get('parity_form')
-        if isinstance(parity_form, str) and len(parity_form) == 4:
+        for kind in kill8_tail.FORM_KINDS:
+            field = kill8_tail.FORM_FIELDS.get(kind)
+            form = seal.get(field) if field else None
+            if not isinstance(form, str) or len(form) != 4:
+                continue
             cards.append(
                 '<div class="k8-card"><div class="k8-pos">%s</div>'
                 '<div class="k8-form">%s</div>'
-                '<div class="k8-sub">排除该四位单双形态（计入整组）</div></div>'
-                % (escape(str(kill8_tail.REVERSE_LABELS['parity'])), escape(parity_form)))
-        size_form = seal.get('size_form')
-        if isinstance(size_form, str) and len(size_form) == 4:
-            cards.append(
-                '<div class="k8-card"><div class="k8-pos">%s</div>'
-                '<div class="k8-form">%s</div>'
-                '<div class="k8-sub">排除该四位大小形态（计入整组）</div></div>'
-                % (escape(str(kill8_tail.REVERSE_LABELS['size'])), escape(size_form)))
+                '<div class="k8-sub">排除该四位%s形态（计入整组）</div></div>'
+                % (escape(str(kill8_tail.REVERSE_LABELS.get(kind, kind))),
+                   escape(form), escape(str(kill8_tail.FORM_LABELS.get(kind, '')))))
         reason = escape(str(seal.get('reason') or '')) or '（无）'
-        scope_html = ('<div class="k8-drop">整组 2 项：单双冷形态 + 大小冷形态；'
+        scope_html = ('<div class="k8-drop">整组 4 项：单双冷形态 + 大小冷形态 + 全大/全小冷形态 + 全单/全双冷形态；'
                       '无合尾、无连用限制（每期按冷热重选）；'
-                      '位置排除数字由用户手动完成，不在此框架内计算</div>')
+                      '位置排除数字由用户手动完成，并决定四种形态的反方向'
+                      '（全大/全小、全单/全双仅在四个位置排除数字全部同向时锁定唯一形态）</div>')
+        legacy_html = ''
+        if str(seal.get('rule_version') or '') != str(kill8_tail.RULE_VERSION):
+            legacy_html = ('<div class="k8-drop">本封存为旧口径（%s），只含当时封存的形态；'
+                           '下一期起按四形态统计</div>'
+                           % escape(str(seal.get('rule_version') or '-')))
         model = seal.get('model_label') or kill8_tail.model_label()
         meta = ('参考期 %s ｜ 目标期 %s ｜ AI 计算 %s（北京时间） ｜ %s'
                 % (escape(str(seal.get('ref_period', ''))),
@@ -233,12 +252,13 @@ def render_block():
         return ('%s%s<style>%s</style><h3>%s</h3>'
                 '%s'
                 '<div class="k8-meta">%s</div>'
-                '<div class="k8-grid">%s</div>%s'
+                '<div class="k8-grid">%s</div>%s%s'
                 '<div class="k8-reason">理由：%s</div>'
                 '%s%s<div class="k8-verify">%s</div>%s%s%s'
                 % (START, _section_open(' data-as-of="%s"' % as_of), STYLE, _TITLE,
                    _run_html(),
-                   meta, ''.join(cards), scope_html, reason,
+                   meta, ''.join(cards), scope_html, legacy_html,
+                   reason,
                    _stats_html(stats), _version_html(), verify, _attack_html(seal),
                    _foot_html(), '</section>' + END))
     except Exception:
@@ -298,21 +318,23 @@ def _run_html():
 
 
 def _attack_html(seal):
-    """位置排除数字输入区 + 完整攻击语（位置排除 + AI 冷形态）+ 复制按钮。
+    """位置排除数字输入区 + 完整攻击语（位置排除 + AI 冷形态 4 项）+ 复制按钮。
 
     位置排除数字由用户手动输入（不进框架计算），前端 localStorage 记忆；
-    完整攻击语 = 千<保留>百<保留>十<保留>个<保留>除<单双>除<大小>，
-    保留数字按 1234567890 顺序去掉被排除数字得到。seal 为 None 时只有位置部分。
+    完整攻击语 = 千<保留>百<保留>十<保留>个<保留>除<单双>除<大小>除<全大/全小>除<全单/全双>，
+    保留数字按 1234567890 顺序去掉被排除数字得到。seal 为 None 或旧口径时缺的形态自动跳过。
     """
-    parity_form = ''
-    size_form = ''
+    forms = {kind: '' for kind in kill8_tail.FORM_KINDS}
     if isinstance(seal, dict):
-        if isinstance(seal.get('parity_form'), str) and len(seal['parity_form']) == 4:
-            parity_form = seal['parity_form']
-        if isinstance(seal.get('size_form'), str) and len(seal['size_form']) == 4:
-            size_form = seal['size_form']
-    data_div = ('<div id="k8-form-data" data-parity="%s" data-size="%s" style="display:none"></div>'
-                % (escape(parity_form), escape(size_form)))
+        for kind in kill8_tail.FORM_KINDS:
+            field = kill8_tail.FORM_FIELDS.get(kind)
+            value = seal.get(field) if field else None
+            if isinstance(value, str) and len(value) == 4:
+                forms[kind] = value
+    data_div = ('<div id="k8-form-data" data-parity="%s" data-size="%s" '
+                'data-all-size="%s" data-all-parity="%s" style="display:none"></div>'
+                % (escape(forms.get('parity', '')), escape(forms.get('size', '')),
+                   escape(forms.get('all_size', '')), escape(forms.get('all_parity', ''))))
     position_labels = (('k8-ex-q', '千位'), ('k8-ex-b', '百位'),
                        ('k8-ex-s', '十位'), ('k8-ex-g', '个位'))
     inputs = []
@@ -349,10 +371,12 @@ def _attack_html(seal):
         "if(v.indexOf(ORDER[i])<0)out+=ORDER[i];}return out;}"
         "function g(id){var el=document.getElementById(id);return el?el.value:'';}"
         "function forms(){var el=document.getElementById('k8-form-data');"
-        "if(!el)return['',''];return[el.getAttribute('data-parity')||'',el.getAttribute('data-size')||''];}"
+        "if(!el)return['','','',''];return[el.getAttribute('data-parity')||'',"
+        "el.getAttribute('data-size')||'',el.getAttribute('data-all-size')||'',"
+        "el.getAttribute('data-all-parity')||''];}"
         "function build(){var f=forms();var p='千'+keep(g('k8-ex-q'))+'百'+keep(g('k8-ex-b'))"
         "+'十'+keep(g('k8-ex-s'))+'个'+keep(g('k8-ex-g'));"
-        "if(f[0])p+='除'+f[0];if(f[1])p+='除'+f[1];return p;}"
+        "if(f[0])p+='除'+f[0];if(f[1])p+='除'+f[1];if(f[2])p+='除'+f[2];if(f[3])p+='除'+f[3];return p;}"
         "function save(){var o={};for(var i=0;i<IDS.length;i++){o[IDS[i]]=norm(g(IDS[i]));}"
         "try{localStorage.setItem(KEY,JSON.stringify(o));}catch(e){}}"
         "function load(){var o={};try{o=JSON.parse(localStorage.getItem(KEY)||'{}')||{};}catch(e){}"
@@ -365,9 +389,9 @@ def _attack_html(seal):
         "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}else{init();}"
         "})();</script>")
     attack = ('<div class="k8-attack">'
-              '<div class="k8-attack-title">完整攻击语（位置排除数字 + AI 冷形态）</div>'
+              '<div class="k8-attack-title">完整攻击语（位置排除数字 + AI 冷形态 4 项）</div>'
               '<textarea id="k8-combined-attack" readonly rows="2" '
-              'aria-label="kill8 完整攻击语（位置排除 + 冷形态）" '
+              'aria-label="kill8 完整攻击语（位置排除 + 冷形态 4 项）" '
               'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
               'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
               '</textarea>'
@@ -380,12 +404,16 @@ def _attack_html(seal):
 
 def _foot_html():
     return ('<div class="k8-foot">'
-            '位置排除数字由你手动填写（下方输入框，自动记忆），作为形态的<b>反方向基准</b>；本框架由 DeepSeek 决定：'
-            '从 16 种四位单双形态（单/双，千百十个顺序）中选 1 种、'
-            '从 16 种四位大小形态（大/小）中选 1 种，作为本期「反方向冷形态排除项」（排除数字的位置取反面）。<br>'
+            '位置排除数字由你手动填写（下方输入框，自动记忆），作为形态的<b>反方向基准</b>；本框架由 DeepSeek 决定 4 个排除形态：'
+            '①从 16 种四位单双形态（单/双，千百十个顺序）中选 1 种；'
+            '②从 16 种四位大小形态（大/小）中选 1 种；'
+            '③从 2 种全大/全小形态中选 1 种（大大大大 / 小小小小）；'
+            '④从 2 种全单/全双形态中选 1 种（单单单单 / 双双双双），作为本期「反方向冷形态排除项」（排除数字的位置取反面）。<br>'
+            '全大/全小、全单/全双的方向规则：四个位置的排除数字<b>全部偏大</b>时锁定「全小」、<b>全部偏小</b>时锁定「全大」；'
+            '<b>全部偏单</b>时锁定「全双」、<b>全部偏双</b>时锁定「全单」；位置方向混杂或未填时，由 AI 在 2 种里按冷热自选。<br>'
             '冷形态定位依据：近 50 期出现次数少、当前遗漏长（仅历史统计，不代表未来概率）。<br>'
-            '命中 = 目标期实际四位单双形态<b>不等于</b>封存单双形态，'
-            '且实际四位大小形态<b>不等于</b>封存大小形态（2 项全中才算整组命中）。<br>'
+            '命中 = 目标期实际四位形态<b>不等于</b>封存形态：单双、大小、全大/全小、全单/全双 4 项全部命中才算整组命中'
+            '（四张卡允许出现相同形态）。<br>'
             '无合尾、无连用限制（每期按冷热重选，不沿用上期）；'
             '旧口径（历史版本封存）保留但不计入本统计；'
             '只统计开奖前发布、开奖后核验的记录；累计四手连败自本版本上线起跨天叠加：连续 4 期整组未全中记 1 次、8 期记 2 次，赢一次清零，不随 05:00 清零；北京时间 05:00 清零（用于当日命中率等当日统计）；'
@@ -394,7 +422,7 @@ def _foot_html():
 
 
 def apply_kill_eight_block(content, report=None):
-    """原地替换/插入 AI 双反向冷形态排除区块；任何异常原样返回 content。"""
+    """原地替换/插入 AI 四反向冷形态排除区块；任何异常原样返回 content。"""
     try:
         if not isinstance(content, str) or not content:
             return content

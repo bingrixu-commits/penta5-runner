@@ -91,8 +91,9 @@ def main():
         print(f'kill8 panel publication failed: {type(error).__name__}')
         return 1
     print(f'kill8 published: ref={reference} target={target} rule={kill8_tail.RULE_VERSION} · '
-          f'{kill8_tail.REVERSE_LABELS["parity"]} {prediction["parity_form"]} · '
-          f'{kill8_tail.REVERSE_LABELS["size"]} {prediction["size_form"]}')
+          + ' · '.join(f'{kill8_tail.REVERSE_LABELS[kind]} '
+                        f'{prediction[kill8_tail.FORM_FIELDS[kind]]}'
+                        for kind in kill8_tail.FORM_KINDS))
     print(f'kill8 attack: {kill8_tail.build_attack(seal)}')
     return 0
 

@@ -1,14 +1,21 @@
-"""AI 双反向冷形态排除框架（kill8，独立封存/结算/统计）。
+"""AI 四反向冷形态排除框架（kill8，独立封存/结算/统计）。
 
 口径（面板、封存与统计都按此写死）：
 - 位置排除数字由用户手动完成，不进本框架计算（本框架只负责排除形态）；
-- 由 DeepSeek 从 16 种四位单双形态（单/双，按千百十个顺序）中选 1 种、
-  从 16 种四位大小形态（大/小，按千百十个顺序）中选 1 种，作为本期
-  「冷形态反向排除项」；
+- 由 DeepSeek 每期给出 4 个「反方向冷形态排除项」，均按千百十个顺序：
+  ① 四位单双形态（单/双，16 选 1）；
+  ② 四位大小形态（大/小，16 选 1）；
+  ③ 全大/全小形态（大大大大 / 小小小小，2 选 1）；
+  ④ 全单/全双形态（单单单单 / 双双双双，2 选 1）；
 - 冷形态定位依据：近 50 期出现次数少、当前遗漏长（仅历史统计，不代表未来概率）；
 - 单双形态命中 = 目标期实际四位单双形态 != 封存单双形态（反向排除项）；
 - 大小形态命中 = 目标期实际四位大小形态 != 封存大小形态（反向排除项）；
-- 整组命中 = 单双 + 大小 2 项同时命中；
+- 全大/全小命中 = 目标期实际四位大小形态 != 封存全大/全小形态（反向排除项）；
+- 全单/全双命中 = 目标期实际四位单双形态 != 封存全单/全双形态（反向排除项）；
+- 整组命中 = 上述 4 项同时命中（四张卡允许出现相同形态：四个位置的排除数字全偏大时，
+  ②大小形态与③全大/全小形态必然同为「小小小小」，按口径分别计入）；
+- ③④方向由排除数字决定：四个位置排除数字全部偏大 → 锁定全小；全部偏小 → 锁定全大；
+  全部偏单 → 锁定全双；全部偏双 → 锁定全单；位置方向混杂或未填时由模型按冷热自选；
 - 无合尾、无连用限制（每期完全由模型按冷热重选，不沿用上期）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
@@ -45,13 +52,23 @@ MAX_TOKENS = 12288
 REASONING_EFFORT = 'high'
 NONRETRYABLE_HTTP_STATUSES = frozenset((400, 401, 402, 422))
 
-FORM_KINDS = ('parity', 'size')
-FORM_LABELS = {'parity': '单双形态', 'size': '大小形态'}
+FORM_KINDS = ('parity', 'size', 'all_size', 'all_parity')
+FORM_LABELS = {'parity': '单双形态', 'size': '大小形态',
+               'all_size': '全大/全小形态', 'all_parity': '全单/全双形态'}
 FORM_PALETTE = {'parity': '单双', 'size': '大小'}
-REVERSE_LABELS = {'parity': '单双反向冷形态', 'size': '大小反向冷形态'}
+FORM_FIELDS = {'parity': 'parity_form', 'size': 'size_form',
+               'all_size': 'all_size_form', 'all_parity': 'all_parity_form'}
+FORM_SOURCE = {'parity': 'parity', 'size': 'size',
+               'all_size': 'size', 'all_parity': 'parity'}
+ALL_FORM_VALUES = {'all_size': ('大大大大', '小小小小'),
+                   'all_parity': ('单单单单', '双双双双')}
+ALL_FORM_NAMES = {'大大大大': '全大', '小小小小': '全小',
+                  '单单单单': '全单', '双双双双': '全双'}
+REVERSE_LABELS = {'parity': '单双反向冷形态', 'size': '大小反向冷形态',
+                  'all_size': '全大/全小反向冷形态', 'all_parity': '全单/全双反向冷形态'}
 
-RULE_VERSION = 'kill8-tail-v2-reverse-cold-forms'
-COUNTED_FORMS = 2
+RULE_VERSION = 'kill8-tail-v3-four-reverse-cold-forms'
+COUNTED_FORMS = 4
 POSITION_EXCLUSIONS_PATH = ROOT / 'data' / 'kill8_position_exclusions.json'
 POSITION_KEYS = ('q', 'b', 's', 'g')
 POSITION_LABELS = {'q': '千位', 'b': '百位', 's': '十位', 'g': '个位'}
@@ -62,6 +79,8 @@ RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
     'parity_form 必须是恰好 4 个单/双字符（按千百十个顺序）；'
     'size_form 必须是恰好 4 个大/小字符（按千百十个顺序）；'
+    'all_size_form 必须是「大大大大」或「小小小小」（4 字符全大或全小）；'
+    'all_parity_form 必须是「单单单单」或「双双双双」（4 字符全单或全双）；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
 
@@ -147,21 +166,31 @@ def pattern_of(digits, kind):
 
 
 def form_space(kind):
-    """16 种四位形态，按调色板字典序（单双 或 大小）。"""
-    if kind not in FORM_PALETTE:
-        raise ValueError('unknown form kind')
-    return [''.join(chars) for chars in product(FORM_PALETTE[kind], repeat=4)]
+    """形态空间：单双/大小各 16 种；全大/全小与全单/全双各 2 种。"""
+    if kind in FORM_PALETTE:
+        return [''.join(chars) for chars in product(FORM_PALETTE[kind], repeat=4)]
+    if kind in ALL_FORM_VALUES:
+        return list(ALL_FORM_VALUES[kind])
+    raise ValueError('unknown form kind')
 
 
 def rank_forms(rows, kind):
-    """16 种形态冷排序：出现次数升序，当前遗漏降序（最冷在前）。"""
+    """形态冷排序：出现次数升序、当前遗漏降序（最冷在前）。
+
+    全大/全小按大小形态统计、全单/全双按单双形态统计；
+    2 种全形态里从未出现的那种，遗漏记为整个窗口长度。
+    """
+    source = FORM_SOURCE.get(kind)
+    if source is None:
+        raise ValueError('unknown form kind')
     space = form_space(kind)
     counts = {form: 0 for form in space}
     last = {}
     for index, row in enumerate(rows):
-        form = pattern_of(row, kind)
-        counts[form] += 1
-        last[form] = index
+        form = pattern_of(row, source)
+        if form in counts:
+            counts[form] += 1
+            last[form] = index
     size = len(rows)
     items = [(form, counts[form],
               size if last.get(form) is None else size - last[form] - 1)
@@ -194,10 +223,11 @@ def load_position_exclusions():
 
 
 def reverse_constraints(exclusions=None):
-    """反向约束：{kind: {位置下标: 反方向字符}}。
+    """反向约束：{kind: ...}。
 
-    反方向 = 排除数字的相反单双/大小（排除双写单、排除大写小）。
-    某位置排除数字方向混杂（单双混杂或大小混杂）或未排除时，该位置不约束。
+    parity/size：{位置下标: 反方向字符}，反方向 = 排除数字的相反单双/大小
+    （排除双写单、排除大写小）；某位置排除数字方向混杂或未排除时，该位置不约束。
+    all_size/all_parity：4 字符形态串或空串；仅当四个位置的排除数字方向全部同向时锁定。
     """
     exclusions = exclusions if isinstance(exclusions, dict) else {}
     parity = {}
@@ -213,7 +243,14 @@ def reverse_constraints(exclusions=None):
             parity[index] = '单' if 0 in parities else '双'
         if len(sizes) == 1:
             size[index] = '大' if 0 in sizes else '小'
-    return {'parity': parity, 'size': size}
+    all_size = ''
+    if len(size) == len(POSITION_KEYS) and len(set(size.values())) == 1:
+        all_size = next(iter(size.values())) * 4
+    all_parity = ''
+    if len(parity) == len(POSITION_KEYS) and len(set(parity.values())) == 1:
+        all_parity = next(iter(parity.values())) * 4
+    return {'parity': parity, 'size': size,
+            'all_size': all_size, 'all_parity': all_parity}
 
 
 def _constraint_text(constraints):
@@ -226,19 +263,36 @@ def _constraint_text(constraints):
     return '、'.join(parts)
 
 
+def _all_constraint_text(forced):
+    """全大/全小、全单/全双的反向约束文本（四个位置排除数字全部同向时才锁定）。"""
+    if not forced:
+        return '（无：四个位置的排除数字未全部同向，2 种里按冷热自选）'
+    return '必须为「%s」（四个位置的排除数字全部同向，反方向锁定）' % forced
+
+
 def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     constraints = reverse_constraints(exclusions)
     parity_constraint = _constraint_text(constraints['parity'])
     size_constraint = _constraint_text(constraints['size'])
+    all_size_constraint = _all_constraint_text(constraints['all_size'])
+    all_parity_constraint = _all_constraint_text(constraints['all_parity'])
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
     parity_ranks = rank_forms(window, 'parity')
     size_ranks = rank_forms(window, 'size')
+    all_size_ranks = rank_forms(window, 'all_size')
+    all_parity_ranks = rank_forms(window, 'all_parity')
     parity_lines = [f'· {form}（出{count}次/遗漏{omission}期）'
                     for form, count, omission in parity_ranks]
     size_lines = [f'· {form}（出{count}次/遗漏{omission}期）'
                   for form, count, omission in size_ranks]
+    all_size_lines = ['· %s（%s）（出%d次/遗漏%d期）'
+                      % (ALL_FORM_NAMES.get(form, form), form, count, omission)
+                      for form, count, omission in all_size_ranks]
+    all_parity_lines = ['· %s（%s）（出%d次/遗漏%d期）'
+                        % (ALL_FORM_NAMES.get(form, form), form, count, omission)
+                        for form, count, omission in all_parity_ranks]
     panel_section = ''
     panel_context_text = None
     panel_context_sha = None
@@ -259,33 +313,51 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=Non
         '【四位大小形态冷热统计（16 种，按出现次数升序、当前遗漏降序排列；'
         '仅历史统计，不代表未来概率）】\n'
         + '\n'.join(size_lines) + '\n\n'
+        '【四位全大/全小形态冷热统计（2 种：全大=大大大大、全小=小小小小；'
+        '按出现次数升序、当前遗漏降序排列；仅历史统计，不代表未来概率）】\n'
+        + '\n'.join(all_size_lines) + '\n\n'
+        '【四位全单/全双形态冷热统计（2 种：全单=单单单单、全双=双双双双；'
+        '按出现次数升序、当前遗漏降序排列；仅历史统计，不代表未来概率）】\n'
+        + '\n'.join(all_parity_lines) + '\n\n'
         '【反向约束（必须严格遵守，这是「反向」的核心）】\n'
         '你已手动排除了各位置数字，排除数字决定形态的「反方向」：\n'
         f'· 单双形态反向约束：{parity_constraint}\n'
         f'· 大小形态反向约束：{size_constraint}\n'
+        f'· 全大/全小形态反向约束：{all_size_constraint}\n'
+        f'· 全单/全双形态反向约束：{all_parity_constraint}\n'
         '约束位置必须取排除数字的反方向（排除双写单、排除单写双；排除大写小、排除小写大）；'
         '未列出的位置由你按冷热自选。\n\n'
         '【任务】\n'
-        '1. 从 16 种四位单双形态中选 1 种作为本期「反方向冷形态排除项」'
+        '1. 从 16 种四位单双形态中选 1 种作为本期「单双反向冷形态排除项」'
         '（严格遵守上面的单双反向约束，其余位置优先选冷）；\n'
-        '2. 从 16 种四位大小形态中选 1 种作为本期「反方向冷形态排除项」'
+        '2. 从 16 种四位大小形态中选 1 种作为本期「大小反向冷形态排除项」'
         '（严格遵守上面的大小反向约束，其余位置优先选冷）；\n'
-        '3. 命中口径：目标期实际四位单双形态 != 封存单双形态，'
-        '且目标期实际四位大小形态 != 封存大小形态；2 项全中才算整组命中；\n'
-        '4. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
-        '5. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
+        '3. 从 2 种全大/全小形态（大大大大 / 小小小小）中选 1 种作为本期'
+        '「全大/全小反向冷形态排除项」（严格遵守上面的全大/全小反向约束，未锁定时按冷热自选）；\n'
+        '4. 从 2 种全单/全双形态（单单单单 / 双双双双）中选 1 种作为本期'
+        '「全单/全双反向冷形态排除项」（严格遵守上面的全单/全双反向约束，未锁定时按冷热自选）；\n'
+        '5. 命中口径：目标期实际四位单双形态 != 封存单双形态，'
+        '且实际四位大小形态 != 封存大小形态，'
+        '且实际四位大小形态 != 封存全大/全小形态，'
+        '且实际四位单双形态 != 封存全单/全双形态；'
+        '4 项全中才算整组命中（四张卡允许出现相同形态）；\n'
+        '6. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
+        '7. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"parity_form":"<4个单/双字符，按千百十个顺序>",'
         '"size_form":"<4个大/小字符，按千百十个顺序>",'
+        '"all_size_form":"<大大大大 或 小小小小>",'
+        '"all_parity_form":"<单单单单 或 双双双双>",'
         '"reason":"40字以内"}\n'
-        '注意：parity_form 必须恰好 4 个单/双字符；size_form 必须恰好 4 个大/小字符。'
+        '注意：parity_form 必须恰好 4 个单/双字符；size_form 必须恰好 4 个大/小字符；'
+        'all_size_form 必须是 大大大大 或 小小小小；all_parity_form 必须是 单单单单 或 双双双双。'
     )
     if panel_section:
         _marker = prompt.find('【任务】')
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill8-prompt-v1-cold-forms',
+        'version': 'kill8-prompt-v2-four-forms',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -295,6 +367,10 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=Non
                            for form, count, omission in parity_ranks],
         'size_ranking': [{'form': form, 'count': count, 'omission': omission}
                          for form, count, omission in size_ranks],
+        'all_size_ranking': [{'form': form, 'count': count, 'omission': omission}
+                             for form, count, omission in all_size_ranks],
+        'all_parity_ranking': [{'form': form, 'count': count, 'omission': omission}
+                               for form, count, omission in all_parity_ranks],
         'panel_context_sha256': panel_context_sha,
         'panel_context': panel_snapshot if isinstance(panel_snapshot, dict) else None,
         'position_exclusions': dict(exclusions) if isinstance(exclusions, dict) else {},
@@ -314,6 +390,12 @@ def normalize_response(response, *, exclusions=None):
     if (not isinstance(size_form, str) or len(size_form) != 4
             or any(char not in '大小' for char in size_form)):
         raise ValueError('size_form 必须是恰好 4 个大/小字符')
+    all_size_form = response.get('all_size_form')
+    if all_size_form not in ALL_FORM_VALUES['all_size']:
+        raise ValueError('all_size_form 必须是「大大大大」或「小小小小」')
+    all_parity_form = response.get('all_parity_form')
+    if all_parity_form not in ALL_FORM_VALUES['all_parity']:
+        raise ValueError('all_parity_form 必须是「单单单单」或「双双双双」')
     constraints = reverse_constraints(exclusions)
     for index, char in constraints['parity'].items():
         if parity_form[index] != char:
@@ -323,12 +405,20 @@ def normalize_response(response, *, exclusions=None):
         if size_form[index] != char:
             raise ValueError('size_form 在%s必须取排除数字的反方向「%s」'
                              % (POSITION_INDEX_LABELS[index], char))
+    forced_all_size = constraints['all_size']
+    if forced_all_size and all_size_form != forced_all_size:
+        raise ValueError('all_size_form 必须取排除数字的反方向「%s」' % forced_all_size)
+    forced_all_parity = constraints['all_parity']
+    if forced_all_parity and all_parity_form != forced_all_parity:
+        raise ValueError('all_parity_form 必须取排除数字的反方向「%s」' % forced_all_parity)
     reason = str(response.get('reason', ''))
     try:
         reason.encode('utf-8')
     except UnicodeEncodeError:
         raise ValueError('reason 必须是合法 UTF-8 文本') from None
-    return {'parity_form': parity_form, 'size_form': size_form, 'reason': reason[:200]}
+    return {'parity_form': parity_form, 'size_form': size_form,
+            'all_size_form': all_size_form, 'all_parity_form': all_parity_form,
+            'reason': reason[:200]}
 
 
 def resolve_model():
@@ -530,6 +620,8 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'publication_state': 'prepared',
         'parity_form': prediction['parity_form'],
         'size_form': prediction['size_form'],
+        'all_size_form': prediction['all_size_form'],
+        'all_parity_form': prediction['all_parity_form'],
         'reason': prediction['reason'],
         'model': resolve_model(),
         'model_label': model_label(),
@@ -583,7 +675,11 @@ def mark_publication_failed(reference, error):
 
 
 def settle_pending(snapshot=None, now=None):
-    """Append settlements for sealed predictions whose target period has drawn."""
+    """Append settlements for sealed predictions whose target period has drawn.
+
+    向后兼容：v2 旧封存只有 parity_form/size_form，按 2 项结算；
+    v3 起封存含 all_size_form/all_parity_form，按 4 项结算且 group 需 4 项全中。
+    """
     now = now or beijing_now()
     snapshot = snapshot or load_snapshot(persist=False)
     records = {str(record.get('period')): record for record in (snapshot.get('records') or [])}
@@ -605,13 +701,22 @@ def settle_pending(snapshot=None, now=None):
         actual_size = pattern_of(actual, 'size')
         sealed_parity = seal.get('parity_form')
         sealed_size = seal.get('size_form')
+        sealed_all_size = seal.get('all_size_form')
+        sealed_all_parity = seal.get('all_parity_form')
         parity_hit = (isinstance(sealed_parity, str) and len(sealed_parity) == 4
                       and all(char in '单双' for char in sealed_parity)
                       and actual_parity != sealed_parity)
         size_hit = (isinstance(sealed_size, str) and len(sealed_size) == 4
                     and all(char in '大小' for char in sealed_size)
                     and actual_size != sealed_size)
-        group_hit = bool(parity_hit and size_hit)
+        all_size_ok = sealed_all_size in ALL_FORM_VALUES['all_size']
+        all_parity_ok = sealed_all_parity in ALL_FORM_VALUES['all_parity']
+        counted = COUNTED_FORMS if (all_size_ok and all_parity_ok) else 2
+        all_size_hit = bool(all_size_ok and actual_size != sealed_all_size)
+        all_parity_hit = bool(all_parity_ok and actual_parity != sealed_all_parity)
+        group_hit = bool(parity_hit and size_hit
+                         and (all_size_hit and all_parity_hit
+                              if counted == COUNTED_FORMS else True))
         published = parse_time(seal.get('published_at'))
         drawn = parse_time(record.get('opentime'))
         verified = (seal.get('publication_state') == 'published' and published is not None
@@ -626,11 +731,17 @@ def settle_pending(snapshot=None, now=None):
             'drawn_at': record.get('opentime'),
             'settled_at': now.isoformat(),
             'actual': [str(value) for value in actual],
+            'counted_forms': counted,
             'parity': {'form': sealed_parity, 'actual': actual_parity, 'hit': bool(parity_hit)},
             'size': {'form': sealed_size, 'actual': actual_size, 'hit': bool(size_hit)},
             'group_hit': group_hit,
             'verified': bool(verified),
         }
+        if counted == COUNTED_FORMS:
+            settlement['all_size'] = {'form': sealed_all_size, 'actual': actual_size,
+                                      'hit': all_size_hit}
+            settlement['all_parity'] = {'form': sealed_all_parity, 'actual': actual_parity,
+                                        'hit': all_parity_hit}
         settlements.append(settlement)
         settled.add(target)
         changed += 1
@@ -684,6 +795,10 @@ def today_stats(now=None):
     group_hits = sum(1 for item in todays if item.get('group_hit') is True)
     parity_hits = sum(1 for item in todays if (item.get('parity') or {}).get('hit') is True)
     size_hits = sum(1 for item in todays if (item.get('size') or {}).get('hit') is True)
+    all_size_hits = sum(1 for item in todays
+                        if (item.get('all_size') or {}).get('hit') is True)
+    all_parity_hits = sum(1 for item in todays
+                          if (item.get('all_parity') or {}).get('hit') is True)
     win, loss, max_loss, four_loss = _streak_stats(todays)
     four_loss_total = _streak_stats(
         [item for item in verified_all if _rule_version(item) == RULE_VERSION])[3]
@@ -707,6 +822,10 @@ def today_stats(now=None):
                    'rate': (parity_hits / total) if total else None},
         'size': {'hits': size_hits, 'bets': total,
                  'rate': (size_hits / total) if total else None},
+        'all_size': {'hits': all_size_hits, 'bets': total,
+                     'rate': (all_size_hits / total) if total else None},
+        'all_parity': {'hits': all_parity_hits, 'bets': total,
+                       'rate': (all_parity_hits / total) if total else None},
         'current_win_streak': win,
         'current_loss_streak': loss,
         'max_loss_streak': max_loss,
@@ -758,14 +877,12 @@ def deadline_for(reference):
 
 
 def build_attack(seal):
-    """反向冷形态攻击语：位置排除由用户手动完成，本框架只给出两个形态排除项。"""
+    """反向冷形态攻击语：位置排除由用户手动完成，本框架只给出 4 个形态排除项。"""
     if not isinstance(seal, dict):
         raise ValueError('attack requires a sealed prediction')
     parts = []
-    parity_form = seal.get('parity_form')
-    size_form = seal.get('size_form')
-    if isinstance(parity_form, str) and len(parity_form) == 4:
-        parts.append('除' + parity_form)
-    if isinstance(size_form, str) and len(size_form) == 4:
-        parts.append('除' + size_form)
+    for kind in FORM_KINDS:
+        form = seal.get(FORM_FIELDS[kind])
+        if isinstance(form, str) and len(form) == 4:
+            parts.append('除' + form)
     return ''.join(parts)

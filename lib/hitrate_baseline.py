@@ -52,6 +52,7 @@ RULE_BASELINE = {
     ('kill1_tail', 'kill1-tail-v4-two-position-one-tail'): (3, 0.729),
     ('kill8_tail', 'kill8-tail-v1-cold-forms'): (2, 0.8789),
     ('kill8_tail', 'kill8-tail-v2-reverse-cold-forms'): (2, 0.8789),
+    ('kill8_tail', 'kill8-tail-v3-four-reverse-cold-forms'): (4, 0.7733),
     ('kill9_tail', 'kill9-tail-v1-four-forms-he2he3'): (6, 0.71085114),
     ('kill9_tail', 'kill9-tail-v2-size-parity-all-mixed'): (6, 0.71234352),
     ('kill9_tail', 'kill9-tail-v3-pool-three-forms-he2he3'): (5, 0.75385763),
@@ -64,7 +65,7 @@ LABELS = {
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
     'kill1_tail': 'AI 双位置杀码（3 项）',
-    'kill8_tail': 'AI 双反向冷形态（2 项）',
+    'kill8_tail': 'AI 四反向冷形态（4 项）',
     'kill9_tail': 'AI 四形态排除+三定位排除+二数合+三数合（9 项）',
 }
 SINGLE_BASELINES = (
