@@ -1,6 +1,6 @@
 """合尾杀码「稳定化」hold_max 多档候选影子（只读，不改现网封存/统计/攻击语）。
 
-覆盖 4 个合尾框架：AI单位置(kill1)、AI三位置(kill3)、固定八码、killer 九项。
+覆盖 4 个合尾框架：AI双位置(kill1)、AI三位置(kill3)、固定八码、killer 九项。
 候选策略 holdK-until-miss：本组尾码命中后继续沿用，最多连用 K 期；失手或满 K 期改用模型本期新选。
 同时对照 hold2 / hold3 / hold5 / hold-until-miss（不设上限）。
 
@@ -39,7 +39,7 @@ FRAMEWORK_FIELDS = (('he_q3_kill', 'qbs'), ('he_h3_kill', 'bsg'))
 
 # (框架 id, 面板名, 分组粒度, 沿用是否要求上一封存目标期与当前参考期连续)
 FRAMEWORKS = (
-    ('kill1_tail', 'AI单位置(kill1)', 'single', False),
+    ('kill1_tail', 'AI双位置(kill1)', 'single', False),
     ('kill3_tail', 'AI三位置(kill3)', 'single', False),
     ('framework', '固定八码框架', 'pair', True),
     ('killer', 'killer九项', 'triple', True),
@@ -444,7 +444,7 @@ def render_block(data):
         + ''.join(body) + '</tbody></table>'
         '<div class="thm-foot">单尾杀1码随机基线 90%；两项合尾一组全中约 81%，三项约 72.9%（近似独立）。'
         '稳定化不会提高命中率（数学上限），只降低换码频率；hold3 是现网已生效口径，其回放应与封存逐期一致（即上表 hold3复现封存）。'
-        'AI单位置/AI三位置为单尾，固定八码为两项一组，killer 为三项一组；组内任一项失手即整组换码。'
+        'AI双位置/AI三位置为单尾，固定八码为两项一组，killer 为三项一组；组内任一项失手即整组换码。'
         '前瞻 n 满 50 期后再按预登记判据复核，现网口径与封存一律不动。</div>'
         '</section>\n' + END)
 

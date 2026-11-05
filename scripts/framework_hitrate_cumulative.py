@@ -63,7 +63,6 @@ RULE_BASELINE = {
     ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v3-position-hold3'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v4-two-position-one-tail'): (3, 0.729),
-    ('kill1_tail', 'kill1-tail-v5-one-position-one-tail'): (2, 0.81),
     ('kill10_tail', 'kill10-tail-v1-he2-he3'): (2, 0.92022400),
     # KILL11_ENUM_PLACEHOLDER: 已由 10^4 开奖 x 16000 配置精确枚举确认 120,600,000/160,000,000=0.75375，按项目口径登记 4 位 0.7538
     ('kill11_tail', 'kill11-tail-v1-one-position-one-form'): (3, 0.7538),
@@ -73,7 +72,7 @@ LABELS = {
     'framework': '固定八码框架（8 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
-    'kill1_tail': 'AI 单位置杀码（2 项）',
+    'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
     'kill11_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
 }
