@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "source": "data/kill3_tail/seals.json ref 20261105148 panel_context",
+  "source_ref_period": "20261105148",
+  "source_published_at": "2026-11-05T12:21:45.839558+08:00",
+  "retired_commit": "988b221",
+  "retired_at": "2026-11-05T12:33:37+08:00",
+  "note": "kill3-only read-only prompt context experiment (user m00325). Restores the two framework blocks removed from shared lib/panel_context.py when selected_six was retired; static dead snapshot, not future data.",
+  "frameworks": {
+    "selected_six": {
+      "rule": "selected-six-independent-v7-single-tail",
+      "today": {
+        "hits": 42,
+        "total": 86,
+        "percent": 48.8372,
+        "current_win_streak": 2,
+        "current_loss_streak": 0
+      },
+      "cumulative": {},
+      "latest_settled_period": "20261105146",
+      "pending_count": 0
+    },
+    "six": {
+      "rule": "block-stability-v2",
+      "label": "Pro 自选七项（独立）",
+      "latest": null,
+      "latest_positions": null,
+      "today": {
+        "hits": 0,
+        "total": 0,
+        "current_win_streak": 0,
+        "current_loss_streak": 0
+      },
+      "pending_count": 0,
+      "rejected_count": 0
+    }
+  },
+  "model_tiers": {
+    "six": "deepseek-flash"
+  }
+}

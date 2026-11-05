@@ -8,6 +8,7 @@
 """
 from datetime import timedelta
 from pathlib import Path
+import json
 import sys
 import time
 
@@ -26,6 +27,43 @@ from kill_three_view import apply_kill_three_block
 
 WAIT_SECONDS = 55.0
 _LOCK_HANDLE = None
+# kill3 专属静态上下文回灌（2026-11-05 试验，用户 m00325「回做」）：12:26 起 selected_six 退役，
+# 共享 lib/panel_context.py 不再向各框架 prompt 注入 frameworks['six'] / ['selected_six']。
+# 本开关只对 kill3 的 prompt 面板段回灌两段历史静态快照；删除该 JSON 即关闭，不影响其他框架。
+FROZEN_CONTEXT_PATH = ROOT / 'ops' / 'kill3-frozen-context-ref20261105148.json'
+
+
+def _apply_frozen_panel_context(snapshot):
+    """只把退役框架的两段历史静态快照补回 kill3 的 panel_context（只读，不改共享模块）。"""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    try:
+        payload = json.loads(FROZEN_CONTEXT_PATH.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return snapshot
+    except Exception as error:
+        print('kill3 frozen context: load failed %s: %s'
+              % (type(error).__name__, str(error)[:120]))
+        return snapshot
+    restored = []
+    frameworks = snapshot.get('frameworks')
+    frozen_frameworks = payload.get('frameworks')
+    if isinstance(frameworks, dict) and isinstance(frozen_frameworks, dict):
+        for key in ('selected_six', 'six'):
+            block = frozen_frameworks.get(key)
+            if isinstance(block, dict):
+                frameworks[key] = block
+                restored.append('frameworks.' + key)
+    tiers = snapshot.get('model_tiers')
+    frozen_tiers = payload.get('model_tiers')
+    if isinstance(tiers, dict) and isinstance(frozen_tiers, dict):
+        for key, value in frozen_tiers.items():
+            tiers[key] = value
+            restored.append('model_tiers.' + key)
+    if restored:
+        print('kill3 frozen context: injected %s from seal ref %s (retired 988b221)'
+              % (', '.join(restored), payload.get('source_ref_period') or '?'))
+    return snapshot
 
 
 def expected_reference(now):
@@ -130,6 +168,8 @@ def main():
         reference, target,
         kill3_stats=kill3_tail.today_stats(),
         kill3_previous=previous_seal)
+
+    panel_snapshot = _apply_frozen_panel_context(panel_snapshot)
     _panel_text, _panel_sha = panel_context.prompt_text(panel_snapshot)
     print('kill3 panel context sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
     prompt, audit = kill3_tail.build_prompt(
