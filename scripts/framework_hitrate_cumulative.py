@@ -36,9 +36,9 @@ MIN_SAMPLE = 200
 BASIS = '现行规则 10^4 开奖组合精确枚举校准（2026-10-31）'
 DATA_LAG_NOTE = ('账本每期刷新；累计报告每 15 分钟生成一次（7/22/37/52 分），'
                  'as_of 与各账本可能差 1–3 期（最新几期结算可能尚未计入；时序并发时以账本为准）')
-JOINT_FORM_BOUNDARY_NOTE = ('该时刻起 framework/killer 的 2 个反向形态改为联合优化形态（主判断不变）；'
-                            'killer 自 2026-11-05 23:59 起改为四位置全部反向锁定（取杀码形态反面）；'
-                            '跨分界累计趋势需谨慎解读')
+JOINT_FORM_BOUNDARY_NOTE = ('该时刻起 joint_form 影子另有 16x16 联合优化形态 opt 对照列；'
+                            '现网封存/评估形态仍是 AI 形态（killer 自 2026-11-05 23:59 起四位置全部反向锁定，'
+                            '取杀码形态反面），累计基线一律取逐期 expected_ai；opt 不进入主判断')
 
 RULE_BASELINE = {
     ('killer', 'conditional-transition-v2'): (9, 0.4162),
@@ -373,11 +373,13 @@ def _p_two_expected(hits, p0s):
 
 
 def _joint_expected(promoted_moment):
-    """killer/framework 逐目标期精确随机期望。
+    """killer/framework 逐目标期精确随机期望（累计基线一律取封存/评估形态的 expected_ai）。
 
-    分界前封存的是 AI 形态 -> expected_ai；分界后封存的是联合优化形态 -> expected_opt。
-    两列都来自 data/joint_form_shadow.json（scripts/run_joint_form_shadow.py 每期用 10^4
-    开奖组合精确枚举写入），因此「累计行 expected」可按记录逐期加权，而不是用单一旧基线。
+    现网封存/评估形态 = shadow 的 ai_patterns（AI 形态），累计基线必须取逐期 expected_ai；
+    expected_opt 是 scripts/run_joint_form_shadow.py 另算的 16x16 假想最优形态对照列，
+    只留在影子记录里，不进入主判断（2026-11-06 修正：分界后误取 expected_opt 会高估基线）。
+    两列都来自 data/joint_form_shadow.json（每期用 10^4 开奖组合精确枚举写入），
+    因此「累计行 expected」按记录逐期加权，而不是用单一旧基线。
     """
     cache_key = promoted_moment.isoformat() if promoted_moment is not None else '(none)'
     cached = _JOINT_EXPECTED_CACHE.get(cache_key)
@@ -398,12 +400,8 @@ def _joint_expected(promoted_moment):
             # shadow records 以 ref_period 为键，但评估/期望属于自身的 target_period；
             # 账本按 target_period 关联，必须用 record['target_period'] 映射，不能把 ref 键当 target。
             target = str(record.get('target_period') or key)
-            value = None
-            if promoted_moment is not None:
-                slot = _period_slot(target)
-                value = record.get('expected_opt') if (slot is not None and slot > promoted_moment) else record.get('expected_ai')
-            else:
-                value = record.get('expected_ai')
+            # 封存/评估形态一律是 AI 形态 -> 累计基线一律 expected_ai（opt 仅影子对照）。
+            value = record.get('expected_ai')
             if not isinstance(value, (int, float)) or not (0.0 < float(value) < 1.0):
                 fallback = record.get('expected_opt')
                 value = fallback if (isinstance(fallback, (int, float))
@@ -420,8 +418,7 @@ def _joint_expected(promoted_moment):
 
 
 def _joint_expected_map(name, promoted_moment):
-    if promoted_moment is None:
-        return None
+    """影子记录存在即返回逐期 expected_ai 映射；分界时刻只用于 before/after 参考说明。"""
     return _joint_expected(promoted_moment)[0].get(name)
 
 
@@ -571,7 +568,7 @@ def _joint_form_boundary():
 
 
 def _post_optimized_count(records, promoted_moment):
-    """target 槽位晚于转正时刻的已核验期数（分界后形态已改用联合优化形态）。"""
+    """target 槽位晚于 joint_form 转正时刻的已核验期数（仅作影子 opt 对照的背景统计）。"""
     count = 0
     for target, _, _ in records:
         slot = _period_slot(target)
@@ -583,8 +580,9 @@ def _post_optimized_count(records, promoted_moment):
 def _with_post_optimized(row, records, promoted_at, promoted_moment):
     count = _post_optimized_count(records, promoted_moment)
     row['post_optimized_n'] = count
-    suffix = ('其中 %d 期 target 槽位晚于 joint_form 转正时刻 %s（该时刻起反向形态改用联合优化形态，'
-              '主判断不变），跨分界累计趋势需谨慎解读' % (count, promoted_at))
+    suffix = ('其中 %d 期 target 槽位晚于 joint_form 转正时刻 %s（影子自此另有 opt 对照列；'
+              '现网封存一律 AI 形态，累计基线统一 expected_ai，opt 不进入主判断）'
+              % (count, promoted_at))
     row['note'] = (row['note'] + '；' + suffix) if row.get('note') else suffix
     return row
 
@@ -912,7 +910,7 @@ def build():
         joint_baseline = {
             'promoted_at': promoted_at,
             'source': 'data/joint_form_shadow.json#summary',
-            'basis': '分界前 AI 形态 expected_ai / 分界后联合优化形态 expected_opt，均为逐期 10^4 精确枚举均值',
+            'basis': '封存/评估形态 = AI 形态，累计基线一律取逐期 expected_ai（10^4 精确枚举均值）；expected_opt 仅 joint_form 影子对照，不进入主判断',
             'models': joint_summary,
         }
     as_of = None
