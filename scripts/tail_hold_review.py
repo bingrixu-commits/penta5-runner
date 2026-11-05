@@ -57,17 +57,6 @@ def _actual_map_r1():
     return mapping
 
 
-def _actual_map_six():
-    mapping = {}
-    for entry in (_read(DATA / 'selected_six_hit_stats.json', {}) or {}).get('verified', {}).values():
-        pub = entry.get('publication') or {}
-        actual = entry.get('actual') or {}
-        ref, nums = pub.get('ref_period'), actual.get('numbers')
-        if ref and isinstance(nums, list) and len(nums) >= 4:
-            mapping[str(ref)] = [int(x) for x in nums[:4]]
-    return mapping
-
-
 def _framework_entries():
     seals = (_read(DATA / 'r1_framework_seals.json', {}) or {}).get('prediction_seals', {})
     actuals = _actual_map_framework()
@@ -104,26 +93,6 @@ def _killer_entries():
                 _tv(nums, 'qbs') != tails['he_q3'],
                 _tv(nums, 'bsg') != tails['he_h3']]
         rows.append((str(ref), hold.get('reused_previous') is True, hits))
-    return rows
-
-
-def _six_entries():
-    seals = (_read(DATA / 'selected_six_seals.json', {}) or {}).get('prediction_seals', {})
-    actuals = _actual_map_six()
-    rows = []
-    for ref in sorted(seals):
-        seal = seals[ref]
-        policy = (seal.get('model_metadata') or {}).get('tail_policy')
-        if not isinstance(policy, dict):
-            continue
-        nums = actuals.get(ref)
-        if nums is None:
-            continue
-        tails = seal['response']['selected_tails']
-        if len(tails) != 1:
-            continue
-        key, kill = next(iter(tails.items()))
-        rows.append((str(ref), policy.get('reused_previous') is True, [_tv(nums, key) != int(kill) % 10]))
     return rows
 
 
@@ -180,7 +149,6 @@ FRAMEWORKS = (
     ('AI三位置', _kill3_entries),
     ('AI双位置+一合尾', _kill1_entries),
     ('固定八码', _framework_entries),
-    ('七项独立v7', _six_entries),
     ('killer九项', _killer_entries),
 )
 
