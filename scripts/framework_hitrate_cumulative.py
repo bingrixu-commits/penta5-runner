@@ -37,6 +37,7 @@ BASIS = '现行规则 10^4 开奖组合精确枚举校准（2026-10-31）'
 DATA_LAG_NOTE = ('账本每期刷新，as_of 与各账本可能差 ≤1 期（时序竞争：最新一期结算与报告生成并发，'
                  '报告可能落后或超前对应账本 1 期）')
 JOINT_FORM_BOUNDARY_NOTE = ('该时刻起 framework/killer 的 2 个反向形态改为联合优化形态（主判断不变）；'
+                            'killer 自 2026-11-05 23:59 起改为四位置全部反向锁定（取杀码形态反面）；'
                             '跨分界累计趋势需谨慎解读')
 
 RULE_BASELINE = {
@@ -57,6 +58,7 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid'): (8, 0.5863),
     ('kill3_tail', 'kill3-tail-v14-hot-repeat-neighbor-hold3-two-counted-three-avoid'): (8, 0.5863),
     ('kill3_tail', 'kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid'): (8, 0.5863),
+    ('kill3_tail', 'kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop'): (8, 0.5863),
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v3-position-hold3'): (3, 0.7538),

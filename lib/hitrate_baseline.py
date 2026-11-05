@@ -46,6 +46,7 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v13-hot-cold-hold3-two-counted-three-avoid'): (8, 0.5863),
     ('kill3_tail', 'kill3-tail-v14-hot-repeat-neighbor-hold3-two-counted-three-avoid'): (8, 0.5863),
     ('kill3_tail', 'kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid'): (8, 0.5863),
+    ('kill3_tail', 'kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop'): (8, 0.5863),
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v3-position-hold3'): (3, 0.7538),
