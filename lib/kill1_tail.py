@@ -1,8 +1,8 @@
-"""AI 双位置杀码 + 一合尾（独立框架，数据独立封存/统计）。
+"""AI 单位置杀码 + 一合尾（独立框架，数据独立封存/统计）。
 
 口径（面板、封存与统计都按此写死）：
-- 由 DeepSeek 从 千/百/十/个 四个位置中选 2 个不同位置，各排除 1 个数字（杀码），
-  两个位置都计入整组（每期 2 注）；
+- 由 DeepSeek 从 千/百/十/个 四个位置中选 1 个位置，排除 1 个数字（杀码），
+  该位置计入整组（每期 1 注）；
 - 定位依据（v2 起）：每个位置给出近 50 期热码 top3 与上期（参考期）该位置重码/邻码
   （±1，0↔9 循环），模型须从中选择排除码，不得以冷码（出现次数少、当前遗漏长）为依据；
   v1 的冷码定位口径已归档，旧封存保留原 rule_version 不再产生新记录；
@@ -11,13 +11,13 @@
   满 3 期后由模型本期重选（重选可与上期同码）；模型尾项在封存里记为换码候选
   （tail_policy.model_tail）；
 - 位置命中 = 该位置实际开奖号 != 杀码；合尾命中 = 该合尾实际和值个位 != 排除码；
-- 整组命中 = 2 个位置 + 1 个合尾同时命中（共 3 项）；
+- 整组命中 = 1 个位置 + 1 个合尾同时命中（共 2 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
-- 位置杀码稳定化 hold3-until-miss（v3 起，v4 起双位置各自独立）：某位置杀码命中后沿用同位置同杀码、
-  最多自动沿用 3 期；失手或满 3 期后由模型重选（重选可与上期同码）；两个位置互不影响；
+- 位置杀码稳定化 hold3-until-miss（v3 起，v5 起单位置）：该位置杀码命中后沿用同位置同杀码、
+  最多自动沿用 3 期；失手或满 3 期后由模型重选（重选可与上期同码）；
   模型位置项在封存里记为换码候选（position_policy.items[*].model_kill）；
 - v4 起不再预测、展示或结算四位反向形态；旧 v3 及更早封存的 form 字段与归档命中保留，
-  不计入 v4 统计；
+  不计入当前（v5）统计；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -73,8 +73,8 @@ REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 FORM_LABELS = dict(REVERSE_LABELS)
 
-RULE_VERSION = 'kill1-tail-v4-two-position-one-tail'
-COUNTED_POSITIONS = 2
+RULE_VERSION = 'kill1-tail-v5-one-position-one-tail'
+COUNTED_POSITIONS = 1
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
 POSITION_HOLD_MAX = 3
@@ -83,9 +83,8 @@ POSITION_POLICY = 'hold3-until-miss'
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
-    'positions 必须是恰好 2 个对象组成的数组，每个对象为 '
-    '\u007b\u007b\u0022key\u0022:\u0022q|b|s|g 之一\u0022,\u0022kill\u0022:0 至 9 的整数\u007d\u007d，'
-    '且两个 key 必须不同；'
+    'positions 必须是恰好 1 个对象组成的数组，每个对象为 '
+    '\u007b\u007b\u0022key\u0022:\u0022q|b|s|g 之一\u0022,\u0022kill\u0022:0 至 9 的整数\u007d\u007d；'
     'tail 为 \u007b\u007b\u0022key\u0022: 五种之一, \u0022kill\u0022: 0 至 9 的整数\u007d\u007d；'
     '合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
@@ -419,31 +418,30 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         + '\n'.join(tail_lines) + '\n\n'
         '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【任务】\n'
-        '1. 从 千/百/十/个 四个位置中挑 2 个不同位置，并从每个位置的近50期热码 top3、'
-        '上期重码、上期邻码（±1）中排除 1 个数字（0-9）；两个位置都计入整组，不得只给 1 个；'
+        '1. 从 千/百/十/个 四个位置中挑 1 个位置，并从该位置的近50期热码 top3、'
+        '上期重码、上期邻码（±1）中排除 1 个数字（0-9）；该位置计入整组；'
         '不得以上期冷码 / 长遗漏码作为定位依据；\n'
         '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；'
         '系统按稳定化规则决定最终封存尾码；\n'
-        '3. 命中口径：位置 = 目标期该位置实际开奖号不等于该位置的排除码（2 个位置各计 1 注）；'
+        '3. 命中口径：位置 = 目标期该位置实际开奖号不等于该位置的排除码（1 个位置计 1 注）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
-        '以上 3 项（2 个位置 + 1 个合尾）同时命中才算整组命中；\n'
-        '4. 两个位置各自独立稳定化：上期某位置命中且该位置自动沿用未满 3 期时，'
-        '系统会沿用该位置上期杀码；两个位置互不影响，你的两项均记为换码候选，可正常自主选择；\n'
+        '以上 2 项（1 个位置 + 1 个合尾）同时命中才算整组命中；\n'
+        '4. 单位置稳定化：上期该位置命中且该位置自动沿用未满 3 期时，'
+        '系统会沿用该位置上期杀码；你的位置项记为换码候选，可正常自主选择；\n'
         '5. 热码、重码、邻码、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
-        '{"positions":[{"key":"q|b|s|g","kill":<0-9整数>},'
-        '{"key":"q|b|s|g","kill":<0-9整数>}],'
+        '{"positions":[{"key":"q|b|s|g","kill":<0-9整数>}],'
         '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
         '"reason":"40字以内"}\n'
-        '注意：positions 必须恰好 2 项，key 互不相同；不需要输出形态（form_type/form）。'
+        '注意：positions 必须恰好 1 项；不需要输出形态（form_type/form）。'
     )
     if panel_section:
         _marker = prompt.find('【任务】')
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill1-tail-prompt-v4-two-position-one-tail',
+        'version': 'kill1-tail-prompt-v5-one-position-one-tail',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -609,12 +607,12 @@ def position_hold_state(seals, settlements):
 
 
 def apply_position_policy(prediction, seals, settlements):
-    """Per-position hold3-until-miss for two independently stabilized positions.
+    """Single-position hold3-until-miss (v5).
 
-    A position keeps its previous kill when that position hit last period and has
-    not been reused three times yet; remaining slots come from the model's picks.
-    The sealed selection always has exactly two distinct positions, and the
-    model's raw picks stay in position_policy for audit.
+    The sealed position keeps its previous kill when that position hit last
+    period and has not been reused three times yet; otherwise the model's pick
+    is used. The sealed selection always has exactly one position, and the
+    model's raw pick stays in position_policy for audit.
     """
     if not isinstance(prediction, dict):
         raise ValueError('prediction must be a dict')
