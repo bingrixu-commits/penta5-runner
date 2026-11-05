@@ -1774,3 +1774,22 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 真实周期：seal ref 20261105287 → target 20261105288（published 23:56:13）rule_version=v15、`position_hold_shadow`（966 期/2033 注）、`position_basis_flags` {q: cold_top3+hold_previous, b: cold_top3+hold_previous, s: cold_top3+hold_previous}、`hold_adopted`=['b','q','s']、`hold_policy`=model-decided；cron 日志 `kill3 previous position hits: 千位 5 hit · 百位 2 hit · 十位 0 hit`；该期结算已出现（target 20261105288 actual 7/8/9/8、counted q,b）。
 - 边界：无 `data/*_auto_promote.json` 写入、无按阈值切 TAIL_POLICY/RULE_VERSION 的分支（kill3 路径 grep auto_promote = 0）；kill1 仍为 2026-11-01 起的确定性 hold3-until-miss，不进影子；现网封存/统计/攻击语口径未变。
 - 回滚：`git revert db5be81` 并按 `ops/kill3-freeze.json` 上一版重算 hash；改前备份 `/root/ops/position-shadow-model-decide-20261105-235118/`（4 源文件 + freeze.json）。
+
+
+### 反向取冷统一：kill3 升 v16（弃位取冷）+ killer 形态四位置反向锁定（2026-11-06 00:02，`417c472`/`73b9b91`/`bec59dd`/`4702422`）
+
+- 需求：用户 m00208「统一马上执行」，接续 m00094「反向取冷形态」的只读评估——把带形态的框架统一为「反向 + 取冷」口径（形态项是排除项：命中 = 实际形态 ≠ 封存形态，单项随机基线 15/16 = 93.75%）。
+- 各框架落点：
+  - kill8 v5：原本已符合（反向只定方向、冷热只定剩余自由度），未动。
+  - framework：不改码——`lib/joint_form_optimizer.py` 的 `reverse_lock` 已锁千/百位，后两位在锁内 16 组枚举取整组联合命中期望最大（10^4 精确枚举 = 锁内最冷）。
+  - kill3：升 `kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop`——被杀 3 位仍机械取杀码形态反面；弃位（dropped）两形态字符改由系统按该位置近 50 期字符冷热（出现次数升序、同次数遗漏降序、再按字符表序）确定并覆盖模型填写，seal 写 `dropped_form_cold`；8 项结构（2 计入位置+1 合尾+2 反向形态+3 组三数共现避开）、2 注/期、尾码 hold3-until-miss 均不变，基线追加同值行 (8, 0.5863) 不重校准。
+  - killer：`p1/p2` 由 `k1..k4` 杀码完全确定（四位单双/大小全取反，`killer_reverse_lock`），不再 16×16 联合穷举；杀码/合尾/三合尾 hold 不变；日志与 metadata 增 `reverse_lock`。
+- 只读回放依据（3423 期开奖 20261018021–20261105284；窗口 = ref 前 50 期；kill3 n=306、framework n=157 仅 2026-11-05 10:34 反向锁上线后、killer n=2905）：kill3 两项同中 现 272/306(88.9%) vs 取冷 275/306(89.9%)，p≈0.73；framework 形态对 现 144(91.7%) vs 取冷 142/141(90.4%/89.8%)，p=0.82/0.65，整组 99/95/94；killer 形态对 现 2615(90.1%) vs 反向 2562(88.2%)（p=0.0272）、整组 1196(41.2%) vs 1074(37.0%)（p≈0）→ **killer 反向锁定显著更差**，按用户「统一马上执行」执行，回滚见末行。
+- 改动（7 文件）：`lib/kill3_tail.py`（`cold_dropped_form`/`_replace_at`/`normalize_response(rows)`/`request_prediction(rows)`/`create_seal` 写 `dropped_form_cold`、docstring+RETRY+prompt 任务 3）、`lib/kill_three_view.py`（弃位取冷展示与脚注）、`scripts/run_kill3_tail.py`（传 rows）；`lib/joint_form_optimizer.py`（`killer_reverse_lock`、`optimize_killer_response` 改锁）、`lib/auto_r1_killer.py`（日志/metadata/攻击语）；`lib/hitrate_baseline.py` 与 `scripts/framework_hitrate_cumulative.py`（v16 基线行 + 分界说明）。
+- 验证：`/tmp/test_rev_cold.py` 31 项全 PASS（弃位取冷逐位置复算、v16 覆盖/旧路径不覆盖/被杀位仍强校验、RETRY format、seal 字段、killer 锁与 expected_opt 精确复算、framework 反向锁不变、两基线含 v16、v15 旧封存不动）；7 文件 py_compile 全过；真实快照 800 行 `cold_dropped_form` 冒烟 OK（个位取 双/小）。
+- 冻结重置：`ops/kill3-freeze.json` → `rule_version` v16、`frozen_at` 2026-11-05T23:59:41+08:00、`freeze_ref_period` 20261105287、version 4、hash_updates +3；`ops/freeze-guards.json` 的 kill3_tail/killer/framework 经 `update`（记录 reason）+ `init --renew`（ref 20261105287）重置窗口，且把 `lib/joint_form_optimizer.py` 新纳入 killer/framework 受控文件清单（此前该文件不在任何冻结守卫内，属补漏）。`freeze_guard.py status` 五框架 changed=−。
+- 真实周期（首个 v16 周期，cron 自动运行、未手动触发）：ref=20261105288 / target=20261106001 封存于 00:01:38 发布，`dropped`=个位，`dropped_form_cold`={parity 双, size 小}，`reverse_parity`=单双单双、`reverse_size`=大小小小（弃位字符与独立复算一致）；killer target 20261105289 封存 00:01:16，`reverse_form.lock`={pattern_ds 单双双单, pattern_dx 小小小大}，与 kills k1..k4=8/5/5/2 逐位取反一致（expected_ai 0.4378 → expected_opt 0.3761，符合「反向锁定更差」的预期）；framework 仍为「本地精确联合优化 + 反向约束」，未变。
+- 面板（00:01:42 自动刷新）：kill3 卡显示「弃位个位按该位置冷热取双/小（v16 起）」、脚注「弃位字符自 v16 起按该位置冷热取冷」，旧「字符自选」计数 0；killer 卡显示「形态：四位置反向锁定（取杀码形态反面，AI 杀码/合尾杀不变）」；framework 卡文案未变。
+- 门禁：`refresh_source_manifest.py --if-drift` → baseline `auto-baseline-20261106-000140`（429 files），manifest_drift OK；`ops_health` overall=warn，非 OK 三项均为已知/预期：kill3_stability（24h version_changes=3 含 v14/v15/v16、missing_slots=2 为历史缺期）、cuopt（无 CUOPT_HEALTH 证据，长期已知）、hitrate_stability（观察 kill1_tail）。
+- 备份/回滚：`/root/ops/reverse-cold-unify-20261105-235458/`（改前 7 代码文件 + 两 JSON + SHA256SUMS）。回滚按序 `git revert 4702422 417c472 73b9b91 bec59dd`，并把 `ops/kill3-freeze.json` 的 rule_version/frozen_at/freeze_ref_period 恢复为 v15/2026-11-05T04:44:42/20261105056 后跑 `freeze_guard.py init --framework kill3_tail`（不加 --renew）；或直接从备份目录覆盖 7 文件 + 两 JSON，重跑 freeze_guard status 与 manifest --if-drift。
+
