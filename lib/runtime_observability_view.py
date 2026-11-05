@@ -14,8 +14,7 @@ START, END = '<!-- RUNTIME_OBSERVABILITY_START -->', '<!-- RUNTIME_OBSERVABILITY
 TZ = timezone(timedelta(hours=8))
 MODELS = (
     ('killer', 'Flash 杀码'), ('framework', 'Flash 框架'),
-    ('pro4', 'Pro 四定位'),
-    ('selected6', 'Pro 八项'), ('he3_refine', '三合五尾'),
+    ('selected6', '七项'), ('he3_refine', '三合五尾'),
 )
 STATUSES = {
     'current': '本轮已完成', 'pending': '本轮进行中', 'manual_off': '手动停止',
@@ -227,6 +226,8 @@ def _row(key, label, raw, day):
     counters = today if isinstance(today, dict) else {}
     mismatch = '；页面目标待核对' if model.get('panel_matches') is False else ''
     diagnostic = '；操作时间不足' if model.get('error_code') == 'operation-window' else ''
+    unavailable = model.get('error_code') == 'evidence-unavailable'
+    unreadable = '；数据源不可读' if unavailable else ''
     phase = _label(PHASES, model.get('phase'), '阶段：—')
     if model.get('status')=='await_rule_start':
         active_start=_period(model.get('active_rule_start_target'))
@@ -235,16 +236,16 @@ def _row(key, label, raw, day):
     api_elapsed = _seconds(times.get('provider_elapsed'))
     return ('<tr data-runtime-model="' + key + '"><td><b>' + label + '</b>'
             '<div class="rt-mini">参考 ' + (ref or '—') + '<br>目标 ' + (target or '—') + '</div></td>'
-            '<td class="rt-stage">' + status + ' / ' + phase + mismatch + diagnostic + '<div class="rt-mini">' + _stages(model) + '</div></td>'
+            '<td class="rt-stage">' + status + ' / ' + phase + mismatch + diagnostic + unreadable + '<div class="rt-mini">' + _stages(model) + '</div></td>'
             '<td>' + elapsed + '<div class="rt-mini">API ' + api_elapsed + '<br>'
             + _latency_quantiles(quality.get('recent50')) + '</div></td>'
             '<td>封存 ' + _seconds(model.get('close_remaining_seconds'), signed=True) + _availability(key,model) + '</td>'
-            '<td data-stats-business-date="' + day + '">' + _rate(today)
-            + '<div class="rt-mini">重试 ' + _count(counters.get('retry_count'))
-            + ' / 关盘余量&lt;90秒 ' + _count(counters.get('margin_under90_count')) + '</div></td>'
-            '<td>' + _rate(quality.get('recent50')) + '</td>'
-            '<td data-stats-business-date="' + day + '">' + ' / '.join(_count(counters.get(name)) for name in
-                ('missing_count', 'api_timeout_count', 'strategy_rejected_count')) + '</td></tr>')
+            '<td data-stats-business-date="' + day + '">' + ('—' if unavailable else _rate(today))
+            + '<div class="rt-mini">重试 ' + ('—' if unavailable else _count(counters.get('retry_count')))
+            + ' / 关盘余量&lt;90秒 ' + ('—' if unavailable else _count(counters.get('margin_under90_count'))) + '</div></td>'
+            '<td>' + ('—' if unavailable else _rate(quality.get('recent50'))) + '</td>'
+            '<td data-stats-business-date="' + day + '">' + ('— / — / —' if unavailable else ' / '.join(_count(counters.get(name)) for name in
+                ('missing_count', 'api_timeout_count', 'strategy_rejected_count'))) + '</td></tr>')
 
 
 def _availability(key,model):
@@ -296,8 +297,9 @@ def render(summary):
     latest = _period(source.get('latest_reference'))
     enabled = api.get('enabled') if type(api.get('enabled')) is bool else None
     api_text = 'API启动' if enabled is True else 'API停止' if enabled is False else 'API—'
-    active_count = len(MODELS)
-    completed = _integer(round_data.get('completed_count'), active_count) if type(round_data.get('total_count')) is int and round_data['total_count'] == active_count else None
+    total_count = round_data.get('total_count')
+    active_count = total_count if type(total_count) is int and total_count > 0 else len(MODELS)
+    completed = _integer(round_data.get('completed_count'), active_count)
     errors = _integer(round_data.get('error_count'), active_count)
     complete_text = str(completed) if completed is not None else '—'
     error_text = str(errors) if errors is not None else '—'

@@ -1,4 +1,4 @@
-"""Bounded, read-only operational evidence for the nine active AI paths.
+"""Bounded, read-only operational evidence for the four tracked active AI paths.
 
 This module does not import model runners, providers, publication writers or
 secrets. Missing clock evidence stays None. It never creates predictions,
@@ -11,6 +11,8 @@ import json
 import math
 from pathlib import Path
 import re
+import subprocess
+import sys
 
 from stats_history import (TZ, beijing_now, business_start, collect_records,
                            parse_period, period_slot)
@@ -29,10 +31,11 @@ DURATION_KEYS = ('source_to_input', 'input_to_request', 'request_to_response',
 MODELS = {
     'killer': ('Flash 杀码', 'r1_stats.json', 'ai_job_status.json', 'ai_job_killer.log', 'R1_KILLER'),
     'framework': ('Flash 框架', 'r1_framework_seals.json', 'ai_job_status.json', 'ai_job_framework.log', 'R1_FRAMEWORK'),
-    'selected6': ('Pro 七项', 'selected_six_seals.json', 'selected_six_status.json', 'selected_six_cron.log', 'SELECTED_SIX_INDEPENDENT'),
+    'selected6': ('七项', 'selected_six_seals.json', 'selected_six_status.json', 'selected_six_cron.log', 'SELECTED_SIX_INDEPENDENT'),
     'he3_refine': ('三合五尾', 'he3_refine_seals.json', 'he3_refine_status.json', 'he3_refine_cron.log', 'HE3_REFINE'),
 }
-_MODEL_ENV_KEYS = {'killer': 'PENTA5_MODEL_KILLER', 'framework': 'PENTA5_MODEL_FRAMEWORK'}
+_MODEL_ENV_KEYS = {'killer': 'PENTA5_MODEL_KILLER', 'framework': 'PENTA5_MODEL_FRAMEWORK',
+                    'selected6': 'PENTA5_MODEL_SIX'}
 _TIER_PREFIX = {'deepseek-flash': 'Flash', 'deepseek-v4-flash': 'Flash', 'deepseek-v4-pro': 'Pro'}
 
 
@@ -49,7 +52,8 @@ def _model_tiers(root):
             continue
         key, _, value = text.partition('=')
         key = key.strip()
-        if key in ('PENTA5_MODEL_KILLER', 'PENTA5_MODEL_FRAMEWORK', 'PENTA5_DEEPSEEK_MODEL'):
+        if key in ('PENTA5_MODEL_KILLER', 'PENTA5_MODEL_FRAMEWORK', 'PENTA5_MODEL_SIX',
+                   'PENTA5_DEEPSEEK_MODEL'):
             values[key] = value.strip().strip('"').strip("'")
     result = {}
     for job, key in _MODEL_ENV_KEYS.items():
@@ -122,6 +126,36 @@ def _read(path, limit=MAX_JSON_BYTES, *, text=False):
         return data.decode('utf-8')
     return json.loads(data, object_pairs_hook=_pairs,
                       parse_constant=lambda value: (_ for _ in ()).throw(ValueError('runtime-invalid-json-number')))
+
+
+SIX_LEDGER = 'selected_six_seals.json'
+SIX_SEAL_INDEX = 'selected_six_seal_index.json'
+SIX_SEAL_INDEX_TIMEOUT = 60
+PANEL_GRACE_SECONDS = 180
+
+
+def _six_ledger_fallback(root):
+    """Read the bounded compact index when the six ledger exceeds the read limit."""
+    source = Path(root) / 'data' / SIX_LEDGER
+    index = source.parent / SIX_SEAL_INDEX
+    script = Path(root) / 'scripts' / 'build_six_seal_index.py'
+    if script.is_file():
+        completed = subprocess.run(
+            [sys.executable, str(script), '--root', str(root), '--if-stale'],
+            capture_output=True, text=True, timeout=SIX_SEAL_INDEX_TIMEOUT,
+            cwd=str(root))
+        if completed.returncode != 0:
+            raise ValueError('six-seal-index-build-failed')
+    return _read(index)
+
+
+def _recent_publication(row, now):
+    """Panel refresh lag after a real publication is tolerated for a short window."""
+    published = _stamp((row.get('stages') or {}).get('published_at'))
+    if published is None:
+        return False
+    elapsed = (now - published).total_seconds()
+    return 0 <= elapsed <= PANEL_GRACE_SECONDS
 
 
 def _control(document, now):
@@ -319,6 +353,9 @@ def parse_log(text):
         finished = re.search(r'\bref=([0-9]{11})\b.*\bpublished=(?:True|False)\b', line)
         if finished and _period(finished[1]):
             row(finished[1])['finished'] = True
+        published_marker = re.search(r'^[A-Z_]*PUBLISHED ref=([0-9]{11})\b', line)
+        if published_marker and _period(published_marker[1]):
+            row(published_marker[1])['finished'] = True
         failed = re.search(r'^[A-Z_]*FAILURE ref=([0-9]{11})\b', line)
         if failed and _period(failed[1]):
             row(failed[1])['finished'] = True
@@ -362,10 +399,6 @@ def _panel_targets(html):
         values = parser.scripts.get(identity, [])
         data = values[0] if len(values) == 1 and isinstance(values[0], dict) else {}
         result[model] = _period(data.get('target_period'))
-    for model, identity in (('pro4', 'pro4-active'),):
-        values = parser.ids.get(identity, [])
-        reference = values[0].get('data-reference') if len(values) == 1 else None
-        result[model] = _target(reference)
     for model in ('killer', 'framework'):
         rows = re.findall(r'<[^>]+class=[\'"][^\'"]*ai-job-row[^\'"]*[\'"][^>]*>', html)
         matching = [tag for tag in rows if re.search(r'\bdata-ai-kind=[\'"]' + model + r'[\'"]', tag)]
@@ -536,8 +569,11 @@ def build_summary(bundle, now):
         panel_target = targets.get(key)
         matches = panel_target == target if panel_target is not None else None
         if current['status'] == 'current' and matches is not True:
-            current['status'] = 'pending' if not current['closed'] else 'failed'
-            current['error_code'] = 'panel-mismatch' if current['closed'] else None
+            grace = (panel_target is not None and not current['closed']
+                     and _recent_publication(current, now))
+            if not grace:
+                current['status'] = 'pending' if not current['closed'] else 'failed'
+                current['error_code'] = 'panel-mismatch' if current['closed'] else None
         if key in bundle.get('unavailable_models', ()):
             current['status'], current['error_code'] = 'unknown', 'evidence-unavailable'
         phase = next((phase for name, phase in reversed(tuple(zip(STAGE_KEYS, ('source', 'input', 'request', 'response', 'published'))))
@@ -632,7 +668,16 @@ def collect(*, root=ROOT, clock=beijing_now):
     shared_status = read('data/ai_job_status.json', optional=True)
     evidence, statuses, diagnostics, starts, unavailable = {}, {}, {}, {}, []
     for key, (_, filename, status_file, logfile, _) in MODELS.items():
-        document = read('data/' + filename, optional=True)
+        document = None
+        if key == 'selected6':
+            try:
+                if (root / 'data' / filename).stat().st_size > MAX_JSON_BYTES:
+                    document = _six_ledger_fallback(root)
+            except (OSError, ValueError, TypeError, KeyError, OverflowError,
+                    subprocess.SubprocessError):
+                document = None
+        if document is None:
+            document = read('data/' + filename, optional=True)
         try:
             evidence[key] = _model_evidence(document or {},model=key)
         except (ValueError, TypeError, KeyError):
