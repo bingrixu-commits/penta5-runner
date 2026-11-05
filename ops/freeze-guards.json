@@ -408,14 +408,23 @@
   },
   "kill9_tail": {
    "files": {
-    "lib/kill9_tail.py": "b598b3e9fb019918676355ee72b98d9747d315d9191f3698d82102f9a53cf054",
+    "lib/kill9_tail.py": "6ec1779362bdcb89fa8c0977948755800b12298b758b5426a88a34e6999f2343",
     "lib/kill_nine_view.py": "7093cbff5bf87e27db4bdb7fd07d342653841bacc9251a8fed58997ffd3921fc"
    },
    "freeze_hours": 72.0,
    "freeze_ref_period": "20261105124",
    "frozen_at": "2026-11-05T10:21:58.766007+08:00",
    "frozen_commit": "a35d27b",
-   "hash_updates": [],
+   "hash_updates": [
+    {
+     "at": "2026-11-05T10:48:23.605301+08:00",
+     "commit": "4e2deed",
+     "file": "lib/kill9_tail.py",
+     "new_sha256": "6ec1779362bdcb89fa8c0977948755800b12298b758b5426a88a34e6999f2343",
+     "old_sha256": "b598b3e9fb019918676355ee72b98d9747d315d9191f3698d82102f9a53cf054",
+     "reason": "v5 攻击语显示修正：定位排除改用位置保留码，不改封存/结算/基线"
+    }
+   ],
    "label": "两位置杀码(kill9)",
    "min_periods": 100,
    "rule_version": "kill9-tail-v5-pool-three-all-form-three-kill-he2he3",
@@ -461,6 +470,6 @@
    }
   }
  },
- "updated_at": "2026-11-05T10:34:54.958275+08:00",
+ "updated_at": "2026-11-05T10:48:23.607150+08:00",
  "version": 1
 }
