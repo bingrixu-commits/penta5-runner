@@ -1956,3 +1956,11 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 推送：git push origin main 成功（905d6e4..93cd39a main -> main），随后其他窗口推进的 40fcf26 已在远端；本台账提交后再次推送，远端 main 与本地 HEAD 同步，ahead 0/0。
 - 验证：git rev-parse HEAD 与 git ls-remote origin refs/heads/main 相同；git rev-list --left-right --count HEAD...origin/main 为 0 0；工作树仅余另一窗口在途的 M lib/hitrate_baseline.py、M lib/kill8_tail.py、M lib/kill_eight_view.py（未提交、未推送，不属本批）。
 - 备份/回滚：本次为纯 fast-forward 推送，无合并、无冲突、未强推；如需回退远端可在 GitHub 侧 git reset --hard 905d6e4 后强推（不推荐），或 git revert 对应提交后再推。
+
+## 2026-11-06 kill8 v6 部署落地（四全形合并 + 跨族混合）
+
+- 变更：kill8_tail.py / kill_eight_view.py / hitrate_baseline.py 三文件升级到 kill8-tail-v6-merged-four-form-mixed（整组仍 4 项：单双 16 选 1、大小 16 选 1、全形 4 选 1、跨族混合 16 选 1），代码口径见 README「## 2026-11-06 kill8」段。
+- 取证：备份 /root/ops/kill8-v6-054710/files/（改前 4 文件 sha256）+ pre-0645/（回传前现网 sha da6e832d/ec2ba3de）；evidence/ 内 patch_kill8_v6_tail.py、smoke_v6.py、kill8_baseline_enum_v6.py/.json、kill8_v6_test.py、kill8_v6_view_probe.py、golden_capture.py、golden_before.json、golden_after.json、golden_compare.py。
+- 门禁：py_compile 三文件通过；kill8_v6_test.py PASS=107；kill8_v6_view_probe.py PASS=32；golden_compare.py PASS=48；枚举 v6 基线 0.7724761962890625→登记 0.7725（v2/v3/v5 复算自证一致）。
+- 真实周期：ref 20261106081→20261106082 published 2026-11-06T06:45:46，四形态 单单双单 / 小大小小 / 单单单单 / 小大双单；面板区块 START/END 各 1 处、4 卡、口径串与 77.25% 基线已随 run_kill8_tail.py 真实写出。
+- 回滚：git checkout f9a9622 -- lib/kill8_tail.py lib/kill_eight_view.py lib/hitrate_baseline.py；kill8 为手动触发（无 cron），回滚后手动跑一次 scripts/run_kill8_tail.py 刷面板；v6 封存按 legacy 渲染、不重算历史。
