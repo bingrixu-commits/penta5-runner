@@ -1,7 +1,7 @@
 {
   "files": {
     "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
-    "lib/kill_three_view.py": "f6fb76d6c10ca59a3f39a93e83921de2cbf8839d79e35ff92e3aeba317309551",
+    "lib/kill_three_view.py": "df32f5d08392707b25909de47009f000ff1e353d1c6783d4c52422f65bbe1d34",
     "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
     "scripts/run_kill3_tail.py": "ac37eb42f767b59e80c22bcdb0c585de9ded26e429d7b119562b618e13a45ab5"
   },
@@ -377,6 +377,14 @@
       "new_sha256": "f6fb76d6c10ca59a3f39a93e83921de2cbf8839d79e35ff92e3aeba317309551",
       "old_sha256": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
       "reason": "P0 只读展示：kill3 卡新增本版累计命中率/精确基线/二项p/自峰值回撤+同n随机参照/平均命中项数；只加展示，不动选码/封存/结算/prompt，RULE_VERSION 未变。离线A/B：摘除新增行后渲染与旧版逐字节一致。"
+    },
+    {
+      "at": "2026-11-05T20:55:52+08:00",
+      "commit": "bfd8414",
+      "file": "lib/kill_three_view.py",
+      "new_sha256": "df32f5d08392707b25909de47009f000ff1e353d1c6783d4c52422f65bbe1d34",
+      "old_sha256": "f6fb76d6c10ca59a3f39a93e83921de2cbf8839d79e35ff92e3aeba317309551",
+      "reason": "P1 只读展示：kill3 卡新增跨版本核心杀项（counted 位置+合尾，切版不清零）与近5版分段；只加展示，不动选码/封存/结算/prompt，RULE_VERSION 未变。"
     }
   ],
   "min_periods": 100,

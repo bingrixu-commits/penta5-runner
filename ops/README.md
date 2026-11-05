@@ -1672,3 +1672,22 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结/门禁：`ops/freeze-guards.json` kill3_tail 的 `lib/kill_three_view.py` fde296d8…→f6fb76d6…（`freeze_guard.py update`，五框架 changed=−）；`ops/kill3-freeze.json` 同步 sha + hash_updates 追加（frozen_at 不重置、RULE_VERSION 未变）。`refresh_source_manifest.py --if-drift` → baseline `/root/backups/auto-baseline-20261105-204004`（429 文件）；`ops_health` overall=warn，仅既有 coverage / hitrate_stability(kill1 白名单观察) / kill3_stability 三项，freeze_guards、manifest_drift 均 OK。
 - 备份/回滚：`/root/ops/hitrate-display-20261105-202016/`（5 个改前文件 .bak + pre.sha256）。回滚 `git revert 3f7cb69 <本节 ops 提交>`；或用备份覆盖 5 文件、`git checkout ops/freeze-guards.json ops/kill3-freeze.json` 后重跑 `python3 scripts/freeze_guard.py status`。
 - 未做（需用户拍板）：P1 版本切换不清零重标定 + 失败分型；P2 覆盖率补跑 + killer v4-pro 0/11 核查；P3 改项数。
+
+
+### 命中率展示层 P1：切版不清零 + 失败分型（2026-11-05 20:5x，`bfd8414` + 紧随的 chore(ops) 提交）
+
+- 需求：用户 m00360「完善」——接续 P0 做 P1：①换 rule_version 时累计不再整段清零，改「跨版本核心杀项项级累计 + 近 5 版分段」展示；②把近 24h 模型调用失败分型与 kill3 缺槽/版本切换单列，缺期不按 0 命中。
+- 数据依据（只读探针，全部 verified+counted）：kill3 账本 982 条中 928 条带 counted（v15 192 / v12 178 / v11 118 / None 96 用 seals.seal_rule 回填 / 其余小样本）；核心项（counted 位置 + 合尾）= 2589/2888 = 89.65%（929 期，均 3.11 项/期），分段核心率 v15 90.16%、v14 92.86%、v13 89.74%、v12 90.45%、v11 90.40%、v10 83.33%、v9 92.82%、v8 85.00%、v7 88.07%、v6 93.00%、v5 89.58%、v3 75.00%。kill1 核心项 = 1276/1418 = 89.99%（646 期，均 2.20 项/期），分段 v4 89.95%、v3 90.41%、v2 87.88%、v1 89.32%。→ 核心杀项跨版同构，切版不清零可展示；整组仍按各版基线重标定、不跨版相加。
+- 改动（`bfd8414`，5 文件 +221/−1）：
+  - `lib/hitrate_display.py`：新增 `_settlement_version_rows()`（settlements + seals 回填 rule，取 verified+counted，item = counted 位置 hit 数 + tail hit）与 `_version_stats()`（按 rule 分段，输出 core / segments）；`build_display_metrics()` 对 kill3/kill1 追加 `versions` 并按累计 as_of 截断。
+  - `scripts/hitrate_stability.py`：新增 `_failure_split()`（model_usage/summary.json 今日 attempts/responses/retries/errors + ops_health kill3_stability 的 published/missing_slots/version_changes/p50），写入 `report['summary']['failure_split']`。
+  - `lib/kill_three_view.py`：卡内新增「跨版本核心杀项（切版不清零）x/y 项 = z%（基线 90.0%）」与「分段（近 5 版）」两段，位于本版累计行之后、今日口径行不变。
+  - `lib/kill_one_view.py`：新增 `_cumulative_html()`（读 hitrate_stability.json 的 kill1_tail 行，校验 rule == RULE_VERSION），渲染本版累计（整组/CI/基线/偏差/p/平均命中）+ 跨版本核心杀项 + 近 5 版分段；置于 render_block 末尾。
+  - `lib/hitrate_stability_view.py`：新增 `_failure_split_html()`，脚注展示「近 24h 模型调用 x 响应 / y 异常（invalid_response、timeout），重试 z；kill3 发布 a 槽 / 缺槽 b / 版本切换 c 次；缺期按覆盖率单列，不计入累计 n，也不按 0 命中」。
+- 验证：`py_compile` 五文件全过；`flock -w 120 /var/lock/penta5-hitrate-stability.lock python3 -u scripts/hitrate_stability.py` → as_of=20261105250、status=warn、alerts=0、watch=1（kill1 白名单仍生效）；新字段核对 kill3 versions.core period 929/item 2589/2888、segments 13 段（v3..v15）、kill1 core 646/1276/1418、summary.failure_split={model_calls:{attempts 975,responses 956,error_total 19,errors{invalid_response 18,timeout 1},retries 4}, kill3_slots:{published_24h 259,missing_slots_24h 2,version_changes_24h 2,p50 82.3}}。
+- 离线渲染：`/tmp/p1_render_check.py` 把三个 apply 依次作用到 panel.html 副本——kill3/kill1/stability apply 全 ok，delta 1004B，`k3-acc`/`k1-acc`/`跨版本核心杀项（切版不清零）`/`失败分型：` 各 1、31 个区块标签全配平；预览 /tmp/panel_preview_p1.html。
+- 线上生效（未重启、未手动触发；面板由 /root/run_stats.py 每期由 penta5-panel-sync 守护进程重新生成）：20:57:10 自动刷新后 panel.html（as_of 20261105251，378140B）已含——kill3 `跨版本核心杀项 2589/2888 项 = 89.65%（基线 90.0%，929 期，均 3.11 项/期）` + 近 5 版分段；kill1 新块 `本版累计 71.43%（90/126 期，95%CI 63.0%–78.6%）· 基线 72.90% · 偏差 -1.47pp · p=0.710 · 平均命中 2.70/3 项（项级 89.9%） · 跨版本核心杀项 1276/1418 项 = 89.99%`；稳定性脚注 `失败分型：近 24h 模型调用 956 响应 / 19 异常（invalid_response 18、timeout 1），重试 4；kill3 发布 259 槽 / 缺槽 2 / 版本切换 2 次；缺期按覆盖率单列，不计入累计 n，也不按 0 命中。`
+- 冻结：`ops/freeze-guards.json` kill3_tail `lib/kill_three_view.py` f6fb76d6…→df32f5d0…、kill1_tail `lib/kill_one_view.py` 0a99919f…→13c4e049…（`freeze_guard.py update`，五框架 status changed=−）；`ops/kill3-freeze.json` 同步 sha + hash_updates 追加第 47 条（commit=bfd8414，frozen_at 不重置、RULE_VERSION 未变）。kill1 无 legacy freeze 文件，只走 guards。
+- 备份/回滚：`/root/ops/hitrate-p1-20261105-205154/`（5 个改前 .bak + pre.sha256，路径另存 /tmp/hitrate_p1_backup_dir）。回滚 `git revert <本节 ops 提交> bfd8414`；或按备份覆盖 5 文件 + `git checkout ops/freeze-guards.json ops/kill3-freeze.json` 后重跑 `python3 scripts/freeze_guard.py status`。
+- 未做（需用户拍板）：P2 覆盖率补跑 + killer v4-pro 0/11 核查；P3 改项数。
+
