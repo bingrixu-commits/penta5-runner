@@ -1479,3 +1479,10 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 
 - v5 已连续结算 3 期（target 20261105125/126/127，均由 cron 自动封存+结算）：125 期整组未中（定位 2/3；十位排除 4 vs 实际 4）、126 期整组命中（actual 3/7/7/4，定位 3/3 + 其余 6 项全中）、127 期整组未中（actual 1/8/2/2，定位千位 4 vs1 中、百位 8 vs8 失、个位 2 vs2 失——该期模型选的是 千/百/个 三位，证明「4 位中任选 3 位」契约生效）。累计 1/3=33.33%（整组登记基线 51.63%，n=3 小样本仅作波动参考），各定位单项 100.00%/66.67%/50.00% 已按位入面板。
 - 累计报告已自动收口：`data/framework_hitrate_cumulative.json`（10:37:20）新增 kill9_tail 行 rule=kill9-tail-v5-…、n=3、hits=1、expected=0.516296，rows 6→7，as_of=20261105127；`hitrate.html` 同步重写；cron 日志 `rolling kill9_tail 24h coverage=46.88% plan_hit_rate=36.46%`。
+
+### kill9 v5 攻击语修正：定位排除改用位置保留码（2026-11-05 10:47，显示层）
+
+- 问题：v5 上线后攻击语把 3 个定位排除项渲染成「千位除4百位除7十位除9」，不符合本仓库/平台统一攻击语语法。本仓库 kill1/kill2/kill3/八项/四定框架的攻击语对位置项一律用「千/百/十/个 位置保留码」表达：被杀位置为去掉该数字的 9 码、未选位置保留 10 码 `1234567890`（见本台账 2026-11-01 kill2 首期攻击语例）。
+- 修法：`lib/kill9_tail.py::build_attack` 新增 `ATTACK_ORDER='1234567890'` 与 `ATTACK_POSITION_LABELS={'q':'千','b':'百','s':'十','g':'个'}`；封存含 `positions` 时先输出 4 段位置保留码，再照旧输出「除<形态>」×4 + 二数合 + 三数合 + 各；v1–v4 无 `positions` 的旧封存攻击语保持原「除…」格式不变。属显示层修改，不改封存字段/结算口径/RULE_VERSION/命中统计。
+- 校验：py_compile OK；模块测试 /tmp/test_kill9_attack.py 13/0——seal 20261105128 逐字节等于期望「千123567890百123456890十123456780个1234567890除双单双双除双单单双除小大大小除大大大大二数合0248三数合01247各」；126/127/129/130 位置段与尾部逐项一致；v1/v4 旧格式不变；非法定位码抛 ValueError。
+- 证据：修复前 `lib/kill9_tail.py` sha256 b598b3e9fb019918676355ee72b98d9747d315d9191f3698d82102f9a53cf054（备份 /root/ops/kill9-attack-fix-104725/ 含 freeze-guards.json），修复后 6ec1779362bdcb89fa8c0977948755800b12298b758b5426a88a34e6999f2343；freeze_guard 受控变更已登记。后续等 kill9 cron 下一期真实封存后，从 `panel.html` 的 `textarea#k9-attack` 复核攻击语与 `build_attack(seals[-1])` 一致。
