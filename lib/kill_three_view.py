@@ -188,8 +188,12 @@ def _form_derivation(seal):
     if not parts:
         return ''
     dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
-    return ('形态取反（按 3 个被杀位置，含仅展示位）：' + ' · '.join(parts)
-            + f'；弃位{dropped}字符自选')
+    cold = seal.get('dropped_form_cold') if isinstance(seal.get('dropped_form_cold'), dict) else None
+    if cold and cold.get('parity') and cold.get('size'):
+        dropped_note = f'；弃位{dropped}按该位置冷热取{cold["parity"]}/{cold["size"]}（v16 起）'
+    else:
+        dropped_note = f'；弃位{dropped}字符自选（v15 旧封存）'
+    return ('形态取反（按 3 个被杀位置，含仅展示位）：' + ' · '.join(parts) + dropped_note)
 
 
 def _version_html():
@@ -466,7 +470,7 @@ def _foot_html():
             '命中 = 该位置实际开奖号<b>不在</b>杀码上（只统计 2 个计入位置）；'
             '合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态'
-            '（3 个被杀位置都取杀码形态反面，含仅展示位置；弃位字符自选）。<br>'
+            '（3 个被杀位置都取杀码形态反面，含仅展示位置；弃位字符自 v16 起按该位置冷热取冷）。<br>'
             '三数共现避开 1/2/3 组由系统按目标期给定、各算 1 项（单项基线 97.96%：'
             '该组 3 个数字<b>未全部</b>出现在 4 球开奖号中即命中）；<br>'
             '2 个计入位置 + 1 个合尾 + 2 项反向形态 + 三数共现 3 组共 8 项同时命中才算整组命中；'

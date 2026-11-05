@@ -199,7 +199,7 @@ def main():
 
     try:
         prediction, generated_at, meta = kill3_tail.request_prediction(
-            prompt, reference, target, deadline)
+            prompt, reference, target, deadline, rows=rows)
     except Exception as error:
         print(f"kill3 request failed: {type(error).__name__}: {str(error)[:140]}")
         return 1

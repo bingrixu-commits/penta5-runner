@@ -16,7 +16,8 @@
   模型每期给出的位置杀码、放弃位置；合尾按 hold3-until-miss 稳定化沿用：上期尾码命中且连用未满 3 期沿用上期，否则用模型本期新选；封存写 tail_policy 追溯；
 - 另输出两项反向形态（与八项独立框架同口径）：
   四位单双形态 reverse_parity、四位大小形态 reverse_size；
-  被杀的 3 个位置取杀码单双/大小的反面，放弃位置的字符由 AI 自选；
+  被杀的 3 个位置取杀码单双/大小的反面；放弃位置的两个字符由系统在开奖前
+  按该位置近 50 期冷热确定（出现次数少优先、同次数取遗漏长），模型填写的字符会被覆盖（v16 起）；
 - 位置命中 = 该位置实际开奖号 != 杀码；
 - 合尾命中 = 该合尾实际和值个位 != 排除码；
 - 反向形态命中 = 目标期实际四位形态 != 封存形态（反向排除项）；
@@ -84,7 +85,7 @@ THREE_AVOID_LABELS = {'threeDigitAvoid': '避开1组', 'threeDigitHit': '避开2
                       'threeDigitAvoid2': '避开3组'}
 THREE_AVOID_ITEMS = len(THREE_AVOID_KEYS)
 
-RULE_VERSION = 'kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid'
+RULE_VERSION = 'kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop'
 MAX_CONSECUTIVE_PERIODS = 3
 COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
@@ -98,7 +99,7 @@ RETRY_INSTRUCTION = (
     'reverse_parity 为四个单/双字符，reverse_size 为四个大/小字符，'
     '3 个被杀位置都必须取杀码形态的反面'
     '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
-    '放弃位置的字符自选；合尾由你自主决定并直接封存；'
+    '放弃位置的字符随便填（系统会按该位置冷热覆盖，v16 起）；合尾由你自主决定并直接封存；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
 
@@ -216,6 +217,37 @@ def reverse_attributes(digit):
     if type(digit) is not int or not 0 <= digit <= 9:
         raise ValueError('reverse attribute digit must be 0..9')
     return ('双' if digit % 2 == 1 else '单'), ('小' if digit >= 5 else '大')
+
+
+def cold_dropped_form(rows, dropped):
+    '''v16 弃位取冷：按该位置近 WINDOW 期出现次数升序、同次数遗漏降序取字符。'''
+    if dropped not in POSITION_INDEX:
+        raise ValueError('unknown dropped position')
+    index = POSITION_INDEX[dropped]
+    window = [list(row)[:4] for row in rows if len(row) >= 4][-WINDOW:]
+    if len(window) < WINDOW:
+        raise ValueError('insufficient-kill3-history')
+    result = {}
+    for kind, chars in (('parity', '单双'), ('size', '大小')):
+        counts = {char: 0 for char in chars}
+        last = {}
+        for offset, row in enumerate(window):
+            value = int(row[index])
+            char = (('双' if value % 2 == 0 else '单') if kind == 'parity'
+                    else ('大' if value >= 5 else '小'))
+            counts[char] += 1
+            last[char] = offset
+        size = len(window)
+        result[kind] = min(chars, key=lambda char: (counts[char],
+                                                    -(size if char not in last else size - last[char] - 1),
+                                                    chars.index(char)))
+    return result
+
+
+def _replace_at(text, index, char):
+    chars = list(str(text))
+    chars[index] = char
+    return ''.join(chars)
 
 
 def pattern_of(digits, kind):
@@ -362,7 +394,7 @@ def _tail_key(value):
     return key
 
 
-def normalize_response(response):
+def normalize_response(response, rows=None):
     """Strict local validation; never pad, default or invent anything."""
     if not isinstance(response, dict):
         raise ValueError('响应必须是 JSON 对象')
@@ -413,6 +445,14 @@ def normalize_response(response):
                 or any(char not in palette for char in value)):
             raise ValueError(f'{field} 必须是恰好 4 个{"单/双" if field == "reverse_parity" else "大/小"}字符')
         patterns[field] = value
+    dropped_cold = None
+    if rows is not None:
+        dropped_cold = cold_dropped_form(rows, dropped[0])
+        dropped_index = POSITION_INDEX[dropped[0]]
+        patterns['reverse_parity'] = _replace_at(patterns['reverse_parity'], dropped_index,
+                                                 dropped_cold['parity'])
+        patterns['reverse_size'] = _replace_at(patterns['reverse_size'], dropped_index,
+                                               dropped_cold['size'])
     for position_key, kill_text in kills.items():
         index = POSITION_INDEX[position_key]
         parity_label, size_label = reverse_attributes(int(kill_text))
@@ -428,6 +468,7 @@ def normalize_response(response):
         'tail': {'key': tail_key, 'label': TAILS[tail_key]['label'], 'kill': str(number)},
         'reverse_parity': patterns['reverse_parity'],
         'reverse_size': patterns['reverse_size'],
+        'dropped_form_cold': dropped_cold,
         'reason': reason[:200],
     }
 
@@ -690,7 +731,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None, previous_positi
         '3. 给出两项四位反向排除形态：reverse_parity 为按千百十个顺序的四位单双形态，'
         'reverse_size 为四位大小形态；被杀的 3 个位置（含 display_only 仅展示位置）'
         '都必须取杀码形态的反面'
-        '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），放弃位置的字符自选；\n'
+        '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大）；放弃位置的两个字符随意填写（系统按该位置冷热覆盖，v16 起）；\n'
         '4. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码（只算 2 个计入位置）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
         '反向形态 = 目标期实际四位形态不等于这两个封存形态（反向排除项）；'
@@ -1062,7 +1103,7 @@ def _post(messages, timeout):
                 pass
 
 
-def request_prediction(prompt, reference, target, deadline, log=print, value_check=None):
+def request_prediction(prompt, reference, target, deadline, log=print, value_check=None, rows=None):
     """At most three paid calls inside the frozen publication window."""
     from ai_call_control import require_ai_enabled
 
@@ -1095,7 +1136,7 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
             if choice.get('finish_reason') != 'stop':
                 raise ValueError('响应未正常结束')
             message = choice.get('message') if isinstance(choice.get('message'), dict) else {}
-            prediction = normalize_response(_extract_json(message.get('content')))
+            prediction = normalize_response(_extract_json(message.get('content')), rows=rows)
             if value_check is not None:
                 value_check(prediction)
             meta = _metadata(reference, attempt, model, api_key, envelope,
@@ -1153,6 +1194,7 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'tail_policy': prediction.get('tail_policy'),
         'reverse_parity': prediction['reverse_parity'],
         'reverse_size': prediction['reverse_size'],
+        'dropped_form_cold': prediction.get('dropped_form_cold'),
         'reason': prediction['reason'],
         'model': resolve_model(),
         'model_label': model_label(),
