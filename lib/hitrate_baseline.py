@@ -53,6 +53,7 @@ RULE_BASELINE = {
     ('kill8_tail', 'kill8-tail-v1-cold-forms'): (2, 0.8789),
     ('kill8_tail', 'kill8-tail-v2-reverse-cold-forms'): (2, 0.8789),
     ('kill8_tail', 'kill8-tail-v3-four-reverse-cold-forms'): (4, 0.7733),
+    ('kill8_tail', 'kill8-tail-v4-majority-lock-four-reverse-cold-forms'): (4, 0.7733),
     ('kill9_tail', 'kill9-tail-v1-four-forms-he2he3'): (6, 0.71085114),
     ('kill9_tail', 'kill9-tail-v2-size-parity-all-mixed'): (6, 0.71234352),
     ('kill9_tail', 'kill9-tail-v3-pool-three-forms-he2he3'): (5, 0.75385763),

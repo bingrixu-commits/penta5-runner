@@ -14,8 +14,8 @@
 - 全单/全双命中 = 目标期实际四位单双形态 != 封存全单/全双形态（反向排除项）；
 - 整组命中 = 上述 4 项同时命中（四张卡允许出现相同形态：四个位置的排除数字全偏大时，
   ②大小形态与③全大/全小形态必然同为「小小小小」，按口径分别计入）；
-- ③④方向由排除数字决定：四个位置排除数字全部偏大 → 锁定全小；全部偏小 → 锁定全大；
-  全部偏单 → 锁定全双；全部偏双 → 锁定全单；位置方向混杂或未填时由模型按冷热自选；
+- ③④方向由排除数字决定（v4 多数锁定）：多数位置排除数字偏大 → 锁定全小；多数偏小 → 锁定全大；
+  多数偏单 → 锁定全双；多数偏双 → 锁定全单；平票（如 2 大 2 小）或全部未填时由模型按冷热自选；
 - 无合尾、无连用限制（每期完全由模型按冷热重选，不沿用上期）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
@@ -67,7 +67,7 @@ ALL_FORM_NAMES = {'大大大大': '全大', '小小小小': '全小',
 REVERSE_LABELS = {'parity': '单双反向冷形态', 'size': '大小反向冷形态',
                   'all_size': '全大/全小反向冷形态', 'all_parity': '全单/全双反向冷形态'}
 
-RULE_VERSION = 'kill8-tail-v3-four-reverse-cold-forms'
+RULE_VERSION = 'kill8-tail-v4-majority-lock-four-reverse-cold-forms'
 COUNTED_FORMS = 4
 POSITION_EXCLUSIONS_PATH = ROOT / 'data' / 'kill8_position_exclusions.json'
 POSITION_KEYS = ('q', 'b', 's', 'g')
@@ -222,12 +222,26 @@ def load_position_exclusions():
     return {key: str(document.get(key) or '') for key in POSITION_KEYS}
 
 
-def reverse_constraints(exclusions=None):
-    """反向约束：{kind: ...}。
+def _majority_lock(votes, direction_labels):
+    """按票数取多数，返回 (反方向字符×4, 票数说明)；平票或无票返回 ('', 说明)。"""
+    ranked = sorted(votes.items(), key=lambda item: (-item[1], item[0]))
+    if not ranked:
+        return '', ''
+    detail = '、'.join('%d 个位置%s' % (count, direction_labels[char])
+                      for char, count in ranked)
+    if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+        return '', detail + '（平票）'
+    return ranked[0][0] * 4, detail
+
+
+def reverse_constraints(exclusions=None, with_details=False):
+    """反向约束：{kind: ...}（v4：③④ 按位置多数方向锁定）。
 
     parity/size：{位置下标: 反方向字符}，反方向 = 排除数字的相反单双/大小
     （排除双写单、排除大写小）；某位置排除数字方向混杂或未排除时，该位置不约束。
-    all_size/all_parity：4 字符形态串或空串；仅当四个位置的排除数字方向全部同向时锁定。
+    all_size/all_parity：按有方向的位置投票取明确多数 → 该反方向 4 字符形态；
+    平票或无方向 → 空串（由模型在 2 种里按冷热自选）。
+    with_details=True 时额外返回 {kind: 票数说明}，用于 prompt 文本。
     """
     exclusions = exclusions if isinstance(exclusions, dict) else {}
     parity = {}
@@ -243,14 +257,20 @@ def reverse_constraints(exclusions=None):
             parity[index] = '单' if 0 in parities else '双'
         if len(sizes) == 1:
             size[index] = '大' if 0 in sizes else '小'
-    all_size = ''
-    if len(size) == len(POSITION_KEYS) and len(set(size.values())) == 1:
-        all_size = next(iter(size.values())) * 4
-    all_parity = ''
-    if len(parity) == len(POSITION_KEYS) and len(set(parity.values())) == 1:
-        all_parity = next(iter(parity.values())) * 4
-    return {'parity': parity, 'size': size,
-            'all_size': all_size, 'all_parity': all_parity}
+    size_votes = {}
+    for value in size.values():
+        size_votes[value] = size_votes.get(value, 0) + 1
+    parity_votes = {}
+    for value in parity.values():
+        parity_votes[value] = parity_votes.get(value, 0) + 1
+    all_size, all_size_detail = _majority_lock(size_votes, {'小': '偏大', '大': '偏小'})
+    all_parity, all_parity_detail = _majority_lock(parity_votes, {'双': '偏单', '单': '偏双'})
+    result = {'parity': parity, 'size': size,
+              'all_size': all_size, 'all_parity': all_parity}
+    if with_details:
+        return result, {'all_size': all_size_detail,
+                        'all_parity': all_parity_detail}
+    return result
 
 
 def _constraint_text(constraints):
@@ -263,21 +283,24 @@ def _constraint_text(constraints):
     return '、'.join(parts)
 
 
-def _all_constraint_text(forced):
-    """全大/全小、全单/全双的反向约束文本（四个位置排除数字全部同向时才锁定）。"""
+def _all_constraint_text(forced, detail=''):
+    """全大/全小、全单/全双的反向约束文本（v4：按位置多数方向投票锁定）。"""
     if not forced:
-        return '（无：四个位置的排除数字未全部同向，2 种里按冷热自选）'
-    return '必须为「%s」（四个位置的排除数字全部同向，反方向锁定）' % forced
+        reason = detail or '四个位置的排除数字均未形成明确方向'
+        return '（无：%s，2 种里按冷热自选）' % reason
+    return '必须为「%s」（%s，按多数方向取反锁定）' % (forced, detail or '多数位置同向')
 
 
 def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
-    constraints = reverse_constraints(exclusions)
+    constraints, all_details = reverse_constraints(exclusions, with_details=True)
     parity_constraint = _constraint_text(constraints['parity'])
     size_constraint = _constraint_text(constraints['size'])
-    all_size_constraint = _all_constraint_text(constraints['all_size'])
-    all_parity_constraint = _all_constraint_text(constraints['all_parity'])
+    all_size_constraint = _all_constraint_text(constraints['all_size'],
+                                               all_details['all_size'])
+    all_parity_constraint = _all_constraint_text(constraints['all_parity'],
+                                                 all_details['all_parity'])
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
     parity_ranks = rank_forms(window, 'parity')
     size_ranks = rank_forms(window, 'size')
@@ -326,7 +349,9 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=Non
         f'· 全大/全小形态反向约束：{all_size_constraint}\n'
         f'· 全单/全双形态反向约束：{all_parity_constraint}\n'
         '约束位置必须取排除数字的反方向（排除双写单、排除单写双；排除大写小、排除小写大）；'
-        '未列出的位置由你按冷热自选。\n\n'
+        '未列出的位置由你按冷热自选。'
+        '全大/全小、全单/全双按 4 个位置的方向投票：明确多数时锁定该反方向全形；'
+        '平票或均无方向时由你在 2 种里按冷热自选。\n\n'
         '【任务】\n'
         '1. 从 16 种四位单双形态中选 1 种作为本期「单双反向冷形态排除项」'
         '（严格遵守上面的单双反向约束，其余位置优先选冷）；\n'
@@ -357,7 +382,7 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, exclusions=Non
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill8-prompt-v2-four-forms',
+        'version': 'kill8-prompt-v3-majority-lock-four-forms',
         'reference': reference,
         'target': target,
         'window': WINDOW,
