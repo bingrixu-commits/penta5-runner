@@ -1714,3 +1714,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结/门禁：本组 3 文件均不在 freeze guards（无需 `freeze_guard.py update`，五框架 status changed=− 复验）；`refresh_source_manifest.py --if-drift` 与 `ops_health_check.py` 见下（本节 ops 提交前刷新）。
 - 备份/回滚：`/root/ops/hitrate-p2-20261105-224557/`（3 个改前 .bak + pre.sha256）。回滚 `git revert <本节 ops 提交> 7504f9f`；或按备份覆盖 3 文件、重跑 cumulative/stability 各一次即可回到旧展示（累计脚本会在下个整 5 分钟周期自然重算）。
 - 未做（需用户拍板）：P3 改项数（会改预测含义与基线，需先确认）。
+
+### 加固：余额暂停阈值上调 + 单框架缺期/总闸长关告警（2026-11-05 23:03，`9a5b1fd`）
+
+- 需求：用户 m00704「全部完善」——接续 P2 通报的三项加固：①余额守卫 pause 阈值 ¥1→¥5~10；②单框架缺期告警；③手动关总闸 >15min 明确告警。
+- 改动（`9a5b1fd`，2 文件 +55/−5）：
+  - `scripts/ai_balance_guard.py`：`PAUSE_BALANCE_CNY 1.00→5.00`、`RESUME_BALANCE_CNY 1.00→6.00`（1 元回差防抖）。依据 2026-11-05 03:29 余额已掉到 0.25 才 pause、欠费 7 分钟漏 2 期；阈值适用于 cron 下一分钟起的新代码。
+  - `scripts/ops_health_check.py`：`check_coverage` 新增「单框架近 24 期（约 2h）有任一缺期即 WARN」；不用绝对覆盖率判定（24h 窗口含共同历史缺口时五个框架会一起误报，首轮实测已踩到）。新增 `check_ai_manual_off(ctx)`：AI 总闸关闭 ≥15min → WARN；从 `transitions` 最后一条 disabled 起算，`auto_paused` 区分「余额欠费自动暂停」/「手动关闭」，`transitions` 缺失时同样 WARN。注册进 `CHECK_FUNCS`/`FALLBACK_NAMES`，docstring 同步；新增常量 `COVERAGE_SINGLE_RECENT_MISSES=1`、`MANUAL_OFF_WARN_SECONDS=15*60`。
+- 验证：`py_compile` 两文件 OK；`scripts/ai_balance_guard.py --dry-run` → balance 131.43、enabled=true、generation=79、action=none（阈值改动对当前无副作用）；离线假 root 单测 `check_ai_manual_off`：开启→OK、手动关闭 30min→WARN、余额欠费 30min→WARN（detail=「AI 总闸余额欠费自动暂停已 30.0m（≥15 分钟，请确认是否忘记打开）」）、手动 5min→OK、disabled 且无 transitions→WARN；`ops_health_check.py` 复跑 coverage 回到 OK（五框架 97.2–97.9%，单框架误报消失）、`ai_manual_off OK`，唯一 FAIL=`manifest_drift`（改 live 源码后未刷基线，提交后刷新即恢复）。
+- 回滚：`git revert 9a5b1fd`；或按备份 `/root/ops/harden-20261105-225735/`（`ai_balance_guard.py.bak`、`ops_health_check.py.bak`、pre.sha256）覆盖后等 cron 下一分钟加载。
