@@ -2,14 +2,23 @@
  "guards": {
   "framework": {
    "files": {
-    "lib/auto_r1_framework.py": "06b294257804e007d8133bbf893557ab66e43e70c9523a80a2660f41f9c90823",
+    "lib/auto_r1_framework.py": "761f9cea59f0f749c60293da9a5420ad3159cff257f81c920de292bc6cfbf180",
     "lib/auto_r1_match5.py": "ede5da3be3ea3ace61866df146546efabf1611708a6226681968943d6619a13e"
    },
    "freeze_hours": 72.0,
    "freeze_ref_period": "20261105089",
    "frozen_at": "2026-11-05T07:30:53.521085+08:00",
    "frozen_commit": "1497b06",
-   "hash_updates": [],
+   "hash_updates": [
+    {
+     "at": "2026-11-05T10:34:54.956377+08:00",
+     "commit": "5462c0c",
+     "file": "lib/auto_r1_framework.py",
+     "new_sha256": "761f9cea59f0f749c60293da9a5420ad3159cff257f81c920de292bc6cfbf180",
+     "old_sha256": "06b294257804e007d8133bbf893557ab66e43e70c9523a80a2660f41f9c90823",
+     "reason": "反向形态约束（千/百位单双+大小四位锁，5462c0c）"
+    }
+   ],
    "label": "R1 框架",
    "min_periods": 100,
    "rule_version": "marginal-frequency-v2",
@@ -452,6 +461,6 @@
    }
   }
  },
- "updated_at": "2026-11-05T10:21:58.766007+08:00",
+ "updated_at": "2026-11-05T10:34:54.958275+08:00",
  "version": 1
 }
