@@ -356,9 +356,11 @@ def run_pro_shadow(reference, target, prompt, log=print):
             last_error = type(error).__name__
             status = getattr(error, 'status', None)
             last_status = status if type(status) is int else None
-            log('AB_SHADOW pro attempt %d/3 rejected ref=%s type=%s%s'
+            detail = ' '.join(str(error).split())[:120]
+            log('AB_SHADOW pro attempt %d/3 rejected ref=%s type=%s%s detail=%s'
                 % (attempt, reference, last_error,
-                   '' if last_status is None else ' http=%s' % last_status))
+                   '' if last_status is None else ' http=%s' % last_status,
+                   detail))
             if last_status in kill1_tail.NONRETRYABLE_HTTP_STATUSES:
                 break
             if attempt == 3:
