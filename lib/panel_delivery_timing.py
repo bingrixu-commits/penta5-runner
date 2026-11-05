@@ -147,8 +147,12 @@ def _read(path):
         if not isinstance(event,dict):
             raise ValueError('delivery-invalid-event')
         identity={key:event.get(key) for key in FIELDS}
+        if identity['model'] not in MODELS:
+            # Retired frameworks keep their historical observations; skip them
+            # so the active ledger stays writable for every later append.
+            continue
         identifier=_hash(_packed(identity))
-        if (event.get('event_id')!=identifier or identifier in seen or identity['model'] not in MODELS
+        if (event.get('event_id')!=identifier or identifier in seen
                 or type(event.get('first_transition')) is not bool
                 or event.get('timing_kind')!='server-commit-observed'
                 or identity['scope'] not in ('attack','card-only')

@@ -101,8 +101,18 @@ def _delivery_worker():
         try:
             from panel_delivery_timing import record_delivery
             record_delivery(*item)
-        except Exception:
-            pass
+        except Exception as error:
+            # A silent observer failure hid a broken ledger for four days;
+            # keep one bounded, non-sensitive diagnostic line per failure.
+            try:
+                destination = Path(PANEL_PATH).parent / 'data' / 'panel_delivery_observer.log'
+                if destination.exists() and destination.stat().st_size > 256 * 1024:
+                    destination.write_text('', encoding='utf-8')
+                with destination.open('a', encoding='utf-8') as stream:
+                    stream.write(datetime.now(timezone.utc).isoformat() + ' '
+                                 + type(error).__name__ + ': ' + str(error)[:300] + '\n')
+            except Exception:
+                pass
         finally:
             _DELIVERY_QUEUE.task_done()
 
