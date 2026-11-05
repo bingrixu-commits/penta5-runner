@@ -80,6 +80,8 @@ ALL_FORM_PICK = 1                            # 全同形态必选数（4 个全�
 TOTAL_FORMS = COUNTED_FORMS + ALL_FORM_PICK  # 整组形态项数 = 4
 POSITION_KEYS = ('q', 'b', 's', 'g')          # 千/百/十/个 四选三
 POSITION_LABELS = {'q': '千位', 'b': '百位', 's': '十位', 'g': '个位'}
+ATTACK_ORDER = '1234567890'                 # 攻击语位置保留码顺序（与 kill1/kill2/kill3/八项一致）
+ATTACK_POSITION_LABELS = {'q': '千', 'b': '百', 's': '十', 'g': '个'}
 POSITION_INDEX = {'q': 0, 'b': 1, 's': 2, 'g': 3}
 POSITION_KILL_COUNT = 3                      # 定位排除项数：3 个不同位置，每位恰好 1 码
 POSITION_BASIS = 'soft-form-direction-hot-cold-repeat-neighbor'
@@ -1254,10 +1256,28 @@ def deadline_for(reference):
 
 
 def build_attack(seal):
-    """攻击语：3 个池选形态 + 1 个全同形态 + 3 个定位排除 + 二数合保留4码 + 三数合保留5码。"""
+    """攻击语：定位排除位置保留码 + 3 个池选形态 + 1 个全同形态 + 二数合保留4码 + 三数合保留5码。
+
+    v5 起新增 3 个定位排除项，按本仓库统一攻击语语法用「位置保留码」表达：千/百/十/个 四段，
+    被杀位置为去掉该数字的 9 码、未选位置保留 10 码 1234567890（与 kill1/kill2/kill3/八项框架
+    同格式）；随后是「除<形态>」×4、二数合、三数合、各。v1-v4 旧封存没有 positions 字段，
+    保持原「除…二数合…三数合…各」格式不变。
+    """
     if not isinstance(seal, dict):
         raise ValueError('attack requires a sealed prediction')
     parts = []
+    positions = seal.get('positions')
+    if isinstance(positions, dict) and positions:
+        for key in POSITION_KEYS:
+            label = ATTACK_POSITION_LABELS[key]
+            value = positions.get(key)
+            if value is None:
+                parts.append(label + ATTACK_ORDER)
+                continue
+            text = str(value).strip()
+            if len(text) != 1 or text not in ATTACK_ORDER:
+                raise ValueError('attack kill digit must be 0..9')
+            parts.append(label + ''.join(d for d in ATTACK_ORDER if d != text))
     forms = seal.get('forms')
     if isinstance(forms, list):
         for value in forms:
@@ -1272,13 +1292,6 @@ def build_attack(seal):
         all_form = seal.get('all_form')
         if isinstance(all_form, str) and len(all_form) == 4:
             parts.append('除' + all_form)
-    positions = seal.get('positions')
-    if isinstance(positions, dict):
-        for key in POSITION_KEYS:
-            value = positions.get(key)
-            if value is None:
-                continue
-            parts.append(POSITION_LABELS[key] + '除' + str(value))
     he2_keep = seal.get('he2_keep')
     he3_keep = seal.get('he3_keep')
     if he2_keep and he3_keep:
