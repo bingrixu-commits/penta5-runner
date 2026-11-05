@@ -1589,3 +1589,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 回滚：`git revert 353a886 6505158 f860879 54f8376 ad4bcb7 f59169a`；data 解两个 tar 回 data/；`/root/run_stats.py` 用 `$BK/files/run_stats.py` 覆盖；`/etc/logrotate.d/penta5` 用 `$BK/files/logrotate-penta5` 覆盖；`bash scripts/crontab_tool.sh install` 并跑 `python3 scripts/freeze_guard.py init --framework kill9_tail --renew`；panel.html/hitrate.html 为生成物，下轮 run_stats 自动重建；无需重启。
 - 非 git 改动：`/root/run_stats.py`、`/etc/logrotate.d/penta5`、panel.html（生成物）、data 封存删除。
 - 风险/遗留：并发窗口提交 `615b3e1 feat(kill8): ③④方向改为多数锁定` 与本退役交错（未触碰其文件、未 git add -A），本段 commit 列表不含它；仓库内 kill9 字样仅剩历史台账/版本串（panel_live_refresh、attack_editor v18）/历史 hash_updates/`model_retirement` marker/未跟踪 .bak 备份；未改任何剩余框架口径。
+
+### kill8 ③④ 多数锁定升级（2026-11-05 18:00，`615b3e1`）
+
+- 需求（m00229）：「四个形态取反向」；问卷 reverse_scope 选「③④混杂时也要反向锁定」——描述原文「不再让 AI 二选一，按四个位置排除数字的多数方向取反向（如 3 大 1 小 → 全小）」。
+- 口径（v4）：①② 单双/大小不变（16 选 1 + 位置反方向约束）；③④ 全大/全小、全单/全双 由「四个位置全部同向才锁定」改为**多数锁定**：每位置排除数字在该维度全部同向才投票；严格多数 → 锁定反方向全形；平票（如 2 大 2 小）或全无票 → 仍由 AI 在 2 种里按冷热自选。结构仍 4 项、整组 4 项全中，基线不重算（沿用 v3 0.7733、4 项）。
+- 代码（commit `615b3e1`，3 files changed +52/−26）：lib/kill8_tail.py RULE_VERSION=`kill8-tail-v4-majority-lock-four-reverse-cold-forms`、新增 `_majority_lock()`、`reverse_constraints(with_details)` 返回多数投票结果、`_all_constraint_text` 锁定/平票文案、build_prompt audit `kill8-prompt-v3-majority-lock-four-forms`；lib/kill_eight_view.py scope 与 foot 改「多数锁定」；lib/hitrate_baseline.py 追加 v4 行 `(4, 0.7733)`。
+- 测试/探针：/tmp/kill8_v4_test.py PASS=69 FAIL=0；/tmp/kill8_v4_view_probe.py PASS=22 FAIL=0（旧 v3 封存按 legacy 渲染 4 卡 + 旧口径提示；合成 v4 4 卡、无 legacy 提示、4 个「除」；空态）。
+- 真实周期（2026-11-05 18:00 手动 run）：data/kill8_position_exclusions.json 临时设 {"q":"5","b":"6","s":"7","g":"9"}（4 位置全偏大 → 锁全小；5/7/9 单、6 双 → 3 单 1 双 → 锁全双）；封存 ref=20261105216 → target=20261105217，published_at=18:00:37；forms parity=双单双双、size=小小小小、all_size=小小小小、all_parity=双双双双；攻击语「除双单双双除小小小小除小小小小除双双双双」；面板 KILL_EIGHT 区块 4 卡、含「多数锁定」文案、基线 77.33%、data-as-of=20261105216。同日 17:5x 另一 v4 封存 ref=20261105215→216 已按 counted_forms=4、group_hit=True、4 子项全 hit 结算（今日 v4 total=1/group_hits=1；v3 历史封存计 legacy=7 期、全中）。验证后排除数字已还原为 {"q":"9","b":"2","s":"","g":""}。
+- 备份 `/root/ops/kill8-v4-175342/`（files 改动前、files-after 改动后、evidence：patch/测试/探针、MANIFEST.txt sha256）；回滚 `git revert 615b3e1`。v3 历史封存（`kill8-tail-v3-four-reverse-cold-forms`）保留为 legacy，不计入 v4 统计。
