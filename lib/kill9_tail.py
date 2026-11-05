@@ -1,4 +1,4 @@
-"""AI 四形态排除（面板候选池挑 3 + 全同形态挑 1）+ 二数合 + 三数合 框架（kill9 v4，独立封存/结算/统计）。
+"""AI 四形态排除（面板候选池挑 3 + 全同形态挑 1）+ 三定位排除 + 二数合 + 三数合 框架（kill9 v5，独立封存/结算/统计）。
 
 口径（面板、封存与统计都按此写死）：
 - 候选池 = 面板其他 AI 框架本期已发布的四位反向形态汇总去重（kill1 的 form、
@@ -11,12 +11,17 @@
   第 4 个「形态排除项」（原样使用，不得与上面 3 个池选形态重复）；
 - 形态只可能是大小（大/小）或单双（单/双）两类：大=5-9、小=0-4、单=1/3/5/7/9、双=0/2/4/6/8；
 - 形态命中 = 目标期实际四位形态 != 封存形态（反向排除项，逐位约束至少一位不满足即命中）；
+- 定位排除（v5 起）：由 DeepSeek 从 千/百/十/个 中挑选 3 个互不相同的位置，每个位置恰好排除 1 个数字（0-9）；
+  选择为「软结合形态」：先选定 4 个形态排除项，再按这 4 个排除形态在各位的单双/大小方向（该位多数排除形态为「单」
+  时该位实际偏「双」，优先排除单类数字；大小同理）结合各位热码/冷码、上期该位重码与邻码自主决定；
+  本地只校验结构（3 个不同位置、每位 1 个 0-9 数字），不硬绑定方向，reason 须说明结合方式；
+- 定位排除命中 = 目标期实际开奖该位置数字 != 封存的排除码；
 - 二数合：he2_keep 从 02468 恰好保留 4 个不同数字；前 4 球任取 2 位 6 种组合和值个位，
   任一落入保留集即命中；
 - 三数合：he3_keep 从 0-9 恰好保留 5 个不同数字且 2 奇 3 偶或 3 奇 2 偶；任取 3 位 4 种组合
   和值个位，任一落入保留集即命中；
-- 整组命中 = 3 个池选形态 + 1 个全同形态 + 二数合 + 三数合 共 6 项同时命中；
-- 无位置杀码、无合尾、无连用限制（每期完全由模型按冷热重选，不沿用上期）；
+- 整组命中 = 3 个池选形态 + 1 个全同形态 + 3 个定位排除 + 二数合 + 三数合 共 9 项同时命中；
+- 定位排除每期重选、无连用限制；无合尾（每期完全由模型按形态方向/冷热重选，不沿用上期）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
@@ -68,10 +73,17 @@ MIDDLE_DIGITS = frozenset((3, 4, 5, 6))
 V1_RULE = 'kill9-tail-v1-four-forms-he2he3'
 V2_RULE = 'kill9-tail-v2-size-parity-all-mixed'
 V3_RULE = 'kill9-tail-v3-pool-three-forms-he2he3'
-RULE_VERSION = 'kill9-tail-v4-pool-three-plus-all-form-he2he3'
+V4_RULE = 'kill9-tail-v4-pool-three-plus-all-form-he2he3'
+RULE_VERSION = 'kill9-tail-v5-pool-three-all-form-three-kill-he2he3'
 COUNTED_FORMS = 3                            # 池选形态数（必须原样取自候选池）
 ALL_FORM_PICK = 1                            # 全同形态必选数（4 个全同形态中挑 1 个）
 TOTAL_FORMS = COUNTED_FORMS + ALL_FORM_PICK  # 整组形态项数 = 4
+POSITION_KEYS = ('q', 'b', 's', 'g')          # 千/百/十/个 四选三
+POSITION_LABELS = {'q': '千位', 'b': '百位', 's': '十位', 'g': '个位'}
+POSITION_INDEX = {'q': 0, 'b': 1, 's': 2, 'g': 3}
+POSITION_KILL_COUNT = 3                      # 定位排除项数：3 个不同位置，每位恰好 1 码
+POSITION_BASIS = 'soft-form-direction-hot-cold-repeat-neighbor'
+TOTAL_ITEMS = TOTAL_FORMS + POSITION_KILL_COUNT + 2   # 整组项数 = 4 形态 + 3 定位 + 二数合 + 三数合 = 9
 HE2_SOURCE_DIGITS = '02468'
 HE2_KEEP_COUNT = 4
 HE3_KEEP_COUNT = 5
@@ -83,9 +95,10 @@ RETRY_INSTRUCTION = (
     'forms 必须是恰好 3 个互不相同的四位形态组成的数组，每项 4 个 大/小 字符或 4 个 单/双 字符'
     '（按千百十个顺序），且必须原样来自【本期候选池】（池内不足 3 个时才允许补足同类型形态）；'
     'all_form 必须原样取自 大大大大/小小小小/双双双双/单单单单 之一，且不得与 forms 重复；'
+    'positions 必须恰好 3 个键（从 q/b/s/g 中选，值 0-9 整数，三位互不相同）；'
     'he2_keep 为 02468 中 4 个不同数字组成的字符串；'
     'he3_keep 为 0123456789 中 5 个不同数字组成的字符串且必须 2 奇 3 偶或 3 奇 2 偶；'
-    'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
+    'reason 60 字以内，且必须说明定位排除如何结合形态。不要输出任何其他文字、解释或代码块。'
 )
 
 
@@ -366,6 +379,37 @@ def _keep_set(value, count, allowed, label):
     return ''.join(sorted(text))
 
 
+def position_evidence(window):
+    """Per-position hot/cold digits plus previous-draw repeat/neighbour evidence."""
+    rows = [[int(value) for value in row] for row in (window or [])]
+    if not rows:
+        raise ValueError('position evidence requires history rows')
+    result = {}
+    for key, index in POSITION_INDEX.items():
+        values = [row[index] for row in rows]
+        counts = {digit: values.count(digit) for digit in range(10)}
+        last = {}
+        for offset, digit in enumerate(values):
+            last[digit] = offset
+        size = len(values)
+        omission = {digit: (size if last.get(digit) is None else size - last[digit] - 1)
+                    for digit in range(10)}
+        hot = sorted(range(10), key=lambda digit: (-counts[digit], omission[digit], digit))[:3]
+        cold = sorted(range(10), key=lambda digit: (counts[digit], -omission[digit], digit))[:3]
+        previous = values[-1]
+        result[key] = {
+            'label': POSITION_LABELS[key],
+            'hot': [{'digit': digit, 'count': counts[digit], 'omission': omission[digit]}
+                    for digit in hot],
+            'cold': [{'digit': digit, 'count': counts[digit], 'omission': omission[digit]}
+                     for digit in cold],
+            'previous': previous,
+            'repeat': previous,
+            'neighbor': [(previous - 1) % 10, (previous + 1) % 10],
+        }
+    return result
+
+
 def pair_tails(numbers):
     return sorted({sum(int(numbers[index]) for index in pair) % 10 for pair in HE2_PAIRS})
 
@@ -423,6 +467,21 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
         '· %s：近50期命中 %.2f%%（%s/50），近30期 %.2f%%'
         % (candidate, hit50 * 100.0, hits, hit30 * 100.0)
         for candidate, hits, hit30, hit50 in he3_rows[:10]]
+    position_evidence_map = position_evidence(window)
+    position_lines = []
+    for position_key in POSITION_KEYS:
+        position_info = position_evidence_map[position_key]
+        hot_text = '、'.join('%d（%d次/遗漏%d）' % (item['digit'], item['count'],
+                                                  item['omission'])
+                            for item in position_info['hot'])
+        cold_text = '、'.join('%d（%d次/遗漏%d）' % (item['digit'], item['count'],
+                                                   item['omission'])
+                             for item in position_info['cold'])
+        position_lines.append(
+            '· %s：上期该位 %d（重码候选 %d），邻码 %d/%d；近%d期热码 %s；冷码 %s'
+            % (POSITION_LABELS[position_key], position_info['previous'],
+               position_info['repeat'], position_info['neighbor'][0],
+               position_info['neighbor'][1], WINDOW, hot_text, cold_text))
     panel_section = ''
     panel_context_text = None
     panel_context_sha = None
@@ -454,6 +513,14 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
     all_section = ('【本期全同形态（4 个，必须从中挑选 1 个作为第 4 个形态排除项；'
                    '原样使用，且不得与上面挑出的 3 个池选形态重复）】\n'
                    + '\n'.join(all_lines) + '\n\n')
+    position_section = (
+        '【本期定位排除依据（千/百/十/个 前四位；从 4 个位置中选 3 个，每位排除 1 个数字 0-9）】\n'
+        + '\n'.join(position_lines) + '\n\n'
+        '说明（定位排除与形态排除的「软结合」规则）：先按第 1、2 步选定 4 个形态排除项，再统计这 4 个排除形态'
+        '在每一位上出现的单双/大小方向（只统计该位带该类字符的排除形态）：若某位多数排除形态为「单」'
+        '（如 3/4 个），说明该位实际落在「单」方向的可能性被削弱、整体偏「双」，可优先在该位排除单类数字；'
+        '大小同理；方向均分则无偏好。软结合只作参考、由你自主决定（本地不做硬绑定校验），'
+        '但必须在 reason 里写明如何结合形态。\n\n')
     prompt = (
         f'以下是真实的最近{WINDOW}期开奖前四位（按时间先后排序，'
         f'最新已开奖参考期号:{reference}，预测目标期号:{target}）：\n'
@@ -466,6 +533,7 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
         + '\n'.join(ranking_lines['parity']) + '\n\n'
         + pool_section
         + all_section
+         + position_section
         + '【二数合保留4码候选（任意两位六组和值个位任一落入保留集即命中；'
         '按近50期真实命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(he2_lines) + '\n\n'
@@ -477,24 +545,34 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
         '不得改写池内形态、不得自造池外形态；若池内不足 3 个，可补足同类型形态并说明；\n'
         '2. 再从【本期全同形态】的 4 个全同形态中恰好挑选 1 个作为本期第 4 个「形态排除项」；'
         '必须原样使用，且不得与第 1 步挑出的 3 个形态重复；\n'
-        '3. 每个形态命中 = 目标期实际四位形态 != 该形态（排除项，至少一位不满足）；\n'
-        '4. he2_keep：从 02468 中恰好保留 4 个不同数字（字符串），'
+        '3. 再从【本期定位排除依据】的 千/百/十/个 中挑选恰好 3 个互不相同的位置作为本期 3 个「定位排除项」，'
+        '每个位置恰好排除 1 个数字（0-9，输出整数）；选择时必须先按第 1、2 步选出的 4 个形态排除项'
+        '在各位的单双/大小方向做软结合（该位多数排除形态为「单」，说明该位实际偏「双」，优先排除单类数字；'
+        '大小同理；均分则无偏好；只统计该位带该类字符的排除形态），并结合各位热码/冷码、'
+        '上期该位重码与邻码自主权衡；3 个位置必须互不相同，剩余 1 个位置不排除；\n'
+        '4. 每个形态命中 = 目标期实际四位形态 != 该形态（排除项，至少一位不满足）；\n'
+        '5. 每个定位排除项命中 = 目标期实际开奖该位置数字 != 封存的排除码；\n'
+        '6. he2_keep：从 02468 中恰好保留 4 个不同数字（字符串），'
         '目标期任取两位的 6 种和值个位任一落入即命中；\n'
-        '5. he3_keep：从 0123456789 中恰好保留 5 个不同数字（字符串），'
+        '7. he3_keep：从 0123456789 中恰好保留 5 个不同数字（字符串），'
         '且必须 2 奇 3 偶或 3 奇 2 偶，目标期任取三位的 4 种和值个位任一落入即命中；\n'
-        '6. 命中口径：3 个池选形态 + 1 个全同形态 + 二数合 + 三数合共 6 项同时命中才算整组命中；\n'
-        '7. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
-        '8. 只能使用上面给出的历史、候选池、全同形态与面板全量上下文；'
+        '8. 命中口径：3 个池选形态 + 1 个全同形态 + 3 个定位排除 + 二数合 + 三数合共 9 项'
+        '同时命中才算整组命中；\n'
+        '9. 冷热、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
+        '10. 只能使用上面给出的历史、候选池、全同形态、定位排除依据与面板全量上下文；'
         '面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"forms":["<4个 大/小 字符，按千百十个顺序>","<4个 大/小 字符>",'
         '"<4个 单/双 字符或 4个 大/小 字符>"],'
         '"all_form":"<大大大大/小小小小/双双双双/单单单单 之一>",'
+        '"positions":{"q":<0-9整数>,"b":<0-9整数>,"s":<0-9整数>},'
         '"he2_keep":"<4位数字，从02468选>","he3_keep":"<5位数字，2奇3偶或3奇2偶>",'
-        '"reason":"40字以内"}\n'
+        '"reason":"60字以内，须说明定位排除如何结合形态"}\n'
         '注意：forms 必须恰好 3 个互不相同的四位形态，每一项都必须是 4 个 大/小 字符'
         '或 4 个 单/双 字符，且必须原样取自【本期候选池】；'
         'all_form 必须是 大大大大/小小小小/双双双双/单单单单 之一且不得与 forms 重复；'
+        'positions 必须恰好 3 个键（从 q/b/s/g 中选，q=千位、b=百位、s=十位、g=个位；'
+        '每个值为 0-9 的整数，3 个位置互不相同）；'
         'he2_keep 必须是 02468 里的 4 个不同数字；'
         'he3_keep 必须是 5 个不同数字且 2 奇 3 偶或 3 奇 2 偶。'
     )
@@ -503,7 +581,7 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill9-prompt-v4-pool-three-plus-all-form-he2he3',
+        'version': 'kill9-prompt-v5-pool-three-all-form-three-kill-he2he3',
         'all_form_values': list(ALL_FORM_VALUES),
         'reference': reference,
         'target': target,
@@ -528,6 +606,8 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None, pool=None):
                        'stale': entry.get('stale')}
                       for entry in pool_entries],
         'pool_sha256': pool_sha256(pool_entries),
+        'positions_basis': POSITION_BASIS,
+        'position_evidence': position_evidence_map,
     }
     return prompt, audit
 
@@ -572,6 +652,27 @@ def normalize_response(response, pool=None):
     odd = sum(1 for char in he3_keep if int(char) % 2 == 1)
     if not 2 <= odd <= 3:
         raise ValueError('三数合保留5码必须 2 奇 3 偶或 3 奇 2 偶')
+    raw_positions = response.get('positions')
+    if not isinstance(raw_positions, dict):
+        raise ValueError('positions 必须恰好 3 个位置键对象（q/b/s/g）')
+    positions = {}
+    for raw_key, raw_value in raw_positions.items():
+        key = str(raw_key).strip().lower()
+        if key not in POSITION_KEYS:
+            raise ValueError('positions 键名只能是 q/b/s/g：%s' % raw_key)
+        if key in positions:
+            raise ValueError('positions 出现重复位置：%s' % key)
+        try:
+            digit = int(str(raw_value).strip())
+        except (TypeError, ValueError):
+            raise ValueError('positions[%s] 必须是 0-9 的整数' % key) from None
+        if not 0 <= digit <= 9:
+            raise ValueError('positions[%s] 必须是 0-9 的整数' % key)
+        positions[key] = str(digit)
+    if len(positions) != POSITION_KILL_COUNT:
+        raise ValueError('positions 必须恰好 %d 个互不相同的位置（千/百/十/个 中选 3）'
+                         % POSITION_KILL_COUNT)
+    ordered_positions = {key: positions[key] for key in POSITION_KEYS if key in positions}
     reason = str(response.get('reason', ''))
     try:
         reason.encode('utf-8')
@@ -581,6 +682,7 @@ def normalize_response(response, pool=None):
         'forms': forms,
         'form_kinds': kinds,
         'all_form': all_form,
+        'positions': ordered_positions,
         'he2_keep': he2_keep,
         'he3_keep': he3_keep,
         'reason': reason[:200],
@@ -788,6 +890,9 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'forms': list(prediction['forms']),
         'form_kinds': list(prediction['form_kinds']),
         'all_form': prediction['all_form'],
+        'positions': dict(prediction['positions']),
+        'position_basis': POSITION_BASIS,
+        'position_evidence': audit.get('position_evidence'),
         'form_pool': audit.get('form_pool'),
         'pool_sha256': audit.get('pool_sha256'),
         'he2_keep': prediction['he2_keep'],
@@ -864,10 +969,14 @@ def settle_pending(snapshot=None, now=None):
             continue
         rule = seal.get('rule_version')
         is_v1 = rule == V1_RULE
-        is_v4 = rule == RULE_VERSION or (isinstance(seal.get('all_form'), str)
-                                         and isinstance(seal.get('forms'), list))
-        is_v3 = (not is_v4) and (bool(seal.get('forms')) or rule == V3_RULE)
-        if is_v4:
+        sealed_positions = (seal.get('positions')
+                            if isinstance(seal.get('positions'), dict) else {})
+        is_v5 = rule == RULE_VERSION or bool(sealed_positions)
+        is_v4 = (not is_v5) and (rule == V4_RULE or (
+            isinstance(seal.get('all_form'), str) and isinstance(seal.get('forms'), list)))
+        is_v3 = (not is_v5) and (not is_v4) and (bool(seal.get('forms')) or rule == V3_RULE)
+        position_entries = {}
+        if is_v4 or is_v5:
             forms = []
             sealed_forms = seal.get('forms') if isinstance(seal.get('forms'), list) else []
             sealed_kinds = (seal.get('form_kinds')
@@ -882,6 +991,17 @@ def settle_pending(snapshot=None, now=None):
             forms.append({'form': all_form, 'kind': 'all',
                           'actual': pattern_of(actual, 'size') + '/' + pattern_of(actual, 'parity'),
                           'hit': bool(form_hit(all_form, actual))})
+            if is_v5:
+                for key in POSITION_KEYS:
+                    if key not in sealed_positions:
+                        continue
+                    kill_text = str(sealed_positions.get(key)).strip()
+                    actual_text = str(actual[POSITION_INDEX[key]])
+                    position_entries[key] = {
+                        'kill': kill_text,
+                        'actual': actual_text,
+                        'hit': bool(kill_text != actual_text),
+                    }
         elif is_v3:
             forms = []
             sealed_forms = seal.get('forms') if isinstance(seal.get('forms'), list) else []
@@ -927,10 +1047,18 @@ def settle_pending(snapshot=None, now=None):
             }
         hit_list = [item['hit'] for item in
                     (forms if isinstance(forms, list) else forms.values())]
-        expected_items = TOTAL_FORMS if is_v4 else (COUNTED_FORMS if is_v3 else 4)
-        group_hit = bool(len(hit_list) == expected_items and all(hit_list)
-                         and keep_entries['he2_keep']['hit']
-                         and keep_entries['he3_keep']['hit'])
+        if is_v5:
+            position_ok = (len(position_entries) == POSITION_KILL_COUNT
+                           and all(entry.get('hit') is True
+                                   for entry in position_entries.values()))
+            group_hit = bool(len(hit_list) == TOTAL_FORMS and all(hit_list) and position_ok
+                             and keep_entries['he2_keep']['hit']
+                             and keep_entries['he3_keep']['hit'])
+        else:
+            expected_items = TOTAL_FORMS if is_v4 else (COUNTED_FORMS if is_v3 else 4)
+            group_hit = bool(len(hit_list) == expected_items and all(hit_list)
+                             and keep_entries['he2_keep']['hit']
+                             and keep_entries['he3_keep']['hit'])
         published = parse_time(seal.get('published_at'))
         drawn = parse_time(record.get('opentime'))
         verified = (seal.get('publication_state') == 'published' and published is not None
@@ -954,6 +1082,8 @@ def settle_pending(snapshot=None, now=None):
             settlement['forms'] = forms
         else:
             settlement.update(forms)
+        if is_v5:
+            settlement['positions'] = position_entries
         settlements.append(settlement)
         settled.add(target)
         changed += 1
@@ -1024,6 +1154,20 @@ def today_stats(now=None):
                 form_hits[index] += 1
     he2_hits = sum(1 for item in todays if (item.get('he2_keep') or {}).get('hit') is True)
     he3_hits = sum(1 for item in todays if (item.get('he3_keep') or {}).get('hit') is True)
+    position_totals = {key: {'bets': 0, 'hits': 0} for key in POSITION_KEYS}
+    for item in todays:
+        entries = item.get('positions')
+        if not isinstance(entries, dict):
+            continue
+        for key in POSITION_KEYS:
+            entry = entries.get(key)
+            if not isinstance(entry, dict) or entry.get('hit') is None:
+                continue
+            position_totals[key]['bets'] += 1
+            if entry.get('hit') is True:
+                position_totals[key]['hits'] += 1
+    position_bets = sum(entry['bets'] for entry in position_totals.values())
+    position_hits = sum(entry['hits'] for entry in position_totals.values())
     win, loss, max_loss, four_loss = _streak_stats(todays)
     four_loss_total = _streak_stats(
         [item for item in verified_all if _rule_version(item) == RULE_VERSION])[3]
@@ -1050,6 +1194,15 @@ def today_stats(now=None):
                      'rate': (he2_hits / total) if total else None},
         'he3_keep': {'hits': he3_hits, 'bets': total,
                      'rate': (he3_hits / total) if total else None},
+        'positions': {key: {'bets': position_totals[key]['bets'],
+                            'hits': position_totals[key]['hits'],
+                            'rate': ((position_totals[key]['hits'] / position_totals[key]['bets'])
+                                     if position_totals[key]['bets'] else None)}
+                      for key in POSITION_KEYS},
+        'position_total': position_bets,
+        'position_hits': position_hits,
+        'position_rate': (position_hits / position_bets) if position_bets else None,
+        'item_total': TOTAL_ITEMS,
         'current_win_streak': win,
         'current_loss_streak': loss,
         'max_loss_streak': max_loss,
@@ -1101,7 +1254,7 @@ def deadline_for(reference):
 
 
 def build_attack(seal):
-    """攻击语：3 个池选形态 + 1 个全同形态 + 二数合保留4码 + 三数合保留5码（共 4 个「除」）。"""
+    """攻击语：3 个池选形态 + 1 个全同形态 + 3 个定位排除 + 二数合保留4码 + 三数合保留5码。"""
     if not isinstance(seal, dict):
         raise ValueError('attack requires a sealed prediction')
     parts = []
@@ -1119,6 +1272,13 @@ def build_attack(seal):
         all_form = seal.get('all_form')
         if isinstance(all_form, str) and len(all_form) == 4:
             parts.append('除' + all_form)
+    positions = seal.get('positions')
+    if isinstance(positions, dict):
+        for key in POSITION_KEYS:
+            value = positions.get(key)
+            if value is None:
+                continue
+            parts.append(POSITION_LABELS[key] + '除' + str(value))
     he2_keep = seal.get('he2_keep')
     he3_keep = seal.get('he3_keep')
     if he2_keep and he3_keep:
