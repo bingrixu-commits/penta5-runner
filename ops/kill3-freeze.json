@@ -2,7 +2,7 @@
   "files": {
     "lib/kill3_tail.py": "aefe3d0b48b061d0622d55e4f5296db596152e38118112400a3baef5c5425b17",
     "lib/kill_three_view.py": "b4a30a9b97e0d4f268794dcc0d988377613143bf5d27316a0462e3c0ac70cc56",
-    "lib/panel_context.py": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
+    "lib/panel_context.py": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
     "scripts/run_kill3_tail.py": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49"
   },
   "freeze_hours": 72,
@@ -425,6 +425,14 @@
       "new_sha256": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49",
       "old_sha256": "b5b7f97de4e23694fcdf17b0dfc1992b4631c2cd7da3ae351d53ec85e48fd6f0",
       "reason": "request_prediction 增传 rows，使 normalize_response 能用行情数据计算并覆盖弃位两个形态字符（v16 起）"
+    },
+    {
+      "at": "2026-11-06T00:56:00+08:00",
+      "commit": "af97953",
+      "file": "lib/panel_context.py",
+      "new_sha256": "298ed7898f0fd0353f4fd5d9aa442f03648282cd9eacbbd48429a6feb4619e63",
+      "old_sha256": "83a2208855b37cfc4a048a7d775c1aba432854016435fc9366ffdfd6dd93a44a",
+      "reason": "新增独立框架 kill10_tail（二数合 he2 + 三数合 he3，整组 2 项）：panel_context 增加可选 kill10_stats/kill10_previous 入参与 kill10_self 键、_kill10_self()、_ai_self_frame 增 kill10_tail 分支、_ai_self_frames 增 kill10、_model_tiers 键列表加 PENTA5_MODEL_KILL10；A/B 证明（本地改前/改后模块、固定 now fixture）：无参数 build()+prompt_text() 的 snapshot/prompt_text 逐字节相同；kill3/kill1 入参路径仅 other_ai_self 新增 kill10 框架帧（extra_panel_input 下的设计内增项，与 kill9 挂接先例一致），kill3_self/kill1_self 与其余键逐字节相同；kill10_self 仅在传入 kill10 参数时出现。kill3 RULE_VERSION v16 与选码/尾码/8 项口径未变"
     }
   ],
   "min_periods": 100,
