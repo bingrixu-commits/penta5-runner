@@ -1979,3 +1979,25 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 改动：kill8_run_routes.js GET can_run 对已通过登录鉴权的 admin/viewer 均返回 true，POST 去掉 admin-only 403；lib/kill_eight_view.py 运行键 JS 升 kill8-run-v3，去掉非 admin 禁用与「仅管理员可启动」文案；panel.html 当期生成物同步补丁。
 - 边界不变：未登录请求仍是 401；ai_control（AI 总闸）等其它付费/控制类接口仍 admin-only。
 - 回滚：git revert 本提交；或 git checkout 3867ee5 -- kill8_run_routes.js lib/kill_eight_view.py（回到 admin-only）。
+
+## 2026-11-06 kill1 v5 单位置杀码 + 一合尾（降项，整组 2 项）
+
+- 授权：用户 m00472「落地」+ m00473–m00475 在四选项中明确选择「① 1 位置 + 1 合尾（整组≈81.0%）」，把 kill1 从 v4（2 位置 + 1 合尾，3 项，精确基线 72.90%）降为 v5（1 位置 + 1 合尾，2 项，精确基线 81.00%）。依据：v4 与随机基线不可区分（137/192=71.35%，p=.63），降项是提升面板整组命中率的唯一机械路径；pro/flash 影子 A/B 继续独立累计（2026-11-06 07:1x 另一窗口已按 .env 关闭，commit 7031235，不属本组）。
+- P 闸门（技能 upgrade-sealed-framework-revision P1–P5，只读，先于改码）：n=249 条 v4 verified 结算（crosscheck_mismatch=0），逐封存 10^4 精确枚举 + 置换零分布（脚本 /tmp/p_gate2.py，结果 /root/ops/kill1-p-gate.json）：
+  - v4 现口径（2 位置 + 1 合尾，3 项）：观测 183/249=73.49%，精确枚举基线 72.90%（与既有登记 (3,0.729) 一致），观测-基线 -0.59pp，置换零分布 P90=3.82%，Wilson 95%CI 67.7–78.6%。
+  - v5 候选（按 POSITION_ORDER 首个位置 + 1 合尾，2 项）：观测 205/249=82.33%，精确枚举基线 81.00%，观测-基线 -1.33pp，置换零分布 P90=3.49%，Wilson 95%CI 77.1–86.6%。
+  - 附：第二位置+合尾 83.94%、2 位置无尾 78.71%、仅单位置 88.76%、仅单合尾 93.17%。
+  - 结论：现口径与 v5 观测均未越过置换零分布 P90（无结构性退化/异常增益）；81.00% 是「项数从 3 降到 2」的机械期望（10^4 全枚举每条配置命中 8100 组），不是 AI 能力提升。
+- 代码（commit 4fb7717，11 文件）：
+  - `lib/kill1_tail.py`：`RULE_VERSION='kill1-tail-v5-one-position-one-tail'`、`COUNTED_POSITIONS=1`；模块 docstring、`RETRY_INSTRUCTION`（1 个 position 对象）、`build_prompt` 任务 1/3/4 与 JSON schema、注意行、audit `version='kill1-tail-prompt-v5-one-position-one-tail'`、`apply_position_policy` docstring 全部改单位置。封存/结算/today_stats/build_attack 逻辑本就按 `counted` 通用，无需结构改动，旧 v4 已封记录字段不变。
+  - `lib/kill_one_view.py`：标题「🤖 AI 单位置杀码 + 一合尾建议」、`FALLBACK_BASELINE=(2,0.81)`、整组行「2 项全中：1 位置 + 合尾」、位置注数「1 注/期」、k1-drop/foot 口径 v5、legacy 文案 v1–v4、攻击语 aria-label。
+  - 消费者：`lib/hitrate_baseline.py` 与 `scripts/framework_hitrate_cumulative.py` 登记 `('kill1_tail','kill1-tail-v5-one-position-one-tail'): (2,0.81)`、LABELS 改「AI 单位置杀码（2 项）」；`lib/model_call_rec.py`、`lib/tail_hold_max_shadow.py`、`lib/attack_editor_view.py`、`scripts/run_kill1_tail.py`、`scripts/ops_health_check.py`、`scripts/tail_hold_review.py`、`scripts/kill1_ab_report.py` 文案/标签同步。A/B 报告逻辑按 `prediction.positions/counted` 通用，无需改代码。
+- 真实周期（cron 每 5 分钟，:35 起跑）：
+  - 首个 v5 封存 ref=20261106086 → target=20261106087，07:10:35 周期用新代码产出，published_at 07:10:43（窗口内）；`counted=['s']`、positions `{'s':'1'}`（十位杀 1，新选）、tail 千百十个杀 7（沿用第 2 期）；攻击语「千1234567890百1234567890十234567890个1234567890四定千百十个合123456890」（仅十位 9 码）。
+  - 首期核验：target 20261106087 开奖后（07:15:35 周期）结算——十位杀 1 对实际 5 命中、合尾杀 7 对实际 8 命中、`group_hit=True`、`verified=True`；v5 已结算 n=1（100.00%，样本极小不作结论）。
+  - 第二期封存 ref=20261106087 → target=20261106088，published_at 07:15:49：十位杀 1（沿用同位第 2 期，上期命中）、合尾换码 tail_qsg/9；面板 `#kill-one-ai` data-as-of=20261106087、标题「AI 单位置杀码 + 一合尾建议」、整组行「2 项全中：1 位置 + 合尾 100.00%（1/1 期）」、位置 1/1 注、合尾 1/1、口径行 `kill1-tail-v5-one-position-one-tail`、整组精确基线 81.00%（2 项）、旧口径 v1–v4 27 期归档不计入。
+  - cron 日志：`kill1 published: ... rule=kill1-tail-v5-one-position-one-tail 十位 杀1 · 千十个合尾 杀9`；模型 deepseek-flash attempt=1 finish=stop，prompt 3984 / completion 1285 tokens，elapsed 7.6s（窗口 230s 内）。
+- 冻结登记（commit 0a9981e）：`ops/freeze-guards.json` guards.kill1_tail 重置——files sha256 `lib/kill1_tail.py` 15aa5436…→1db51a71…、`lib/kill_one_view.py` b35f339a…→005dbf59…；`rule_version`=v5、`freeze_ref_period`=20261106086（v5 首个封存 ref）、`frozen_at`=2026-11-06T07:13:12+08:00、`frozen_commit`=4fb7717；`hash_updates` 追加 2 条。`freeze_guard status`：kill1_tail ref=20261106086 periods=0/100 hours=0.0/72 changed=- rule=v5。
+- 收尾复验（2026-11-06 07:13–07:17）：`refresh_source_manifest.py --root /root/penta5-runner --if-drift` → 新基线 /root/backups/auto-baseline-20261106-071340（442 文件）；`ops_health_check.py` freeze_guards OK（5 框架变更 0）、manifest_drift OK、kill1 覆盖率 OK；仅 2 条非 OK 均为既有/环境项：hitrate_stability 历史 as_of=20261106085（age 0.7min，切版观察项，07:28 起为 v5 行）、model_usage 余额警告（18.12 CNY，按近 1h 速率仅够约 0.3h，与本改动无关，属余额问题）。
+- 备份/回滚：改前 11 文件备份 `/root/ops/kill1-v5-20261106-071019/`（扁平命名 lib__*.py、scripts__*.py）；回滚 `git revert 4fb7717 0a9981e`（代码+冻结一起回滚），或按备份覆盖后 `python3 scripts/freeze_guard.py --root /root/penta5-runner init --framework kill1_tail --renew` 重新登记；v5 已产生的封存/结算记录按 rule_version 独立归档，不影响回滚后 v4 统计。
+- 并行窗口：本批期间 HEAD 由 f1afd81 推进至 7031235（他窗 kill1 A/B 影子开关改 .env、PENTA5_KILL1_AB_PRO=0）与 4fb7717/0a9981e（本批）；工作树在本批提交后干净。
