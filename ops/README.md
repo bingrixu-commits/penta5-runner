@@ -1474,3 +1474,8 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 影响 / 已知取舍：八项联合精确期望由 0.5605 降到约 0.5474，是「形态必须反向」口径的固有代价；shadow 的 opt 列仍是纯优化期望（约 0.573–0.577），framework_hitrate_cumulative 的 drift expected 会略乐观；joint_form_promotion_gate 的 live delta 会转负，但 not-met 不会自动关闭优化器（只有 manual_disable 才停）。本轮不改 hitrate_baseline（framework 8 项 0.5559 沿用旧口径，与 10-31 joint_form 转正时同样未改的先例一致）。仅 ref 20261105126（10:31:06 发布）属 2 位锁过渡期，旧封存不改。
 - 冻结守卫：`python3 scripts/freeze_guard.py update --framework framework --file lib/auto_r1_framework.py --reason "反向形态约束（千/百位单双+大小四位锁，5462c0c）"` → 06b294257804 -> 761f9cea59f0，status framework changed=-。
 - 回滚：`git revert 5462c0c`，下期 cron 即回到纯联合优化形态；如需核对某期是否新口径，看该期封存 model_metadata.reverse_form 是否存在及其 lock 结构（list=2 位锁旧期，dict=四位锁）。
+
+### kill9 v5 上线后首小时实盘补记（2026-11-05 10:39）
+
+- v5 已连续结算 3 期（target 20261105125/126/127，均由 cron 自动封存+结算）：125 期整组未中（定位 2/3；十位排除 4 vs 实际 4）、126 期整组命中（actual 3/7/7/4，定位 3/3 + 其余 6 项全中）、127 期整组未中（actual 1/8/2/2，定位千位 4 vs1 中、百位 8 vs8 失、个位 2 vs2 失——该期模型选的是 千/百/个 三位，证明「4 位中任选 3 位」契约生效）。累计 1/3=33.33%（整组登记基线 51.63%，n=3 小样本仅作波动参考），各定位单项 100.00%/66.67%/50.00% 已按位入面板。
+- 累计报告已自动收口：`data/framework_hitrate_cumulative.json`（10:37:20）新增 kill9_tail 行 rule=kill9-tail-v5-…、n=3、hits=1、expected=0.516296，rows 6→7，as_of=20261105127；`hitrate.html` 同步重写；cron 日志 `rolling kill9_tail 24h coverage=46.88% plan_hit_rate=36.46%`。
