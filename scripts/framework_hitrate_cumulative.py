@@ -68,6 +68,7 @@ RULE_BASELINE = {
     ('kill9_tail', 'kill9-tail-v2-size-parity-all-mixed'): (6, 0.71234352),
     ('kill9_tail', 'kill9-tail-v3-pool-three-forms-he2he3'): (5, 0.75385763),
     ('kill9_tail', 'kill9-tail-v4-pool-three-plus-all-form-he2he3'): (6, 0.70822528),
+    ('kill9_tail', 'kill9-tail-v5-pool-three-all-form-three-kill-he2he3'): (9, 0.51629623),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -76,7 +77,7 @@ LABELS = {
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 三位置杀码',
     'kill1_tail': 'AI 双位置杀码（3 项）',
-    'kill9_tail': 'AI 四形态排除+二数合+三数合（6 项）',
+    'kill9_tail': 'AI 四形态排除+三定位排除+二数合+三数合（9 项）',
 }
 WINDOWS = {
     'killer': '自账本首期累计',
@@ -857,7 +858,7 @@ def cum_kill9():
     settlements = _read(DATA / 'kill9_tail' / 'settlements.json') or {}
     seals = _read(DATA / 'kill9_tail' / 'seals.json') or {}
     seal_records = seals.get('records') or []
-    rule = 'kill9-tail-v4-pool-three-plus-all-form-he2he3'
+    rule = 'kill9-tail-v5-pool-three-all-form-three-kill-he2he3'
     if seal_records and isinstance(seal_records[-1], dict):
         rule = seal_records[-1].get('rule_version') or rule
     seal_rule = {str(record.get('ref_period')): record.get('rule_version')

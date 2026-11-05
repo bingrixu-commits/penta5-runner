@@ -59,6 +59,7 @@ RULE_BASELINE = {
     ('kill9_tail', 'kill9-tail-v2-size-parity-all-mixed'): (6, 0.71234352),
     ('kill9_tail', 'kill9-tail-v3-pool-three-forms-he2he3'): (5, 0.75385763),
     ('kill9_tail', 'kill9-tail-v4-pool-three-plus-all-form-he2he3'): (6, 0.70822528),
+    ('kill9_tail', 'kill9-tail-v5-pool-three-all-form-three-kill-he2he3'): (9, 0.51629623),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -68,7 +69,7 @@ LABELS = {
     'kill3_tail': 'AI 三位置杀码',
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill8_tail': 'AI 双反向冷形态（2 项）',
-    'kill9_tail': 'AI 四形态排除+二数合+三数合（6 项）',
+    'kill9_tail': 'AI 四形态排除+三定位排除+二数合+三数合（9 项）',
 }
 SINGLE_BASELINES = (
     ('杀 1 码', 0.9),
