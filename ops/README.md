@@ -1609,3 +1609,11 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 冻结登记（`75ebe96`）：`ops/kill3-freeze.json` 的 files['scripts/run_kill3_tail.py'] 7c55f6ce…→ac37eb42…，追加 hash_updates（frozen_at 不重置、RULE_VERSION 未变）；`ops/freeze-guards.json` 同步 `freeze_guard.py update`，5 框架 changed=-。
 - 备份/回滚：`/root/ops/kill3-frozen-ctx-20261105-180740`（改动前 4 文件 + frozen json + ROLLBACK.txt）。回滚 `git revert c5f6094 75ebe96 <this>`；只关闭回灌（保留代码）`rm -f ops/kill3-frozen-context-ref20261105148.json`，下一个 5 分钟周期即恢复旧上下文。
 - 风险：注入的是 12:11 冻死的 selected_six 死数据（today 42/86=48.84%，latest_settled 20261105146），会作为静态死数据长期留在 kill3 prompt 里；仅实验，跑 20–30 期后按整组命中率 vs 精确基线 0.5863 与改前窗口对比决定保留/撤销。
+
+### hitrate_stability 已登记升版过渡期豁免（2026-11-05 19:41，3d78525）
+
+- 需求：check27 hitrate_stability 在 kill1 v4 有意升版后按「口径清零」报 fail（预计 11-06 10:28 自愈）；用户指令「修复完善」——只对「已登记的有意升版」降噪，不下调全体阈值。
+- 代码：scripts/hitrate_stability.py 新增 WHITELIST='ops/hitrate_stability_whitelist.json' 与 _load_whitelist()；_judge(..., whitelist_entry=None) 命中登记且 until 未过期时只把 churn 告警降级为 watch 并标注原因，覆盖断崖/短期陡降等其他 alert 逻辑不变。报告 revision 升为 hitrate-stability-v2，新增 whitelist（active/expired/ignored）与 summary.whitelisted 字段；过期或 until 无法解析的条目自动失效，不形成无声长期豁免。
+- 登记：ops/hitrate_stability_whitelist.json → kill1_tail / kill1-tail-v4-two-position-one-tail，until 2026-11-06T10:30:00+08:00（24h 自愈点 +2min）。
+- 验证：手动 python3 scripts/hitrate_stability.py → status=warn alerts=0 watch=1（kill1_tail 降级），as_of=20261105235；沙盒 /tmp/hs_test 五档回归（active/expired/mismatch/baduntil/empty）分别得到 watch/alert/alert/alert/alert，rc=0；py_compile 通过。
+- 回滚：git revert 3d78525；或删 ops/hitrate_stability_whitelist.json（代码保留时无条目=原行为）。
