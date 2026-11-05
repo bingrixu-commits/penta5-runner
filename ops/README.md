@@ -1529,7 +1529,7 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 首版踩坑：format string 里字面 % 未转义（`95%CI %.1f`）→ `ValueError: unsupported format character 'C'` 被 try/except 吞掉、行静默为空；改为 `95%%CI %.1f` 修复，并加固为断言渲染文本与 JSON 数字一致（`/root/ops/test_kill3_cumstats.py`）。
 - stability 实跑 exit 0：`kill3_tail.baseline_band={n:82,hits:57,expected:0.5863,mean_hits:48.08,sd:4.46,z:2.0,level:ok}`，其余 6 行 null；summary 与改前一致（既有 kill1_tail 版本 churn alert + selected_six watch，非本次引入）。
 - 线上实证：真实周期 ref=20261105141 → target=20261105142（11:46:26 发布）后，panel.html 的 KILL_THREE 块 data-as-of=20261105141、块长 7420 字节，渲染「本版累计整组命中率 69.51%（57/82 期，95%CI 58.9–78.4%）· 精确基线 58.63% · 偏差 +10.88pp · p=0.045 · 近 24 期 79.2%（19/24）· 截至 ref 20261105139」；今日行为 68.29%（56/82）。
-- 冻结登记：`7d891e8` 更新 `ops/kill3-freeze.json` 的 `lib/kill_three_view.py` sha256 `fde296d8…`→`f2dbb4fd…` 并追加 hash_updates（frozen_at 不重置、RULE_VERSION 未变）。
+- 冻结登记：`7d891e8` 更新 `ops/kill3-freeze.json` 的 `lib/kill_three_view.py` sha256 `fde296d8…`→`f2dbb4fd…` 并追加 hash_updates（frozen_at 不重置、RULE_VERSION 未变）；`scripts/freeze_guard.py update` 同步受控登记该文件 fde296d8…→f2dbb4fd…（commit 6a9b15a）。
 
 **备份 / 回滚**
 - 改动前备份 `/root/ops/kill3-cumstats-20261105-114346`（panel.html、data 快照、ROLLBACK.txt）；回滚 `git revert 6a9b15a 0d45d27 7d891e8`，或按 ROLLBACK.txt 覆盖回读。

@@ -63,7 +63,7 @@
   "kill3_tail": {
    "files": {
     "lib/kill3_tail.py": "6eac93a3fa6efaec433a20c36fa26c89fa74dfede14022a1e02e67f0fa0b24f3",
-    "lib/kill_three_view.py": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
+    "lib/kill_three_view.py": "f2dbb4fd72dbe9df64553d5e4daa7f926ef283b462e8483d9382a853dd79c433",
     "lib/panel_context.py": "c95339a94b7d2a1e00f3bd013dd92b5c1b7e1f02a6c4b435203ac3f900d7ea75",
     "scripts/run_kill3_tail.py": "7c55f6ce8f2808aaec1319d53bd9201f7542acb53b01f6b0901dc5af2d0e97c5"
    },
@@ -399,6 +399,14 @@
      "new_sha256": "c95339a94b7d2a1e00f3bd013dd92b5c1b7e1f02a6c4b435203ac3f900d7ea75",
      "old_sha256": "79031796e329ded522aff655e7a6d6cc064654ba67c3e4d64df4cad10b2eba38",
      "reason": "kill1 v4（m00002）：panel_context 的 kill1_self 只保留 counted/position_policy（去掉 form_type/form），kill3 口径与封存未变"
+    },
+    {
+     "at": "2026-11-05T11:49:06.293360+08:00",
+     "commit": "c7f7034",
+     "file": "lib/kill_three_view.py",
+     "new_sha256": "f2dbb4fd72dbe9df64553d5e4daa7f926ef283b462e8483d9382a853dd79c433",
+     "old_sha256": "fde296d84b39d0eb6a0a4fbca32f7ce0f0907265c4a07e94bb8a5882888977b3",
+     "reason": "只读展示行（本版累计命中率 + 今日前缀 + 脚注 + CSS），选码/尾码/8 项结构/封存/结算/AI prompt 未变，不升 RULE_VERSION；commit 6a9b15a"
     }
    ],
    "label": "三位置杀码(kill3)",
@@ -470,6 +478,6 @@
    }
   }
  },
- "updated_at": "2026-11-05T10:48:23.607150+08:00",
+ "updated_at": "2026-11-05T11:49:06.295241+08:00",
  "version": 1
 }
