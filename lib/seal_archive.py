@@ -10,8 +10,8 @@
 用法：
   read_hot(path)    # 只读主文件近期窗口（等价原 read_stats；写方/判重用）
   read_full(path)   # 冷分片(老→新) + 主文件(新) 透明合并（统计/面板/回放用）
-  archive(path, keep_days=7, now=None, dry_run=True)   # 独立 cron 归档
-  write_full_separated(path, data, keep_days, now)      # 写方分离写（hit_stats）
+  archive(path, keep_days=2, now=None, dry_run=True)   # 独立 cron 归档
+  write_full_separated(path, data, keep_days=DEFAULT_KEEP_DAYS)  # 写方分离写（hit_stats）
 """
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +24,11 @@ import tempfile
 from ai_verified_stats import atomic_json, sync_parent_directory
 
 BEIJING = timezone(timedelta(hours=8))
+
+# 主文件保留窗口。he3 每期封存约 90KB，7 天热窗实测 112MiB，已超过
+# ops_health ledger_size 的 110MiB 预警线；收紧到 2 天（约 30MiB），更老
+# 期号由冷分片经 read_full 透明合并读回，统计/面板口径不变。
+DEFAULT_KEEP_DAYS = 2
 
 # stem → 期号 dict key（归档/合并目标；其余字段保留在主文件）
 PERIOD_DICT_KEYS = {
@@ -140,7 +145,7 @@ def _write_cold(path, cold, log):
             sum(len(v) for v in existing.values())))
 
 
-def archive(path, keep_days=7, now=None, dry_run=True, log=print):
+def archive(path, keep_days=DEFAULT_KEEP_DAYS, now=None, dry_run=True, log=print):
     """把主文件里超 keep_days 的期号按月压到冷分片，主文件只留近期窗口。
 
     返回 {"archived": 归档期号总数, "kept": {dict_key: 保留期号数},
@@ -170,7 +175,7 @@ def archive(path, keep_days=7, now=None, dry_run=True, log=print):
     return result
 
 
-def write_full_separated(path, data, keep_days=7, now=None, log=print):
+def write_full_separated(path, data, keep_days=DEFAULT_KEEP_DAYS, now=None, log=print):
     """写方分离写：把全量 data 的期号 dict 按 keep_days 分离，老期号进冷分片，
     近期进主文件。用于 hit_stats 这类写方需全量重算但主文件只留近期窗口的账本。
 

@@ -6,7 +6,7 @@
 
 用法：
   python3 scripts/archive_seals.py --dry-run
-  python3 scripts/archive_seals.py --target he3_refine_seals --keep-days 14 --apply
+  python3 scripts/archive_seals.py --target he3_refine_seals --keep-days 2 --apply
 """
 import argparse
 import json
@@ -31,8 +31,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="seal/hit_stats 滚动归档")
     parser.add_argument("--target", action="append", default=None,
                         help="stem 白名单（可重复）；缺省全部 4 文件")
-    parser.add_argument("--keep-days", type=int, default=7,
-                        help="主文件保留最近 N 天期号，更老按月归档（默认 7）")
+    parser.add_argument("--keep-days", type=int, default=2,
+                        help="主文件保留最近 N 天期号，更老按月归档（默认 2；he3 每期约 90KB，7 天会超 110MiB 预警线）")
     parser.add_argument("--apply", action="store_true",
                         help="实际归档（缺省 dry-run 只出报告）")
     args = parser.parse_args(argv)
