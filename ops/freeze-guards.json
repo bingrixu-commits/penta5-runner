@@ -70,7 +70,7 @@
   },
   "kill1_tail": {
    "files": {
-    "lib/kill1_tail.py": "3cf792f9a2b6eb65fa3f3a24292451ad06cd1ddc30d2fa772fd8c638172d0744",
+    "lib/kill1_tail.py": "15aa543642283ec553f5686c07b5a9278ccaab44fa3fd0fc852b52d976581714",
     "lib/kill_one_view.py": "0a99919fb27c15866f1a61219dc1e03ced27271c0204a21fd3ffc50cc66d5945"
    },
    "freeze_hours": 72.0,
@@ -85,6 +85,14 @@
      "new_sha256": "82d9174a3c50f206688ff6227dfc2bff746f152af988b5479823dc6893f79946",
      "old_sha256": "c95339a94b7d2a1e00f3bd013dd92b5c1b7e1f02a6c4b435203ac3f900d7ea75",
      "reason": "退役 selected_six（七项独立框架，用户指令 m00002）：lib/panel_context.py 移除 frameworks.selected_six 块与 model_tiers.six 环境档位；固定 fixture REF=20261105148/TGT=20261105149 的 build()+prompt_text() A/B 证明新旧 snapshot 仅这两处删除、其余逐字节相同（prompt sha 6d77b883daca8d72→a66a08e1f3647f45），kill3/kill1/kill9/he3/killer 口径、封存、结算与攻击语均未变。"
+    },
+    {
+     "at": "2026-11-05T17:15:58.301839+08:00",
+     "commit": "11b81c1",
+     "file": "lib/kill1_tail.py",
+     "new_sha256": "15aa543642283ec553f5686c07b5a9278ccaab44fa3fd0fc852b52d976581714",
+     "old_sha256": "3cf792f9a2b6eb65fa3f3a24292451ad06cd1ddc30d2fa772fd8c638172d0744",
+     "reason": "修复 v4 RETRY_INSTRUCTION 花括号未双写（KeyError \"key\"）导致重试路径整期跳过；仅恢复 {{ }} 双花括号，运行时重试文案与 v4 意图逐字符一致，不改变规则/封存/结算语义；py_compile + format 渲染验证通过，配套代码提交见 frozen_commit 指向的 HEAD。"
     }
    ],
    "label": "单位置杀码(kill1)",
@@ -519,6 +527,6 @@
    }
   }
  },
- "updated_at": "2026-11-05T12:34:40.692296+08:00",
+ "updated_at": "2026-11-05T17:15:58.303792+08:00",
  "version": 1
 }
