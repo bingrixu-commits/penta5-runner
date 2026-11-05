@@ -1555,3 +1555,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 回滚：`git revert a285b83 468784d 30c48c3 e963f71 988b221`；`.env` 用 `$B/.env.before-edit` 覆盖；logrotate 用 `$B/logrotate-penta5.bak` 覆盖；`/root/run_stats.py` 用 `$B/run_stats.py` 覆盖；data 解归档三个 tar 回 `data/`；无需重启（cron 下轮自动加载）。panel.html/hitrate.html 为 skip-worktree 生成物，回滚后下轮 run_stats 自动重建。
 - 非 git 改动：`.env` 删 `PENTA5_MODEL_SIX=deepseek-flash`、`PENTA5_SIX_PEI_SIX_WINDOW=30`；`/etc/logrotate.d/penta5` 删 3 个日志段；`/root/run_stats.py`（不在仓库）删 selected_six import/stage 与 model_signi 链。
 - 风险/遗留：未改任何剩余框架口径；ops_health 仍有既有 kill1_tail stability FAIL（另一窗口 kill1 v4 在途）与 coverage/data_tmp warn，非本次引入；dormant selected_framework 的历史命名（`selected-six-*` 错误码、`selected-six-stats-v1` 等）按「不属于被退役框架」保留，未改名。
+
+
+### kill3 展示回退（2026-11-05 17:19，`c72ff75`）
+
+- 用户指令 m00187「反回前面样子，现在的不稳」：撤回 `6a9b15a` 的只读累计展示行，KILL_THREE 卡片恢复改动前外观（单行「整组命中率（8 项全中：…）」），选码/尾码/8 项结构/封存/结算/AI prompt 未变，未升 RULE_VERSION。
+- 回退方式 `git revert --no-edit 6a9b15a`（仅 `lib/kill_three_view.py`，sha 回到 `fde296d8…`）；保留 `0d45d27` 的累计 vs 基线单侧 2σ 带（仅告警、不显示）与 `c7f7034` 台账。
+- 冻结登记：`ops/kill3-freeze.json` 与 `ops/freeze-guards.json` 的 `kill3_tail.files['lib/kill_three_view.py']` 由 `f2dbb4fd…` 回退为 `fde296d8…`，追加 hash_updates（frozen_at 不重置、RULE_VERSION 未变）。
+- 备份 `/root/ops/kill3-revert-20261105-171827`（view、两个 freeze json、README、panel.html、ROLLBACK.txt）。
+- 回退前现况（17:14）：累计 n=148 命中 95 = 64.19%（p=0.170，z=1.37 baseline_band ok），今日 63.95%（94/147）；长期期望仍按 58.63% 管理，本次未改口径。
