@@ -3,6 +3,9 @@ RETIRED_MODELS = frozenset(('selected7', 'selected'))
 SELECTED_MARKERS = ('SELECTED_FRAMEWORK', 'SELECTED_FRAMEWORK_ATTACK', 'SELECTED_FRAMEWORK_STATS')
 # 2026-11-01: AI 冷码七项框架（Pro 冷码 30 期七项）按用户要求整体退役；其面板块在每次重建时被剥除。
 COLD_MARKERS = ('COLD_FRAMEWORK',)
+# 2026-11-05: AI 四形态排除（池选三+全同一）+三定位排除+二数合+三数合（kill9_tail）按用户要求整体退役；
+# 面板块在每次重建时被剥除（防护任何旧进程把区块写回）。
+KILL_NINE_MARKERS = ('KILL_NINE',)
 
 
 def is_retired(model):
@@ -12,7 +15,7 @@ def is_retired(model):
 def strip_retired_panels(page):
     if not isinstance(page,str):raise TypeError('retirement-panel-must-be-text')
     ranges=[]
-    for marker in SELECTED_MARKERS + COLD_MARKERS:
+    for marker in SELECTED_MARKERS + COLD_MARKERS + KILL_NINE_MARKERS:
         start,end='<!-- '+marker+'_START -->','<!-- '+marker+'_END -->'
         counts=page.count(start),page.count(end)
         if counts==(0,0):continue

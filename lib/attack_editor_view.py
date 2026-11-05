@@ -4,10 +4,10 @@ import re
 
 SCRIPT_ID = 'penta5-attack-editor-control'
 SCRIPT = r'''<script id="penta5-attack-editor-control">
-/* all-attack-editor-v17-retire-selected-six */
+/* all-attack-editor-v18-retire-kill9 */
 (function(){
 'use strict';
-const version='all-attack-editor-v17-retire-selected-six',previous=window.__PENTA5_ATTACK_EDITOR__;
+const version='all-attack-editor-v18-retire-kill9',previous=window.__PENTA5_ATTACK_EDITOR__;
 if(previous&&previous.version===version){previous.check();return;}
 if(previous&&typeof previous.destroy==='function')previous.destroy();
 const definitions=[
@@ -15,8 +15,7 @@ const definitions=[
  {id:'r1_killer_attack_text',copy:'r1_killer_copy_btn',label:'深度排除攻击语',kind:'killer'},
  {id:'selected6-attack-text',copy:'selected6-attack-copy',label:'三定位七项框架攻击语',data:'selected6-attack-data'},
  {id:'kill3-attack-text',copy:'kill3-attack-copy',label:'AI三位置+一合尾攻击语',data:'kill3-attack-data'},
- {id:'kill1-attack-text',copy:'kill1-attack-copy',label:'AI双位置+一合尾攻击语',data:'kill1-attack-data'},
- {id:'k9-attack',copy:'k9-attack-copy',label:'AI四形态+二数合+三数合攻击语'}
+ {id:'kill1-attack-text',copy:'kill1-attack-copy',label:'AI双位置+一合尾攻击语',data:'kill1-attack-data'}
 ];
 const entries=new Map();
 const styleId='penta5-attack-editor-style',sourceAttribute='data-penta5-attack-editor-source';
