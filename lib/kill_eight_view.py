@@ -222,7 +222,7 @@ def render_block():
             cards.append(
                 '<div class="k8-card"><div class="k8-pos">%s</div>'
                 '<div class="k8-form">%s</div>'
-                '<div class="k8-sub">排除该四位%s形态（计入整组）</div></div>'
+                '<div class="k8-sub">排除该四位%s（计入整组）</div></div>'
                 % (escape(str(kill8_tail.REVERSE_LABELS.get(kind, kind))),
                    escape(form), escape(str(kill8_tail.FORM_LABELS.get(kind, '')))))
         reason = escape(str(seal.get('reason') or '')) or '（无）'
