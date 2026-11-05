@@ -8,8 +8,8 @@ from stats_history import (TZ, beijing_now, business_start, parse_time, period_s
                            valid_draw_record, validate_conflicting_periods)
 
 VERSION = 1
-REVISION = 'cold-observation-v5-100-crossday'
-WINDOW_SIZE = 100
+REVISION = 'cold-observation-v6-70-crossday'
+WINDOW_SIZE = 70
 POSITION_KEYS = ('q', 'b', 's', 'g')
 TAIL_INDEXES = {
     'all': (0, 1, 2, 3), 'qbs': (0, 1, 2), 'qbg': (0, 1, 3),
@@ -72,9 +72,9 @@ def _group(values, samples, periods):
 
 
 def build_observation(snapshot):
-    """Observe the last at most 100 real draws across natural days.
+    """Observe the last at most 70 real draws across natural days.
 
-    The window is a rolling 100-period span that does not reset at the 05:00
+    The window is a rolling 70-period span that does not reset at the 05:00
     business-day boundary, so the card stays fully populated right after
     midnight instead of only late in the day. Source rows are revalidated and
     normalized without modifying the snapshot. Conflicts and gaps in the
