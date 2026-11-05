@@ -1,7 +1,25 @@
 # penta5-runner
 penta5-runner666
 
-## 2026-11-05 kill8：反向冷形态扩为 4 项（单双 / 大小 / 全大·全小 / 全单·全双）
+## 2026-11-06 kill8：四全形合并 4 选 1 + 新增跨族混合 16 选 1（单双 / 大小 / 全形 / 跨族混合，整组仍 4 项）
+
+- 依据：用户 2026-11-06 先问「四形态，是取反向冷形态吗？检查一下」（已完成只读核查），再提出「混合形态，比如大小双双，小小双双」并回复 b / 1 / ab，确认 A+B：③④合并为「四全形 4 选 1」、新增「跨族混合 16 选 1」，整组仍 4 项；随后指令「部署」。
+- 口径：
+  - ①单双、②大小：不变，16 种四位形态各选 1（实际四位形态 != 封存形态即命中）。
+  - ③全形（原「全大/全小」+「全单/全双」合并）：在 大大大大 / 小小小小 / 单单单单 / 双双双双 4 选 1；方向按「已约束位置多数锁定」（单票也算锁定）：多数偏大→锁全小、多数偏小→锁全大、多数偏单→锁全双、多数偏双→锁全单；两类同时锁定且方向不同时由 AI 在 2 候选里按冷热二选一；两类都未成型时 4 选。
+  - ④跨族混合：16 种（前两位千/百按大小反向、后两位十/个按单双反向，如 大小双双），未约束位置由 AI 按冷热自选。
+  - 命中：全形按覆盖号码集合判定（全大=四位全大、全小=四位全小、全单=四位全单、全双=四位全双）；跨族混合=前两位大小 pattern + 后两位单双 pattern 与封存一致；整组仍 4 项全中。
+  - 去重：③全形与①单双或②大小同形且该项还有自由位时，翻最靠前自由位；被排除数字钉死的位置不动。
+  - 旧 v3–v5 封存（all_size_form/all_parity_form）保留旧键、旧结算分支与逐字攻击语回退，不计入 v6 统计（面板 legacy 归档）。
+- 改动文件（3 files）：
+  - lib/kill8_tail.py：FORM_KINDS=(parity,size,uniform,mixed)；RULE_VERSION=kill8-tail-v6-merged-four-form-mixed；新增 UNIFORM_FORM_VALUES/SOURCE/NAMES、MIXED_FORM_SPACE/MIXED_HEAD_PALETTE/MIXED_TAIL_PALETTE、LEGACY_FORM_KINDS/FIELDS、pattern_of_mixed、_majority_lock/_uniform_candidates/_mixed_constraints、_uniform_constraint_text/_mixed_constraint_text；form_space/rank_forms/reverse_constraints/build_prompt/normalize_response/_dedupe_forms/create_seal/settle_pending/today_stats/build_attack 同步 v6，旧 all_size/all_parity 键兼容。
+  - lib/kill_eight_view.py：4 卡改「全形反向冷形态 / 跨族混合反向冷形态」；整组 σ 用 0.7725（文案 77.25%）；_SETTLE_ITEMS 4 项 + _LEGACY_SETTLE_ITEMS 兜底；data-uniform/data-mixed 属性（JS 回退 data-all-size/data-all-parity）；foot 改为 v6 规则/命中口径。
+  - lib/hitrate_baseline.py：登记 ('kill8_tail','kill8-tail-v6-merged-four-form-mixed'): (4, 0.7725)。
+- 基线（10^4 开奖空间 × 16384 均匀配置精确枚举，禁单项相乘）：v2 复算 0.87890625 自证一致；v3/v5 复算 0.7733056640625 自证一致；v6 每 draw 命中 15*15*15*(4-m)，Σ=15^3*37500=126,562,500 → 0.7724761962890625，登记 0.7725（低于 v5 0.77330566：四项退化为严格独立 15/16，相关性红利消失）；uniform_hit_factor 分布 m=0:7694 / m=1:2112 / m=2:194；A only（3 项）0.823974609375。证据：/root/ops/kill8-v6-054710/evidence/kill8_baseline_enum_v6.json。
+- 验证（改后、上线前）：py_compile 全绿；kill8_v6_test.py PASS=107 FAIL=0（常量/空间/rank/反向约束/prompt/normalize+dedupe/create_seal/settle 五分支含 v2/v3/v5 旧封存兼容/build_attack/today_stats）；kill8_v6_view_probe.py PASS=32 FAIL=0（旧 v5 封存 2 卡+legacy 提示、旧结算 legacy 行、v6 封存 4 卡/77.25%/uniform+mixed 结算行/data 属性、空态、注入替换与异常兜底）；golden_compare.py PASS=48 FAIL=0（golden_before 5 条旧封存 attack 用 v6 build_attack 回退逐字一致、input_sha256 复算 True、settlements 文件 sha256 不变、seals 仅 +1 条 v6、last_settlements 逐字段不变、today legacy 继承改前 3 期 2 中）。
+- 真实周期验证（AI 开关 enabled，手动触发）：2026-11-06 06:45:46 published，ref 20261106081 → target 20261106082，封存 单双=单单双单、大小=小大小小、全形=单单单单、跨族混合=小大双单；attack「除单单双单除小大小小除单单单单除小大双单」；面板 4 卡 / 口径 kill8-tail-v6-merged-four-form-mixed / 整组精确基线 77.25%（4 项）/ 待核验 1 期 / 旧口径（历史版本封存）3 期（整组 2 中）归档。
+- 备份 / 回滚：改动前文件、patch 脚本、单测与探针、golden before/after、枚举脚本与 JSON 在 /root/ops/kill8-v6-054710/（MANIFEST.txt 含 sha256）。回滚：`git checkout f9a9622 -- lib/kill8_tail.py lib/kill_eight_view.py lib/hitrate_baseline.py`（f9a9622 = 改动前 HEAD），再手动跑一次 kill8 恢复面板（旧封存数据不动；新 v6 封存会按 legacy 渲染）。
+- 版本/口径串：RULE_VERSION=kill8-tail-v6-merged-four-form-mixed；面板 4 卡「全形反向冷形态 / 跨族混合反向冷形态」；hitrate_baseline 整组基线 77.25%（4 项）。## 2026-11-05 kill8：反向冷形态扩为 4 项（单双 / 大小 / 全大·全小 / 全单·全双）
 
 - 依据：用户 2026-11-05 17:03 指令「这个框架修改一下，排除数字给出排除四个形态」；同日问卷确认四张卡 = 单双反向冷形态、大小反向冷形态、全大/全小、全单/全双，整组 4 项全中，kill9 候选池不动，③④方向由排除数字锁定。
 - 口径：

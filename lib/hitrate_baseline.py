@@ -56,6 +56,8 @@ RULE_BASELINE = {
     ('kill8_tail', 'kill8-tail-v3-four-reverse-cold-forms'): (4, 0.7733),
     ('kill8_tail', 'kill8-tail-v4-majority-lock-four-reverse-cold-forms'): (4, 0.7733),
     ('kill8_tail', 'kill8-tail-v5-dedupe-four-reverse-cold-forms'): (4, 0.7733),
+    # v6：③④合并为全形 4 选 1 + 新增跨族混合 16 选 1，10^4 开奖 x 16384 配置精确枚举 = 0.7724761962890625
+    ('kill8_tail', 'kill8-tail-v6-merged-four-form-mixed'): (4, 0.7725),
     ('kill10_tail', 'kill10-tail-v1-he2-he3'): (2, 0.92022400),
     # KILL11_ENUM_PLACEHOLDER: 已由 10^4 开奖 x 16000 配置精确枚举确认 120,600,000/160,000,000=0.75375，按项目口径登记 4 位 0.7538
     ('kill11_tail', 'kill11-tail-v1-one-position-one-form'): (3, 0.7538),

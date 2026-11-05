@@ -7,11 +7,14 @@
 - 位置排除数字由用户手动完成，不进本框架计算；
 - 单双形态命中 = 目标期实际四位单双形态 != 封存单双形态（反向排除项，4 字符）；
 - 大小形态命中 = 目标期实际四位大小形态 != 封存大小形态（反向排除项，4 字符）；
-- 全大/全小命中 = 目标期实际四位大小形态 != 封存全大/全小形态（反向排除项，4 字符）；
-- 全单/全双命中 = 目标期实际四位单双形态 != 封存全单/全双形态（反向排除项，4 字符）；
-- 整组命中 = 上述 4 项同时命中（四张卡允许出现相同形态）；
-- ③④方向：四个位置的排除数字全部同向时锁定唯一形态（全偏大→全小、全偏小→全大、
-  全偏单→全双、全偏双→全单），方向混杂或未填时由 AI 在 2 种里按冷热自选；
+- 全形形态命中 = 目标期实际号码不属于封存全形（全大=大大大大、全小=小小小小、全单=单单单单、
+  全双=双双双双）；
+- 跨族混合形态命中 = 目标期「前两位大小 + 后两位单双」组合 != 封存混合形态（如 大小双双）；
+- 整组命中 = 上述 4 项同时命中（每一项都按覆盖的号码集合判定）；
+- ③ 全形 4 选 1 方向：单双/大小两类各自按已约束位置多数投票锁定反方向全形（单票也锁定）；
+  两类同时锁定但方向不同时由 AI 在 2 个候选里按冷热二选一；都未成型时由 AI 在 4 种里自选；
+- ④ 跨族混合方向：前两位（千/百）按大小反向约束、后两位（十/个）按单双反向约束；
+- 去重：③ 全形与 ①/② 同形且 ①/② 还有自由位时，翻最靠前自由位（四位全钉死才允许同形）；
 - 无合尾、无连用限制；只统计开奖前已发布、开奖后按真实开奖核验的记录；
 - 北京时间 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与。
 
@@ -32,13 +35,15 @@ START = '<!-- KILL_EIGHT_START -->'
 END = '<!-- KILL_EIGHT_END -->'
 
 # 整组随机基线兜底：(项数, 精确期望命中率)。
-# 4 项 = 单双反向冷形态 + 大小反向冷形态 + 全大/全小反向冷形态 + 全单/全双反向冷形态；
-# 均匀配置口径下 10^4 开奖空间精确枚举平均期望 = 0.7733（精确 0.77330566）。
+# 4 项 = 单双反向冷形态 + 大小反向冷形态 + 全形反向冷形态（4 选 1）+ 跨族混合反向冷形态；
+# 均匀配置口径下 10^4 开奖空间精确枚举平均期望 = 0.7725（精确 0.77247620）。
 # hitrate_baseline.RULE_BASELINE[('kill8_tail', RULE_VERSION)] 未登记时使用本值。
-FALLBACK_BASELINE = (4, 0.7733)
+FALLBACK_BASELINE = (4, 0.7725)
 
 _SETTLE_ITEMS = (('parity', '单双形态'), ('size', '大小形态'),
-                 ('all_size', '全大/全小形态'), ('all_parity', '全单/全双形态'))
+                 ('uniform', '全形形态'), ('mixed', '跨族混合形态'))
+# 旧口径（v5 及更早）封存/结算里的两个 2 选 1 形态，仅用于历史记录展示。
+_LEGACY_SETTLE_ITEMS = (('all_size', '全大/全小形态'), ('all_parity', '全单/全双形态'))
 
 _TITLE = '🤖 AI 四反向冷形态排除建议'
 
@@ -103,21 +108,20 @@ def _stats_html(stats):
     if total:
         parity = stats.get('parity') or {}
         size = stats.get('size') or {}
-        all_size = stats.get('all_size') or {}
-        all_parity = stats.get('all_parity') or {}
+        uniform = stats.get('uniform') or {}
+        mixed = stats.get('mixed') or {}
         join = ' · '.join([
-            '整组命中率（4 项全中：单双 + 大小 + 全大/全小 + 全单/全双）'
+            '整组命中率（4 项全中：单双 + 大小 + 全形 + 跨族混合）'
             ' <b>%s</b>（%s/%s 期）'
             % (_pct(stats.get('group_rate')), stats.get('group_hits'), total),
             '单双冷形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
             % (_pct(parity.get('rate')), parity.get('hits'), parity.get('bets')),
             '大小冷形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
             % (_pct(size.get('rate')), size.get('hits'), size.get('bets')),
-            '全大/全小冷形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
-            % (_pct(all_size.get('rate')), all_size.get('hits'), all_size.get('bets')),
-            '全单/全双冷形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
-            % (_pct(all_parity.get('rate')), all_parity.get('hits'),
-               all_parity.get('bets')),
+            '全形冷形态（4 选 1，随机基线93.75%%） <b>%s</b>（%s/%s 期）'
+            % (_pct(uniform.get('rate')), uniform.get('hits'), uniform.get('bets')),
+            '跨族混合冷形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
+            % (_pct(mixed.get('rate')), mixed.get('hits'), mixed.get('bets')),
             '待核验 <b>%s</b> 期' % pending,
         ])
     else:
@@ -138,9 +142,9 @@ def _stats_html(stats):
     join += (' · 累计四手连败 <b>%s</b> 次（自本版本上线起，跨天不重叠计数）'
              % (stats.get('four_loss_cycles_total') or 0))
     if total and total < 200:
-        sigma_group = 100.0 * math.sqrt(0.7733 * (1 - 0.7733) / total)
+        sigma_group = 100.0 * math.sqrt(0.7725 * (1 - 0.7725) / total)
         sigma_item = 100.0 * math.sqrt(0.9375 * 0.0625 / total)
-        join += (' · 样本 n=%s（&lt;200 属小样本：整组 77.33%% 1σ≈%.1fpp、2σ≈%.1fpp；'
+        join += (' · 样本 n=%s（&lt;200 属小样本：整组 77.25%% 1σ≈%.1fpp、2σ≈%.1fpp；'
                  '单项 93.75%% 1σ≈%.1fpp、2σ≈%.1fpp），单日只作波动参考'
                  % (total, sigma_group, 2 * sigma_group, sigma_item, 2 * sigma_item))
     return '<div class="k8-stats"><span>%s</span></div>' % join
@@ -150,7 +154,7 @@ def _settlement_line(settlement):
     if not isinstance(settlement, dict):
         return '已发布，等待目标期开奖核验。'
     parts = ['目标期已开奖：' + ''.join(str(value) for value in (settlement.get('actual') or []))]
-    for key, label in _SETTLE_ITEMS:
+    for key, label in _SETTLE_ITEMS + _LEGACY_SETTLE_ITEMS:
         item = settlement.get(key) or {}
         if isinstance(item, dict) and item:
             parts.append('%s %s %s（实际 %s）' % (
@@ -226,15 +230,15 @@ def render_block():
                 % (escape(str(kill8_tail.REVERSE_LABELS.get(kind, kind))),
                    escape(form), escape(str(kill8_tail.FORM_LABELS.get(kind, '')))))
         reason = escape(str(seal.get('reason') or '')) or '（无）'
-        scope_html = ('<div class="k8-drop">整组 4 项：单双冷形态 + 大小冷形态 + 全大/全小冷形态 + 全单/全双冷形态；'
+        scope_html = ('<div class="k8-drop">整组 4 项：单双冷形态 + 大小冷形态 + 全形冷形态（4 选 1）+ 跨族混合冷形态（16 选 1）；'
                       '无合尾、无连用限制（每期按冷热重选）；'
                       '位置排除数字由用户手动完成，并决定四种形态的反方向'
-                      '（全大/全小、全单/全双按四个位置排除数字的多数方向锁定，平票或未填时由 AI 二选一；'
-                      '若①/②与③/④同形且①/②还有自由位，会自动翻转自由位去重）</div>')
+                      '（全形按单双/大小两类各自多数方向锁定，两类方向冲突时由 AI 在 2 个候选里二选一；'
+                      '跨族混合前两位按大小、后两位按单双取反；若③全形与①/②同形且①/②还有自由位，会自动翻转自由位去重）</div>')
         legacy_html = ''
         if str(seal.get('rule_version') or '') != str(kill8_tail.RULE_VERSION):
             legacy_html = ('<div class="k8-drop">本封存为旧口径（%s），只含当时封存的形态；'
-                           '下一期起按四形态统计</div>'
+                           '下一期起按新四项口径（含全形 4 选 1 + 跨族混合 16 选 1）统计</div>'
                            % escape(str(seal.get('rule_version') or '-')))
         model = seal.get('model_label') or kill8_tail.model_label()
         meta = ('参考期 %s ｜ 目标期 %s ｜ AI 计算 %s（北京时间） ｜ %s'
@@ -322,20 +326,29 @@ def _attack_html(seal):
     """位置排除数字输入区 + 完整攻击语（位置排除 + AI 冷形态 4 项）+ 复制按钮。
 
     位置排除数字由用户手动输入（不进框架计算），前端 localStorage 记忆；
-    完整攻击语 = 千<保留>百<保留>十<保留>个<保留>除<单双>除<大小>除<全大/全小>除<全单/全双>，
+    完整攻击语 = 千<保留>百<保留>十<保留>个<保留>除<单双>除<大小>除<全形>除<跨族混合>，
     保留数字按 1234567890 顺序去掉被排除数字得到。seal 为 None 或旧口径时缺的形态自动跳过。
     """
     forms = {kind: '' for kind in kill8_tail.FORM_KINDS}
+    legacy_forms = {}
     if isinstance(seal, dict):
         for kind in kill8_tail.FORM_KINDS:
             field = kill8_tail.FORM_FIELDS.get(kind)
             value = seal.get(field) if field else None
             if isinstance(value, str) and len(value) == 4:
                 forms[kind] = value
+        for kind in kill8_tail.LEGACY_FORM_KINDS:
+            field = kill8_tail.LEGACY_FORM_FIELDS.get(kind)
+            value = seal.get(field) if field else None
+            if isinstance(value, str) and len(value) == 4:
+                legacy_forms[kind] = value
     data_div = ('<div id="k8-form-data" data-parity="%s" data-size="%s" '
+                'data-uniform="%s" data-mixed="%s" '
                 'data-all-size="%s" data-all-parity="%s" style="display:none"></div>'
                 % (escape(forms.get('parity', '')), escape(forms.get('size', '')),
-                   escape(forms.get('all_size', '')), escape(forms.get('all_parity', ''))))
+                   escape(forms.get('uniform', '')), escape(forms.get('mixed', '')),
+                   escape(legacy_forms.get('all_size', '')),
+                   escape(legacy_forms.get('all_parity', ''))))
     position_labels = (('k8-ex-q', '千位'), ('k8-ex-b', '百位'),
                        ('k8-ex-s', '十位'), ('k8-ex-g', '个位'))
     inputs = []
@@ -381,9 +394,9 @@ def _attack_html(seal):
         "if(v.indexOf(ORDER[i])<0)out+=ORDER[i];}return out;}"
         "function g(id){var el=document.getElementById(id);return el?el.value:'';}"
         "function forms(){var el=document.getElementById('k8-form-data');"
-        "if(!el)return['','','',''];return[el.getAttribute('data-parity')||'',"
-        "el.getAttribute('data-size')||'',el.getAttribute('data-all-size')||'',"
-        "el.getAttribute('data-all-parity')||''];}"
+        "if(!el)return['','','',''];var a=function(n){return el.getAttribute(n)||'';};"
+        "return[a('data-parity'),a('data-size'),a('data-uniform')||a('data-all-size'),"
+        "a('data-mixed')||a('data-all-parity')];}"
         "function build(){var f=forms();var p='千'+keep(g('k8-ex-q'))+'百'+keep(g('k8-ex-b'))"
         "+'十'+keep(g('k8-ex-s'))+'个'+keep(g('k8-ex-g'));"
         "if(f[0])p+='除'+f[0];if(f[1])p+='除'+f[1];if(f[2])p+='除'+f[2];if(f[3])p+='除'+f[3];return p;}"
@@ -417,15 +430,18 @@ def _foot_html():
             '位置排除数字由你手动填写（下方输入框，自动记忆），作为形态的<b>反方向基准</b>；本框架由 DeepSeek 决定 4 个排除形态：'
             '①从 16 种四位单双形态（单/双，千百十个顺序）中选 1 种；'
             '②从 16 种四位大小形态（大/小）中选 1 种；'
-            '③从 2 种全大/全小形态中选 1 种（大大大大 / 小小小小）；'
-            '④从 2 种全单/全双形态中选 1 种（单单单单 / 双双双双），作为本期「反方向冷形态排除项」（排除数字的位置取反面）。<br>'
-            '全大/全小、全单/全双的方向规则（<b>多数锁定</b>）：4 个位置里有方向的排除数字<b>多数偏大</b>时锁定「全小」、<b>多数偏小</b>时锁定「全大」；'
-            '<b>多数偏单</b>时锁定「全双」、<b>多数偏双</b>时锁定「全单」；<b>平票</b>（如 2 大 2 小）或全部未填时，由 AI 在 2 种里按冷热自选。'
-            '①/②与③/④同形且①/②还有自由位时，会把最靠前的自由位翻成反方向去重；被排除数字钉死的位置不动，四位全钉死时允许同形。<br>'
+            '③从 4 种全形形态中选 1 种（大大大大 / 小小小小 / 单单单单 / 双双双双）；'
+            '④从 16 种跨族混合形态中选 1 种（前两位千/百看大小、后两位十/个看单双，如 大小双双），作为本期「反方向冷形态排除项」（排除数字的位置取反面）。<br>'
+            '全形方向规则（<b>多数锁定</b>）：单双、大小两类各自按「有方向」的已约束位置投票，'
+            '<b>多数偏大</b>时锁定「全小」、<b>多数偏小</b>时锁定「全大」；<b>多数偏单</b>时锁定「全双」、<b>多数偏双</b>时锁定「全单」'
+            '（单票也算锁定）；两类同时锁定且方向不同（如锁全大 + 锁全单）时由 AI 在 2 个候选里按冷热二选一；'
+            '两类都未成型时由 AI 在 4 种里按冷热自选。<br>'
+            '跨族混合方向规则：前两位（千/百）按大小反向约束（排除大写小、排除小写大）、'
+            '后两位（十/个）按单双反向约束（排除双写单、排除单写双），未约束位由 AI 按冷热自选。<br>'
+            '③全形与①/②同形且①/②还有自由位时，会把最靠前的自由位翻成反方向去重；被排除数字钉死的位置不动，四位全钉死时允许同形。<br>'
             '冷形态定位依据：近 50 期出现次数少、当前遗漏长（仅历史统计，不代表未来概率）。<br>'
-            '命中 = 目标期实际四位形态<b>不等于</b>封存形态：单双、大小、全大/全小、全单/全双 4 项全部命中才算整组命中'
-            '（①/②与③/④默认自动去重：同形且①/②还有自由位时会把最靠前的自由位翻成反方向；'
-            '四位全被排除数字钉死时才允许同形）。<br>'
+            '命中 = 目标期实际四位形态<b>不等于</b>封存形态：单双、大小、全形、跨族混合 4 项全部命中才算整组命中'
+            '（全形按覆盖号码集合判定：全大=四位全大、全小=四位全小、全单=四位全单、全双=四位全双）。<br>'
             '无合尾、无连用限制（每期按冷热重选，不沿用上期）；'
             '旧口径（历史版本封存）保留但不计入本统计；'
             '只统计开奖前发布、开奖后核验的记录；累计四手连败自本版本上线起跨天叠加：连续 4 期整组未全中记 1 次、8 期记 2 次，赢一次清零，不随 05:00 清零；北京时间 05:00 清零（用于当日命中率等当日统计）；'
