@@ -2090,3 +2090,19 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   - `python3 scripts/kill3_v16_rollback.py` dry-run：输出「已达预登记样本 n=183，未触发回滚条件（维持 v16，门禁关闭）」、反向补丁预检 OK、git status 无代码改动 —— 证明门禁若真触发，417c472 反向补丁仍可 apply。
 - 备份/回滚：文件备份 `/root/ops/kill3-autoroll-20261106/`；crontab 安装前自动备份到 `/tmp/crontab.backup.<ts>`。解除自动执行：改 `data/kill3_v16_auto_rollback.json` 的 enabled=false，或从 crontab 删该行再 `scripts/crontab_tool.sh dump`；本提交仅新增调度器+cron 行，`git revert` 可完全撤回。
 - 并行窗口：提交前 `git status --short` 仅本批文件（scripts/kill3_v16_auto_rollback.py 新增、ops/crontab.txt、ops/README.md）。
+
+## 2026-11-06 16:46 kill3 纸面跟投账本上线（只读影子：每期按攻击语剩余码各买 1 单位，四定 9900 赔率纸面结算，不产生任何真实下注）
+
+- 需求链：用户 m00263「好」批准 (B) 纸面影子账本——回答「排除模型实战没盈利过」：用真实封存逐期复算「如果每期照单全买」的纸面盈亏与回撤；只读、不下注、不改预测口径、不写真实下注代码。
+- 处置：
+  - 新增 `scripts/kill3_shadow_ledger.py`：读 `data/kill3_tail/seals.json` 与 `settlements.json`，对每期按 10^4 精确枚举攻击语剩余码集（条件：计入位置杀码、合尾、three_avoid 三组、单双/大小反向形态），并与结算 `group_hit` 逐期互证；rows 按 target_period 缓存增量（ledger_version/semantics_version 变更才全量；首轮全量 25.6s、增量 0.63s），原子写 `data/kill3_shadow_ledger.json`。
+  - 结算口径：每期剩余码 N 个各买 1 单位（投入 N），命中返 9900 单位（四定赔率含本金，平台抽水约 1%），未中返 0；盈亏平衡命中率 = 覆盖基线/0.99。另给 1→2→3→4 阶梯倍投（连败封顶 4 倍、命中归 1）压力测试与按每码 0.1 元折算。
+  - 新增 `lib/kill3_shadow_view.py` + `scripts/update_kill3_shadow_panel.py`：在 kill3 卡下方（`<!-- KILL_THREE_END -->` 之后）注入 `<!-- KILL3_SHADOW_START/END -->` 只读块，标题「🧾 kill3 纸面跟投账本（只读 · 纸面模拟，不产生任何真实下注）」；`lib/panel_live_refresh.py` 版本 bump 到 `quiet-panel-v31-add-kill3-shadow` 并把 `KILL3_SHADOW` 加入刷新名单。
+  - `ops/crontab.txt` 新增行：`4,9,14,...,59` 分 `sleep 30` 跑 ledger + updater（flock `/var/lock/penta5-kill3shadow.lock`，墙钟 120s/20s，日志 `data/kill3_shadow_cron.log`）。
+- 验证（2026-11-06 16:40 首轮全量）：
+  - v16 当前口径 n=183 hits=92 rate=50.27%、平均覆盖 58.53%（基线 58.63%）、盈亏平衡线 59.12%；固定 1 单位纸面盈亏 −160,307 单位（ROI −14.97%）、最大回撤 169,168 单位、最长连败 10 期；阶梯倍投纸面盈亏 −331,590 单位、最大回撤 358,770 单位；按每码 0.1 元折算约 −16,031 元。
+  - 全口径（v1 起 1204 期）命中率 59.39%、纸面盈亏 −107,108 单位（ROI −1.49%）；sanity 0 mismatch（复算命中 vs 结算 group_hit 全一致）。
+  - 面板：`panel.html` 中 KILL3_SHADOW_START/END 各 1、块 1,202 字符，位于 `<!-- KILL_THREE_END -->` 之后（run_stats 16:45 重生成后仍在）；crontab install 后 `crontab_tool.sh diff` 零差异（39 jobs）。
+- 结论口径（用于回答用户）：这套排除模型没有可验证正边际——v16 50.27% 远低于自身覆盖决定的 59.12% 盈亏平衡线；1204 期全口径 ROI −1.49% 约等于平台抽水，即长期数学期望为负；不建议用倍投/加码挽回（阶梯倍投把最大回撤放大到 358,770 单位、约 2.1 倍）。
+- 备份/回滚：改前 `lib/panel_live_refresh.py`、`ops/crontab.txt` 备份 `/tmp/panel_live_refresh.py.bak.20261106`、`/tmp/crontab.txt.bak.20261106`，旧 crontab `/tmp/crontab.backup.20261106_164523`；回滚=`git revert <本条提交>` + `bash scripts/crontab_tool.sh install`（去掉 kill3shadow 行）+ 手工删除 panel.html 里的 KILL3_SHADOW 块（该块只由 updater 写入，移除 cron 后不会再自动生成）；`data/kill3_shadow_ledger.json` 可整体删除。
+- 并行窗口：本批开始前 git status 干净（仅本批 3 个新文件）；未触碰 kill3 冻结文件、封存/结算账本与预测口径。
