@@ -241,7 +241,7 @@
   },
   "kill3_tail": {
    "files": {
-    "lib/kill3_tail.py": "3bb8d3c0ea2b186fe7b44c9077b8d0c6dc8abb50adef531160bf3753a3431b11",
+    "lib/kill3_tail.py": "ec3cf5121b0c4f91d200bf58a7706f850e02f37f9271a44a2463ebcf61153759",
     "lib/kill_three_view.py": "f70ee853b2a9514a8ce82aada66d4a1adbba55b1fddec5cd2a50961e9c0704cb",
     "lib/panel_context.py": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
     "scripts/run_kill3_tail.py": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49"
@@ -714,6 +714,14 @@
      "new_sha256": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
      "old_sha256": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc",
      "reason": "kill12 上线：panel_context.py 新增 kill12 自选帧（仅 additive，kill11/kill10 行为 A/B 逐字节一致）"
+    },
+    {
+     "at": "2026-11-06T16:49:02.502982+08:00",
+     "commit": "2a91c4f",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "ec3cf5121b0c4f91d200bf58a7706f850e02f37f9271a44a2463ebcf61153759",
+     "old_sha256": "3bb8d3c0ea2b186fe7b44c9077b8d0c6dc8abb50adef531160bf3753a3431b11",
+     "reason": "2026-11-06 推理档 high->medium（用户决定保持 pro：pro 单请求长尾 100-173s 撞 230s 发布窗，今日 12 期超窗缺期）；仅 _post 的 reasoning_effort 与 request_policy_version，不改选码/尾码/8 项结构、不升 RULE_VERSION"
     }
    ],
    "label": "三位置杀码(kill3)",
@@ -799,6 +807,6 @@
    }
   }
  },
- "updated_at": "2026-11-06T11:57:07.022602+08:00",
+ "updated_at": "2026-11-06T16:49:02.504938+08:00",
  "version": 1
 }
