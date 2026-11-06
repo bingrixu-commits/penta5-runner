@@ -2,7 +2,7 @@
   "format": "mnemonpack",
   "version": 1,
   "scope": "full",
-  "exportedAt": "2026-11-06T16:27:53.896Z",
+  "exportedAt": "2026-11-06T17:28:00.242Z",
   "source": {
     "plugin": "dsh-mnemon",
     "pluginVersion": "0.5.41"
@@ -16,19 +16,19 @@
     {
       "component": "runtime",
       "files": 3,
-      "bytes": 27458,
-      "items": 20
+      "bytes": 19922,
+      "items": 15
     },
     {
       "component": "documents",
-      "files": 8,
-      "bytes": 59428,
-      "items": 7
+      "files": 10,
+      "bytes": 77304,
+      "items": 9
     },
     {
       "component": "memory-spaces",
       "files": 3,
-      "bytes": 390286,
+      "bytes": 545934,
       "items": 2
     }
   ],
@@ -36,7 +36,7 @@
     "channel": "git",
     "branch": "mnemon-sync",
     "subdir": "mnemon/",
-    "pushedAt": "2026-11-06T16:27:53.896Z",
+    "pushedAt": "2026-11-06T17:28:00.242Z",
     "machine": {
       "id": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
       "label": "PC-20260622JLQP",
@@ -119,6 +119,42 @@
         "target": "memory",
         "contentHash": "63c5808f04e5c62bf4097611cc88b9cd2fbc08d4bb79c05dfb8b2908ec51bcad",
         "deletedAt": "2026-10-31T22:12:37.249Z",
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
+      },
+      {
+        "target": "memory",
+        "contentHash": "b5120f0f8fbbb867fc6606e8f3c44fda1444ad89152c47ae53b2d6d938aaa8b1",
+        "deletedAt": "2026-11-06T17:28:00.065Z",
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
+      },
+      {
+        "target": "memory",
+        "contentHash": "a1c11392dbd41e95e7fd265c8cae022ce607da96cc87ad6563aa031ce895e469",
+        "deletedAt": "2026-11-06T17:28:00.065Z",
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
+      },
+      {
+        "target": "memory",
+        "contentHash": "70a639e369dfbdaa332809237d3e893d6473cebedce3745a02c68b0f390a07fd",
+        "deletedAt": "2026-11-06T17:28:00.065Z",
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
+      },
+      {
+        "target": "memory",
+        "contentHash": "44e52e828be0061b7e8c219dfe5cd50c3a8e9d8922f0d6e054a8868d5ddc475c",
+        "deletedAt": "2026-11-06T17:28:00.065Z",
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
+      },
+      {
+        "target": "memory",
+        "contentHash": "849ddd9d2cbea429f73d97366674d7000c7e289f34313cfea77ba666c128fa99",
+        "deletedAt": "2026-11-06T17:28:00.065Z",
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
+      },
+      {
+        "target": "memory",
+        "contentHash": "dbb458f5e7c1e725e180abe6ab213a592f0db4dcada5b68ffd1b126710280ae2",
+        "deletedAt": "2026-11-06T17:28:00.065Z",
         "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12"
       }
     ]

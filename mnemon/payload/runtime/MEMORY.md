@@ -16,22 +16,12 @@ penta5-runner 面板 2026-10-31 新增「刮刮乐·单双大小」静态区块�
 §
 penta5-runner 2026-10-31 上线三项（commits 7200fcc/efedb85/9d37acf）：① scripts/ops_health_check.py 新增 deepseek_balance（ok>=8/warn>=3/fail<3 CNY，脚本自己解析 .env 的 PENTA5_FRAMEWORK_API_KEY）与 provider_402（近30分钟日志有 402→warn）；② 面板新增「整组命中率 vs 随机期望」区块：lib/hitrate_baseline.py 生成 data/hitrate_baseline.json（精确枚举基线 killer 41.62/framework 55.59/selected_six 51.60/冷码 54.27/固定 54.36/he3 93.75/kill3 61.91%），lib/hitrate_baseline_view.py 渲染，/root/run_stats.py 每轮先重算再在 update_panel 最外层注入（run_stats.py 不在 git，备份 /root/ops/remediation-20261031/）；③ six「来源核验暂不可用」修复：scripts/build_six_seal_index.py 对 350MB selected_six_seals.json 做字节级 prediction_seals 提取生成 data/selected_six_seal_index.json（54MB/1059 seals，字段全保留、校验不降级），lib/strategy_comparison.py 在源超 128MB 时读索引、源 size/mtime 变更自动重建、失败回落 source_error；面板 six 现显示整组 47.06%/定位 90.52%。
 §
-penta5-runner 2026-10-31 上线「DeepSeek 余额守护」：scripts/ai_balance_guard.py + crontab 每分钟（flock /var/lock/penta5-balance-guard.lock → data/ai_balance_guard.log，状态 data/ai_balance_guard.json）。逻辑：余额接口 is_available=false 连续 2 次且 AI 开关开启→用 ai_call_control.set_enabled 自动停（保留 CAS generation/审计链）；只自动恢复自己停的那一代（generation 匹配才 resume，期间手动改过就清标记尊重手动）；恢复后不补旧期，既有 */5 AI cron 下一轮自动读最近 50 期最新数据继续发布。正常轮次静默，状态文件是心跳。commits 4dcd135/7a2a359；crontab 已用 scripts/crontab_tool.sh 版本化安装（ops/crontab.txt），备份 /tmp/crontab.backup.20261031_040208 与 /root/ops/balance-guard-20261031/。AI 开关仍是 manual 模式，只有余额不可用时才会被自动改写。
-§
 DSH 技能配置最终状态（2026-10-31 04:3x）：注入模型时 description 只取 500 字符（dsh-tool-skill/lib/index.js:768、:1089），长描述技能的触发词要前置。用户级 25 个 ~/.dsh/skills 技能全部可模型调用、全带「当用户说…」中文触发词（4 个长描述触发句在开头）。Cursor/Codex 同步到共享目录 ~/.agents/skills 的 26 个技能（含 8 个仅 /命令 的 Codex 命令型，如 shell/goal/review/onboard）已整体移到 C:\Users\Administrator\.dsh\parked\agents-skills-20261031（manifest.json 可还原；Cursor 原副本 ~/.cursor/skills-cursor 未动），并设用户环境变量 DSH_AGENTS_HOME=C:\Users\Administrator\.dsh\agents-home，DSH 下次启动起不再读 ~/.agents/skills。不要恢复那 26 个或改回 DSH_AGENTS_HOME。
 §
-penta5-runner 2026-10-31 提示词部署：selected_six 首答硬性要求已上线 9939126（transport v2 兼容 v1 历史，ref 051-055 attempt=1）；framework/killer 自检 94c5000 破坏 stat50_archive 的历史 prompt 复渲染校验，已 revert d94dc1b，看板恢复；pro 切档后看板 _metadata 只认 flash 族会拒新封存。
-§
-penta5-runner 2026-10-31 06:51 状态：服务器全自动、本机关机不影响。A0：影子任务 68bb193、门禁 070c48a、自动解除/转正 135f17a（门禁 ready 自动写 data/joint_form_auto_promote.json enabled；framework/killer 下一期起仅把两个排除形态换成 10^4 精确联合最优，AI 杀码/合尾/保留集不变；旧封存保留；回滚=该文件 manual_disable=true）。历史 2100 期 framework 55.98→58.55(+2.57pp)、killer 39.97→42.78(+2.80pp)；优化响应通过发布校验；门禁 ready 临时根测试通过。当前 burn-in 2/72（面板底 #joint-form-shadow 实时显示）。余额 10.6 CNY 仅约1h，跑满72期需充值约40-50 CNY，否则 AI 停摆无法自动解除门禁。ops_health ok。
-§
-penta5-runner 2026-10-31 上线「模型运行观测层」：lib/model_usage.py + lib/model_usage_view.py + scripts/run_model_usage.py（每分钟 cron，flock penta5-model-usage，日志 data/model_usage_cron.log 已入 logrotate）；只读 7 个 AI 任务日志的 AI_* 观测行 → data/model_usage/ledger-YYYYMM.jsonl + summary.json；面板 #model-usage 区块（MODEL_USAGE_START/END，在 RUNTIME_OBSERVABILITY_END 后，run_stats 重生成不覆盖）；ops_health 新增 model_usage 项。首轮回填 8715 事件，402=619/429=7 与原始日志 grep 一致。commits 1bb95cf/270817a；备份 /root/ops/model-usage-20261031/。
-§
 阿萨
-§
-penta5-runner：面板「整组命中率 vs 随机期望（累计·版本锁定）」大表已于 2026-11-01 移到独立页 /hitrate（cron 每15min 重写 hitrate.html，面板只留 hitrate-base-entry 入口），不要再加回主面板。提交 598000f/b3bede4，备份 /root/ops/hitrate-page-20261101-044355/。
-§
-penta5-runner .env 的 PENTA5_MODEL_* 行由 scripts/model_tier_guard.py（cron 每10分钟，data/model_tier_guard.log）按余额自动全量切 flash/pro，且会增删个别键（如 KILL1/KILL2P 行可能消失）；各 task 脚本的真实模型解析有回退链（kill1: KILL1→KILLER→DEEPSEEK_MODEL；kill2p: KILL2P→KILL3→KILLER→DEEPSEEK_MODEL）。读「某任务当前用什么模型」必须按回退链解析 .env，不能只看单键。
 §
 w'q
 §
 a
+§
+penta5-runner 于 2026-11-07 00:40 上线 kill13_tail 框架（冷合尾 2 项，纯确定性不调 AI）：50 期冷榜从 5 种合尾组合×尾码 0-9=50 候选取最冷 2 个；沿用规则 cold-hold-top2（上期 2 项仍在本期冷榜前 2 就沿用，掉出即换，无连用上限）；RULE_VERSION=kill13-tail-v1-two-cold-hewei，精确基线 10^4×C(50,2)=1225 枚举 0.8082；数据 data/kill13_tail/，面板 section #kill-thirteen-ai（KILL_THIRTEEN 标记），cron */5 sleep 50，日志 data/kill13_tail_cron.log；无 freeze guard。

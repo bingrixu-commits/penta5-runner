@@ -122,18 +122,6 @@
       }
     },
     {
-      "content": "penta5-runner 2026-10-31 上线「DeepSeek 余额守护」：scripts/ai_balance_guard.py + crontab 每分钟（flock /var/lock/penta5-balance-guard.lock → data/ai_balance_guard.log，状态 data/ai_balance_guard.json）。逻辑：余额接口 is_available=false 连续 2 次且 AI 开关开启→用 ai_call_control.set_enabled 自动停（保留 CAS generation/审计链）；只自动恢复自己停的那一代（generation 匹配才 resume，期间手动改过就清标记尊重手动）；恢复后不补旧期，既有 */5 AI cron 下一轮自动读最近 50 期最新数据继续发布。正常轮次静默，状态文件是心跳。commits 4dcd135/7a2a359；crontab 已用 scripts/crontab_tool.sh 版本化安装（ops/crontab.txt），备份 /tmp/crontab.backup.20261031_040208 与 /root/ops/balance-guard-20261031/。AI 开关仍是 manual 模式，只有余额不可用时才会被自动改写。",
-      "target": "memory",
-      "importance": "normal",
-      "created_at": "2026-10-30T20:04:31.078Z",
-      "updated_at": "2026-10-30T20:04:31.078Z",
-      "origin": {
-        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
-        "label": "PC-20260622JLQP",
-        "at": "2026-10-30T20:04:31.078Z"
-      }
-    },
-    {
       "content": "DSH 技能配置最终状态（2026-10-31 04:3x）：注入模型时 description 只取 500 字符（dsh-tool-skill/lib/index.js:768、:1089），长描述技能的触发词要前置。用户级 25 个 ~/.dsh/skills 技能全部可模型调用、全带「当用户说…」中文触发词（4 个长描述触发句在开头）。Cursor/Codex 同步到共享目录 ~/.agents/skills 的 26 个技能（含 8 个仅 /命令 的 Codex 命令型，如 shell/goal/review/onboard）已整体移到 C:\\Users\\Administrator\\.dsh\\parked\\agents-skills-20261031（manifest.json 可还原；Cursor 原副本 ~/.cursor/skills-cursor 未动），并设用户环境变量 DSH_AGENTS_HOME=C:\\Users\\Administrator\\.dsh\\agents-home，DSH 下次启动起不再读 ~/.agents/skills。不要恢复那 26 个或改回 DSH_AGENTS_HOME。",
       "target": "memory",
       "importance": "normal",
@@ -146,42 +134,6 @@
       }
     },
     {
-      "content": "penta5-runner 2026-10-31 提示词部署：selected_six 首答硬性要求已上线 9939126（transport v2 兼容 v1 历史，ref 051-055 attempt=1）；framework/killer 自检 94c5000 破坏 stat50_archive 的历史 prompt 复渲染校验，已 revert d94dc1b，看板恢复；pro 切档后看板 _metadata 只认 flash 族会拒新封存。",
-      "target": "memory",
-      "importance": "normal",
-      "created_at": "2026-10-30T20:27:11.554Z",
-      "updated_at": "2026-10-30T20:40:31.041Z",
-      "origin": {
-        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
-        "label": "PC-20260622JLQP",
-        "at": "2026-10-30T20:40:31.041Z"
-      }
-    },
-    {
-      "content": "penta5-runner 2026-10-31 06:51 状态：服务器全自动、本机关机不影响。A0：影子任务 68bb193、门禁 070c48a、自动解除/转正 135f17a（门禁 ready 自动写 data/joint_form_auto_promote.json enabled；framework/killer 下一期起仅把两个排除形态换成 10^4 精确联合最优，AI 杀码/合尾/保留集不变；旧封存保留；回滚=该文件 manual_disable=true）。历史 2100 期 framework 55.98→58.55(+2.57pp)、killer 39.97→42.78(+2.80pp)；优化响应通过发布校验；门禁 ready 临时根测试通过。当前 burn-in 2/72（面板底 #joint-form-shadow 实时显示）。余额 10.6 CNY 仅约1h，跑满72期需充值约40-50 CNY，否则 AI 停摆无法自动解除门禁。ops_health ok。",
-      "target": "memory",
-      "importance": "normal",
-      "created_at": "2026-10-30T21:44:21.552Z",
-      "updated_at": "2026-10-30T22:51:40.793Z",
-      "origin": {
-        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
-        "label": "PC-20260622JLQP",
-        "at": "2026-10-30T22:51:40.793Z"
-      }
-    },
-    {
-      "content": "penta5-runner 2026-10-31 上线「模型运行观测层」：lib/model_usage.py + lib/model_usage_view.py + scripts/run_model_usage.py（每分钟 cron，flock penta5-model-usage，日志 data/model_usage_cron.log 已入 logrotate）；只读 7 个 AI 任务日志的 AI_* 观测行 → data/model_usage/ledger-YYYYMM.jsonl + summary.json；面板 #model-usage 区块（MODEL_USAGE_START/END，在 RUNTIME_OBSERVABILITY_END 后，run_stats 重生成不覆盖）；ops_health 新增 model_usage 项。首轮回填 8715 事件，402=619/429=7 与原始日志 grep 一致。commits 1bb95cf/270817a；备份 /root/ops/model-usage-20261031/。",
-      "target": "memory",
-      "importance": "normal",
-      "created_at": "2026-10-30T22:15:59.308Z",
-      "updated_at": "2026-10-30T22:15:59.308Z",
-      "origin": {
-        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
-        "label": "PC-20260622JLQP",
-        "at": "2026-10-30T22:15:59.308Z"
-      }
-    },
-    {
       "content": "阿萨",
       "target": "memory",
       "importance": "normal",
@@ -191,33 +143,6 @@
         "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
         "label": "PC-20260622JLQP",
         "at": "2026-10-31T05:49:40.735Z"
-      }
-    },
-    {
-      "content": "penta5-runner：面板「整组命中率 vs 随机期望（累计·版本锁定）」大表已于 2026-11-01 移到独立页 /hitrate（cron 每15min 重写 hitrate.html，面板只留 hitrate-base-entry 入口），不要再加回主面板。提交 598000f/b3bede4，备份 /root/ops/hitrate-page-20261101-044355/。",
-      "target": "memory",
-      "importance": "normal",
-      "created_at": "2026-10-31T20:53:59.146Z",
-      "updated_at": "2026-10-31T20:53:59.146Z",
-      "origin": {
-        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
-        "label": "PC-20260622JLQP",
-        "at": "2026-10-31T20:53:59.146Z"
-      }
-    },
-    {
-      "content": "penta5-runner .env 的 PENTA5_MODEL_* 行由 scripts/model_tier_guard.py（cron 每10分钟，data/model_tier_guard.log）按余额自动全量切 flash/pro，且会增删个别键（如 KILL1/KILL2P 行可能消失）；各 task 脚本的真实模型解析有回退链（kill1: KILL1→KILLER→DEEPSEEK_MODEL；kill2p: KILL2P→KILL3→KILLER→DEEPSEEK_MODEL）。读「某任务当前用什么模型」必须按回退链解析 .env，不能只看单键。",
-      "target": "memory",
-      "importance": "normal",
-      "created_at": "2026-10-31T21:41:51.734Z",
-      "updated_at": "2026-11-05T22:19:57.213Z",
-      "branches": [
-        "ss"
-      ],
-      "origin": {
-        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
-        "label": "PC-20260622JLQP",
-        "at": "2026-11-05T22:19:57.213Z"
       }
     },
     {
@@ -242,6 +167,18 @@
         "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
         "label": "PC-20260622JLQP",
         "at": "2026-11-05T22:19:38.987Z"
+      }
+    },
+    {
+      "content": "penta5-runner 于 2026-11-07 00:40 上线 kill13_tail 框架（冷合尾 2 项，纯确定性不调 AI）：50 期冷榜从 5 种合尾组合×尾码 0-9=50 候选取最冷 2 个；沿用规则 cold-hold-top2（上期 2 项仍在本期冷榜前 2 就沿用，掉出即换，无连用上限）；RULE_VERSION=kill13-tail-v1-two-cold-hewei，精确基线 10^4×C(50,2)=1225 枚举 0.8082；数据 data/kill13_tail/，面板 section #kill-thirteen-ai（KILL_THIRTEEN 标记），cron */5 sleep 50，日志 data/kill13_tail_cron.log；无 freeze guard。",
+      "target": "memory",
+      "importance": "normal",
+      "created_at": "2026-11-06T16:55:49.583Z",
+      "updated_at": "2026-11-06T16:55:49.583Z",
+      "origin": {
+        "machine": "258021d3-2d2a-48bc-87e9-d9414fa59b12",
+        "label": "PC-20260622JLQP",
+        "at": "2026-11-06T16:55:49.583Z"
       }
     }
   ]

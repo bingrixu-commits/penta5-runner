@@ -1,10 +1,10 @@
 {
   "algorithm": "sha256",
   "files": {
-    "payload/runtime/memories.json": "94b7da88014c5c2c0dbff6d13aca82b8759e8a7860132b524f294b40cef49cc0",
+    "payload/runtime/memories.json": "72f95a8de95f8874c42f584bbcbfe7ffd69ca39ddf9fd15ae814681eecbdbd75",
     "payload/runtime/USER.md": "6bc09f7683dbf157103c80f074b40164d717c13958598f1d0db3d0cfa08cd0af",
-    "payload/runtime/MEMORY.md": "649d769ad000b7706356765be5eba74e68e9a9fc2c72b75e204931ef1468c31d",
-    "payload/documents/index.json": "c289c3cdae22759b68f4ac0ea107336c2b8855a8ea7a7d8f6b070e3c8af03de6",
+    "payload/runtime/MEMORY.md": "a06f8ea9cdda996b7cd0db6aa04fd7240523b45f2dfbbfa3ac89faeff45a4ed2",
+    "payload/documents/index.json": "6573de92817fc59ae7114560b983b12d0041e8b56796d3d9b355bfac247f9e2f",
     "payload/documents/active/mnemon-dsh-03ec4e06.md": "ece777f1e33d2d0dca41a40492fa4eb754c1e537ae7356075285b5c80b41ba5d",
     "payload/documents/active/penta5-runner-kill8-v7-v6-2026-11-06-02779d21.md": "8fb51f7d258bd5335d256643002449d3b94e034e9324cc9d3eb467b8f426e073",
     "payload/documents/active/penta5-runner-2026-11-06-c9e2bfd1.md": "cb09ebadaa9f5d6b7b3eff4856b5594651b6c60094febbba156073c002900a37",
@@ -12,8 +12,10 @@
     "payload/documents/active/penta5-runner-kill3-v16-2026-11-06-2cb7a64d.md": "f05e1229bda4b006c51b3c9efc3be37fd09375360131b6b88dd3a568ede3017e",
     "payload/documents/active/penta5-runner-ai-2026-11-06-ff1dd0eb.md": "c496deef276d5ce9a1ac0d897bb619e543838694ff6ae566162caa2638353908",
     "payload/documents/active/penta5-runner-kill12-v2-2026-11-06-7b9973e0.md": "3eb2c66f1c700702e1c04d3a1996727a1f6af1aaf99bd8cad8b62c418460c2c8",
-    "payload/data/.dsh-memory-bodies.json": "475da9002e1bf5e324b83f583ced7921cd8308936d74d9e85fd011ea97b03f02",
-    "payload/data/0dcb869d-6a01-4654-bf94-c25bd925dc8d/mnemon.db": "e5c6331966fd79962b9815d6a3d16c57f44bd37d624e90fd4b4ce32a1ce6eb4b",
-    "payload/data/default/mnemon.db": "3cef2bfacf7d605f2cac78dc51f6de33149f3423b5c2b7585eb46f5cc983d94f"
+    "payload/documents/active/penta5-runner-kill1-v7-kill3-v17-kill11-v2-kill1-ea2d6c9e.md": "f02969fe7fa5de2581edcccaef2b87408672cae217bf830b8ed30c1ff3a74850",
+    "payload/documents/active/penta5-runner-kill13-2-df30b2dd.md": "f6aa34d301ce6638ad19abb30b8d661f3e4cbecf5123c3d2ce4cafa01716d208",
+    "payload/data/.dsh-memory-bodies.json": "5b2f4b8606f292951e2c604702c0d31401f2ebc90f0e87934607b27515339c73",
+    "payload/data/0dcb869d-6a01-4654-bf94-c25bd925dc8d/mnemon.db": "ddc328ac4d9c86b8f05eedfbfb55b6b493d4b0e33d4a8e6f0bc6a96e9eea3605",
+    "payload/data/default/mnemon.db": "790b6c4ea91f9179c4819f8ae8a4ac9731ead61b6281c7891ab93fb4947ba402"
   }
 }

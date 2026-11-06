@@ -35,7 +35,7 @@
       ],
       "createdAt": "2026-11-06T03:04:41.409Z",
       "updatedAt": "2026-11-06T03:04:41.409Z",
-      "lastAccessedAt": "2026-11-06T15:29:53.349Z",
+      "lastAccessedAt": "2026-11-06T17:09:12.828Z",
       "revision": 1,
       "contentHash": "ef288ce9cd49f81aba8370b060faa78f7a61f689cb2aef7a90210426f440d901",
       "sizeBytes": 5491,
@@ -59,7 +59,7 @@
       ],
       "createdAt": "2026-11-06T08:13:05.134Z",
       "updatedAt": "2026-11-06T08:13:05.134Z",
-      "lastAccessedAt": "2026-11-06T15:29:53.349Z",
+      "lastAccessedAt": "2026-11-06T17:02:48.815Z",
       "revision": 1,
       "contentHash": "010aa918f743d47f4c31a7c47952ccbaca186ada02532b3cf7044f4031a452dd",
       "sizeBytes": 8333,
@@ -101,7 +101,7 @@
       ],
       "createdAt": "2026-11-06T10:02:17.697Z",
       "updatedAt": "2026-11-06T10:02:17.697Z",
-      "lastAccessedAt": "2026-11-06T15:29:53.349Z",
+      "lastAccessedAt": "2026-11-06T17:09:12.828Z",
       "revision": 1,
       "contentHash": "d75285f6bec0195d51f01891f8ca7f679e435e9737399ef068042899579253d5",
       "sizeBytes": 8709,
@@ -139,10 +139,55 @@
       ],
       "createdAt": "2026-11-06T15:30:37.399Z",
       "updatedAt": "2026-11-06T15:30:37.399Z",
-      "lastAccessedAt": "2026-11-06T15:30:37.399Z",
+      "lastAccessedAt": "2026-11-06T17:09:12.828Z",
       "revision": 1,
       "contentHash": "1f1a5a44fedaff8d429185a52739bf50b99fe1f606dfb081500ed6d2b2d9c570",
       "sizeBytes": 8020,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "ea2d6c9e-1e38-4d1a-856b-3d4dfe4745bf",
+      "title": "penta5-runner 四框架灵活位置改造总览（kill1 v7 / kill3 v17 / kill11 v2 / kill12 v3，2026-11-07）",
+      "description": "四个定位排除框架由固定位置数升级为 AI 每期自选 2~4 位置、每位置杀 1 码，并改为逐期期望基线的口径、基线表、统计机制、验证证据、提交/回滚与观察注意事项。回答“这些框架现在怎么选位置、基线多少、统计怎么算、怎么回滚/验证”时参考。",
+      "status": "active",
+      "filename": "penta5-runner-kill1-v7-kill3-v17-kill11-v2-kill1-ea2d6c9e.md",
+      "relativePath": "documents/active/penta5-runner-kill1-v7-kill3-v17-kill11-v2-kill1-ea2d6c9e.md",
+      "sourcePaths": [
+        "penta5-posvar/P-report.md",
+        "penta5-posvar/A-plan.md",
+        "penta5-posvar/kill1-map.md",
+        "penta5-posvar/kill3-map.md",
+        "penta5-posvar/kill11-12-map.md",
+        "penta5-posvar/observation-20261107-0101.md"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-223560de-d7c5-4728-bafe-f6bfc9fc31e0"
+      ],
+      "createdAt": "2026-11-06T17:04:08.977Z",
+      "updatedAt": "2026-11-06T17:04:08.977Z",
+      "lastAccessedAt": "2026-11-06T17:09:12.828Z",
+      "revision": 1,
+      "contentHash": "24c1cac4df7b01a704263b4ee479a82a55fe9ec518c60b1d49658a53e5e7672e",
+      "sizeBytes": 6900,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "df30b2dd-5ca2-48a0-890a-25570f0bbad3",
+      "title": "penta5-runner kill13 冷合尾 2 项框架（口径/基线/部署落地/回滚）",
+      "description": "kill13（冷合尾 2 项，纯确定性）的口径、精确基线 0.8082、9 处挂接点与 3 处跳过理由、2026-11-07 真实周期与部署落地审计证据、备份与回滚；回答 kill13 怎么选出两个最冷合尾、沿用规则、基线怎么来、上线/回滚怎么做时参考。",
+      "status": "active",
+      "filename": "penta5-runner-kill13-2-df30b2dd.md",
+      "relativePath": "documents/active/penta5-runner-kill13-2-df30b2dd.md",
+      "sourcePaths": [],
+      "sessionIds": [
+        "mnemon-run-v1-aa324421-45ef-45f9-a962-380e3eb47155"
+      ],
+      "createdAt": "2026-11-06T17:09:42.225Z",
+      "updatedAt": "2026-11-06T17:09:42.225Z",
+      "lastAccessedAt": "2026-11-06T17:09:42.225Z",
+      "revision": 1,
+      "contentHash": "edff70c9294c6581b03df9b3738d891ca57ac7c2a71fec75439e86c0d3525933",
+      "sizeBytes": 8468,
       "memoryBodyIds": []
     }
   ]
