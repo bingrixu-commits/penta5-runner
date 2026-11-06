@@ -2068,3 +2068,12 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
   - ops_health：`python3 scripts/ops_health_check.py --root /root/penta5-runner | grep -E 'overall|kill12'` → `OK kill12_tail ref=20261106145 published_at=2026-11-06T12:06:15.822255+08:00`，alerts 记录 kill12_tail:warn->ok。overall=FAIL 与 kill12 无关：唯一 FAIL 为既有 hitrate_stability（kill1_tail 口径仅存活 3.2h/39 期，其他窗口改 kill1 口径所致），WARN 为 kill3_stability/coverage/model_usage 既有项。
 - 备份/回滚：改前 13 文件备份 /root/ops/kill12-deploy/pre-patch-20261106-115259（含 manifest.json sha 清单）、panel_context.py.bak 与 .bak.20261106-114922、冻结前备份 /root/ops/kill12-deploy/freeze-20261106-115707、旧 crontab /tmp/crontab.backup.20261106_115718。回滚：`git revert <本条提交> a7e6105 a8060be` 恢复仓库文件；crontab 去掉 kill12 行后 `bash scripts/crontab_tool.sh install`；logrotate 去掉 kill12 行；.env 删除 PENTA5_MODEL_KILL12 行（cron 热读）；kill12 自身账本可整体归档，不影响其它框架。
 - 并行窗口：本批开始前 HEAD=46b4033、工作树干净；本批三个提交逐层叠加，期间无他窗提交；提交后 git status 干净（data/、panel.html、.env 等生成/忽略文件不在版本控制）。
+### kill12 落地复验与 GitHub 推送（2026-11-06 12:47）
+
+- 需求：用户 m00371「落地」（承接上一轮 kill12 上线交付）。
+- 运行落地证据（截至 2026-11-06 12:45 CST）：`data/kill12_tail/seals.json` n=9、`settlements.json` n=8；已结算 8 期整组全中 8/8（100.00%）、当前连中 8 期；封存覆盖 ref 20261106144–152 → target 20261106145–153，位置在千位/百位/个位间轮换、合尾在 tail_qsg 2/7 间按 hold3 策略沿用/换码；最新 publish 2026-11-06T12:40:57.122451+08:00（ref 20261106152 → target 20261106153）。
+- 面板落地：`#kill-twelve-ai` data-as-of=20261106152（随 run_stats 每期重生成），今日整组 8/8、位置 8/8 注、形态 8/8、合尾 8/8、待核验 1 期、当前连中 8、累计四手连败 0；本版累计（跨天不清零）4/4，数据截至 20261106148（15 分钟刷新、滞后 ≤4 期属设计行为）。
+- 小样本提醒：8/8 对应随机基线 75.38%，8 连中事前概率约 10.4%，面板 Wilson 95%CI 51.0%–100.0%；仅证明链路正常，不作能力结论。
+- GitHub 落地：服务器 deploy key `/root/.ssh/penta5_deploy_ed25519` + SSH 别名 github-penta5 认证成功；fetch 后 HEAD...origin/main=5/0（无远端独有提交），push `a9e5305..3f89dd5 main -> main` 成功；`git ls-remote origin refs/heads/main` 与本地 HEAD 同为 3f89dd5，ahead/behind 0/0；本台账提交后再推一次并复验同步。
+- 门禁：`refresh_source_manifest.py --if-drift` → no-drift（基线 /root/backups/auto-baseline-20261106-120910）；ops_health 12:45:16 检查：`kill12_tail OK waiting: latest=20261106153 seal_ref=20261106152 age=5s`、`manifest_drift OK`；overall=FAIL 仍仅既有 hitrate_stability（kill1_tail 口径清零风险 4.0h/48 期，与本框架无关）。
+- 回滚：推送为 fast-forward，无强推、无合并；如需整组回退 `git revert 3f89dd5 a7e6105 a8060be` 后再推送，其余回滚路径同 kill12 上线段。
