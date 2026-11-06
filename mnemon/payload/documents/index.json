@@ -19,6 +19,27 @@
       "contentHash": "3cea350c6143f1f1781011e3bfd31c9376d495e90cf552c34c80f3f265d4067a",
       "sizeBytes": 5674,
       "memoryBodyIds": []
+    },
+    {
+      "id": "02779d21-b0f2-4d50-b70a-abb933646032",
+      "title": "penta5-runner kill8 四反向冷形态框架：v7 两形态实验与 v6 回退（2026-11-06）",
+      "description": "kill8 独立框架口径与随机基线、v7 双形态上线 2 期后按用户「各要一组」回退 v6 单形态的完整记录：代码提交、结算兼容补丁、验证证据、备份/回滚路径与经验。当需要再改 kill8 口径、切回 v7、或排查 kill8 封存/结算/面板时参考。",
+      "status": "active",
+      "filename": "penta5-runner-kill8-v7-v6-2026-11-06-02779d21.md",
+      "relativePath": "documents/active/penta5-runner-kill8-v7-v6-2026-11-06-02779d21.md",
+      "sourcePaths": [
+        "kill8-v7"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-5557aa97-1832-468a-a6ff-53e4b0416615"
+      ],
+      "createdAt": "2026-11-06T03:04:41.409Z",
+      "updatedAt": "2026-11-06T03:04:41.409Z",
+      "lastAccessedAt": "2026-11-06T03:04:41.409Z",
+      "revision": 1,
+      "contentHash": "ef288ce9cd49f81aba8370b060faa78f7a61f689cb2aef7a90210426f440d901",
+      "sizeBytes": 5491,
+      "memoryBodyIds": []
     }
   ]
 }
