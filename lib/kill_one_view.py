@@ -1,12 +1,13 @@
-"""AI 双位置杀码建议面板区块（kill1 独立框架，v6）。
+"""AI 双位置杀码 + 一合尾建议面板区块（kill1 独立框架，v4）。
 
 数据源 data/kill1_tail/{seals,settlements}.json，由 scripts/run_kill1_tail.py 每期生成。
 与 kill3 完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
 
 命中口径（写死，面板脚注同步展示）：
 - 位置命中 = 该位置实际开奖号 != 排除码（每期 2 个不同位置各排除 1 码，共 2 注/期，两项均计入整组）；
-- 整组命中 = 2 个位置同时命中（共 2 项，精确随机基线 81%）；
-- 位置稳定化 v6 = 两个位置各自独立 hold3-until-miss；v6 起无合尾项；
+- 合尾命中 = 该合尾实际和值个位 != 排除码（5 种合尾选 1）；
+- 整组命中 = 2 位置 + 1 合尾同时命中（共 3 项）；
+- 位置稳定化 v4 = 两个位置各自独立 hold3-until-miss；合尾沿用 hold3-until-miss；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 """
@@ -22,10 +23,10 @@ START = '<!-- KILL_ONE_START -->'
 END = '<!-- KILL_ONE_END -->'
 
 # 整组随机基线兜底：(项数, 精确期望命中率)。
-# 2 项 = 2 个不同位置各杀 1 码；均匀配置下 10^4 全枚举每条配置恰 8100/10000。
-FALLBACK_BASELINE = (2, 0.81)
+# 3 项 = 2 个不同位置各杀 1 码 + 1 个合尾；均匀配置下 10^4 全枚举每条配置恰 7290/10000。
+FALLBACK_BASELINE = (3, 0.729)
 
-_TITLE = '🤖 AI 双位置杀码建议'
+_TITLE = '🤖 AI 双位置杀码 + 一合尾建议'
 
 _PARITY_OPPOSITE = {'单': '双', '双': '单'}
 _SIZE_OPPOSITE = {'大': '小', '小': '大'}
@@ -79,12 +80,15 @@ def _stats_html(stats):
     pending = stats.get('pending') or 0
     late = stats.get('late') or 0
     positions = stats.get('positions') or {}
+    tail_stats = stats.get('tail') or {}
     if total:
         join = ' · '.join([
-            '整组命中率（2 项全中：2 个位置） <b>%s</b>（%s/%s 期）'
+            '整组命中率（3 项全中：2 位置 + 合尾） <b>%s</b>（%s/%s 期）'
             % (_pct(stats.get('group_rate')), stats.get('group_hits'), total),
             '位置杀码（2 注/期，单项随机基线90%%） <b>%s</b>（%s/%s 注）'
             % (_pct(positions.get('rate')), positions.get('hits'), positions.get('bets')),
+            '合尾杀码（随机基线90%%） <b>%s</b>（%s/%s 期）'
+            % (_pct(tail_stats.get('rate')), tail_stats.get('hits'), tail_stats.get('bets')),
             '待核验 <b>%s</b> 期' % pending,
         ])
     else:
@@ -94,7 +98,7 @@ def _stats_html(stats):
         join += ' · 未计入（发布晚于开奖）%s 期' % late
     legacy = stats.get('legacy') or {}
     if legacy.get('total'):
-        join += (' · 旧口径（v1–v5 历史封存）%s 期（整组 %s 中）已归档不计入'
+        join += (' · 旧口径（v1/v2/v3 含形态封存）%s 期（整组 %s 中）已归档不计入'
                  % (legacy.get('total'), legacy.get('group_hits')))
     win = stats.get('current_win_streak') or 0
     loss = stats.get('current_loss_streak') or 0
@@ -423,8 +427,8 @@ def render_block():
     html.append(_position_policy_html(seal))
     html.append(_tail_policy_html(seal))
     html.append(_form_derivation(seal))
-    html.append('<div class="k1-drop">整组 2 项：2 个位置（各 1 注、均计入整组）；'
-                '位置稳定化 v6：两位置各自独立 hold3（命中自动沿用，最多自动沿用 3 期）；'
+    html.append('<div class="k1-drop">整组 3 项：2 位置 + 1 合尾（两位置各 1 注、均计入整组）；'
+                '位置稳定化 v4 起两位置各自独立 hold3（命中自动沿用，最多自动沿用 3 期）；'
                 '位置与杀码不做连用限制（完全由模型每期自选）</div>')
     html.append('<div class="k1-drop">发布 %s · 窗口 %s 期 · 关盘按开奖槽位倒推 70 秒</div>'
                 % (_clock(seal.get('published_at')), escape(str(seal.get('window') or '-'))))
@@ -453,7 +457,7 @@ def _attack_html(seal):
         template = (
             '<div class="k1-attack">'
             '<div class="k1-attack-title">攻击语（复制到平台，与八项同格式）</div>'
-            '<textarea id="kill1-attack-text" readonly aria-label="AI 双位置杀码攻击语"'
+            '<textarea id="kill1-attack-text" readonly aria-label="AI 双位置+一合尾攻击语"'
             ' style="width:100%;min-height:52px;margin-top:6px;padding:6px;border:1px solid #c7d2fe;'
             'border-radius:6px;background:#fff;font:12px/1.5 monospace;color:#334155;resize:vertical">'
             '__ATTACK__</textarea>'
@@ -482,12 +486,13 @@ def _attack_html(seal):
 def _foot_html():
     return ('<div class="k1-foot">口径（写死）：位置杀码 = 该位置实际开奖号 ≠ 排除码'
             '（每期 2 个不同位置各排除 1 码，两项均计入整组，共 2 注/期）；'
-            '整组命中 = 2 个位置同时命中（共 2 项，精确随机基线 81.00%）；v6 起无合尾项。'
-            '位置稳定化 v6：两位置各自独立 hold3-until-miss（命中自动沿用同位置同杀码，最多连续沿用 3 期，'
-            '上期未命中或满 3 期换码）。'
+            '合尾杀码 = 该合尾实际和值个位 ≠ 排除码（5 种合尾选 1）；'
+            '整组命中 = 2 位置 + 1 合尾同时命中（共 3 项）。'
+            '位置稳定化 v4：两位置各自独立 hold3-until-miss（命中自动沿用同位置同杀码，最多连续沿用 3 期，'
+            '上期未命中或满 3 期换码）；合尾沿用 hold3-until-miss。'
             '只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；'
             '只使用前 4 球（千/百/十/个），第 5 球不参与；关盘前 70 秒截止。'
-            'v1–v5 旧封存（含合尾 / 形态）历史归档，不计入 v6 统计。</div>')
+            'v1/v2/v3 旧封存（含形态）历史归档，不计入 v4 统计。</div>')
 
 
 def apply_kill_one_block(content, report=None):

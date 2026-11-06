@@ -1,18 +1,23 @@
-"""AI 双位置杀码（独立框架，数据独立封存/统计）。
+"""AI 双位置杀码 + 一合尾（独立框架，数据独立封存/统计）。
 
 口径（面板、封存与统计都按此写死）：
 - 由 DeepSeek 从 千/百/十/个 四个位置中选 2 个不同位置，各排除 1 个数字（杀码），
   两个位置都计入整组（每期 2 注）；
-- 定位依据：每个位置给出近 50 期热码 top3 与上期（参考期）该位置重码/邻码
+- 定位依据（v2 起）：每个位置给出近 50 期热码 top3 与上期（参考期）该位置重码/邻码
   （±1，0↔9 循环），模型须从中选择排除码，不得以冷码（出现次数少、当前遗漏长）为依据；
-- 位置命中 = 该位置实际开奖号 != 杀码；
-- 整组命中 = 2 个位置同时命中（共 2 项）；
+  v1 的冷码定位口径已归档，旧封存保留原 rule_version 不再产生新记录；
+- 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
+- 尾码稳定化 hold3-until-miss：上期尾码命中且自动沿用未满 3 期时沿用上期尾码；失手或自动沿用
+  满 3 期后由模型本期重选（重选可与上期同码）；模型尾项在封存里记为换码候选
+  （tail_policy.model_tail）；
+- 位置命中 = 该位置实际开奖号 != 杀码；合尾命中 = 该合尾实际和值个位 != 排除码；
+- 整组命中 = 2 个位置 + 1 个合尾同时命中（共 3 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
-- 位置杀码稳定化 hold3-until-miss：某位置杀码命中后沿用同位置同杀码、
+- 位置杀码稳定化 hold3-until-miss（v3 起，v4 起双位置各自独立）：某位置杀码命中后沿用同位置同杀码、
   最多自动沿用 3 期；失手或满 3 期后由模型重选（重选可与上期同码）；两个位置互不影响；
   模型位置项在封存里记为换码候选（position_policy.items[*].model_kill）；
-- v6 起不再预测、展示或结算合尾；v1–v5 旧封存的 tail/tail_policy/form 字段与归档命中保留，
-  不计入 v6 统计；
+- v4 起不再预测、展示或结算四位反向形态；旧 v3 及更早封存的 form 字段与归档命中保留，
+  不计入 v4 统计；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -68,7 +73,7 @@ REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 FORM_LABELS = dict(REVERSE_LABELS)
 
-RULE_VERSION = 'kill1-tail-v6-two-position-no-tail'
+RULE_VERSION = 'kill1-tail-v4-two-position-one-tail'
 COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
@@ -81,6 +86,8 @@ RETRY_INSTRUCTION = (
     'positions 必须是恰好 2 个对象组成的数组，每个对象为 '
     '\u007b\u007b\u0022key\u0022:\u0022q|b|s|g 之一\u0022,\u0022kill\u0022:0 至 9 的整数\u007d\u007d，'
     '且两个 key 必须不同；'
+    'tail 为 \u007b\u007b\u0022key\u0022: 五种之一, \u0022kill\u0022: 0 至 9 的整数\u007d\u007d；'
+    '合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
 
@@ -221,8 +228,8 @@ ATTACK_TAIL_LABELS = {'tail_all': '千百十个合', 'tail_qbs': '千百十合',
 def build_attack(seal):
     """与八项独立框架同格式的攻击语。
 
-    位置保留码（被杀位置为去掉杀码的 9 码，未选位置保留 10 码）→ 四定。
-    v6 起无合尾段；旧封存若仍带 tail，则照旧追加合尾保留码。
+    位置保留码（被杀位置为去掉杀码的 9 码，未选位置保留 10 码）→ 四定 →
+    合尾保留码（去掉排除码）→ 除<本框架唯一反向形态>。
     """
     if not isinstance(seal, dict):
         raise ValueError('attack requires a sealed prediction')
@@ -305,6 +312,13 @@ def normalize_response(response):
         kills[key] = str(number)
     if len(kills) != COUNTED_POSITIONS:
         raise ValueError('positions 必须恰好包含 %d 个不同位置' % COUNTED_POSITIONS)
+    tail = response.get('tail')
+    if not isinstance(tail, dict):
+        raise ValueError('tail 必须是对象')
+    tail_key = _tail_key(tail.get('key'))
+    number = digit(tail.get('kill'))
+    if number is None:
+        raise ValueError('合尾排除码必须是 0 至 9 的整数')
     reason = str(response.get('reason', ''))
     try:
         reason.encode('utf-8')
@@ -313,6 +327,7 @@ def normalize_response(response):
     return {
         'positions': {key: kills[key] for key in POSITION_ORDER if key in kills},
         'counted': [key for key in POSITION_ORDER if key in kills],
+        'tail': {'key': tail_key, 'label': TAILS[tail_key]['label'], 'kill': str(number)},
         'reason': reason[:200],
     }
 
@@ -336,7 +351,8 @@ def _hot_line(ranks, limit=3):
     return '、'.join(f'{number}(出{count}次/遗漏{omission}期)'
                      for number, count, omission in ranks[:limit])
 
-def build_prompt(reference, target, rows, *, panel_snapshot=None):
+def build_prompt(reference, target, rows, *, previous_tail=None,
+                 panel_snapshot=None):
     """Frozen prompt and its audit metadata; rows are the last WINDOW draws."""
     window = rows[-WINDOW:]
     history = ', '.join(''.join(str(int(value)) for value in row) for row in window)
@@ -355,6 +371,29 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None):
         base = latest_digits[key]
         neighbor_lines.append(
             f'· {label}：重码 {base}；邻码 {(base - 1) % 10} / {(base + 1) % 10}')
+    tail_rows = []
+    for key in TAIL_KEYS:
+        values = [tail_value(row, key) for row in window]
+        ranks = rank_digits(values)
+        kill = ranks[0][0]
+        hits50 = sum(1 for value in values if value != kill)
+        recent = values[-30:]
+        hits30 = sum(1 for value in recent if value != kill)
+        tail_rows.append((key, TAILS[key]['label'], kill, ranks[0][1], ranks[0][2],
+                          hits50 / len(values), hits30 / len(recent)))
+    tail_rows.sort(key=lambda row: (-row[5], -row[6], -row[4]))
+    tail_lines = [
+        f'· {label}：候选 {kill}（近50期出{count}次/当前遗漏{omission}期），'
+        f'近50期该尾候选杀号命中 {hit50:.2%}，近30期 {hit30:.2%}'
+        for _key, label, kill, count, omission, hit50, hit30 in tail_rows]
+    if isinstance(previous_tail, dict) and previous_tail.get('key') in TAILS:
+        prev_label = TAILS[previous_tail['key']]['label']
+        prev_kill = str(previous_tail.get('kill', '-'))
+        restriction = (f'上一期合尾：{prev_label} 杀 {prev_kill}。'
+                       '稳定化规则：上期该尾码命中且连用未满 3 期时，系统直接沿用上期尾码；'
+                       '否则采用你本期新选。你的尾项仍会记为换码候选，可正常自主选择。')
+    else:
+        restriction = '本期无上一期尾码，按你本期自主选择封存。'
     panel_section = ''
     panel_context_text = None
     panel_context_sha = None
@@ -375,28 +414,36 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None):
         f'· {latest_line}\n\n'
         '【上期重码 / 邻码候选（±1，0↔9 循环；上期号码的重复或相邻数字）】\n'
         + '\n'.join(neighbor_lines) + '\n\n'
+        '【五种合尾候选对比（合尾 = 对应位置数字之和的个位；'
+        '按该尾候选码近50期真实杀号命中率排序，顺序不代表推荐）】\n'
+        + '\n'.join(tail_lines) + '\n\n'
+        '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 2 个不同位置，并从每个位置的近50期热码 top3、'
         '上期重码、上期邻码（±1）中排除 1 个数字（0-9）；两个位置都计入整组，不得只给 1 个；'
         '不得以上期冷码 / 长遗漏码作为定位依据；\n'
-        '2. 命中口径：位置 = 目标期该位置实际开奖号不等于该位置的排除码（2 个位置各计 1 注）；'
-        '2 个位置同时命中才算整组命中（共 2 项）；\n'
-        '3. 两个位置各自独立稳定化：上期某位置命中且该位置自动沿用未满 3 期时，'
+        '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；'
+        '系统按稳定化规则决定最终封存尾码；\n'
+        '3. 命中口径：位置 = 目标期该位置实际开奖号不等于该位置的排除码（2 个位置各计 1 注）；'
+        '合尾 = 目标期该合尾实际和值个位不等于排除码；'
+        '以上 3 项（2 个位置 + 1 个合尾）同时命中才算整组命中；\n'
+        '4. 两个位置各自独立稳定化：上期某位置命中且该位置自动沿用未满 3 期时，'
         '系统会沿用该位置上期杀码；两个位置互不影响，你的两项均记为换码候选，可正常自主选择；\n'
-        '4. 热码、重码、邻码、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
-        '5. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
+        '5. 热码、重码、邻码、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
+        '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"positions":[{"key":"q|b|s|g","kill":<0-9整数>},'
         '{"key":"q|b|s|g","kill":<0-9整数>}],'
+        '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
         '"reason":"40字以内"}\n'
-        '注意：positions 必须恰好 2 项，key 互不相同；不需要输出合尾（tail）、形态（form_type/form）。'
+        '注意：positions 必须恰好 2 项，key 互不相同；不需要输出形态（form_type/form）。'
     )
     if panel_section:
         _marker = prompt.find('【任务】')
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill1-tail-prompt-v6-two-position-no-tail',
+        'version': 'kill1-tail-prompt-v4-two-position-one-tail',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -412,6 +459,12 @@ def build_prompt(reference, target, rows, *, panel_snapshot=None):
         'latest_row': {'period': str(reference),
                        'digits': {key: str(latest_digits[key])
                                   for key, _label, _index in POSITIONS}},
+        'tail_comparison': [{'key': key, 'label': label, 'candidate': str(kill),
+                             'hit50': round(hit50, 6), 'hit30': round(hit30, 6)}
+                            for key, label, kill, _count, _omission, hit50, hit30 in tail_rows],
+        'previous_tail': previous_tail,
+        'tail_policy': TAIL_POLICY,
+        'tail_hold_max': TAIL_HOLD_MAX,
         'position_policy': POSITION_POLICY,
         'position_hold_max': POSITION_HOLD_MAX,
         'panel_context_sha256': panel_context_sha,
@@ -841,6 +894,8 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'publication_state': 'prepared',
         'positions': prediction['positions'],
         'counted': prediction.get('counted') or list(prediction['positions']),
+        'tail': prediction['tail'],
+        'tail_policy': prediction.get('tail_policy'),
         'position_policy': prediction.get('position_policy'),
         'reason': prediction['reason'],
         'model': resolve_model(),
@@ -920,15 +975,14 @@ def settle_pending(snapshot=None, now=None):
             kill_number = digit(kill)
             positions[key] = {'kill': str(kill_number), 'actual': str(actual[index]),
                               'hit': kill_number is not None and actual[index] != kill_number}
-        tail = seal.get('tail') if isinstance(seal.get('tail'), dict) else {}
+        tail = seal.get('tail') or {}
         tail_key = tail.get('key')
         tail_kill = digit(tail.get('kill'))
-        tail_entry = None
-        if tail_key in TAILS and tail_kill is not None:
-            actual_tail = tail_actual(actual, tail_key)
-            tail_entry = {'key': tail_key, 'label': TAILS[tail_key]['label'],
-                          'kill': str(tail_kill), 'actual': str(actual_tail),
-                          'hit': actual_tail != tail_kill}
+        actual_tail = tail_actual(actual, tail_key) if tail_key in TAILS else None
+        tail_entry = {'key': tail_key,
+                      'label': TAILS[tail_key]['label'] if tail_key in TAILS else '',
+                      'kill': str(tail_kill), 'actual': str(actual_tail),
+                      'hit': tail_kill is not None and actual_tail is not None and actual_tail != tail_kill}
         form_type = seal.get('form_type')
         kind = {'reverse_parity': 'parity', 'reverse_size': 'size'}.get(form_type)
         sealed_form = seal.get('form')
@@ -947,8 +1001,7 @@ def settle_pending(snapshot=None, now=None):
                       'actual': actual_form, 'hit': form_hit}
         counted = seal.get('counted') or list(positions)
         group_hit = (all(positions[key]['hit'] for key in counted if key in positions)
-                     and (tail_entry['hit'] if tail_entry is not None else True)
-                     and form_hit is not False)
+                     and tail_entry['hit'] and form_hit is not False)
         published = parse_time(seal.get('published_at'))
         drawn = parse_time(record.get('opentime'))
         verified = (seal.get('publication_state') == 'published' and published is not None
@@ -1034,10 +1087,7 @@ def today_stats(now=None):
             if entry.get('hit') is True:
                 per_position[key]['hits'] += 1
                 position_hits += 1
-    tail_bets = sum(1 for item in todays
-                    if isinstance(item.get('tail'), dict) and item['tail'])
-    tail_hits = sum(1 for item in todays
-                    if isinstance(item.get('tail'), dict) and item['tail'].get('hit') is True)
+    tail_hits = sum(1 for item in todays if (item.get('tail') or {}).get('hit') is True)
     form_hits = form_bets = 0
     form_types = {field: {'hits': 0, 'bets': 0, 'rate': None} for field in REVERSE_KEYS}
     for item in todays:
@@ -1075,9 +1125,8 @@ def today_stats(now=None):
         'positions': {'bets': position_bets, 'hits': position_hits,
                       'rate': (position_hits / position_bets) if position_bets else None},
         'per_position': per_position,
-        'tail': ({'hits': tail_hits, 'bets': tail_bets,
-                  'rate': (tail_hits / tail_bets) if tail_bets else None}
-                 if tail_bets else None),
+        'tail': {'hits': tail_hits, 'bets': total,
+                 'rate': (tail_hits / total) if total else None},
         'form': {'hits': form_hits, 'bets': form_bets,
                  'rate': (form_hits / form_bets) if form_bets else None,
                  'types': form_types},

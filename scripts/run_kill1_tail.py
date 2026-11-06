@@ -1,4 +1,4 @@
-"""AI 双位置杀码 每期任务（cron 每 5 分钟，开奖后启动）。
+"""AI 双位置 + 一合尾 每期任务（cron 每 5 分钟，开奖后启动）。
 
 流程：
 1. 等待本期开奖数据就绪（最多 55 秒）；
@@ -107,6 +107,7 @@ def main():
     deadline, target = kill1_tail.deadline_for(reference)
     rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
     previous_seal = seals[-1] if seals else None
+    previous_tail = (previous_seal.get('tail') or {}) if isinstance(previous_seal, dict) else {}
     panel_snapshot = panel_context.build(
         reference, target,
         kill1_stats=kill1_tail.today_stats(),
@@ -115,6 +116,7 @@ def main():
     print('kill1 panel context sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
     prompt, audit = kill1_tail.build_prompt(
         reference, target, rows,
+        previous_tail=previous_tail if isinstance(previous_tail, dict) else None,
         panel_snapshot=panel_snapshot)
     try:
         prediction, generated_at, meta = kill1_tail.request_prediction(
@@ -130,6 +132,7 @@ def main():
         return 0
     settlements = kill1_tail.load_settlements()
     prediction = kill1_tail.apply_position_policy(prediction, seals, settlements)
+    prediction = kill1_tail.apply_tail_policy(prediction, seals, settlements)
     seal = kill1_tail.create_seal(reference, target, latest.get('opentime'), prediction,
                                   prompt, audit, generated_at, meta)
     kill1_tail.save_seal(seal)
@@ -143,7 +146,8 @@ def main():
     picked = ' · '.join('%s 杀%s' % (kill1_tail.POSITION_LABELS[key],
                                       prediction['positions'][key])
                          for key in prediction.get('counted') or [])
-    print(f'kill1 published: ref={reference} target={target} rule={kill1_tail.RULE_VERSION} {picked}')
+    print(f'kill1 published: ref={reference} target={target} rule={kill1_tail.RULE_VERSION} {picked} · '
+          f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]}')
     position_policy = prediction.get('position_policy') or {}
     if position_policy:
         items = position_policy.get('items')
@@ -159,6 +163,13 @@ def main():
             print('kill1 position policy: ' + str(position_policy.get('note'))
                   + ' · sealed=' + str(position_policy.get('sealed_kill'))
                   + ' · model=' + str(position_policy.get('model_kill')))
+    tail_policy = prediction.get('tail_policy') or {}
+    if tail_policy:
+        print('kill1 tail policy: ' + str(tail_policy.get('note'))
+              + ' · sealed=' + str(prediction['tail'].get('key')) + '/'
+              + str(prediction['tail'].get('kill'))
+              + ' · model=' + str((tail_policy.get('model_tail') or {}).get('key')) + '/'
+              + str((tail_policy.get('model_tail') or {}).get('kill')))
     return 0
 
 
