@@ -14,7 +14,7 @@
       ],
       "createdAt": "2026-11-06T00:16:26.957Z",
       "updatedAt": "2026-11-06T00:16:26.957Z",
-      "lastAccessedAt": "2026-11-06T08:12:37.836Z",
+      "lastAccessedAt": "2026-11-06T08:25:28.610Z",
       "revision": 1,
       "contentHash": "3cea350c6143f1f1781011e3bfd31c9376d495e90cf552c34c80f3f265d4067a",
       "sizeBytes": 5674,
@@ -35,7 +35,7 @@
       ],
       "createdAt": "2026-11-06T03:04:41.409Z",
       "updatedAt": "2026-11-06T03:04:41.409Z",
-      "lastAccessedAt": "2026-11-06T08:12:37.836Z",
+      "lastAccessedAt": "2026-11-06T08:25:28.610Z",
       "revision": 1,
       "contentHash": "ef288ce9cd49f81aba8370b060faa78f7a61f689cb2aef7a90210426f440d901",
       "sizeBytes": 5491,
@@ -59,10 +59,33 @@
       ],
       "createdAt": "2026-11-06T08:13:05.134Z",
       "updatedAt": "2026-11-06T08:13:05.134Z",
-      "lastAccessedAt": "2026-11-06T08:13:05.134Z",
+      "lastAccessedAt": "2026-11-06T08:25:28.610Z",
       "revision": 1,
       "contentHash": "010aa918f743d47f4c31a7c47952ccbaca186ada02532b3cf7044f4031a452dd",
       "sizeBytes": 8333,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "66b9c4b9-9241-4056-98f3-2fe2827de53c",
+      "title": "penta5 kill3 面板命中率「断崖」诊断：70% 高点是累计曲线随机涨点（2026-11-06）",
+      "description": "回答「为什么命中率一度 70% 又断崖下跌、模型是不是坏了」的只读诊断：1,202 期精确基线复算、日内累计峰值与随机回撤 MC、缺期（AI 余额守卫关总闸）与换版清零三层归因、v16 回滚门禁临界状态与下一步。当需要解释面板今日/本版累计行跳动、判断某版本是否真偏低、或排查 kill3 缺期时参考。",
+      "status": "active",
+      "filename": "penta5-kill3-70-2026-11-06-66b9c4b9.md",
+      "relativePath": "documents/active/penta5-kill3-70-2026-11-06-66b9c4b9.md",
+      "sourcePaths": [
+        "penta5-audit/A-hitrate.md",
+        "penta5-audit/B-economics.md",
+        "penta5-audit/C-signal.md"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-1aaf6509-8b69-4735-b5dc-9951837d198a"
+      ],
+      "createdAt": "2026-11-06T08:26:03.567Z",
+      "updatedAt": "2026-11-06T08:26:03.567Z",
+      "lastAccessedAt": "2026-11-06T08:26:03.567Z",
+      "revision": 1,
+      "contentHash": "b86a7402b77cafc3c42420a290ea09584c736f0a51ca6551c278359dd841c9eb",
+      "sizeBytes": 9540,
       "memoryBodyIds": []
     }
   ]
