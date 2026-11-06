@@ -44,7 +44,7 @@ TASKS = (
      'env_chain': ('PENTA5_MODEL_HE3', 'PENTA5_DEEPSEEK_MODEL')},
     {'key': 'kill3_tail', 'usage_key': 'kill3', 'label': 'AI 三位置杀码',
      'env_chain': ('PENTA5_MODEL_KILL3', 'PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL')},
-    {'key': 'kill1_tail', 'usage_key': 'kill1', 'label': 'AI 双位置杀码（3 项）',
+    {'key': 'kill1_tail', 'usage_key': 'kill1', 'label': 'AI 自选 2~4 位置杀码（N+1 项）',
      'env_chain': ('PENTA5_MODEL_KILL1', 'PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL')},
 )
 

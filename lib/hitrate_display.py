@@ -3,7 +3,7 @@
 
 数据源（全部只读）：
   data/kill3_tail/settlements.json   kill3 逐期结算（8 项：2 计入位置 + 合尾 + 2 反向形态 + 3 组三数共现）
-  data/kill1_tail/settlements.json   kill1 逐期结算（3 项：2 位置 + 合尾）
+  data/kill1_tail/settlements.json   kill1 逐期结算（v4 起 2 位置 + 合尾=3 项；v7 起 AI 自选 2~4 位置=N+1 项）
   data/r1_framework_hit_stats.json   八项框架逐期 outcomes（8 项）
   data/framework_hitrate_cumulative.json（调用方传入 rows，复用其 rule / n / expected）
 
@@ -17,7 +17,7 @@
 - 随机参照：以该框架累计精确基线 expected 作为独立伯努利 p，固定种子模拟同 n 期累计曲线，
   burn-in 25 期后取最大回撤分布（中位 / p90 / P(最大回撤 >= 观测自峰值回撤)）。
   含义：同期纯随机序列通常也会出现多大的回撤，用来区分「断崖」与「随机波动」。
-- 项级命中：每期命中项数（kill3 8 项、kill1 3 项、framework 8 项）的累计均值与项级命中率。
+- 项级命中：每期命中项数（kill3 8 项、kill1 N+1 项、framework 8 项）的累计均值与项级命中率。
 - 只统计 verified 且计入（counted）的记录；缺项的期只跳过项级统计，整组回撤不受影响。
 - 任何异常返回 {}，调用方按缺失降级；numpy 缺失时不输出（视图自动隐藏回撤/项级）。
 """
@@ -87,7 +87,7 @@ def _kill3_items(row):
 
 
 def _kill1_items(row):
-    """kill1 当期命中项数 (hits, total)；2 位置 + 1 合尾 = 3 项。"""
+    """kill1 当期命中项数 (hits, total)；counted 位置数 + 1 合尾（v4=3 项，v7 起 N+1 项）。"""
     try:
         counted = row.get('counted') or []
         positions = row.get('positions') or {}

@@ -1,9 +1,9 @@
 """kill1 pro-vs-flash 影子 A/B 报告（预注册判据见 kill1-ab-experiment-plan.md）。
 
-口径与线上封存一致（lib/kill1_tail.py v4）：
-- 位置命中 = 该位置实际开奖号 != 杀码（2 个位置各算 1 项，全部计入整组）；
+口径与线上封存一致（lib/kill1_tail.py v7，AI 自选 2~4 个位置 + 一合尾）：
+- 位置命中 = 该位置实际开奖号 != 杀码（AI 本期所选 N 个位置各算 1 项，全部计入整组，N=2~4）；
 - 合尾命中 = 对应位置和值个位 != 排除码；
-- 整组命中 = 2 个位置 + 1 个合尾同时命中（3 项合取）。
+- 整组命中 = N 个位置 + 1 个合尾同时命中（N+1 项合取；逐项计数由封存 counted 驱动，不写死项数）。
 评估只为「同一 reference 两臂都成功且 prompt 相同」的配对样本，用
 data/kill1_tail/settlements.json 里的 actual 四位开奖号独立复算，不依赖面板统计。
 """
@@ -441,7 +441,7 @@ def format_text(report):
                  % (counts['pro_fail'], counts.get('pro_error_types') or {},
                     counts['flash_fail']))
     lines.append('')
-    for metric, label in (('group', '整组（2 位置+1 合尾 3 项全中）'),
+    for metric, label in (('group', '整组（N 个位置+1 合尾，共 N+1 项全中，N=2~4）'),
                           ('tail', '合尾单项')):
         row = report['metrics'][metric]
         flash = row['flash']
@@ -483,7 +483,7 @@ def format_text(report):
     sealed = report.get('sealed')
     if sealed:
         lines.append('')
-        lines.append('同 target 对照（v4 已封存）：sealed %s；flash raw %s；pro raw %s'
+        lines.append('同 target 对照（当前版本已封存）：sealed %s；flash raw %s；pro raw %s'
                      % (_fmt_rate(*sealed['sealed']), _fmt_rate(*sealed['flash']),
                         _fmt_rate(*sealed['pro'])))
     lines.append('')

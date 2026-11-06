@@ -1,13 +1,14 @@
-"""AI 双位置杀码 + 一合尾建议面板区块（kill1 独立框架，v4）。
+"""AI 自选 2~4 位置杀码 + 一合尾建议面板区块（kill1 独立框架，v7）。
 
 数据源 data/kill1_tail/{seals,settlements}.json，由 scripts/run_kill1_tail.py 每期生成。
 与 kill3 完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
 
 命中口径（写死，面板脚注同步展示）：
-- 位置命中 = 该位置实际开奖号 != 排除码（每期 2 个不同位置各排除 1 码，共 2 注/期，两项均计入整组）；
+- 位置命中 = 该位置实际开奖号 != 排除码（AI 每期自选 N 个不同位置各排除 1 码，共 N 注/期，全部计入整组，N=2~4）；
 - 合尾命中 = 该合尾实际和值个位 != 排除码（5 种合尾选 1）；
-- 整组命中 = 2 位置 + 1 合尾同时命中（共 3 项）；
-- 位置稳定化 v4 = 两个位置各自独立 hold3-until-miss；合尾沿用 hold3-until-miss；
+- 整组命中 = N 位置 + 1 合尾同时命中（共 N+1 项，N=2~4）；
+- 位置稳定化 v7 = 最终位置集合恒等于 AI 本期所选，各位置独立 hold3-until-miss；合尾沿用 hold3-until-miss；
+- 整组随机基线随 N 变动：expected_group_rate = 0.9^(N+1)（N=2 72.90% / N=3 65.61% / N=4 59.05%）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 """
@@ -22,11 +23,13 @@ import kill1_tail
 START = '<!-- KILL_ONE_START -->'
 END = '<!-- KILL_ONE_END -->'
 
-# 整组随机基线兜底：(项数, 精确期望命中率)。
-# 3 项 = 2 个不同位置各杀 1 码 + 1 个合尾；均匀配置下 10^4 全枚举每条配置恰 7290/10000。
-FALLBACK_BASELINE = (3, 0.729)
+# 整组随机基线兜底文案：v7 起 AI 自选 N 个位置（N=2~4）+ 1 合尾 = N+1 项，
+# 精确期望按闭式 0.9^(N+1)：N=2 72.90% / N=3 65.61% / N=4 59.05%。
+# 基线优先读最新封存的 position_count / expected_items / expected_group_rate 动态渲染；
+# 未登记基线且暂无新封存可读时，显示区间文案（不再写死单一档位）：
+FALLBACK_BASELINE_TEXT = 'N+1 项（N=2~4），精确基线 59.05%~72.90%'
 
-_TITLE = '🤖 AI 双位置杀码 + 一合尾建议'
+_TITLE = '🤖 AI 自选 2~4 位置杀码 + 一合尾建议'
 
 _PARITY_OPPOSITE = {'单': '双', '双': '单'}
 _SIZE_OPPOSITE = {'大': '小', '小': '大'}
@@ -83,9 +86,9 @@ def _stats_html(stats):
     tail_stats = stats.get('tail') or {}
     if total:
         join = ' · '.join([
-            '整组命中率（3 项全中：2 位置 + 合尾） <b>%s</b>（%s/%s 期）'
+            '整组命中率（N+1 项全中：N 位置 + 合尾，N=2~4） <b>%s</b>（%s/%s 期）'
             % (_pct(stats.get('group_rate')), stats.get('group_hits'), total),
-            '位置杀码（2 注/期，单项随机基线90%%） <b>%s</b>（%s/%s 注）'
+            '位置杀码（N 注/期，单项随机基线90%%） <b>%s</b>（%s/%s 注）'
             % (_pct(positions.get('rate')), positions.get('hits'), positions.get('bets')),
             '合尾杀码（随机基线90%%） <b>%s</b>（%s/%s 期）'
             % (_pct(tail_stats.get('rate')), tail_stats.get('hits'), tail_stats.get('bets')),
@@ -98,7 +101,7 @@ def _stats_html(stats):
         join += ' · 未计入（发布晚于开奖）%s 期' % late
     legacy = stats.get('legacy') or {}
     if legacy.get('total'):
-        join += (' · 旧口径（v1–v3 含形态、v6 无合尾封存）%s 期（整组 %s 中）已归档不计入'
+        join += (' · 旧口径（v1–v6：含形态 / 固定两位置 / 试验版封存）%s 期（整组 %s 中）已归档不计入'
                  % (legacy.get('total'), legacy.get('group_hits')))
     win = stats.get('current_win_streak') or 0
     loss = stats.get('current_loss_streak') or 0
@@ -177,7 +180,7 @@ def _form_derivation(seal):
 
 
 def _position_policy_html(seal):
-    """双位置独立 hold3 稳定化说明（v4）；旧单条 position_policy 走兼容分支。"""
+    """位置独立 hold3 稳定化说明（v7：最终位置集合恒等于 AI 本期所选，各位置独立 hold3）；旧单条 position_policy 走兼容分支。"""
     policy = seal.get('position_policy')
     if not isinstance(policy, dict) or not policy:
         return ''
@@ -259,8 +262,40 @@ def _missing_version_targets(rule):
         return []
 
 
+def _latest_seal_baseline(rule):
+    """v7 起整组项数随 AI 自选位置数 N 变动：读最新封存的 position_count / expected_items / expected_group_rate。
+    旧封存没有这些字段时返回 None，由调用方显示区间兜底文案。"""
+    try:
+        seals = kill1_tail.load_seals()
+    except Exception:
+        return None
+    if not isinstance(seals, list):
+        return None
+    for seal in reversed(seals):
+        if not isinstance(seal, dict):
+            continue
+        if rule and str(seal.get('rule_version') or '') != rule:
+            continue
+        try:
+            items = int(seal.get('expected_items'))
+        except (TypeError, ValueError):
+            continue
+        if items < 1:
+            continue
+        try:
+            count = int(seal.get('position_count'))
+        except (TypeError, ValueError):
+            count = items - 1
+        try:
+            rate = float(seal.get('expected_group_rate'))
+        except (TypeError, ValueError):
+            rate = 0.9 ** items
+        return {'items': items, 'count': count, 'rate': rate}
+    return None
+
+
 def _version_html(stats=None):
-    """口径追溯行：rule_version、自 ref 起期数（含待核验）、缺期披露、整组精确基线（未登记回退 FALLBACK_BASELINE）。"""
+    """口径追溯行：rule_version、自 ref 起期数（含待核验）、缺期披露、整组精确基线（未登记时读最新封存按 N 动态渲染，再兜底区间文案）。"""
     try:
         stats = stats if isinstance(stats, dict) else {}
         rule = str(getattr(kill1_tail, 'RULE_VERSION', '') or '')
@@ -276,8 +311,6 @@ def _version_html(stats=None):
             baseline = RULE_BASELINE.get(('kill1_tail', rule))
         except Exception:
             baseline = None
-        if not baseline:
-            baseline = FALLBACK_BASELINE
         parts = ['口径 ' + escape(rule)]
         first = info.get('first_ref')
         if first:
@@ -297,8 +330,16 @@ def _version_html(stats=None):
                 shown += '；等'
             parts.append('缺期 %d 槽（%s），不计入累计 n、不按 0 命中'
                          % (len(missing), escape(shown)))
-        parts.append('整组精确基线 %.2f%%（%d 项）'
-                     % (float(baseline[1]) * 100.0, int(baseline[0])))
+        if baseline:
+            parts.append('整组精确基线 %.2f%%（%d 项）'
+                         % (float(baseline[1]) * 100.0, int(baseline[0])))
+        else:
+            dynamic = _latest_seal_baseline(rule)
+            if dynamic:
+                parts.append('整组精确基线 %.2f%%（%d 项，N=%d）'
+                             % (dynamic['rate'] * 100.0, dynamic['items'], dynamic['count']))
+            else:
+                parts.append(FALLBACK_BASELINE_TEXT)
         parts.append('kill1 独立框架：与 kill3 独立封存 / 结算 / 统计')
         return '<div class="k1-drop">' + ' · '.join(parts) + '</div>'
     except Exception:
@@ -427,9 +468,11 @@ def render_block():
     html.append(_position_policy_html(seal))
     html.append(_tail_policy_html(seal))
     html.append(_form_derivation(seal))
-    html.append('<div class="k1-drop">整组 3 项：2 位置 + 1 合尾（两位置各 1 注、均计入整组）；'
-                '位置稳定化 v4 起两位置各自独立 hold3（命中自动沿用，最多自动沿用 3 期）；'
-                '位置与杀码不做连用限制（完全由模型每期自选）</div>')
+    pos_n = sum(1 for _key, _label, _index in kill1_tail.POSITIONS if _key in counted) or len(counted)
+    html.append('<div class="k1-drop">整组 %d 项：%d 位置 + 1 合尾（每位置各 1 注、均计入整组，N=%d）；'
+                '位置稳定化 v7 起最终位置集合恒等于 AI 本期所选、各位置独立 hold3（命中自动沿用，最多自动沿用 3 期）；'
+                '位置与杀码不做连用限制（完全由模型每期自选）</div>'
+                % (pos_n + 1, pos_n, pos_n))
     html.append('<div class="k1-drop">发布 %s · 窗口 %s 期 · 关盘按开奖槽位倒推 70 秒</div>'
                 % (_clock(seal.get('published_at')), escape(str(seal.get('window') or '-'))))
     html.append('<div class="k1-verify">' + _settlement_line(settlement) + '</div>')
@@ -457,7 +500,7 @@ def _attack_html(seal):
         template = (
             '<div class="k1-attack">'
             '<div class="k1-attack-title">攻击语（复制到平台，与八项同格式）</div>'
-            '<textarea id="kill1-attack-text" readonly aria-label="AI 双位置+一合尾攻击语"'
+            '<textarea id="kill1-attack-text" readonly aria-label="AI 自选 2~4 位置+一合尾攻击语"'
             ' style="width:100%;min-height:52px;margin-top:6px;padding:6px;border:1px solid #c7d2fe;'
             'border-radius:6px;background:#fff;font:12px/1.5 monospace;color:#334155;resize:vertical">'
             '__ATTACK__</textarea>'
@@ -485,14 +528,15 @@ def _attack_html(seal):
 
 def _foot_html():
     return ('<div class="k1-foot">口径（写死）：位置杀码 = 该位置实际开奖号 ≠ 排除码'
-            '（每期 2 个不同位置各排除 1 码，两项均计入整组，共 2 注/期）；'
+            '（AI 每期自选 N 个不同位置各排除 1 码，全部计入整组，共 N 注/期，N=2~4）；'
             '合尾杀码 = 该合尾实际和值个位 ≠ 排除码（5 种合尾选 1）；'
-            '整组命中 = 2 位置 + 1 合尾同时命中（共 3 项）。'
-            '位置稳定化 v4：两位置各自独立 hold3-until-miss（命中自动沿用同位置同杀码，最多连续沿用 3 期，'
-            '上期未命中或满 3 期换码）；合尾沿用 hold3-until-miss。'
+            '整组命中 = N 位置 + 1 合尾同时命中（共 N+1 项，N=2~4）。'
+            '位置稳定化 v7：最终位置集合恒等于 AI 本期所选，各位置独立 hold3-until-miss'
+            '（命中自动沿用同位置同杀码，最多连续沿用 3 期，上期未命中或满 3 期换码）；合尾沿用 hold3-until-miss。'
+            '整组随机基线随 N 变动：0.9^(N+1)（N=2 72.90% / N=3 65.61% / N=4 59.05%）。'
             '只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；'
             '只使用前 4 球（千/百/十/个），第 5 球不参与；关盘前 70 秒截止。'
-            'v1/v2/v3 旧封存（含形态）历史归档，不计入 v4 统计。</div>')
+            'v4 及更早版本（固定两位置 / 含形态 / 试验版）历史归档，不计入 v7 统计。</div>')
 
 
 def apply_kill_one_block(content, report=None):

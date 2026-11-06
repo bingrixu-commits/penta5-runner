@@ -15,6 +15,13 @@
       "until": "2026-11-07T02:00:00+08:00",
       "reason": "kill3 v16 弃位形态按冷热取冷的有意升级（2026-11-06 00:01 首封存 / 00:13 首次观测），过渡期 churn 告警已登记降噪；24h 后阈值本身也会自愈",
       "registered_at": "2026-11-06T01:16:08+08:00"
+    },
+    {
+      "key": "kill1_tail",
+      "rule": "kill1-tail-v7-flexible-two-four-position-one-tail",
+      "until": "2026-11-08T04:21:17+08:00",
+      "reason": "kill1 v7 AI 自选 2~4 位置+一合尾的有意升级（首封存后观察），过渡期 churn 告警登记降噪；动态期望基线按逐期 expected_group_rate 计算",
+      "registered_at": "2026-11-06T22:21:17+08:00"
     }
   ]
 }

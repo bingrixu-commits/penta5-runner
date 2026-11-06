@@ -1,8 +1,8 @@
-"""AI 双位置杀码 + 一合尾（独立框架，数据独立封存/统计）。
+"""AI 自选 2~4 位置杀码 + 一合尾（独立框架，数据独立封存/统计）。
 
-口径（面板、封存与统计都按此写死）：
-- 由 DeepSeek 从 千/百/十/个 四个位置中选 2 个不同位置，各排除 1 个数字（杀码），
-  两个位置都计入整组（每期 2 注）；
+口径（面板、封存与统计都按此写死，v7 起）：
+- 由 DeepSeek 从 千/百/十/个 四个位置中自选 N 个不同位置（N=2~4），每个位置排除 1 个数字（杀码），
+  N 个位置全部计入整组（每期 N 注，N 由 AI 按本期把握决定）；
 - 定位依据（v2 起）：每个位置给出近 50 期热码 top3 与上期（参考期）该位置重码/邻码
   （±1，0↔9 循环），模型须从中选择排除码，不得以冷码（出现次数少、当前遗漏长）为依据；
   v1 的冷码定位口径已归档，旧封存保留原 rule_version 不再产生新记录；
@@ -11,13 +11,16 @@
   满 3 期后由模型本期重选（重选可与上期同码）；模型尾项在封存里记为换码候选
   （tail_policy.model_tail）；
 - 位置命中 = 该位置实际开奖号 != 杀码；合尾命中 = 该合尾实际和值个位 != 排除码；
-- 整组命中 = 2 个位置 + 1 个合尾同时命中（共 3 项）；
+- 整组命中 = N 个位置 + 1 个合尾同时命中（共 N+1 项）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
-- 位置杀码稳定化 hold3-until-miss（v3 起，v4 起双位置各自独立）：某位置杀码命中后沿用同位置同杀码、
-  最多自动沿用 3 期；失手或满 3 期后由模型重选（重选可与上期同码）；两个位置互不影响；
-  模型位置项在封存里记为换码候选（position_policy.items[*].model_kill）；
+- 位置杀码稳定化 hold3-until-miss（v7 起 N 个位置各自独立）：某位置在上一期封存中被计入、
+  上期该位置命中且自动沿用未满 3 期时，沿用上期同位置杀码；失手、满 3 期或上期未选该位置时
+  由模型本期重选（重选可与上期同码）；N 个位置互不影响；模型位置项在封存里记为换码候选
+  （position_policy.items[*].model_kill）；
+- 封存/结算逐期登记 position_count / expected_items / expected_group_rate / expected_basis
+  （整组随机期望 = 0.9^(N+1)，N=2 72.9%、N=3 65.61%、N=4 59.049%）；
 - v4 起不再预测、展示或结算四位反向形态；旧 v3 及更早封存的 form 字段与归档命中保留，
-  不计入 v4 统计；
+  不计入 v7 统计；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
 数据落点：
@@ -73,8 +76,9 @@ REVERSE_KEYS = ('reverse_parity', 'reverse_size')
 REVERSE_LABELS = {'reverse_parity': '单双反向形态', 'reverse_size': '大小反向形态'}
 FORM_LABELS = dict(REVERSE_LABELS)
 
-RULE_VERSION = 'kill1-tail-v4-two-position-one-tail'
-COUNTED_POSITIONS = 2
+RULE_VERSION = 'kill1-tail-v7-flexible-two-four-position-one-tail'
+MIN_POSITIONS = 2
+MAX_POSITIONS = 4
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
 POSITION_HOLD_MAX = 3
@@ -83,9 +87,9 @@ POSITION_POLICY = 'hold3-until-miss'
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
-    'positions 必须是恰好 2 个对象组成的数组，每个对象为 '
+    'positions 必须是 2 至 4 个对象组成的数组，每个对象为 '
     '\u007b\u007b\u0022key\u0022:\u0022q|b|s|g 之一\u0022,\u0022kill\u0022:0 至 9 的整数\u007d\u007d，'
-    '且两个 key 必须不同；'
+    '且各 key 必须不同（共 2 至 4 个位置）；'
     'tail 为 \u007b\u007b\u0022key\u0022: 五种之一, \u0022kill\u0022: 0 至 9 的整数\u007d\u007d；'
     '合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
@@ -297,8 +301,8 @@ def normalize_response(response):
         source_items = raw_positions
     else:
         raise ValueError('positions 必须是数组')
-    if len(source_items) != COUNTED_POSITIONS:
-        raise ValueError('positions 必须恰好包含 %d 个位置' % COUNTED_POSITIONS)
+    if not MIN_POSITIONS <= len(source_items) <= MAX_POSITIONS:
+        raise ValueError('positions 必须包含 %d 至 %d 个位置' % (MIN_POSITIONS, MAX_POSITIONS))
     kills = {}
     for item in source_items:
         if not isinstance(item, dict):
@@ -310,8 +314,8 @@ def normalize_response(response):
         if number is None:
             raise ValueError('位置杀码必须是 0 至 9 的整数')
         kills[key] = str(number)
-    if len(kills) != COUNTED_POSITIONS:
-        raise ValueError('positions 必须恰好包含 %d 个不同位置' % COUNTED_POSITIONS)
+    if not MIN_POSITIONS <= len(kills) <= MAX_POSITIONS:
+        raise ValueError('positions 必须包含 %d 至 %d 个不同位置' % (MIN_POSITIONS, MAX_POSITIONS))
     tail = response.get('tail')
     if not isinstance(tail, dict):
         raise ValueError('tail 必须是对象')
@@ -419,16 +423,19 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         + '\n'.join(tail_lines) + '\n\n'
         '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【任务】\n'
-        '1. 从 千/百/十/个 四个位置中挑 2 个不同位置，并从每个位置的近50期热码 top3、'
-        '上期重码、上期邻码（±1）中排除 1 个数字（0-9）；两个位置都计入整组，不得只给 1 个；'
+        '1. 自行决定本期采用 2~4 个不同位置（即 2 至 4 个，N 由你按本期把握决定，不要固定为同一个数），'
+        '从 千/百/十/个 中选，并从每个位置的近50期热码 top3、'
+        '上期重码、上期邻码（±1）中排除 1 个数字（0-9）；N 个位置全部计入整组，'
+        '不得只给 1 个，也不得超过 4 个；'
         '不得以上期冷码 / 长遗漏码作为定位依据；\n'
         '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；'
         '系统按稳定化规则决定最终封存尾码；\n'
-        '3. 命中口径：位置 = 目标期该位置实际开奖号不等于该位置的排除码（2 个位置各计 1 注）；'
+        '3. 命中口径：位置 = 目标期该位置实际开奖号不等于该位置的排除码（N 个位置各计 1 注）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
-        '以上 3 项（2 个位置 + 1 个合尾）同时命中才算整组命中；\n'
-        '4. 两个位置各自独立稳定化：上期某位置命中且该位置自动沿用未满 3 期时，'
-        '系统会沿用该位置上期杀码；两个位置互不影响，你的两项均记为换码候选，可正常自主选择；\n'
+        '以上 N+1 项（N 个位置 + 1 个合尾）同时命中才算整组命中；\n'
+        '4. N 个位置各自独立稳定化：同一 rule 的上一期封存中某位置被计入且该位置命中、'
+        '自动沿用未满 3 期时，系统会沿用该位置上期杀码；N 个位置互不影响，'
+        '你的 N 项均记为换码候选，可正常自主选择；\n'
         '5. 热码、重码、邻码、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
@@ -436,21 +443,23 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '{"key":"q|b|s|g","kill":<0-9整数>}],'
         '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
         '"reason":"40字以内"}\n'
-        '注意：positions 必须恰好 2 项，key 互不相同；不需要输出形态（form_type/form）。'
+        '注意：positions 必须为 2~4 项（即 2 至 4 项，N 由你按本期把握决定，'
+        '示例仅为格式参考，请按实际选择输出 2/3/4 项）；key 互不相同；'
+        '不需要输出形态（form_type/form）。'
     )
     if panel_section:
         _marker = prompt.find('【任务】')
         if _marker != -1:
             prompt = prompt[:_marker] + panel_section + prompt[_marker:]
     audit = {
-        'version': 'kill1-tail-prompt-v4-two-position-one-tail',
+        'version': 'kill1-tail-prompt-v7-flexible-two-four-position-one-tail',
         'reference': reference,
         'target': target,
         'window': WINDOW,
         'history_sha256': sha256(history.encode('utf-8')).hexdigest(),
         'rows': [[str(int(value)) for value in row] for row in window],
         'position_basis': 'hot-repeat-neighbor',
-        'counted_positions': COUNTED_POSITIONS,
+        'position_range': [MIN_POSITIONS, MAX_POSITIONS],
         'hot_ranking': [{'key': key, 'label': label,
                          'top': [{'number': str(number), 'count': count,
                                   'omission': omission}
@@ -608,77 +617,102 @@ def position_hold_state(seals, settlements):
             'streaks': _position_hold_replay(seals, settlements)}
 
 
-def apply_position_policy(prediction, seals, settlements):
-    """Per-position hold3-until-miss for two independently stabilized positions.
+def _previous_rule_seal(seals):
+    """Latest seal produced by the current rule revision, if any."""
+    for seal in reversed([item for item in (seals or []) if isinstance(item, dict)]):
+        if seal.get('rule_version') == RULE_VERSION:
+            return seal
+    return None
 
-    A position keeps its previous kill when that position hit last period and has
-    not been reused three times yet; remaining slots come from the model's picks.
-    The sealed selection always has exactly two distinct positions, and the
-    model's raw picks stay in position_policy for audit.
+
+def _verified_settlement(settlements, seal):
+    """Verified settlement for the seal's target period, or None."""
+    target = str(seal.get('target_period') or '')
+    if not target:
+        return None
+    for item in reversed([item for item in (settlements or []) if isinstance(item, dict)]):
+        if str(item.get('target_period') or '') == target:
+            return item if item.get('verified') is True else None
+    return None
+
+
+def apply_position_policy(prediction, seals, settlements):
+    """Per-position hold3-until-miss with a variable number of AI-chosen positions.
+
+    Plan B: the sealed position set always equals the N positions chosen by the
+    model this period (N=MIN_POSITIONS~MAX_POSITIONS). For each chosen position,
+    when the latest seal of the current rule revision counted that position, that
+    position hit last period and its automatic reuse run is below
+    POSITION_HOLD_MAX, the previous sealed kill is reused (run+1); otherwise the
+    model's fresh kill is sealed (run=1).
     """
     if not isinstance(prediction, dict):
         raise ValueError('prediction must be a dict')
     model_positions = {}
     for key, value in (prediction.get('positions') or {}).items():
         if key not in POSITION_INDEX:
-            continue
+            raise ValueError('模型位置键必须是 q/b/s/g 之一')
         number = digit(value)
         if number is None:
             raise ValueError('模型位置杀码必须是 0 至 9 的整数')
         model_positions[key] = str(number)
-    if len(model_positions) != COUNTED_POSITIONS:
-        raise ValueError('模型必须给出 %d 个不同位置' % COUNTED_POSITIONS)
+    if not MIN_POSITIONS <= len(model_positions) <= MAX_POSITIONS:
+        raise ValueError('模型必须给出 %d 至 %d 个不同位置' % (MIN_POSITIONS, MAX_POSITIONS))
     streaks = position_hold_state(seals, settlements)['streaks']
+    previous = _previous_rule_seal(seals)
+    previous_positions = (previous.get('positions') or {}) if isinstance(previous, dict) else {}
+    previous_counted = (set(previous.get('counted') or list(previous_positions))
+                        if isinstance(previous, dict) else set())
+    previous_settlement = (_verified_settlement(settlements, previous)
+                           if isinstance(previous, dict) else None)
     final = {}
     items = {}
     notes = []
     for key, label, _index in POSITIONS:
-        if len(final) >= COUNTED_POSITIONS:
-            break
+        if key not in model_positions:
+            continue
+        model_kill = model_positions[key]
         streak = streaks.get(key)
-        if not isinstance(streak, dict):
+        previous_digit = digit(previous_positions.get(key)) if key in previous_positions else None
+        previous_hit = bool(
+            previous_settlement is not None
+            and (((previous_settlement.get('positions') or {}).get(key) or {}).get('hit') is True))
+        counted_last = key in previous_counted and key in previous_positions
+        run = int(streak.get('run') or 0) if isinstance(streak, dict) else 0
+        if counted_last and previous_digit is not None and previous_hit and run < POSITION_HOLD_MAX:
+            final[key] = str(previous_digit)
+            items[key] = {
+                'key': key, 'label': label,
+                'model_kill': model_kill,
+                'sealed_kill': str(previous_digit),
+                'reused_previous': True,
+                'run': run + 1,
+                'note': '沿用同位上期杀码（第%d期，上期命中）' % (run + 1),
+                'previous': streak if isinstance(streak, dict) else {
+                    'digit': str(previous_digit), 'run': run + 1, 'prev_hit': True},
+            }
+            notes.append('%s沿用上期杀%s' % (label, previous_digit))
             continue
-        if streak.get('prev_hit') is not True:
-            continue
-        run = int(streak.get('run') or 0)
-        if run >= POSITION_HOLD_MAX:
-            continue
-        digit_value = str(streak.get('digit'))
-        final[key] = digit_value
-        items[key] = {
-            'key': key, 'label': label,
-            'model_kill': model_positions.get(key),
-            'sealed_kill': digit_value,
-            'reused_previous': True,
-            'run': run + 1,
-            'note': '沿用同位上期杀码（第%d期，上期命中）' % (run + 1),
-            'previous': streak,
-        }
-        notes.append('%s沿用上期杀%s' % (label, digit_value))
-    for key in model_positions:
-        if len(final) >= COUNTED_POSITIONS:
-            break
-        if key in final:
-            continue
-        label = POSITION_LABELS[key]
-        streak = streaks.get(key)
-        digit_value = model_positions[key]
-        if isinstance(streak, dict) and streak.get('prev_hit') is True:
+        if not counted_last:
+            note = '新选（上期未选该位置）'
+        elif previous_settlement is None:
+            note = '新选（上一期尚未结算，无法沿用）'
+        elif previous_hit:
             note = '换码（同位自动沿用已满3期，改由模型重选）'
         elif isinstance(streak, dict) and streak.get('prev_hit') is False:
             note = '换码（同位上期未命中）'
         else:
             note = '新选（同位无沿用状态）'
-        final[key] = digit_value
+        final[key] = model_kill
         items[key] = {
             'key': key, 'label': label,
-            'model_kill': digit_value, 'sealed_kill': digit_value,
+            'model_kill': model_kill, 'sealed_kill': model_kill,
             'reused_previous': False, 'run': 1, 'note': note,
             'previous': streak if isinstance(streak, dict) else None,
         }
-        notes.append('%s杀%s（%s）' % (label, digit_value, note))
-    if len(final) != COUNTED_POSITIONS:
-        raise ValueError('稳定化后位置数不足 %d 个' % COUNTED_POSITIONS)
+        notes.append('%s杀%s（%s）' % (label, model_kill, note))
+    if set(final) != set(model_positions):
+        raise ValueError('稳定化后位置集合必须与模型所选位置集合一致')
     result = dict(prediction)
     result['positions'] = {key: final[key] for key in POSITION_ORDER if key in final}
     result['counted'] = [key for key in POSITION_ORDER if key in final]
@@ -907,6 +941,11 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'panel_context': audit.get('panel_context'),
         'window': WINDOW,
     }
+    position_count = len(seal['positions'])
+    seal['position_count'] = position_count
+    seal['expected_items'] = position_count + 1
+    seal['expected_group_rate'] = round(0.9 ** (position_count + 1), 6)
+    seal['expected_basis'] = 'closed-form-0.9^(n+1)'
     if isinstance(extra, dict):
         seal.update(extra)
     return seal
@@ -1020,6 +1059,9 @@ def settle_pending(snapshot=None, now=None):
             'actual': [str(value) for value in actual],
             'positions': positions,
             'counted': list(counted),
+            'position_count': seal.get('position_count'),
+            'expected_items': seal.get('expected_items'),
+            'expected_group_rate': seal.get('expected_group_rate'),
             'tail': tail_entry,
             'form_type': form_type if has_form else None,
             'form': form_entry,

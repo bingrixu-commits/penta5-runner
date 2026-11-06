@@ -68,6 +68,8 @@ RULE_BASELINE = {
     ('kill11_tail', 'kill11-tail-v1-one-position-one-form'): (3, 0.7538),
     # kill12 与 kill11 同构克隆：10^4 开奖 x 16000 配置精确枚举=120,600,000/160,000,000=0.75375，按项目口径登记 4 位 0.7538
     ('kill12_tail', 'kill12-tail-v1-one-position-one-form'): (3, 0.7538),
+    # kill12 v2：3 个定位各杀 1 码 + 一合尾（无形态），10^4 开奖 x 200000 配置精确枚举=1,312,200,000/2,000,000,000=0.6561，按项目口径登记 4 位 0.6561
+    ('kill12_tail', 'kill12-tail-v2-three-position-one-tail'): (4, 0.6561),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -77,7 +79,14 @@ LABELS = {
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
     'kill11_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
-    'kill12_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
+    'kill12_tail': 'AI 三位置杀码 + 一合尾（4 项）',
+}
+
+# 动态项数规则：expected 取逐期 expected_group_rate（由封存/结算写入），items 取 expected_items 区间。
+DYNAMIC_RULES = {
+    ('kill1_tail', 'kill1-tail-v7-flexible-two-four-position-one-tail'): {
+        'label': 'AI 自选 2~4 位置杀码（N+1 项）',
+    },
 }
 WINDOWS = {
     'killer': '自账本首期累计',
@@ -592,7 +601,7 @@ def _with_post_optimized(row, records, promoted_at, promoted_moment):
 
 
 def _build(key, rule, records, source, note='', expected_map=None, promoted_moment=None,
-           rolling=None, launch=None):
+           rolling=None, launch=None, label=None, items=None):
     """records: [(target_period, joint_hit_bool, model_or_None)]。
 
     rolling: 该框架「全部已核验且计入」的 [(target_period, hit)]（可跨规则版本，只用于滚动覆盖率），
@@ -628,8 +637,8 @@ def _build(key, rule, records, source, note='', expected_map=None, promoted_mome
                    for model, value in sorted(models.items(), key=lambda item: -item[1][0])]
     valid = sorted([str(t) for t in targets if t is not None])
     row = {
-        'key': key, 'label': LABELS[key], 'rule': rule,
-        'items': _items(key, rule), 'window': WINDOWS[key],
+        'key': key, 'label': label or LABELS[key], 'rule': rule,
+        'items': items if items is not None else _items(key, rule), 'window': WINDOWS[key],
         'n': n, 'hits': hits, 'rate': rate, 'ci95': _wilson(hits, n),
         'expected': expected, 'delta': delta, 'p': p,
         'expected_split': _expected_split(records, p0s, promoted_moment) if (expected_map and promoted_moment is not None) else None,
@@ -807,9 +816,17 @@ def cum_kill1():
     for record in seal_records:
         if isinstance(record, dict) and record.get('target_period'):
             launch.append(record.get('target_period'))
+    expected_map, items_values = {}, []
     for row in settlements.get('records') or []:
         if not isinstance(row, dict):
             continue
+        value = row.get('expected_group_rate')
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and 0.0 < float(value) < 1.0):
+            expected_map[str(row.get('target_period'))] = float(value)
+        count = row.get('expected_items')
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+            items_values.append(count)
         if row.get('target_period'):
             launch.append(row.get('target_period'))
         if not row.get('verified'):
@@ -822,8 +839,15 @@ def cum_kill1():
                 and seal_rule.get(str(row.get('ref_period'))) != rule):
             continue
         records.append((row.get('target_period'), hit, None))
+    dynamic = DYNAMIC_RULES.get(('kill1_tail', rule))
+    label = dynamic['label'] if dynamic else None
+    items = None
+    if dynamic and items_values:
+        items = (items_values[0] if len(set(items_values)) == 1
+                 else '%d~%d' % (min(items_values), max(items_values)))
     return _build('kill1_tail', rule, records, 'data/kill1_tail/settlements.json',
-                  rolling=rolling, launch=launch)
+                  rolling=rolling, launch=launch, expected_map=expected_map or None,
+                  label=label, items=items)
 
 
 def cum_kill10():

@@ -63,6 +63,8 @@ RULE_BASELINE = {
     ('kill11_tail', 'kill11-tail-v1-one-position-one-form'): (3, 0.7538),
     # kill12 与 kill11 同构克隆：10^4 开奖 x 16000 配置精确枚举=120,600,000/160,000,000=0.75375，按项目口径登记 4 位 0.7538
     ('kill12_tail', 'kill12-tail-v1-one-position-one-form'): (3, 0.7538),
+    # kill12 v2：3 个定位各杀 1 码 + 一合尾（无形态），10^4 开奖 x 200000 配置精确枚举=1,312,200,000/2,000,000,000=0.6561，按项目口径登记 4 位 0.6561
+    ('kill12_tail', 'kill12-tail-v2-three-position-one-tail'): (4, 0.6561),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -73,8 +75,17 @@ LABELS = {
     'kill8_tail': 'AI 四反向冷形态（4 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
     'kill11_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
-    'kill12_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
+    'kill12_tail': 'AI 三位置杀码 + 一合尾（4 项）',
 }
+
+# 动态项数规则：expected/items 不再取单一常量，改用封存/结算逐期 expected_group_rate /
+# expected_items 的均值与区间（kill1 v7 起 AI 每期自选 N 个位置，整组 N+1 项）。
+DYNAMIC_RULES = {
+    ('kill1_tail', 'kill1-tail-v7-flexible-two-four-position-one-tail'): {
+        'label': 'AI 自选 2~4 位置杀码（N+1 项）',
+    },
+}
+
 SINGLE_BASELINES = (
     ('杀 1 码', 0.9),
     ('四位反向形态', 0.9375),
@@ -115,11 +126,46 @@ def p_two(hits, n, p0):
     return math.erfc(abs(z) / math.sqrt(2))
 
 
-def _row(key, rule, n, hits, source, note=''):
+def _p_two_expected(hits, p0s):
+    # 逐期随机期望混算的二项正态近似检验（各期基线不同也可合并）。
+    if not p0s:
+        return None
+    total = sum(p0s)
+    variance = sum(p0 * (1 - p0) for p0 in p0s)
+    if variance <= 0:
+        return None
+    z = (hits - total) / math.sqrt(variance)
+    return math.erfc(abs(z) / math.sqrt(2))
+
+
+def _row(key, rule, n, hits, source, note='', records=None):
     items, expected = RULE_BASELINE.get((key, rule), (None, None))
+    label = LABELS[key]
+    dynamic = DYNAMIC_RULES.get((key, rule))
+    dynamic_rates = []
+    dynamic_items = []
+    if dynamic and records:
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            value = record.get('expected_group_rate')
+            if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and 0.0 < float(value) < 1.0):
+                dynamic_rates.append(float(value))
+            count = record.get('expected_items')
+            if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+                dynamic_items.append(count)
+    if dynamic and n and len(dynamic_rates) == n:
+        expected = round(sum(dynamic_rates) / n, 6)
+        if dynamic_items:
+            items = (dynamic_items[0] if len(set(dynamic_items)) == 1
+                     else '%d~%d' % (min(dynamic_items), max(dynamic_items)))
+        label = dynamic['label']
+        p = _p_two_expected(hits, dynamic_rates)
+    else:
+        p = p_two(hits, n, expected) if expected is not None else None
     rate = (hits / n) if n else None
     delta = (rate - expected) if (rate is not None and expected is not None) else None
-    p = p_two(hits, n, expected) if expected is not None else None
     if expected is None:
         verdict = '基线待校准'
     elif n < 200:
@@ -128,7 +174,7 @@ def _row(key, rule, n, hits, source, note=''):
         verdict = '偏离随机基线'
     else:
         verdict = '与随机无法区分'
-    return {'key': key, 'label': LABELS[key], 'rule': rule, 'items': items,
+    return {'key': key, 'label': label, 'rule': rule, 'items': items,
             'n': n, 'hits': hits, 'rate': rate, 'expected': expected,
             'delta': delta, 'p': p, 'verdict': verdict,
             'source': source, 'note': note}
@@ -216,6 +262,7 @@ def _kill1_rows():
     business_day = _business_start(now)
     hits = 0
     total = 0
+    counted_rows = []
     for record in rows:
         if not isinstance(record, dict) or not record.get('verified'):
             continue
@@ -229,9 +276,11 @@ def _kill1_rows():
             continue
         total += 1
         hits += int(bool(record.get('group_hit')))
+        counted_rows.append(record)
     if not total:
         return []
-    return [_row('kill1_tail', rule, total, hits, 'data/kill1_tail/settlements.json')]
+    return [_row('kill1_tail', rule, total, hits, 'data/kill1_tail/settlements.json',
+                 records=counted_rows)]
 
 
 def _kill8_rows():
