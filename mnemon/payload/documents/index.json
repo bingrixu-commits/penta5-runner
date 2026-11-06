@@ -35,7 +35,7 @@
       ],
       "createdAt": "2026-11-06T03:04:41.409Z",
       "updatedAt": "2026-11-06T03:04:41.409Z",
-      "lastAccessedAt": "2026-11-06T13:14:55.076Z",
+      "lastAccessedAt": "2026-11-06T15:29:53.349Z",
       "revision": 1,
       "contentHash": "ef288ce9cd49f81aba8370b060faa78f7a61f689cb2aef7a90210426f440d901",
       "sizeBytes": 5491,
@@ -59,7 +59,7 @@
       ],
       "createdAt": "2026-11-06T08:13:05.134Z",
       "updatedAt": "2026-11-06T08:13:05.134Z",
-      "lastAccessedAt": "2026-11-06T13:14:55.076Z",
+      "lastAccessedAt": "2026-11-06T15:29:53.349Z",
       "revision": 1,
       "contentHash": "010aa918f743d47f4c31a7c47952ccbaca186ada02532b3cf7044f4031a452dd",
       "sizeBytes": 8333,
@@ -82,7 +82,7 @@
       ],
       "createdAt": "2026-11-06T08:26:03.567Z",
       "updatedAt": "2026-11-06T08:26:03.567Z",
-      "lastAccessedAt": "2026-11-06T13:14:55.076Z",
+      "lastAccessedAt": "2026-11-06T15:29:53.349Z",
       "revision": 1,
       "contentHash": "b86a7402b77cafc3c42420a290ea09584c736f0a51ca6551c278359dd841c9eb",
       "sizeBytes": 9540,
@@ -101,7 +101,7 @@
       ],
       "createdAt": "2026-11-06T10:02:17.697Z",
       "updatedAt": "2026-11-06T10:02:17.697Z",
-      "lastAccessedAt": "2026-11-06T13:14:55.076Z",
+      "lastAccessedAt": "2026-11-06T15:29:53.349Z",
       "revision": 1,
       "contentHash": "d75285f6bec0195d51f01891f8ca7f679e435e9737399ef068042899579253d5",
       "sizeBytes": 8709,
@@ -124,6 +124,25 @@
       "revision": 1,
       "contentHash": "a7814af50d88628abe3d0b04e35fe10f905a413b06b3c6c368d20d01e14df532",
       "sizeBytes": 5268,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "7b9973e0-57b8-4343-8900-cb13d7d1eef4",
+      "title": "penta5-runner kill12 v2：三位置杀码 + 一合尾 升级落地（2026-11-06）",
+      "description": "kill12 从 v1（1 定位+单双形态+合尾，3 项，0.7538）升级为 v2（3 定位+合尾、无形态、4 项，精确基线 0.6561）的口径、枚举、代码改动、真实周期证据、部署台账与回滚；含并行窗口导致 manifest_drift 的处置经验。",
+      "status": "active",
+      "filename": "penta5-runner-kill12-v2-2026-11-06-7b9973e0.md",
+      "relativePath": "documents/active/penta5-runner-kill12-v2-2026-11-06-7b9973e0.md",
+      "sourcePaths": [],
+      "sessionIds": [
+        "mnemon-run-v1-a0608a19-5b33-40ab-9412-d43b291e6796"
+      ],
+      "createdAt": "2026-11-06T15:30:37.399Z",
+      "updatedAt": "2026-11-06T15:30:37.399Z",
+      "lastAccessedAt": "2026-11-06T15:30:37.399Z",
+      "revision": 1,
+      "contentHash": "1f1a5a44fedaff8d429185a52739bf50b99fe1f606dfb081500ed6d2b2d9c570",
+      "sizeBytes": 8020,
       "memoryBodyIds": []
     }
   ]
