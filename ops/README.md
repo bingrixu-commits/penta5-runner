@@ -2181,3 +2181,20 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 备份/回滚：部署前备份 16 文件 /root/ops/posvar-b/20261106-deploy-kill3/backup-20261106_232431/（manifest.json 含 before sha256 + git HEAD）；staged 源 /root/ops/posvar-b/20261106-b2-kill3/stage；回滚 python3 scripts/kill3_v17_rollback.py --execute（或 dry-run 预览）；应急 git revert 9609ba1 a8ba71c 6a9f1e4 后 freeze renew。
 - 测试：staged tests/test_kill3_v17.py commit 后 9/9 PASS。
 - 后续：观察 v17 累积至 n≥150；kill11 v2 部署；kill12 是否灵活化待用户确认。
+
+## 2026-11-06 23:54 kill11 v2 上线：AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项，逐期动态期望）
+
+- 需求链：用户 m00199「所有模型。定位排除站位不限次数」批 2 第三框架。口径：AI 每期从 4 个位置自选 N∈{2,3,4} 个不同位置、每位置杀 1 码（N 注/期，全部计入整组）；单双反向形态 1 项（所有被杀位置字符取杀码单双的反面，未被杀位置 AI 自选）；合尾 1 项（hold3-until-miss）；整组 = N+2 项；旧 v1 封存/结算不动（按 rule_version 隔离）。
+- 规则版本：kill11-tail-v2-flexible-two-four-position-one-form-one-tail；EXPECTED_GROUP_RATE {2:0.672750,3:0.599850,4:0.534240}（10^4 开奖空间 × 16000/120000/400000/500000 配置精确枚举，禁连乘；旧 v1 锚点 0.75375 复现）；EXPECTED_BASIS=enumerated-10^4；expected_items=N+2；封存新增 position_count/expected_items/expected_group_rate/expected_basis（结算复制）。
+- 代码 commit **d028c9d**（9 files，+1919/−1729）：stalib 复制 lib/kill11_tail.py sha 8ac900cb…1724fb17、lib/kill_eleven_view.py sha a55f8ac5…fb402c5；共享改动 lib/hitrate_baseline.py 12522c84…（LABELS 改「AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项）」、DYNAMIC_RULES 加 v2、_kill11_rows 补 counted_rows 传 records；RULE_BASELINE 保留旧 v1 (3,0.7538) 不加 v2 常量）、scripts/framework_hitrate_cumulative.py 8924ca42…（LABELS+DYNAMIC_RULES+cum_kill11 整函数换逐期 expected 动态版）、lib/attack_editor_view.py d3d96501…（版本串 v24-flexible-kill11、kill11 标签）、scripts/tail_hold_review.py 585e3a48…、scripts/ops_health_check.py 94d77a29…、scripts/run_kill11_tail.py 4ebd9193…、ops/hitrate_stability_whitelist.json 79b23188…（kill11 v2 条目 until 2026-11-08T01:00:00+08:00）。
+- 测试：staged tests/test_kill11_v2.py **18/18 PASS**；live import 校验 RULE/EXPECTED_GROUP_RATE/EXPECTED_BASIS/view _TITLE 全部为 v2；kill11 无 freeze guard（freeze-guards kill11=null）→ 无需重登记。
+- 真实周期验证（cron 每 5 分钟，sleep 40 启动）：
+  - 首期 v2 seal ref 20261106285→286，published 2026-11-06T23:46:08.423175+08:00，position_count=2、expected_items=4、expected_group_rate=0.67275、expected_basis='enumerated-10^4'；positions q=4/b=9（合尾 8），日志「kill11 published: ref=20261106285 target=20261106286 rule=kill11-tail-v2-... 千位 杀4 · 百位 杀9 · 百十个合尾 杀8」。
+  - 首条 v2 结算 target 20261106286：verified=True、group_hit=True，且 position_count/expected_items/expected_group_rate/expected_basis 四字段已从 seal 复制。
+  - 第二期 v2 seal ref 20261106286→287（published 23:51:18.493）：AI 自选 **N=3**（q=9/b=3/g=5），expected_items=5、expected_group_rate=0.59985（证明 N 可变），合尾沿用上期 8。
+  - 面板（panel.html data-as-of=20261106286）：新标题「🤖 AI 自选 2~4 位置杀码 + 单双形态 + 一合尾建议」、「AI 自选 N=3 个位置」、三张定位卡+形态卡+合尾卡；stats「整组命中率（N+2 项全中）100.00%（1/1 期）」「按实际 N 的随机期望 67.2750%（4 项，1 期）」「口径 kill11-tail-v2-... · 自 ref 20261106285 起（本版 2 期，含待核验 1 期） · 整组精确基线 59.9850%（5 项，N=3；按最新封存）」；旧串已归零。
+- 统计链路：data/hitrate_baseline.json kill11 行 label v2、items 4、expected 0.67275、n=1 hits=1 rate 100%（重跑 hitrate_baseline 后）；data/framework_hitrate_cumulative.json kill11 行 items 4、expected 0.67275、expected_basis=per-record-exact；hitrate_stability 白名单已登记（23:58 后 cron 生效）。
+- 门禁复验（23:53:45 ops_health，overall=warn）：kill11_tail ok ref=20261106286 published_at 23:51:18；kill3_v17_gate ok observe n=5/150 rate 80.00% vs 53.24% z=1.1994；freeze_guards ok（5 框架·变更 0）；panel_html ok mtime 23:53:25 398.7KiB；manifest_drift ok（baseline auto-baseline-20261106-234207）；crontab_drift ok（40 jobs）；hitrate_stability warn（观察 kill3_tail/kill1_tail/kill12_tail，既有监控项）。
+- 回滚：git revert d028c9d，再从 /root/ops/posvar-b/20261106-deploy-kill11/backup-20261106_234147/（manifest.json 含 9 文件 before sha256）覆盖；kill11 无冻结 guard，无需 renew；旧 v1 封存/结算不受影响。
+- 备份/证据：部署脚本 /root/ops/posvar-b/20261106-deploy-kill11/patch_kill11.py、staged 源 /root/ops/posvar-b/20261106-b2-kill11/stage 与 tests；真实周期证据见 data/kill11_tail/{seals,settlements}.json 末两条与 data/kill11_tail_cron.log。
+- 后续：观察 kill11 v2 累积；kill12 是否也改 AI 自选 2~4 位置待用户确认（现为并行窗口上线的固定三位置 v2，rule kill12-tail-v2-three-position-one-tail，expected 0.6561）。
