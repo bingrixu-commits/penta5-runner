@@ -40,7 +40,7 @@ STYLE = """
 
 
 def _three_position_line():
-    """冷码杀号战绩块顶部显示「本期 AI 三位置+一合尾建议」——数据来自 kill3_tail。"""
+    """冷码杀号战绩块顶部显示「本期 AI 自选 2~4 位置+一合尾建议」——数据来自 kill3_tail。"""
     try:
         import kill3_tail
         data = kill3_tail.current_summary()
@@ -62,9 +62,9 @@ def _three_position_line():
         dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), '')
         dropped_text = ('（放弃:%s）' % dropped) if dropped else ''
         return ('<div class="ch-pick" style="margin:6px 0 10px;font-size:13px;color:#334155;">'
-                '本期 AI 三位置+一合尾建议：' + picks + tail_text + patterns + dropped_text +
+                '本期 AI 自选 2~4 位置+一合尾建议：' + picks + tail_text + patterns + dropped_text +
                 '<span style="font-size:12px;color:#64748b;margin-left:6px;">'
-                '（详见下方「AI 三位置+一合尾建议」）</span></div>')
+                '（详见下方「AI 自选 2~4 位置+一合尾建议」）</span></div>')
     except Exception:
         return ''
 

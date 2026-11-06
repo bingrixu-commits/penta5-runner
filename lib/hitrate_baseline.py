@@ -47,6 +47,7 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v14-hot-repeat-neighbor-hold3-two-counted-three-avoid'): (8, 0.5863),
     ('kill3_tail', 'kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid'): (8, 0.5863),
     ('kill3_tail', 'kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop'): (8, 0.5863),
+    ('kill3_tail', 'kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid'): (8, 0.5863),
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v3-position-hold3'): (3, 0.7538),
@@ -70,7 +71,7 @@ LABELS = {
     'killer': '智能深排 killer（9 项）',
     'framework': '固定八码框架（8 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
-    'kill3_tail': 'AI 三位置杀码',
+    'kill3_tail': 'AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现（N+6 项）',
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill8_tail': 'AI 四反向冷形态（4 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
@@ -83,6 +84,9 @@ LABELS = {
 DYNAMIC_RULES = {
     ('kill1_tail', 'kill1-tail-v7-flexible-two-four-position-one-tail'): {
         'label': 'AI 自选 2~4 位置杀码（N+1 项）',
+    },
+    ('kill3_tail', 'kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid'): {
+        'label': 'AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现（N+6 项）',
     },
 }
 

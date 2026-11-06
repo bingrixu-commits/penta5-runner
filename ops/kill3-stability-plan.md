@@ -86,3 +86,17 @@
   - 脚本行为：备份 5 个文件到 `/root/ops/kill3-v16-rollback-<ts>/` → 以提交 417c472 生成反向补丁并 `git apply -R` → 断言 RULE_VERSION=v15 且 v16 专有字段清零 → py_compile → 重算冻结戳（`freeze_guard.py init --framework kill3_tail --renew` + 旧 `ops/kill3-freeze.json` 镜像）→ 写门禁 inactive → 按文件精确 `git add` 提交（不使用 `git add -A`）。
 - 回滚后口径：v16 样本按 rule_version 自然隔离，统计回到 v15 分组；整组结构与基线 0.5863 不变，无需重注册；门禁因 rule_version 不匹配自动 inactive。
 - 当前进度（2026-11-06 06:40:17 CST）：n=79、hits=33、rate=41.77%、z=-3.0424、p_two=0.0037、status=observe（离触发还差 71 期）；详见 `data/kill3_v16_guard.json` 与 ops_health 的 `kill3_v16_gate` 行。
+
+
+### kill3 v17 预登记回滚门禁（2026-11-06 23:25）
+
+- 背景：用户 m00199「所有模型。定位排除站位不限次数」→ kill3 改为 AI 每期自选 2~4 个不同位置、每位置杀 1 码；v17 取消 display_only、N 个位置全部计入整组与攻击语；整组 N+6 项（N 位置 + 1 合尾 + 2 反向形态 + 3 三数共现避开）；弃位 0~2 个，其形态字符按 v16 cold_dropped_form 用近 50 期冷热确定。
+- 精确基线（10^4 开奖空间全枚举 + 配置均匀解析式）：N=2 58.63%、N=3 51.68%、N=4 45.57%（注册值）；解析 58.34/51.50/45.34、200 配置抽样 58.36/51.54/45.31、v16 实测配置回放 58.55/51.68/45.57；旧 8 项自证 58.52 vs 登记 58.63（差 0.2pp）。封存/结算新增 position_count / expected_items / expected_group_rate / expected_basis。
+- 预登记判据（观察起点 = 首个 v17 已结算 target_period，不复用 v16 样本）：
+  - 样本门槛 N=150 期；
+  - 触发条件：n≥150 且（相对逐期 expected_group_rate 加权期望的 z < -2.5，或本版整组命中率 < 50%）；
+  - 档位：inactive（现行口径非 v17）/ observe（n<150）/ passed（n≥150 未触发）/ triggered（触发回滚）。
+- 实现：lib/kill3_v17_guard.py（只读，原子写 data/kill3_v17_guard.json，CLI --json/--write）；scripts/ops_health_check.py 的 kill3_v17_gate 探针每 10 分钟刷新（triggered→FAIL 并附回滚命令）；面板 kill3 卡只读显示 v17 门禁进度与 v16 历史停用行。
+- 回滚执行：预检 python3 scripts/kill3_v17_rollback.py（dry-run + git apply -R --check）；执行 --execute（备份 5 文件 → 按引入提交反向补丁回 v16 → freeze renew → 写 inactive → 精确 git add 提交不 push）；自动：cron 每 5 分钟 scripts/kill3_v17_auto_rollback.py，仅 status=triggered 且现行仍 v17 时执行一次，最多 5 次尝试，失败退避 600s。
+- 统计口径：累计必须逐期取封存/结算 expected_group_rate（lib/hitrate_baseline.py 与 scripts/framework_hitrate_cumulative.py 已登记 DYNAMIC_RULES 并按 expected_map 加权），禁止用单一 0.5863 常量；旧 v16 样本按 rule_version 隔离。
+- 口径风险：N=2 期望最高（58.63%），AI 存在长期只选 N=2 抬命中率的倾向；按已确认的 n_policy「引导 + 观察」不强制分布，面板/日志记录 N 分布，连续 30 期全为 N=2 时复查。

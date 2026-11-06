@@ -196,7 +196,7 @@ def _kill12_entries():
 
 
 FRAMEWORKS = (
-    ('AI三位置', _kill3_entries),
+    ('AI自选2~4位置+一合尾', _kill3_entries),
     ('AI自选2~4位置+一合尾', _kill1_entries),
     ('AI单位置+单双形态+一合尾', _kill11_entries),
     ('AI三位置+一合尾(kill12)', _kill12_entries),

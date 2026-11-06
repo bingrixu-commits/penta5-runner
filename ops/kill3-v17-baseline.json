@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "framework": "kill3_tail",
+  "rule_version": "kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid",
+  "generated_at": "2026-11-06T23:20:00+08:00",
+  "method": "10^4 开奖组合全枚举 + 配置均匀解析式；口径与 tests/enumerate_kill3_v17.py 一致",
+  "expected_items": {
+    "2": 8,
+    "3": 9,
+    "4": 10
+  },
+  "expected_group_rate": {
+    "2": 0.5863,
+    "3": 0.5168,
+    "4": 0.4557
+  },
+  "analytic": {
+    "2": 0.583427,
+    "3": 0.515005,
+    "4": 0.453446
+  },
+  "sampled_config_mean": {
+    "2": 0.583562,
+    "3": 0.515388,
+    "4": 0.453092
+  },
+  "actual_v16_config_replay": {
+    "2": 0.585502,
+    "3": 0.516808,
+    "4": 0.455719
+  },
+  "old_v16_8item_selfcheck": 0.585167,
+  "old_v16_registered": 0.5863,
+  "expected_basis": "enumerated-10^4",
+  "guard": {
+    "n_trigger": 150,
+    "z_trigger": -2.5,
+    "rate_floor": 0.5,
+    "report": "data/kill3_v17_guard.json",
+    "rollback_command": "python3 scripts/kill3_v17_rollback.py --execute",
+    "auto_rollback": "scripts/kill3_v17_auto_rollback.py (cron every 5 min)"
+  },
+  "notes": [
+    "N=2 与旧 8 项基本等价（-0.1~-0.3pp），AI 选 N=2 会自然抬高命中率，属口径风险，需面板/README 明示。",
+    "N=4 回放第 4 个杀码无历史封存，用随机杀码近似，上线后应按真实封存重算。"
+  ]
+}

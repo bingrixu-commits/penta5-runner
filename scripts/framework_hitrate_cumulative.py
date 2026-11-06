@@ -59,6 +59,7 @@ RULE_BASELINE = {
     ('kill3_tail', 'kill3-tail-v14-hot-repeat-neighbor-hold3-two-counted-three-avoid'): (8, 0.5863),
     ('kill3_tail', 'kill3-tail-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid'): (8, 0.5863),
     ('kill3_tail', 'kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop'): (8, 0.5863),
+    ('kill3_tail', 'kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid'): (8, 0.5863),
     ('kill1_tail', 'kill1-tail-v1-one-position-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v3-position-hold3'): (3, 0.7538),
@@ -75,7 +76,7 @@ LABELS = {
     'killer': '智能深排 killer（9 项）',
     'framework': '固定八码框架（8 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
-    'kill3_tail': 'AI 三位置杀码',
+    'kill3_tail': 'AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现（N+6 项）',
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
     'kill11_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
@@ -86,6 +87,9 @@ LABELS = {
 DYNAMIC_RULES = {
     ('kill1_tail', 'kill1-tail-v7-flexible-two-four-position-one-tail'): {
         'label': 'AI 自选 2~4 位置杀码（N+1 项）',
+    },
+    ('kill3_tail', 'kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid'): {
+        'label': 'AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现（N+6 项）',
     },
 }
 WINDOWS = {
@@ -784,9 +788,17 @@ def cum_kill3():
     for record in seal_records:
         if isinstance(record, dict) and record.get('target_period'):
             launch.append(record.get('target_period'))
+    expected_map, items_values = {}, []
     for row in settlements.get('records') or []:
         if not isinstance(row, dict):
             continue
+        value = row.get('expected_group_rate')
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and 0.0 < float(value) < 1.0):
+            expected_map[str(row.get('target_period'))] = float(value)
+        count = row.get('expected_items')
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+            items_values.append(count)
         if row.get('target_period'):
             launch.append(row.get('target_period'))
         if not row.get('verified'):
@@ -799,9 +811,15 @@ def cum_kill3():
                 and seal_rule.get(str(row.get('ref_period'))) != rule):
             continue
         records.append((row.get('target_period'), hit, None))
+    dynamic = DYNAMIC_RULES.get(('kill3_tail', rule))
+    label = dynamic['label'] if dynamic else None
+    items = None
+    if dynamic and items_values:
+        items = (items_values[0] if len(set(items_values)) == 1
+                 else '%d~%d' % (min(items_values), max(items_values)))
     return _build('kill3_tail', rule, records, 'data/kill3_tail/settlements.json',
-                  rolling=rolling, launch=launch)
-
+                  rolling=rolling, launch=launch, expected_map=expected_map or None,
+                  label=label, items=items)
 
 def cum_kill1():
     settlements = _read(DATA / 'kill1_tail' / 'settlements.json') or {}

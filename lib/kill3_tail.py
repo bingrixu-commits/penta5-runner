@@ -1,22 +1,22 @@
-"""AI 三位置杀码 + 一合尾建议（替代原规则版三位置杀码）。
+"""AI 自选 2~4 位置杀码 + 一合尾建议（v17；取消固定「3 选 2 计」）。
 
 口径（面板、封存与统计都按此写死）：
-- 由 DeepSeek 从 千/百/十/个 四个位置中选 3 个位置，每个位置排除 1 个数字（杀码），
-  剩余的 1 个位置为「放弃」；
+- 由 DeepSeek 从 千/百/十/个 四个位置中自选 2~4 个不同位置，每个选中位置排除 1 个数字（杀码），
+  全部计入整组与攻击语（v17 起取消 display_only 仅展示位）；未选位置为「放弃位」；
 - 定位依据（v15 起）：每个位置并列给出近 50 期热码 top3 与冷码 top3（出现次数少、当前遗漏长），
   另加上期（参考期）重码/邻码（±1，0↔9 循环）；同时给出【位置杀码稳定化影子】对照
   （现行每期换码 / hold2 / hold3 / hold5 / hold-until-miss 的命中率与换码次数，回放本框架已结算期），
   由模型自主决定是否沿用上期同位置杀码（采纳 hold）或换码，系统不做确定性 hold 后处理；
   冷码/长遗漏不再被禁用，但任何依据都不得当作未来概率保证；
   v14 的「只给热码、禁冷码」口径归档，旧封存保留原 rule_version 不再产生新记录；
-- 3 个被杀位置全部展示，其中 AI 用 display_only 指定 2 个计入整组与攻击语（counted），
-  第 3 个仅展示、不计入整组与攻击语；
+- 所选 N 个位置全部计入整组与攻击语（v17 起；counted = 全部所选位置），
+  整组项数 = N+6（N 位置 + 1 合尾 + 2 反向形态 + 3 三数共现）；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
 - 尾码与位置/弃位均由 DeepSeek 自主决定（v10 起）：无自动沿用、无连用期数上限、无强制换码，
   模型每期给出的位置杀码、放弃位置；合尾按 hold3-until-miss 稳定化沿用：上期尾码命中且连用未满 3 期沿用上期，否则用模型本期新选；封存写 tail_policy 追溯；
 - 另输出两项反向形态（与八项独立框架同口径）：
   四位单双形态 reverse_parity、四位大小形态 reverse_size；
-  被杀的 3 个位置取杀码单双/大小的反面；放弃位置的两个字符由系统在开奖前
+  被杀的每个所选位置取杀码单双/大小的反面；放弃位置（未选位置）的两个字符由系统在开奖前
   按该位置近 50 期冷热确定（出现次数少优先、同次数取遗漏长），模型填写的字符会被覆盖（v16 起）；
 - 位置命中 = 该位置实际开奖号 != 杀码；
 - 合尾命中 = 该合尾实际和值个位 != 排除码；
@@ -24,7 +24,7 @@
 - 三数共现避开 1/2/3 组：由后端按目标期给定（v13 起计入整组，不由模型选择、不从响应解析）；
   每组 3 个数字，单项命中 = 该组 3 个数字【未全部】出现在目标期 4 球开奖号中（单项基线 97.96%）；
 - 攻击语在合尾之后追加「除对数<1组>-<2组>-<3组>」（与固定八码框架同格式）；
-- 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态 + 三数共现避开 3 组同时命中（共 8 项）；
+- 整组命中 = N 个所选位置 + 1 个合尾 + 2 项反向形态 + 三数共现避开 3 组同时命中（共 N+6 项，N=2~4）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 位置杀码与放弃位置不再强制轮换：同一位置杀码/放弃位置可连续使用，由模型自主决定；
 - 尾码与位置均无「不得与上一期同类 / 连用满 3 期必换」限制，模型完全自主；
@@ -85,21 +85,59 @@ THREE_AVOID_LABELS = {'threeDigitAvoid': '避开1组', 'threeDigitHit': '避开2
                       'threeDigitAvoid2': '避开3组'}
 THREE_AVOID_ITEMS = len(THREE_AVOID_KEYS)
 
-RULE_VERSION = 'kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop'
+RULE_VERSION = 'kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid'
 MAX_CONSECUTIVE_PERIODS = 3
-COUNTED_POSITIONS = 2
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
 
+# v17（用户口径）：AI 每期自选 2~4 个不同位置，每位置杀 1 码，所选位置全部计入整组/攻击语；
+# 未选位置为放弃位，其两个形态字符由系统按该位置近 50 期冷热确定（v16 dropped 机制推广到 N 个自选位）。
+MIN_POSITIONS = 2
+MAX_POSITIONS = 4
+TAIL_ITEMS = 1
+FORM_ITEMS = len(REVERSE_KEYS)
+# 10^4 开奖空间全配置精确枚举得到的整组随机期望（P 阶段：
+# /root/ops/posvar-assessment/kill3/enumerate_baseline.py，JSON 同目录）。
+EXPECTED_GROUP_RATE = {2: 0.5863, 3: 0.5168, 4: 0.4557}
+EXPECTED_BASIS = 'enumerated-10^4'
+
+
+def expected_items(position_count):
+    """整组项数 = N 位置 + 1 合尾 + 2 反向形态 + 3 三数共现。"""
+    return int(position_count) + TAIL_ITEMS + FORM_ITEMS + THREE_AVOID_ITEMS
+
+
+def expected_group_rate(position_count):
+    """按实际位置数 N 取整组随机期望（定向枚举登记值）。"""
+    try:
+        return EXPECTED_GROUP_RATE[int(position_count)]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def seal_position_count(seal):
+    """封存的位置数：优先 position_count，其次 counted，再退回 positions。"""
+    if not isinstance(seal, dict):
+        return 0
+    if seal.get('position_count') is not None:
+        try:
+            return int(seal['position_count'])
+        except (TypeError, ValueError):
+            pass
+    counted = seal.get('counted')
+    if isinstance(counted, list) and counted:
+        return len(counted)
+    return len(seal.get('positions') or {})
+
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
-    'positions 恰好 3 个键，键名只能从 q/b/s/g 中选择；每个值为 0 至 9 的整数；'
-    '3 个位置全部展示，其中恰好 2 个计入整组与攻击语，display_only 标明 1 个仅展示位；'
+    'positions 必须是 2 至 4 个键（从 q/b/s/g 中选，不得重复），每个值为 0 至 9 的整数；'
+    '所选位置全部计入整组与攻击语（v17 起没有 display_only 仅展示位，不要输出该字段）；'
+    '未选中的位置视为放弃位，其两个形态字符随意填写（系统按该位置近50期冷热覆盖）；'
     'tail 为 {{"key": 五种之一, "kill": 0 至 9 的整数}}；'
     'reverse_parity 为四个单/双字符，reverse_size 为四个大/小字符，'
-    '3 个被杀位置都必须取杀码形态的反面'
-    '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大），'
-    '放弃位置的字符随便填（系统会按该位置冷热覆盖，v16 起）；合尾由你自主决定并直接封存；'
+    '被杀位置都必须取杀码形态的反面'
+    '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大）；合尾由你自主决定并直接封存；'
     'reason 40 字以内。不要输出任何其他文字、解释或代码块。'
 )
 
@@ -395,12 +433,25 @@ def _tail_key(value):
 
 
 def normalize_response(response, rows=None):
-    """Strict local validation; never pad, default or invent anything."""
+    """Strict local validation; never pad, default or invent anything.
+
+    v17：AI 每期自选 2~4 个不同位置，每位置杀 1 码，全部计入整组与攻击语；
+    未选位置为放弃位，其两个形态字符由系统按该位置近 50 期冷热覆盖。
+    """
     if not isinstance(response, dict):
         raise ValueError('响应必须是 JSON 对象')
     positions = response.get('positions')
+    if isinstance(positions, list):
+        merged = {}
+        for item in positions:
+            if not isinstance(item, dict) or item.get('key') is None:
+                raise ValueError('positions 数组的每一项必须是含 key/kill 的对象')
+            merged[item['key']] = item.get('kill')
+        positions = merged
     if not isinstance(positions, dict):
-        raise ValueError('positions 必须是对象')
+        raise ValueError('positions 必须是对象（或含 key/kill 的数组）')
+    if response.get('display_only') is not None:
+        raise ValueError('v17 起不再支持 display_only：所选位置全部计入整组')
     kills = {}
     for raw_key, raw_value in positions.items():
         key = _position_key(raw_key)
@@ -410,21 +461,12 @@ def normalize_response(response, rows=None):
         if number is None:
             raise ValueError('位置杀码必须是 0 至 9 的整数')
         kills[key] = str(number)
-    if len(kills) != 3:
-        raise ValueError('必须恰好选择 3 个位置')
-    dropped = [key for key, _label, _index in POSITIONS if key not in kills]
-    if len(dropped) != 1:
-        raise ValueError('必须恰好放弃 1 个位置')
-    raw_display = response.get('display_only')
-    if raw_display is None:
-        raise ValueError('display_only 必须是所选 3 个位置之一（缺失）')
-    display_only = _position_key(raw_display)
-    if display_only not in kills:
-        raise ValueError('display_only 必须是所选 3 个位置之一')
-    counted = [key for key, _label, _index in POSITIONS
-               if key in kills and key != display_only]
-    if len(counted) != COUNTED_POSITIONS:
-        raise ValueError(f'必须恰好 {COUNTED_POSITIONS} 个位置计入整组')
+    if len(kills) < MIN_POSITIONS or len(kills) > MAX_POSITIONS:
+        raise ValueError(f'位置数必须在 {MIN_POSITIONS} 至 {MAX_POSITIONS} 之间（本期给了 {len(kills)} 个）')
+    ordered = [key for key, _label, _index in POSITIONS if key in kills]
+    killed = {key: kills[key] for key in ordered}
+    dropped = [key for key, _label, _index in POSITIONS if key not in killed]
+    counted = list(ordered)
     tail = response.get('tail')
     if not isinstance(tail, dict):
         raise ValueError('tail 必须是对象')
@@ -445,15 +487,17 @@ def normalize_response(response, rows=None):
                 or any(char not in palette for char in value)):
             raise ValueError(f'{field} 必须是恰好 4 个{"单/双" if field == "reverse_parity" else "大/小"}字符')
         patterns[field] = value
-    dropped_cold = None
+    dropped_cold = {}
     if rows is not None:
-        dropped_cold = cold_dropped_form(rows, dropped[0])
-        dropped_index = POSITION_INDEX[dropped[0]]
-        patterns['reverse_parity'] = _replace_at(patterns['reverse_parity'], dropped_index,
-                                                 dropped_cold['parity'])
-        patterns['reverse_size'] = _replace_at(patterns['reverse_size'], dropped_index,
-                                               dropped_cold['size'])
-    for position_key, kill_text in kills.items():
+        for position in dropped:
+            form = cold_dropped_form(rows, position)
+            dropped_cold[position] = form
+            dropped_index = POSITION_INDEX[position]
+            patterns['reverse_parity'] = _replace_at(patterns['reverse_parity'], dropped_index,
+                                                     form['parity'])
+            patterns['reverse_size'] = _replace_at(patterns['reverse_size'], dropped_index,
+                                                   form['size'])
+    for position_key, kill_text in killed.items():
         index = POSITION_INDEX[position_key]
         parity_label, size_label = reverse_attributes(int(kill_text))
         if patterns['reverse_parity'][index] != parity_label:
@@ -461,17 +505,16 @@ def normalize_response(response, rows=None):
         if patterns['reverse_size'][index] != size_label:
             raise ValueError(f'大小反向形态在{position_key}位置必须取杀码形态的反面')
     return {
-        'positions': kills,
-        'display_only': display_only,
+        'positions': killed,
         'counted': counted,
-        'dropped': dropped[0],
+        'position_count': len(killed),
+        'dropped': dropped,
         'tail': {'key': tail_key, 'label': TAILS[tail_key]['label'], 'kill': str(number)},
         'reverse_parity': patterns['reverse_parity'],
         'reverse_size': patterns['reverse_size'],
-        'dropped_form_cold': dropped_cold,
+        'dropped_form_cold': dropped_cold or None,
         'reason': reason[:200],
     }
-
 
 def _history_rows(snapshot=None):
     snapshot = snapshot or load_snapshot(persist=False)
@@ -704,7 +747,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None, previous_positi
                        '（该组 3 个数字不得在目标期 4 球开奖号中全部出现）'
                        for group in three_avoid]
         three_avoid_section = (
-            '【本期固定三数共现避开组（v13 起计入整组，由系统按目标期给定，不需要你选择）】'
+            '【本期固定三数共现避开组（v13 起计入整组，由系统按目标期给定，不需要你选择；v17 整组共 N+6 项）】'
             + chr(10) + chr(10).join(avoid_lines)
             + chr(10) + '这 3 组各算 1 项，与你的位置/合尾/形态一起参与整组命中判定。'
             + chr(10) + chr(10))
@@ -723,30 +766,29 @@ def build_prompt(reference, target, rows, *, previous_tail=None, previous_positi
         + '\n'.join(tail_lines) + '\n\n'
         '【合尾稳定化规则】\n' + restriction + '\n\n'
         '【任务】\n'
-        '1. 从 千/百/十/个 四个位置中挑 3 个（必须放弃 1 个），每个选中位置排除 1 个数字（0-9）；'
+        '1. 从 千/百/十/个 四个位置中自选 2~4 个不同位置（可放弃 0~2 个），每个选中位置排除 1 个数字（0-9）；'
         '定位依据可从该位置的近50期热码 top3、冷码 top3（出现次数少/遗漏长）、上期重码、上期邻码（±1）以及【位置杀码稳定化影子】对照中自主选择，鼓励结合冷码；'
-        '其中恰好 2 个位置计入整组（攻击语只按这 2 个位置排除），'
-        '第 3 个位置用 display_only 标明，只展示、不计入整组与攻击语；\n'
+        '你选中的每个位置都计入整组与攻击语（v17 起取消 display_only 仅展示位，无论选 2、3 还是 4 个位置都全部计入），'
+        '未选中的位置为放弃位，其两个形态字符由系统按该位置近50期冷热自动确定；\n'
         '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；系统按稳定化规则决定最终封存尾码；\n'
         '3. 给出两项四位反向排除形态：reverse_parity 为按千百十个顺序的四位单双形态，'
-        'reverse_size 为四位大小形态；被杀的 3 个位置（含 display_only 仅展示位置）'
+        'reverse_size 为四位大小形态；被杀的每个位置（N 个）'
         '都必须取杀码形态的反面'
-        '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大）；放弃位置的两个字符随意填写（系统按该位置冷热覆盖，v16 起）；\n'
-        '4. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码（只算 2 个计入位置）；'
+        '（杀码为单则写双、为双则写单；杀码为大则写小、为小则写大）；放弃位置的形态字符随意填写（系统按该位置冷热覆盖）；\n'
+        '4. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码（你选中的 N 个位置全部计入，N=2~4）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
         '反向形态 = 目标期实际四位形态不等于这两个封存形态（反向排除项）；'
         '三数共现避开 = 目标期 4 球开奖号中不包含该组全部 3 个数字（3 组各算 1 项，固定给定）；\n'
-        '以上 8 项（2 个计入位置 + 1 个合尾 + 2 项形态 + 三数共现避开 3 组）同时命中才算整组命中；\n'
+        '以上 N+6 项（N 个位置 + 1 个合尾 + 2 项形态 + 三数共现避开 3 组）同时命中才算整组命中；\n'
         '5. 热码、冷码、重码、遗漏与影子命中率只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄或为避开同号强行换码，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
         '{"positions":{"q":<0-9整数>,"b":<0-9整数>,"s":<0-9整数>},'
-        '"display_only":"q|b|s|g",'
         '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
         '"reverse_parity":"<四个单/双字符>","reverse_size":"<四个大/小字符>",'
         '"reason":"40字以内"}\n'
-        '注意：positions 必须恰好 3 个键（从 q/b/s/g 中选），键名与数字都必须合法；'
-        'display_only 必须是 positions 的 3 个键之一；'
+        '注意：positions 必须包含 2~4 个键（从 q/b/s/g 中选，不得重复），键名与数字都必须合法；'
+        ''
         '两个形态字符串都必须是 4 个字符。'
     )
     if shadow_section:
@@ -762,7 +804,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None, previous_positi
         if _marker != -1:
             prompt = prompt[:_marker] + three_avoid_section + prompt[_marker:]
     audit = {
-        'version': 'kill3-tail-prompt-v15-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid',
+        'version': 'kill3-tail-prompt-v17-hot-cold-repeat-neighbor-hold-shadow-flexible-position-three-avoid',
         'reference': reference,
         'target': target,
         'window': WINDOW,
@@ -833,7 +875,11 @@ def _trailing_digit_streaks(seals):
 
 
 def _trailing_drop_streak(seals):
-    """Trailing consecutive seals that abandoned the same position."""
+    """Trailing consecutive seals that abandoned the same position.
+
+    v17 放弃位是集合（一期可放弃 0~2 个）；这里取按 POSITIONS 顺序的第一个交集元素作为游标，
+    仅供面板/validate_position_choice 参考（run 不强制）。
+    """
     drop = None
     count = 0
     for seal in reversed(seals):
@@ -842,15 +888,17 @@ def _trailing_drop_streak(seals):
         value = seal.get('dropped')
         if value is None:
             break
-        value = str(value)
+        keys = [str(item) for item in value] if isinstance(value, list) else [str(value)]
         if drop is None:
-            drop, count = value, 1
-        elif value == drop:
+            drop = next((key for key, _label, _index in POSITIONS if key in keys),
+                        keys[0] if keys else None)
+            count = 1
+            continue
+        if drop in keys:
             count += 1
-        else:
-            break
+            continue
+        break
     return drop, count
-
 
 def position_restrictions(seals):
     """Consecutive-use limits for position kills and the abandoned position."""
@@ -889,7 +937,14 @@ def validate_position_choice(prediction, position_limit=None):
             label = POSITION_LABELS.get(key, key)
             raise ValueError(f'{label}已连续{limit}期使用杀码{digit}，本期必须换码')
     blocked_drop = position_limit.get('blocked_drop')
-    if blocked_drop and prediction.get('dropped') == blocked_drop:
+    dropped_value = prediction.get('dropped')
+    if isinstance(dropped_value, list):
+        dropped_keys = [str(key) for key in dropped_value]
+    elif dropped_value is None:
+        dropped_keys = []
+    else:
+        dropped_keys = [str(dropped_value)]
+    if blocked_drop and blocked_drop in dropped_keys:
         label = POSITION_LABELS.get(blocked_drop, blocked_drop)
         raise ValueError(f'放弃位置已连续{limit}期放弃{label}，本期必须换放弃位置')
     return prediction
@@ -1201,7 +1256,6 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'published_at': None,
         'publication_state': 'prepared',
         'positions': prediction['positions'],
-        'display_only': prediction.get('display_only'),
         'counted': prediction.get('counted') or [],
         'dropped': prediction['dropped'],
         'tail': prediction['tail'],
@@ -1219,6 +1273,11 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'panel_context': audit.get('panel_context'),
         'window': WINDOW,
     }
+    position_count = len(seal.get('positions') or {})
+    seal['position_count'] = position_count
+    seal['expected_items'] = expected_items(position_count)
+    seal['expected_group_rate'] = expected_group_rate(position_count)
+    seal['expected_basis'] = EXPECTED_BASIS
     if isinstance(extra, dict):
         seal.update(extra)
     return seal
@@ -1337,6 +1396,10 @@ def settle_pending(snapshot=None, now=None):
             'positions': positions,
             'display_only': seal.get('display_only'),
             'counted': list(counted),
+            'position_count': seal.get('position_count'),
+            'expected_items': seal.get('expected_items'),
+            'expected_group_rate': seal.get('expected_group_rate'),
+            'expected_basis': seal.get('expected_basis'),
             'dropped': seal.get('dropped'),
             'tail': tail_entry,
             'patterns': patterns,
