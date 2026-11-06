@@ -21,6 +21,7 @@
 */10 * * * * flock -n /var/lock/penta5-health.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 120 python3 -u scripts/ops_health_check.py --root /root/penta5-runner >> data/ops_health_cron.log 2>&1'
 25 * * * * flock -n /var/lock/penta5-model-daily.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 300 python3 -u scripts/model_daily_report.py >> data/model_daily_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-kill3t.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill3_tail.py >> data/kill3_tail_cron.log 2>&1'
+*/5 * * * * flock -n /var/lock/penta5-kill3autoroll.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 300 python3 -u scripts/kill3_v16_auto_rollback.py >> data/kill3_v16_auto_rollback.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-kill1t.lock bash -c 'sleep 35 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill1_tail.py >> data/kill1_tail_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-kill10t.lock bash -c 'sleep 50 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill10_tail.py >> data/kill10_tail_cron.log 2>&1'
 */5 * * * * flock -n /var/lock/penta5-kill11t.lock bash -c 'sleep 40 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill11_tail.py >> data/kill11_tail_cron.log 2>&1'

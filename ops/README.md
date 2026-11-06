@@ -2077,3 +2077,16 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - GitHub 落地：服务器 deploy key `/root/.ssh/penta5_deploy_ed25519` + SSH 别名 github-penta5 认证成功；fetch 后 HEAD...origin/main=5/0（无远端独有提交），push `a9e5305..3f89dd5 main -> main` 成功；`git ls-remote origin refs/heads/main` 与本地 HEAD 同为 3f89dd5，ahead/behind 0/0；本台账提交后再推一次并复验同步。
 - 门禁：`refresh_source_manifest.py --if-drift` → no-drift（基线 /root/backups/auto-baseline-20261106-120910）；ops_health 12:45:16 检查：`kill12_tail OK waiting: latest=20261106153 seal_ref=20261106152 age=5s`、`manifest_drift OK`；overall=FAIL 仍仅既有 hitrate_stability（kill1_tail 口径清零风险 4.0h/48 期，与本框架无关）。
 - 回滚：推送为 fast-forward，无强推、无合并；如需整组回退 `git revert 3f89dd5 a7e6105 a8060be` 后再推送，其余回滚路径同 kill12 上线段。
+## 2026-11-06 16:44 kill3 v16 预登记门禁接入自动执行器（cron 每 5 分钟读门禁，触发即执行已预登记回滚）
+
+- 需求链：用户 m00263「好」批准把 ops/kill3-stability-plan.md §9 的预登记回滚从「人工执行」升级为「门禁触发后自动执行」。本批只新增调度器与 cron，不改判据、不改 kill3 预测口径、不触碰封存/结算账本。
+- 处置：
+  - 新增 `scripts/kill3_v16_auto_rollback.py`：读 `data/kill3_v16_guard.json`，仅当 status=triggered、现行 RULE_VERSION=v16、距上次尝试 ≥600s、未 gave_up/done 时执行 `scripts/kill3_v16_rollback.py --execute`（回滚脚本自身会再校验一次门禁，双保险）；成功判定 rc=0 且 RULE_VERSION 变为 v15 → state done；失败 attempts 累加，5 次后 gave_up 并打 CRITICAL、停止自动重试，等人工处理。单实例：cron `flock` + 脚本内 `data/kill3_v16_auto_rollback.lock` fcntl 锁；状态原子写 `data/kill3_v16_auto_rollback_state.json`（status=idle/retrying/gave_up/done）。
+  - 配置 `data/kill3_v16_auto_rollback.json`（enabled=true, min_interval_seconds=600, max_attempts=5, timeout_seconds=300）。改 enabled=false 即解除自动执行（data/ 不入 git，直接改服务器文件即可）。
+  - `ops/crontab.txt` 新增行（kill3 预测行之后）：`*/5 * * * * flock -n /var/lock/penta5-kill3autoroll.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=5s 300 python3 -u scripts/kill3_v16_auto_rollback.py >> data/kill3_v16_auto_rollback.log 2>&1'`；`scripts/crontab_tool.sh install` 上线，`scripts/crontab_tool.sh diff` 与基线零差异。
+- 验证：
+  - 编排测试 `/tmp/test_autoroll.py`（临时根目录 + stub 回滚脚本）10/10 PASS：enabled=false 不动作；guard=passed 不动作；triggered 成功→done 且 RULE_VERSION=v15；stub 失败 1/1→retrying、2/2→gave_up 且之后不再执行；现行口径已 v15 时直接 done 不执行 stub；600s 间隔内第二次跳过；外部已持有数据锁时跳过。
+  - 真实根无动作跑（2026-11-06 16:37）：guard=passed n=183 hits=92 rate=0.5027 z=-2.2954，state 只更新 last_checked_at，未执行回滚。
+  - `python3 scripts/kill3_v16_rollback.py` dry-run：输出「已达预登记样本 n=183，未触发回滚条件（维持 v16，门禁关闭）」、反向补丁预检 OK、git status 无代码改动 —— 证明门禁若真触发，417c472 反向补丁仍可 apply。
+- 备份/回滚：文件备份 `/root/ops/kill3-autoroll-20261106/`；crontab 安装前自动备份到 `/tmp/crontab.backup.<ts>`。解除自动执行：改 `data/kill3_v16_auto_rollback.json` 的 enabled=false，或从 crontab 删该行再 `scripts/crontab_tool.sh dump`；本提交仅新增调度器+cron 行，`git revert` 可完全撤回。
+- 并行窗口：提交前 `git status --short` 仅本批文件（scripts/kill3_v16_auto_rollback.py 新增、ops/crontab.txt、ops/README.md）。
