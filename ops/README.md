@@ -2244,3 +2244,15 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 ### 后续
 - 观察 kill13 累计与换码频率（n<200 前统计仅供参考）；若用户认为换码过频，可把沿用门槛从 top2 放宽到 top3/top5（属口径变更，需新 rule_version 并按升级流程登记基线/白名单）。
 - 冷榜口径如需改用更长窗口（如 70/100 期）同样需新 rule_version。
+
+### kill13 部署落地（2026-11-07 01:03，`c60c565`）
+
+- 落地方式：kill13 由 cron 每期新起解释器直读磁盘代码，面板后端按 mtime 直读 `panel.html`，因此**无需重启任何 pm2 进程**；只读落地自检脚本 `scripts/kill13_verify_online.py`（`c60c565`）25 项全 PASS。
+- 本批提交：`978c3d2` 三件套+枚举基线、`24fc20c` 派生统计/健康/证据/面板挂接、`fad5159` 上线台账、`c60c565` 落地自检脚本；推送后 AHEAD=0/BEHIND=0（以 `git rev-list --count origin/main..HEAD` 与 `git log -1 origin/main` 为准）。
+- commit=磁盘：`git show HEAD:lib/kill13_tail.py | sha256sum` = 磁盘 `b73fa2003acec10eab41d2345eb41d761aa3281b893517d298b938a3b9a290fd`；`lib/kill_thirteen_view.py` = `84659dfd…`；`scripts/run_kill13_tail.py` = `5707d1f5…`。
+- 线上生效：cron 第 31 行 `*/5 * * * * flock -n /var/lock/penta5-kill13t.lock … run_kill13_tail.py`，与 `ops/crontab.txt` 比对 matches（45 行）；`data/kill13_tail_cron.log` 已连续 published ref=20261107008→20261107013（最新 ref=20261107012 target=20261107013，01:01:02）；封存 5 条、结算 4 条，今日 4/4=100%。首次换码出现在 01:01：千百十合尾 杀5 沿用、千十个合尾 杀0 掉出冷榜前 2 → 换成千百十个合尾 杀2（kept1/swapped1），证明 cold-hold-top2 已在线上执行。
+- 面板：`panel.html` 01:00 后重建，`data-as-of=20261107012`、`KILL_THIRTEEN_START/END` 各 1、版本串 `quiet-panel-v32-add-kill13-tail` 与 `all-attack-editor-v26-kill13-tail` 命中、攻击语与 `kill13_tail.build_attack(seal)` 逐字一致；`data/state.json` latest=20261107012 与 data-as-of 对齐。面板链路：nginx `listen 3001` → `127.0.0.1:3010`（`/etc/nginx/conf.d/penta5.conf` + `/etc/nginx/snippets/penta5-proxy-guard.conf`），3010 由 `penta5-runner` 进程监听；后端 `penta5_backend_runner.js:15226,15232` 的 `getPanelHtmlText()` 直接读盘并按 `stat.mtimeMs` 失效缓存，所以提交后无需重启。
+- 门禁：`refresh_source_manifest.py --if-drift` = no-drift（`/root/backups/auto-baseline-20261107-004815/verification-manifest.json`）；`ops_health` 的 `kill13_tail` = OK `ref=20261107011 published_at=2026-11-07T00:55:53.171462+08:00`，overall=WARN 仅剩存量 kill3_stability/coverage/hitrate_stability；`scripts/kill13_verify_online.py` 输出 `RESULT {"pass":25,"fail":0}`；logrotate 已识别 kill13 日志（备份 `/root/ops/deploy-audit-20261107/penta5.logrotate.bak-*`）。
+- 鉴权复核：kill13 无手动启动路由（全仓无 `/api/kill13-run`）；既有 `/api/kill8-run` 未登录 POST/GET 均返回 401 authentication-required（任何已登录账号可启动是 2026-11-06 用户明确要求，本批未改）。
+- 落地证据：`/root/ops/deploy-audit-20261107/deploy-audit.md`（含基线/进程/门禁/终检表）；本机 Windows 侧仅审计命令进程，无 penta5 python 进程与计划任务。
+- 未落地项：无（本批 commit 已推送，见推送后复核）。
