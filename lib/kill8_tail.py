@@ -860,12 +860,22 @@ def settle_pending(snapshot=None, now=None):
         sealed_size = seal.get('size_form')
         sealed_uniform = seal.get('uniform_form')
         sealed_mixed = seal.get('mixed_form')
-        parity_hit = (isinstance(sealed_parity, str) and len(sealed_parity) == 4
-                      and all(char in '单双' for char in sealed_parity)
-                      and actual_parity != sealed_parity)
-        size_hit = (isinstance(sealed_size, str) and len(sealed_size) == 4
-                    and all(char in '大小' for char in sealed_size)
-                    and actual_size != sealed_size)
+        # 跨 rule_version 兼容：v7 曾把 ①单双/②大小 各封存 2 个形态（列表字段）。
+        # 生成口径已回退为每项 1 个形态，但历史 v7 封存仍须按「实际形态不在排除集合内」结算。
+        sealed_parity_forms = seal.get('parity_forms')
+        sealed_size_forms = seal.get('size_forms')
+        forms_mode = (isinstance(sealed_parity_forms, list) and bool(sealed_parity_forms)
+                      and isinstance(sealed_size_forms, list) and bool(sealed_size_forms))
+        if forms_mode:
+            parity_hit = actual_parity not in sealed_parity_forms
+            size_hit = actual_size not in sealed_size_forms
+        else:
+            parity_hit = (isinstance(sealed_parity, str) and len(sealed_parity) == 4
+                          and all(char in '单双' for char in sealed_parity)
+                          and actual_parity != sealed_parity)
+            size_hit = (isinstance(sealed_size, str) and len(sealed_size) == 4
+                        and all(char in '大小' for char in sealed_size)
+                        and actual_size != sealed_size)
         uniform_ok = sealed_uniform in UNIFORM_FORM_VALUES
         mixed_ok = (isinstance(sealed_mixed, str) and len(sealed_mixed) == 4
                     and all(char in MIXED_HEAD_PALETTE for char in sealed_mixed[:2])
@@ -886,6 +896,17 @@ def settle_pending(snapshot=None, now=None):
             'group_hit': False,
             'verified': False,
         }
+        if forms_mode:
+            settlement['parity'] = {'forms': list(sealed_parity_forms),
+                                    'form': sealed_parity_forms[0],
+                                    'actual': actual_parity,
+                                    'hit': bool(parity_hit)}
+            settlement['size'] = {'forms': list(sealed_size_forms),
+                                  'form': sealed_size_forms[0],
+                                  'actual': actual_size,
+                                  'hit': bool(size_hit)}
+            settlement['forms_per_item'] = {'parity': len(sealed_parity_forms),
+                                            'size': len(sealed_size_forms)}
         published = parse_time(seal.get('published_at'))
         drawn = parse_time(record.get('opentime'))
         verified = (seal.get('publication_state') == 'published' and published is not None
