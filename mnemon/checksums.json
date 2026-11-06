@@ -4,11 +4,12 @@
     "payload/runtime/memories.json": "94b7da88014c5c2c0dbff6d13aca82b8759e8a7860132b524f294b40cef49cc0",
     "payload/runtime/USER.md": "6bc09f7683dbf157103c80f074b40164d717c13958598f1d0db3d0cfa08cd0af",
     "payload/runtime/MEMORY.md": "649d769ad000b7706356765be5eba74e68e9a9fc2c72b75e204931ef1468c31d",
-    "payload/documents/index.json": "68867a72cc2de5b339e89c633bccb0949bd9bbe1e8f4ba71fbcc62e375fd3499",
+    "payload/documents/index.json": "a85c2e06a01f0e1a458cb14e18a96227451a39727c691e7b62b99e535451f070",
     "payload/documents/active/mnemon-dsh-03ec4e06.md": "ece777f1e33d2d0dca41a40492fa4eb754c1e537ae7356075285b5c80b41ba5d",
     "payload/documents/active/penta5-runner-kill8-v7-v6-2026-11-06-02779d21.md": "8fb51f7d258bd5335d256643002449d3b94e034e9324cc9d3eb467b8f426e073",
-    "payload/data/.dsh-memory-bodies.json": "2c1a997a6fe6ab5d8f588527e6a206b3cb597b9f6f91229b078952d03b2c661b",
-    "payload/data/0dcb869d-6a01-4654-bf94-c25bd925dc8d/mnemon.db": "08f32ce0b8b6ac355c01517d80c33c53de42f29a82b2cb1dbcc03b9a4a77ee90",
-    "payload/data/default/mnemon.db": "b0007921c341b5cac737309bb4606c596a74188cbaf4cf9dce31bc9bcf22a3a0"
+    "payload/documents/active/penta5-runner-2026-11-06-c9e2bfd1.md": "cb09ebadaa9f5d6b7b3eff4856b5594651b6c60094febbba156073c002900a37",
+    "payload/data/.dsh-memory-bodies.json": "475da9002e1bf5e324b83f583ced7921cd8308936d74d9e85fd011ea97b03f02",
+    "payload/data/0dcb869d-6a01-4654-bf94-c25bd925dc8d/mnemon.db": "48b9c2aa664861352b9b8b237053218ce4f1ed164764eab97f2c0fe702291224",
+    "payload/data/default/mnemon.db": "22529105f295a999498a81ac223ca2b0142058c268bc4168919e15681d19ae4d"
   }
 }

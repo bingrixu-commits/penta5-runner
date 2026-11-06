@@ -14,7 +14,7 @@
       ],
       "createdAt": "2026-11-06T00:16:26.957Z",
       "updatedAt": "2026-11-06T00:16:26.957Z",
-      "lastAccessedAt": "2026-11-06T00:16:26.957Z",
+      "lastAccessedAt": "2026-11-06T08:12:37.836Z",
       "revision": 1,
       "contentHash": "3cea350c6143f1f1781011e3bfd31c9376d495e90cf552c34c80f3f265d4067a",
       "sizeBytes": 5674,
@@ -35,10 +35,34 @@
       ],
       "createdAt": "2026-11-06T03:04:41.409Z",
       "updatedAt": "2026-11-06T03:04:41.409Z",
-      "lastAccessedAt": "2026-11-06T03:04:41.409Z",
+      "lastAccessedAt": "2026-11-06T08:12:37.836Z",
       "revision": 1,
       "contentHash": "ef288ce9cd49f81aba8370b060faa78f7a61f689cb2aef7a90210426f440d901",
       "sizeBytes": 5491,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "c9e2bfd1-2ae0-4441-ba88-f6d211075222",
+      "title": "penta5-runner 排除/杀码模型审计：随机性、期望与倍投风险（2026-11-06）",
+      "description": "penta5 排除/杀码模型三路审计（命中率 A / 经济赔率 B / 随机性与 AI 增量 C）的完整结论与证据：3178 期随机性检验、9 框架 30 版本校正后无显著优势、9900 赔率与 ROI 表、倍投破产概率、平台/自动投注设施现状。当需要回答「这套模型有没有效、稳不稳、能不能盈利、倍投行不行」或复查审计结论时参考。",
+      "status": "active",
+      "filename": "penta5-runner-2026-11-06-c9e2bfd1.md",
+      "relativePath": "documents/active/penta5-runner-2026-11-06-c9e2bfd1.md",
+      "sourcePaths": [
+        "penta5-audit/A-hitrate.md",
+        "penta5-audit/B-economics.md",
+        "penta5-audit/C-signal.md",
+        "penta5-audit/scripts"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-8c0d333f-7529-4150-901f-67fba1cfe781"
+      ],
+      "createdAt": "2026-11-06T08:13:05.134Z",
+      "updatedAt": "2026-11-06T08:13:05.134Z",
+      "lastAccessedAt": "2026-11-06T08:13:05.134Z",
+      "revision": 1,
+      "contentHash": "010aa918f743d47f4c31a7c47952ccbaca186ada02532b3cf7044f4031a452dd",
+      "sizeBytes": 8333,
       "memoryBodyIds": []
     }
   ]
