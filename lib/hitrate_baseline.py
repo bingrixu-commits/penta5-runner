@@ -232,6 +232,7 @@ def _kill3_rows():
     business_day = _business_start(now)
     hits = 0
     total = 0
+    counted_rows = []
     for record in rows:
         if not isinstance(record, dict) or not record.get('verified'):
             continue
@@ -245,9 +246,11 @@ def _kill3_rows():
             continue
         total += 1
         hits += int(bool(record.get('group_hit')))
+        counted_rows.append(record)
     if not total:
         return []
-    return [_row('kill3_tail', rule, total, hits, 'data/kill3_tail/settlements.json')]
+    return [_row('kill3_tail', rule, total, hits, 'data/kill3_tail/settlements.json',
+                 records=counted_rows)]
 
 
 def _kill1_rows():
