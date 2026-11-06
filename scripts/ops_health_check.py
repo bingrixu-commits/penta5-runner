@@ -449,7 +449,7 @@ def check_kill3(ctx):
 
 
 def check_kill1(ctx):
-    """AI 双位置+一合尾：最新已开奖期应有开奖前封存；超时未封存/未发布即告警。"""
+    """AI 双位置杀码（v6）：最新已开奖期应有开奖前封存；超时未封存/未发布即告警。"""
     latest = ctx.get('latest')
     if not isinstance(latest, dict) or not latest.get('ref'):
         return _entry('kill1_tail', WARN, 'latest draw unknown')
