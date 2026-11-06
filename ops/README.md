@@ -2256,3 +2256,36 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 鉴权复核：kill13 无手动启动路由（全仓无 `/api/kill13-run`）；既有 `/api/kill8-run` 未登录 POST/GET 均返回 401 authentication-required（任何已登录账号可启动是 2026-11-06 用户明确要求，本批未改）。
 - 落地证据：`/root/ops/deploy-audit-20261107/deploy-audit.md`（含基线/进程/门禁/终检表）；本机 Windows 侧仅审计命令进程，无 penta5 python 进程与计划任务。
 - 未落地项：无（本批 commit 已推送，见推送后复核）。
+## 2026-11-07 01:45 kill12 v4 上线（恢复单位置杀码 + 单双反向形态 + 一合尾，整组 3 项）
+
+### 变更
+- kill12 由 v3「AI 自选 2~4 位置 + 一合尾（N+1 项）」恢复/升级为 v4「1 定位 + 1 单双反向形态 + 1 合尾」整组 3 项：RULE_VERSION=kill12-tail-v4-one-position-one-form、PROMPT_VERSION=kill12-tail-prompt-v4-one-position-one-form、COUNTED_POSITIONS=1、TAIL_HOLD_MAX=3、TAIL_POLICY='hold3-until-miss'、FORM_LABELS/REVERSE_LABELS 单双反向形态、FORM_CHARS='单双'。语义等同 v1（commit a8060be）三件套，升级版本号使 v1/v2/v3 旧封存按 rule_version 隔离归档不计入。
+- 封存新增 position_count=1 / expected_items=3 / expected_group_rate=0.75375 / expected_basis='exact-enum-10^4x16000=0.75375000' 并在结算复制；settle_pending 保留 form_present 兼容分支：v3 无 form 封存 → form_present=False、只按位置+合尾判定；带 form 封存（含旧 v1）→ form 缺失/错误判定，不 KeyError。
+- 精确基线（v1 已枚举）：10^4 开奖 × 16000 配置 = 120,600,000/160,000,000 = 0.75375，按项目口径登记 4 位 0.7538（items=3）。
+- 代码 commit **76d629a**（9 files，+1753/−1854，父 9b5d2bb）：lib/kill12_tail.py（恢复 v1 后升 v4，47766B）、lib/kill_twelve_view.py（26950B）、scripts/run_kill12_tail.py（6059B）、lib/hitrate_baseline.py（v4 条目 (3,0.7538) + LABELS「AI 单位置杀码 + 单双形态 + 一合尾（3 项）」）、scripts/framework_hitrate_cumulative.py（v4 条目 + LABELS + cum_kill12 兜底 rule 改 v4）、lib/attack_editor_view.py（kill12 标签「AI单位置+单双形态+一合尾攻击语」，kill1 标签未动）、scripts/ops_health_check.py（check_kill12 docstring）、scripts/tail_hold_review.py（docstring + FRAMEWORKS 标签）、ops/hitrate_stability_whitelist.json（追加 v4 条目，until 2026-11-09T01:30:00+08:00）。
+- 测试：staged settle 兼容 3 fixture（v3 无 form group_hit=True、v4 form 命中 True、v4 form 未命中 False）、create_seal 四字段、build_attack「千123567890百1234567890十1234567890个1234567890四定千百十合123467890除单双单双」、view render_block 单位置文案且无「2~4 位置」、apply 注入 START/END 各 1；两处基线表 v4 静态路径预期一致；9 文件 py_compile 全过、live import 复核 RULE_VERSION/EXPECTED_ITEMS/0.75375。
+
+### 部署与真实周期证据
+- 部署窗口：2026-11-07 01:33:08（上一轮 cron 01:30:45 任务结束、距下一轮 01:35:45 尚 157s；无 run_kill12_tail.py 在跑），APPLIED 9 文件 sha 与 staged 一致。
+- 首期 v4 封存：ref=20261107019 → target=20261107020，published_at=2026-11-07T01:35:54.294247+08:00；positions {'s':'6'}、counted ['s']、form_type='reverse_parity'、form='单单单双'、tail tail_qsg=0；counted 1 / expected_items 3 / expected_group_rate 0.75375。cron 日志「kill12 published: ref=20261107019 target=20261107020 rule=kill12-tail-v4-one-position-one-form 十位 杀6 · 千十个合尾 杀0」。
+- 第二期 v4 封存：ref=20261107020 → target=20261107021，published_at=01:41:06.391143，counted ['q']。
+- 跨版本结算兼容线上取证：部署前遗留的 v3 封存 target=20261107019 由新 settle 代码结算为 form_present=False、group_hit=False、verified=True（只算位置+合尾，无 KeyError）。首条 v4 结算 target=20261107020：form_present=True、form_hit=True、group_hit=False（位置项未中）、verified=True、expected_group_rate=0.75375、expected_items=3（四字段已从封存复制）。
+- 面板（panel.html 01:45:01 重生成，376740B）：#kill-twelve-ai 新标题「🤖 AI 单位置杀码 + 单双形态 + 一合尾建议」、参考期 20261107020/目标期 20261107021、千位定位卡「0 定位排除 1 码」、形态卡「单双双单（千位杀 0 → 第 1 位取反写 单）」、合尾卡「千十个合尾 0」；stats「整组命中率（3 项全中：1 位置 + 1 单双形态 + 1 合尾）0.00%（0/1 期）· 位置杀码 0.00%（0/1 注）· 单双反向形态 100.00%（1/1 期）· 合尾杀码 100.00%（1/1 期）· 待核验 1 期 · 旧口径（历史版本封存）161 期（整组 118 中）已归档不计入 · 当前连败 1 期」，口径 kill12-tail-v4-one-position-one-form。
+- 旧文案归属核定：面板剩余 2 处「AI 自选 2~4 位置杀码 + 一合尾建议」分别属于 #kill-three-ai 与 #kill-one-ai 卡（非 kill12）；5 处「（N+1 项）」属 kill1/kill3/kill11/hitrate_stability 观察项与 v3 历史行（口径本就如此），kill12 现行卡旧文案 0 处。
+
+### 统计链路
+- data/hitrate_baseline.json：kill12_tail 行 rule=kill12-tail-v4-one-position-one-form、n=2、hits=0、items=3、expected=0.7538、label「AI 单位置杀码 + 单双形态 + 一合尾（3 项）」。
+- data/framework_hitrate_cumulative.json：kill12 行 rule=v4、n=2、hits=0、items=3、expected=0.75375、expected_basis=per-record-exact（逐期取封存 expected_group_rate）、coverage=1.0、label 同上。
+- 白名单：kill12 v4 条目已登记（reason「有意升级，过渡期 churn 告警降噪」）；v2/v3 旧条目保留自然到期。
+
+### 回滚
+- 代码：git revert 76d629a（9 文件）；面板区块随下一轮 run_stats 自动回退为 v3 文案。
+- 整文件回滚：从 /root/ops/kill12-v4-20261107_013126-repo/orig/ 覆盖 9 个文件（orig 另含 sha256 清单），py_compile 后跑 refresh_source_manifest.py --if-drift；白名单回滚用 orig 副本。
+- 数据：v4 封存/结算与 v1/v2/v3 按 rule_version 隔离，回退后不会被误计入旧版本；无需删除 data/kill12_tail 记录。
+
+### 备份/证据
+- /root/ops/kill12-v4-20261107_013126-repo/（orig + staged + 首次失败 staging 为 /root/ops/kill12-v4-20261107_013105-repo），均含 sha256 清单；部署脚本 /tmp/k12_v4_apply.py，staging 脚本 /tmp/kill12_v4_stage2.py。
+- 真实周期证据：data/kill12_tail/{seals,settlements}.json 末 2 条与 data/kill12_tail_cron.log 01:35 段。
+
+### 后续
+- 观察 v4 累积至 n≥200；v1/v2/v3 均已归档不计入现行口径。
