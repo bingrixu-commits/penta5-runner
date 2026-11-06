@@ -1,19 +1,22 @@
-"""AI 三位置杀码 + 一合尾（独立框架，数据独立封存/统计）。
+"""AI 自选 2~4 位置杀码 + 一合尾（kill12 独立框架，v3，无形态）。
 
 口径（面板、封存与统计都按此写死）：
-- 由 DeepSeek 从 千/百/十/个 四个位置中选 3 个不同位置，每个位置各排除 1 个数字（杀码），
-  3 个位置各计 1 注（共 3 注/期），不得只给 1 个或 2 个位置；
+- 由 DeepSeek 每期自行从 千/百/十/个 四个位置中选择 2~4 个不同位置（N 由模型按本期把握决定，
+  不固定为同一个数），每个位置各排除 1 个数字（杀码），每个位置计 1 注（N 注/期），全部计入整组；
 - 定位依据：每个位置给出近 50 期热码 top3 与上期（参考期）该位置重码/邻码
   （±1，0↔9 循环），模型须从中选择排除码，不得以冷码（出现次数少、当前遗漏长）为依据；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
 - 尾码稳定化 hold3-until-miss：上期尾码命中且自动沿用未满 3 期时沿用上期尾码；失手或自动沿用
   满 3 期后由模型本期重选（重选可与上期同码）；模型尾项在封存里记为换码候选
   （tail_policy.model_tail）；
-- 位置命中 = 该位置实际开奖号 != 杀码；合尾命中 = 该合尾实际和值个位 != 排除码；
-- 整组命中 = 3 个位置 + 1 个合尾同时命中（共 4 项）；
+- v3 起不再预测单双反向形态；v1 旧封存仍带 form_type/form，结算按封存自身字段兼容，
+  v1/v2 历史封存与结算不计入 v3 统计；
+- 位置命中 = 该位置实际开奖号 != 该位置杀码（N 个位置各计 1 注）；合尾命中 = 该合尾实际和值个位
+  != 排除码；整组命中 = N 个位置 + 1 个合尾同时命中（共 N+1 项）；
+- 整组随机期望随 N 变动（闭式 0.9^(N+1)，10^4 开奖 × 全配置空间枚举交叉验证）：
+  N=2 → 0.729000（3 项）、N=3 → 0.656100（4 项）、N=4 → 0.590490（5 项）；
+  封存记录 position_count / expected_items / expected_group_rate / expected_basis='closed-form-0.9^(n+1)'；
 - 无位置/杀码连用限制：位置与杀码完全由模型每期自选，不做 hold 沿用；
-- v2 起不再预测单双反向形态：新封存不含 form_type/form；v1 旧封存保留这两字段，
-  结算按封存自身字段兼容（有 form 才核对形态）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 
@@ -56,6 +59,7 @@ POSITIONS = (
 )
 POSITION_LABELS = {key: label for key, label, _index in POSITIONS}
 POSITION_INDEX = {key: index for key, _label, index in POSITIONS}
+POSITION_ORDER = tuple(key for key, _label, _index in POSITIONS)
 
 TAILS = {
     'tail_all': {'label': '千百十个', 'indices': (0, 1, 2, 3)},
@@ -65,29 +69,50 @@ TAILS = {
     'tail_bsg': {'label': '百十个', 'indices': (1, 2, 3)},
 }
 TAIL_KEYS = tuple(TAILS)
-# 形态相关常量仅保留给 v1 旧封存结算/展示兼容；v2 起不再预测单双反向形态。
+# v1 旧封存兼容常量（v3 不再产出单双反向形态；仅用于历史封存重建攻击语/结算兼容）
 REVERSE_KEYS = ('reverse_parity',)
 REVERSE_LABELS = {'reverse_parity': '单双反向形态'}
 FORM_LABELS = dict(REVERSE_LABELS)
 FORM_CHARS = '单双'
-FORM_RULE = ('被杀位置字符必须取杀码单双反面（杀码为奇数→双、偶数→单），'
-             '其余 3 个位置的单/双字符由 AI 自选')
 
-RULE_VERSION = 'kill12-tail-v2-three-position-one-tail'
-COUNTED_POSITIONS = 3
+RULE_VERSION = 'kill12-tail-v3-flexible-two-four-position-one-tail'
+MIN_POSITIONS = 2
+MAX_POSITIONS = 4
 TAIL_HOLD_MAX = 3
 TAIL_POLICY = 'hold3-until-miss'
-PROMPT_VERSION = 'kill12-tail-prompt-v2-three-position-one-tail'
+PROMPT_VERSION = 'kill12-tail-prompt-v3-flexible-two-four-position-one-tail'
+
+# 整组随机期望：v3 无形态，位置与合尾相互独立，整组命中率 P_N = 0.9^(N+1)（闭式精确值）。
+# 配置空间 = C(4,N) * 10^N * 50；命中对数 = 10^4 * C(4,N) * 9^N * 45。
+# 10^4 开奖 × 全配置空间分组枚举 + 固定种子逐对抽样验证（tests/enumerate_baseline_v3.py）。
+EXPECTED_BASIS = 'closed-form-0.9^(n+1)'
+EXPECTED_GROUP_RATE = {2: 0.729, 3: 0.6561, 4: 0.59049}
+
+
+def expected_items_for(position_count):
+    """整组项数 = N 个位置 + 1 个合尾（N+1 项）。"""
+    count = int(position_count)
+    if count not in EXPECTED_GROUP_RATE:
+        raise ValueError('kill12 v3 position_count must be 2..4')
+    return count + 1
+
+
+def expected_group_rate(position_count):
+    """整组随机期望命中率（闭式 0.9^(N+1)，枚举脚本交叉验证）。"""
+    count = int(position_count)
+    if count not in EXPECTED_GROUP_RATE:
+        raise ValueError('kill12 v3 position_count must be 2..4')
+    return EXPECTED_GROUP_RATE[count]
 
 
 RETRY_INSTRUCTION = (
     '上次响应未通过本地校验（{error}）。请严格按格式重新输出完整 JSON：'
-    'positions 必须是恰好 3 个对象的数组，每个对象为 '
-    '{{"key":"q|b|s|g 之一","kill":0 至 9 的整数}}，3 个 key 必须互不相同；'
+    'positions 必须是 2 至 4 个对象组成的数组，每个对象为 '
+    '{{"key":"q|b|s|g 之一","kill":0 至 9 的整数}}，各 key 必须不同（共 2 至 4 个位置）；'
     'tail 为 {{"key": 五种之一, "kill": 0 至 9 的整数}}；'
     '合尾为换码候选（系统会按稳定化规则决定最终封存尾码，可能沿用上期尾码）；'
-    '不再输出 form_type / form；reason 40 字以内。'
-    '不要输出任何其他文字、解释或代码块。'
+    '本框架不预测单双反向形态，不要输出 form_type / form 字段；'
+    'reason 40 字以内。不要输出其他任何文字、解释或代码块。'
 )
 
 
@@ -223,8 +248,8 @@ ATTACK_TAIL_LABELS = {'tail_all': '千百十个合', 'tail_qbs': '千百十合',
 def build_attack(seal):
     """与八项独立框架同格式的攻击语。
 
-    位置保留码（被杀位置为去掉杀码的 9 码，未选位置保留 10 码）→ 四定 →
-    合尾保留码（去掉排除码）；v1 旧封存若带反向形态再追加「除<形态>」，v2 起无形态项。
+    位置保留码（被杀位置为去掉杀码的 9 码，未选位置保留 10 码）→ 四定 → 合尾保留码（去掉排除码）。
+    v3 不再产出单双反向形态；v1 旧封存带 form 时追加 '除'+form，仅历史封存展示兼容。
     """
     if not isinstance(seal, dict):
         raise ValueError('attack requires a sealed prediction')
@@ -281,30 +306,36 @@ def _tail_key(value):
     return key
 
 
+def _position_items(response):
+    """Accept positions as a 2~4 item list (v2 preferred) or a legacy-style mapping."""
+    raw = response.get('positions')
+    if isinstance(raw, dict):
+        return [{'key': key, 'kill': value} for key, value in raw.items()]
+    if isinstance(raw, list):
+        return raw
+    raise ValueError('positions 必须是数组')
+
+
 def normalize_response(response):
     """Strict local validation; never pad, default or invent anything."""
     if not isinstance(response, dict):
         raise ValueError('响应必须是 JSON 对象')
-    raw_positions = response.get('positions')
-    if isinstance(raw_positions, dict):
-        items = [{'key': key, 'kill': value} for key, value in raw_positions.items()]
-    elif isinstance(raw_positions, list):
-        items = raw_positions
-    else:
-        raise ValueError('positions 必须是对象或数组')
+    items = _position_items(response)
+    if not MIN_POSITIONS <= len(items) <= MAX_POSITIONS:
+        raise ValueError('positions 必须包含 %d 至 %d 个位置' % (MIN_POSITIONS, MAX_POSITIONS))
     kills = {}
     for item in items:
         if not isinstance(item, dict):
-            raise ValueError('positions 的每一项必须是对象')
+            raise ValueError('positions 每项必须是对象')
         key = _position_key(item.get('key'))
+        if key in kills:
+            raise ValueError('positions 位置不能重复')
         number = digit(item.get('kill'))
         if number is None:
             raise ValueError('位置杀码必须是 0 至 9 的整数')
-        if key in kills:
-            raise ValueError('positions 不能包含重复位置')
         kills[key] = str(number)
-    if len(kills) != COUNTED_POSITIONS:
-        raise ValueError('positions 必须恰好包含 %d 个不同位置' % COUNTED_POSITIONS)
+    if not MIN_POSITIONS <= len(kills) <= MAX_POSITIONS:
+        raise ValueError('positions 必须包含 %d 至 %d 个不同位置' % (MIN_POSITIONS, MAX_POSITIONS))
     tail = response.get('tail')
     if not isinstance(tail, dict):
         raise ValueError('tail 必须是对象')
@@ -317,10 +348,10 @@ def normalize_response(response):
         reason.encode('utf-8')
     except UnicodeEncodeError:
         raise ValueError('reason 必须是合法 UTF-8 文本') from None
-    counted = [key for key, _label, _index in POSITIONS if key in kills]
+    ordered = [key for key in POSITION_ORDER if key in kills]
     return {
-        'positions': kills,
-        'counted': counted,
+        'positions': {key: kills[key] for key in ordered},
+        'counted': ordered,
         'tail': {'key': tail_key, 'label': TAILS[tail_key]['label'], 'kill': str(number)},
         'reason': reason[:200],
     }
@@ -421,24 +452,26 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '【合尾稳定化规则（hold3-until-miss：命中自动沿用，最多自动沿用 3 期）】\n'
         + restriction + '\n\n'
         '【任务】\n'
-        '1. 从 千/百/十/个 四个位置中挑 3 个不同位置，每个位置从该位置的近50期热码 top3、'
-        '上期重码、上期邻码（±1）中排除 1 个数字（0-9），三个位置各计 1 注；'
-        '不得只给 1 个或 2 个位置，三个位置不得重复；'
+        '1. 自行决定本期采用 2~4 个不同位置（即 2 至 4 个，N 由你按本期把握决定，不要固定为同一个数），'
+        '从 千/百/十/个 中选，并为每个位置各排除 1 个数字（0-9），作为该位置的定位杀码；'
+        '每个位置只杀 1 码、只计 1 注，N 个位置全部计入整组，不得只给 1 个，也不得超过 4 个；'
+        '排除码须从该位置的近50期热码 top3、上期重码、上期邻码（±1）中选取，'
         '不得以上期冷码 / 长遗漏码作为定位依据；\n'
         '2. 从上述 5 种合尾中挑 1 种并排除 1 个和尾数字（0-9），作为本期换码候选；'
         '系统按稳定化规则决定最终封存尾码；\n'
-        '3. 命中口径：位置 = 目标期该位置实际开奖号不等于排除码；'
+        '3. 命中口径：位置 = 目标期该位置实际开奖号不等于该位置的排除码（N 个位置各计 1 注）；'
         '合尾 = 目标期该合尾实际和值个位不等于排除码；'
-        '以上 4 项（3 个位置 + 1 个合尾）同时命中才算整组命中；\n'
+        '以上 N+1 项（N 个位置 + 1 个合尾）同时命中才算整组命中；本框架不预测单双反向形态；\n'
         '4. 位置与杀码不做连用限制，完全由你每期自主选择；合尾按 hold3-until-miss 稳定化；\n'
         '5. 热码、重码、邻码、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，不得声称保证命中；\n'
         '6. 只能使用上面给出的历史与面板全量上下文；面板数据只作参考，不得照抄，也不得声称保证命中。\n\n'
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
-        '{"positions":[{"key":"q|b|s|g","kill":<0-9整数>},{"key":"q|b|s|g","kill":<0-9整数>},'
+        '{"positions":[{"key":"q|b|s|g","kill":<0-9整数>},'
         '{"key":"q|b|s|g","kill":<0-9整数>}],'
         '"tail":{"key":"tail_all|tail_qbs|tail_qbg|tail_qsg|tail_bsg","kill":<0-9整数>},'
         '"reason":"40字以内"}\n'
-        '注意：positions 必须恰好 3 个不同位置（q/b/s/g 各最多一次）。'
+        '注意：positions 必须为 2~4 项（即 2 至 4 项，N 由你按本期把握决定，示例仅为格式参考，'
+        '请按实际选择输出 2/3/4 项）；key 互不相同；不要输出 form_type/form 等任何形态字段。'
     )
     if panel_section:
         _marker = prompt.find('【任务】')
@@ -452,7 +485,11 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         'history_sha256': sha256(history.encode('utf-8')).hexdigest(),
         'rows': [[str(int(value)) for value in row] for row in window],
         'position_basis': 'hot-repeat-neighbor',
-        'counted_positions': COUNTED_POSITIONS,
+        'position_range': [MIN_POSITIONS, MAX_POSITIONS],
+        'expected_baseline': {str(count): {'items': expected_items_for(count),
+                                           'group_rate': expected_group_rate(count),
+                                           'basis': EXPECTED_BASIS}
+                              for count in sorted(EXPECTED_GROUP_RATE)},
         'hot_ranking': [{'key': key, 'label': label,
                          'top': [{'number': str(number), 'count': count,
                                   'omission': omission}
@@ -569,7 +606,7 @@ def apply_tail_policy(prediction, seals, settlements):
 
 
 def resolve_model():
-    for name in ('PENTA5_MODEL_KILL12', 'PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL'):
+    for name in ('PENTA5_MODEL_KILL11', 'PENTA5_MODEL_KILLER', 'PENTA5_DEEPSEEK_MODEL'):
         try:
             from app_secrets import get_secret
             value = get_secret(name)
@@ -780,10 +817,11 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'panel_context_sha256': audit.get('panel_context_sha256'),
         'panel_context': audit.get('panel_context'),
         'window': WINDOW,
+        'position_count': len(prediction['positions']),
+        'expected_items': expected_items_for(len(prediction['positions'])),
+        'expected_group_rate': expected_group_rate(len(prediction['positions'])),
+        'expected_basis': EXPECTED_BASIS,
     }
-    if prediction.get('form') is not None:
-        seal['form_type'] = prediction.get('form_type')
-        seal['form'] = prediction.get('form')
     if isinstance(extra, dict):
         seal.update(extra)
     return seal
@@ -891,6 +929,10 @@ def settle_pending(snapshot=None, now=None):
             'actual': [str(value) for value in actual],
             'positions': positions,
             'counted': list(counted),
+            'position_count': seal.get('position_count'),
+            'expected_items': seal.get('expected_items'),
+            'expected_group_rate': seal.get('expected_group_rate'),
+            'expected_basis': seal.get('expected_basis'),
             'tail': tail_entry,
             'form_type': form_type,
             'form_present': bool(form_present),
@@ -968,11 +1010,13 @@ def today_stats(now=None):
         entry = item.get('form') if isinstance(item.get('form'), dict) else {}
         field = item.get('form_type') or entry.get('type')
         if field not in form_types:
-            continue
-        form_types[field]['bets'] += 1
+            field = None
         if entry.get('hit') is True:
             form_hits += 1
-            form_types[field]['hits'] += 1
+        if field is not None:
+            form_types[field]['bets'] += 1
+            if entry.get('hit') is True:
+                form_types[field]['hits'] += 1
     for field, block in form_types.items():
         block['rate'] = (block['hits'] / block['bets']) if block['bets'] else None
     win, loss, max_loss, four_loss = _streak_stats(todays)
@@ -989,7 +1033,29 @@ def today_stats(now=None):
             pending += 1
     late = sum(1 for item in settlements
                if item.get('verified') is False and _business_key(item.get('settled_at')) == start)
-    form_bets = sum(block['bets'] for block in form_types.values())
+    expected = {'records': 0, 'group_rate': None, 'group_expected': 0.0,
+                'items_min': None, 'items_max': None, 'basis': EXPECTED_BASIS}
+    expected_sum = 0.0
+    expected_items = []
+    for item in todays:
+        count = item.get('position_count')
+        try:
+            count = int(count) if count is not None else len(item.get('counted') or [])
+        except (TypeError, ValueError):
+            count = 0
+        rate = item.get('expected_group_rate')
+        if not isinstance(rate, (int, float)) or not 0 < float(rate) < 1:
+            rate = EXPECTED_GROUP_RATE.get(count)
+        if rate is None:
+            continue
+        expected_sum += float(rate)
+        expected_items.append(count + 1)
+        expected['records'] += 1
+    if expected['records']:
+        expected['group_rate'] = expected_sum / expected['records']
+        expected['group_expected'] = expected_sum
+        expected['items_min'] = min(expected_items)
+        expected['items_max'] = max(expected_items)
     return {
         'business_start': start.isoformat(),
         'total': total,
@@ -1000,8 +1066,8 @@ def today_stats(now=None):
         'per_position': per_position,
         'tail': {'hits': tail_hits, 'bets': total,
                  'rate': (tail_hits / total) if total else None},
-        'form': {'hits': form_hits, 'bets': form_bets,
-                 'rate': (form_hits / form_bets) if form_bets else None,
+        'form': {'hits': form_hits, 'bets': total,
+                 'rate': (form_hits / total) if total else None,
                  'types': form_types},
         'current_win_streak': win,
         'current_loss_streak': loss,
@@ -1010,6 +1076,7 @@ def today_stats(now=None):
         'four_loss_cycles_total': four_loss_total,
         'pending': pending,
         'late': late,
+        'expected': expected,
         'legacy': {'total': len(legacy),
                    'group_hits': sum(1 for item in legacy if item.get('group_hit') is True)},
         'latest_period': latest,

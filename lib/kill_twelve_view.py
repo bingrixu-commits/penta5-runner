@@ -1,14 +1,16 @@
-"""AI 三位置杀码 + 一合尾 建议面板区块（kill12 独立框架，v2）。
+"""AI 自选 2~4 位置杀码 + 一合尾 建议面板区块（kill12 独立框架，v3）。
 
 数据源 data/kill12_tail/{seals,settlements}.json，由 scripts/run_kill12_tail.py 每期生成。
 与既有框架完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
 
 命中口径（写死，面板脚注同步展示）：
-- 位置命中 = 该位置实际开奖号 != 排除码（3 个不同位置各 1 注，3 注/期）；
+- AI 每期自行选择 N 个不同位置（N=2~4，不固定），每个位置各排除 1 码，共 N 注/期、全部计入整组；
+- 位置命中 = 该位置实际开奖号 != 该位置排除码；
 - 合尾命中 = 该合尾实际和值个位 != 排除码（5 种合尾选 1）；
-- 整组命中 = 3 个位置 + 1 个合尾同时命中（共 4 项）；
-- v2 起不再预测单双反向形态；v1 旧封存仍带 form_type/form，卡面/结算按封存自身字段兼容；
+- 整组命中 = N 个位置 + 1 个合尾同时命中（共 N+1 项）；
+- v3 起不再预测单双反向形态；v1 旧封存仍带 form_type/form，卡面/结算按封存自身字段兼容；
 - 无位置/杀码连用限制；合尾 hold3-until-miss 稳定化；
+- 整组随机基线随 N 变动（闭式精确值，与 10^4 开奖 × 全配置空间枚举一致）：N=2 72.9000% / N=3 65.6100% / N=4 59.0490%；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
 """
@@ -23,13 +25,16 @@ import kill12_tail
 START = '<!-- KILL_TWELVE_START -->'
 END = '<!-- KILL_TWELVE_END -->'
 
-# 整组随机基线兜底：(项数, 精确期望命中率)。
-# 4 项 = 3 个定位杀码 + 1 个合尾（整组 4 项）。
-# 10^4 开奖空间 x 200000 配置精确枚举 = 1,312,200,000/2,000,000,000 = 0.6561，
-# 与 hitrate_baseline.RULE_BASELINE[('kill12_tail', 'kill12-tail-v2-three-position-one-tail')] 一致。
-FALLBACK_BASELINE = (4, 0.6561)
+# 整组随机基线兜底：v3 起 AI 自选 N 个位置（N=2~4）+ 1 个合尾 = N+1 项，
+# 精确期望（闭式 0.9^(N+1)，与 10^4 开奖 × 全配置空间枚举一致）：
+# N=2 72.9000% / N=3 65.6100% / N=4 59.0490%；
+# 旧 v1（3 位置 + 形态 + 合尾 = 4 项）与旧 v2（3 位置 + 合尾 = 4 项）均 65.61%，
+# 历史版本按 rule_version 归档，不参与 v3 统计。
+# 基线优先读共享 hitrate_baseline.DYNAMIC_RULES；未登记时读最新同 rule 封存的
+# expected_items / expected_group_rate 动态渲染；暂无新封存时显示区间兜底文案。
+FALLBACK_BASELINE_TEXT = 'N+1 项（N=2~4），精确基线 59.0490%~72.9000%'
 
-_TITLE = '🤖 AI 三位置杀码 + 一合尾建议'
+_TITLE = '🤖 AI 自选 2~4 位置杀码 + 一合尾建议'
 
 STYLE = """
 #kill-twelve-ai{box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;padding:14px;border:1px solid #c7d2fe;border-radius:12px;background:#f8faff;color:#334155;font:14px/1.6 sans-serif;min-width:0;overflow-wrap:anywhere}
@@ -81,11 +86,12 @@ def _stats_html(stats):
     late = stats.get('late') or 0
     positions = stats.get('positions') or {}
     tail_stats = stats.get('tail') or {}
+    expected = stats.get('expected') if isinstance(stats.get('expected'), dict) else {}
     if total:
         join = ' · '.join([
-            '整组命中率（4 项全中：3 位置 + 1 合尾） <b>%s</b>（%s/%s 期）'
+            '整组命中率（N+1 项全中：N 位置 + 1 合尾） <b>%s</b>（%s/%s 期）'
             % (_pct(stats.get('group_rate')), stats.get('group_hits'), total),
-            '位置杀码（3 注/期，随机基线90%%） <b>%s</b>（%s/%s 注）'
+            '位置杀码（N 注/期，N=AI 每期自选 2~4，随机基线90%%） <b>%s</b>（%s/%s 注）'
             % (_pct(positions.get('rate')), positions.get('hits'), positions.get('bets')),
             '合尾杀码（随机基线90%%） <b>%s</b>（%s/%s 期）'
             % (_pct(tail_stats.get('rate')), tail_stats.get('hits'), tail_stats.get('bets')),
@@ -96,6 +102,16 @@ def _stats_html(stats):
                 '最早一期开奖后核验（北京时间 05:00 清零）' % pending)
     if late:
         join += ' · 未计入（发布晚于开奖）%s 期' % late
+    if expected.get('records'):
+        items_min = expected.get('items_min')
+        items_max = expected.get('items_max')
+        if isinstance(items_min, int) and isinstance(items_max, int):
+            items_text = ('%d 项' % items_min) if items_min == items_max else ('%d~%d 项' % (items_min, items_max))
+        else:
+            items_text = 'N+1 项'
+        join += (' · 按实际 N 的随机期望 <b>%.4f%%</b>（%s，%d 期）'
+                 % (float(expected.get('group_rate') or 0.0) * 100.0, items_text,
+                    int(expected.get('records') or 0)))
     legacy = stats.get('legacy') or {}
     if legacy.get('total'):
         join += (' · 旧口径（历史版本封存）%s 期（整组 %s 中）已归档不计入'
@@ -229,8 +245,51 @@ def _missing_version_targets(rule):
         return []
 
 
+def _seal_position_count(seal):
+    """v3 封存位置数 N；旧 v1/v2 封存回退 positions 长度。"""
+    if not isinstance(seal, dict):
+        return 0
+    try:
+        count = int(seal.get('position_count'))
+    except (TypeError, ValueError):
+        count = 0
+    if count <= 0:
+        try:
+            count = len(seal.get('positions') or {})
+        except (TypeError, ValueError):
+            count = 0
+    return count
+
+
+def _latest_seal_baseline(rule):
+    """v3 起整组项数随 AI 自选位置数 N 变动：读最新同 rule 封存的
+    position_count / expected_items / expected_group_rate 动态渲染基线。"""
+    try:
+        seals = kill12_tail.load_seals()
+    except Exception:
+        return None
+    if not isinstance(seals, list):
+        return None
+    for seal in reversed(seals):
+        if not isinstance(seal, dict):
+            continue
+        if rule and str(seal.get('rule_version') or '') != rule:
+            continue
+        try:
+            items = int(seal.get('expected_items'))
+            count = int(seal.get('position_count'))
+            rate = float(seal.get('expected_group_rate'))
+        except (TypeError, ValueError):
+            continue
+        if items >= 2 and count >= 2 and 0.0 < rate < 1.0:
+            return {'items': items, 'count': count, 'rate': rate}
+    return None
+
+
 def _version_html(stats=None):
-    """口径追溯行：rule_version、自 ref 起期数（含待核验）、缺期披露、整组精确基线（未登记回退 FALLBACK_BASELINE）。"""
+    """口径追溯行：rule_version、自 ref 起期数（含待核验）、缺期披露、整组精确基线。
+    v3 起项数随 AI 自选 N 变动：旧 RULE_BASELINE 登记值优先，其次读最新同 rule 封存的
+    expected 字段动态渲染，最后回退区间文案 FALLBACK_BASELINE_TEXT。"""
     try:
         stats = stats if isinstance(stats, dict) else {}
         rule = str(getattr(kill12_tail, 'RULE_VERSION', '') or '')
@@ -246,8 +305,7 @@ def _version_html(stats=None):
             baseline = RULE_BASELINE.get(('kill12_tail', rule))
         except Exception:
             baseline = None
-        if not baseline:
-            baseline = FALLBACK_BASELINE
+        dynamic = None if baseline else _latest_seal_baseline(rule)
         parts = ['口径 ' + escape(rule)]
         first = info.get('first_ref')
         if first:
@@ -267,8 +325,15 @@ def _version_html(stats=None):
                 shown += '；等'
             parts.append('缺期 %d 槽（%s），不计入累计 n、不按 0 命中'
                          % (len(missing), escape(shown)))
-        parts.append('整组精确基线 %.2f%%（%d 项）'
-                     % (float(baseline[1]) * 100.0, int(baseline[0])))
+        if baseline:
+            parts.append('整组精确基线 %.4f%%（%d 项）'
+                         % (float(baseline[1]) * 100.0, int(baseline[0])))
+        elif dynamic:
+            parts.append('整组精确基线 %.4f%%（%d 项，N=%d；按最新封存动态读取）'
+                         % (float(dynamic['rate']) * 100.0, int(dynamic['items']),
+                            int(dynamic['count'])))
+        else:
+            parts.append(FALLBACK_BASELINE_TEXT)
         parts.append('kill12 独立框架：与既有框架完全独立封存 / 结算 / 统计')
         return '<div class="k1-drop">' + ' · '.join(parts) + '</div>'
     except Exception:
@@ -357,6 +422,7 @@ def render_block():
     target = seal.get('target_period')
     positions = seal.get('positions') or {}
     counted = seal.get('counted') or list(positions)
+    position_count = _seal_position_count(seal)
     tail = seal.get('tail') or {}
     form_type = str(seal.get('form_type') or '')
     form = seal.get('form') if (
@@ -364,11 +430,12 @@ def render_block():
         and isinstance(seal.get('form'), str)
         and len(seal.get('form')) == 4
     ) else ''
+    group_items = position_count + 1 + (1 if form else 0)
     html = [_section_open(' data-as-of="%s"' % escape(str(reference or '')))]
     html.append('<h3>' + _TITLE + '</h3>')
-    html.append('<div class="k1-meta">参考期 %s · 目标期 %s · AI 计算 %s（北京时间） · %s</div>'
+    html.append('<div class="k1-meta">参考期 %s · 目标期 %s · AI 自选 N=%d 个位置 · AI 计算 %s（北京时间） · %s</div>'
                 % (escape(str(reference or '-')), escape(str(target or '-')),
-                   _clock(seal.get('generated_at')),
+                   position_count, _clock(seal.get('generated_at')),
                    escape(str(seal.get('model_label') or seal.get('model') or '-'))))
     cards = []
     for key, label, _index in kill12_tail.POSITIONS:
@@ -410,9 +477,10 @@ def render_block():
         html.append('<div class="k1-reason">理由：%s</div>' % reason)
     html.append(_tail_policy_html(seal))
     html.append(_form_derivation(seal))
-    html.append('<div class="k1-drop">整组 4 项：3 定位杀码 + 1 合尾；'
+    html.append('<div class="k1-drop">整组 %d 项：%d 定位杀码 + 1 合尾；'
                 '位置与杀码不做连用限制（完全由模型每期自选）；'
-                '合尾稳定化 hold3-until-miss（命中自动沿用，最多自动沿用 3 期）</div>')
+                '合尾稳定化 hold3-until-miss（命中自动沿用，最多自动沿用 3 期）</div>'
+                % (group_items, position_count))
     html.append('<div class="k1-drop">发布 %s · 窗口 %s 期 · 关盘按开奖槽位倒推 70 秒</div>'
                 % (_clock(seal.get('published_at')), escape(str(seal.get('window') or '-'))))
     html.append('<div class="k1-verify">' + _settlement_line(settlement) + '</div>')
@@ -453,9 +521,10 @@ def _attack_html(seal):
         "try{ok=document.execCommand('copy')===true;}catch(e){}a.remove();done(ok);};"
         "if(navigator.clipboard&&navigator.clipboard.writeText){"
         "navigator.clipboard.writeText(t).then(function(){done(true);},fb);}else{fb();}")
+    rows_text = str(max(3, min(5, _seal_position_count(seal) + 1)))
     return ('<div class="k1-attack">'
             '<div class="k1-attack-title">攻击语（复制到平台，与八项同格式）</div>'
-            '<textarea id="kill12-attack-text" readonly rows="3" aria-label="AI 三位置+一合尾攻击语" '
+            '<textarea id="kill12-attack-text" readonly rows="' + rows_text + '" aria-label="AI 自选 2~4 位置+一合尾攻击语" '
             'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
             'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
             + escape(text) + '</textarea>'
@@ -468,10 +537,14 @@ def _attack_html(seal):
 
 def _foot_html():
     return ('<div class="k1-foot">口径（写死）：'
-            '定位杀码 = 该位置实际开奖号 ≠ 排除码（4 个位置选 3 个不同位置，每位置 1 注、共 3 注/期）；'
+            '定位杀码 = AI 每期自行选择 N 个不同位置（N=2~4，不固定），每个位置各排除 1 码、'
+            '共 N 注/期且全部计入整组；命中 = 该位置实际开奖号 ≠ 该位置排除码；'
             '合尾杀码 = 该合尾实际和值个位 ≠ 排除码（5 种合尾选 1；hold3-until-miss 稳定化：'
             '命中自动沿用、最多自动沿用 3 期；失手或满 3 期后由模型重选，重选可与上期同码；AI 尾项为换码候选）；'
-            '整组 4 项 = 3 个位置 + 1 个合尾，四项同时命中才算整组命中；v2 起不再预测单双反向形态；'
+            '整组命中 = N 个位置 + 1 个合尾同时命中（共 N+1 项）；v3 起不再预测单双反向形态'
+            '（v1 旧封存带 form_type/form 的，按封存自身字段兼容展示与结算）；'
+            '整组随机基线随 N 变动（闭式精确值，与 10^4 开奖 × 全配置空间枚举一致）：'
+            'N=2 72.9000%（3 项）、N=3 65.6100%（4 项）、N=4 59.0490%（5 项）；'
             '位置与杀码不做连用限制（完全由模型每期自选）；'
             '只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；'
             '累计四手连败自本版本上线起跨天叠加：连续 4 期整组未全中记 1 次、8 期记 2 次，'
