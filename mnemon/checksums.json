@@ -4,7 +4,10 @@
     "payload/runtime/memories.json": "94b7da88014c5c2c0dbff6d13aca82b8759e8a7860132b524f294b40cef49cc0",
     "payload/runtime/USER.md": "6bc09f7683dbf157103c80f074b40164d717c13958598f1d0db3d0cfa08cd0af",
     "payload/runtime/MEMORY.md": "649d769ad000b7706356765be5eba74e68e9a9fc2c72b75e204931ef1468c31d",
-    "payload/documents/index.json": "02dbd87a6d87bb3eb0cf2d22a87efdf8dd323affa7668abf0720108a5fee366c",
-    "payload/data/.dsh-memory-bodies.json": "dc6020b75bab2ed6109193aea9c3427c22d9d2b6edd223c4c8c6cd87ad0c67dd"
+    "payload/documents/index.json": "31ece71c8e78ab95ba5e09752217b31a76627a5ef48d2caac91071b06021e413",
+    "payload/documents/active/mnemon-dsh-03ec4e06.md": "ece777f1e33d2d0dca41a40492fa4eb754c1e537ae7356075285b5c80b41ba5d",
+    "payload/data/.dsh-memory-bodies.json": "1dfd5ca9312cc4e7319e081f9d5e57beb2bb1aff66279ac78509862f05335c5a",
+    "payload/data/0dcb869d-6a01-4654-bf94-c25bd925dc8d/mnemon.db": "e7110d5d78fd917ee3d7a34df78341a93fc659b620f7746ba006fdab9b9104af",
+    "payload/data/default/mnemon.db": "3d5540102f11df006d1a91afbf119af671e102f574f512208261f5fada211d6f"
   }
 }

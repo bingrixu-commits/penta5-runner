@@ -1,4 +1,24 @@
 {
   "version": 1,
-  "documents": []
+  "documents": [
+    {
+      "id": "03ec4e06-aa1a-423d-9db5-b47ad011c747",
+      "title": "Mnemon 记忆空间启用与创建（本机 DSH，含根因取证）",
+      "description": "本机 DSH 开通 Mnemon 记忆空间的完整记录：providerReady/View 按轮组装导致创建失败的根因、安装 CLI→新轮→创建→激活→导入→复验的操作流程、本次落成的两个空间与 pitfalls。当需要重建/排查记忆空间、向空间写入或解释创建按钮灰掉/工具报 manage-spaces 未提供时参考。",
+      "status": "active",
+      "filename": "mnemon-dsh-03ec4e06.md",
+      "relativePath": "documents/active/mnemon-dsh-03ec4e06.md",
+      "sourcePaths": [],
+      "sessionIds": [
+        "mnemon-run-v1-bb6f4fb4-4493-4a0b-9aa5-bb1690680042"
+      ],
+      "createdAt": "2026-11-06T00:16:26.957Z",
+      "updatedAt": "2026-11-06T00:16:26.957Z",
+      "lastAccessedAt": "2026-11-06T00:16:26.957Z",
+      "revision": 1,
+      "contentHash": "3cea350c6143f1f1781011e3bfd31c9376d495e90cf552c34c80f3f265d4067a",
+      "sizeBytes": 5674,
+      "memoryBodyIds": []
+    }
+  ]
 }

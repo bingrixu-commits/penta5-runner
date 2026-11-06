@@ -1,4 +1,21 @@
 {
   "version": 1,
-  "bodies": []
+  "bodies": [
+    {
+      "id": "0dcb869d-6a01-4654-bf94-c25bd925dc8d",
+      "name": "本机环境坑与 DSH 配置",
+      "description": "本机 Windows/DSH 环境与配置知识：DSH 桌面版 profile 与插件安装、billion-context 与记忆系统配置、Windows 代理与 Store 修复、凭据与网络踩坑、penta5 服务器同步与发布流程的边缘问题。当排查本机环境、插件、网络代理、DSH 配置或跨窗口协同问题时召回。",
+      "active": true,
+      "createdAt": "2026-11-06T00:12:44.332Z",
+      "updatedAt": "2026-11-06T00:15:05.068Z"
+    },
+    {
+      "id": "default",
+      "name": "penta5 运行与口径",
+      "description": "penta5-runner 线上项目的运行与口径知识：各预测框架（kill1/kill2p/kill3/kill8/he3/cold/stat50 等）的 rule_version 与结算口径变更史、封存与命中率基线、审计结论、回滚与验收判据、cron 与守护进程、面板重生成等运维坑。当需要回忆某框架当期怎么算、某次改动为什么做、回滚或验收判据、线上部署与面板细节时召回。",
+      "active": true,
+      "createdAt": "2026-11-06T00:12:26.896Z",
+      "updatedAt": "2026-11-06T00:14:25.181Z"
+    }
+  ]
 }
