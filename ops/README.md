@@ -2208,3 +2208,39 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 回滚：git revert d028c9d，再从 /root/ops/posvar-b/20261106-deploy-kill11/backup-20261106_234147/（manifest.json 含 9 文件 before sha256）覆盖；kill11 无冻结 guard，无需 renew；旧 v1 封存/结算不受影响。
 - 备份/证据：部署脚本 /root/ops/posvar-b/20261106-deploy-kill11/patch_kill11.py、staged 源 /root/ops/posvar-b/20261106-b2-kill11/stage 与 tests；真实周期证据见 data/kill11_tail/{seals,settlements}.json 末两条与 data/kill11_tail_cron.log。
 - 后续：观察 kill11 v2 累积；kill12 是否也改 AI 自选 2~4 位置待用户确认（现为并行窗口上线的固定三位置 v2，rule kill12-tail-v2-three-position-one-tail，expected 0.6561）。
+## 2026-11-07 00:47 kill13 上线（冷合尾 2 项：50 期冷榜取最冷两个合尾，纯确定性 cold-hold-top2）
+
+### 变更
+- 新框架 kill13「冷合尾 2 项」：每期用近 50 期（前 4 球=千/百/十/个）重算 5 种合尾组合 × 尾码 0-9 = 50 个候选的冷榜，取最冷 2 个合尾作杀码；整组 2 项全中即整组命中。
+- 冷序口径：出现次数升序 → 当前遗漏降序 → 组合序 → 尾码；出现次数相同则遗漏更长者更冷（与 position_cold/cold_hit_stats 同口径）。
+- 沿用规则 cold-hold-top2（用户口径「站不动的，不冷在换」）：上期封存的 2 项只要仍在本期冷榜前 2 就原样沿用；掉出前 2 的项换成本期冷榜前 2 中缺的项；无连用上限。封存与结算保留 kept/swapped 轨迹、kept_count/swapped_count，面板显示换码轨迹。
+- 候选池 50 个（5 组合 all/qbs/qbg/qsg/bsg × 尾 0-9）；不调用 DeepSeek，纯确定性、0 API 成本，因此不产生 panel_context/model_usage 记录。
+- 攻击语：四个位置全保留 10 码串 + 「四定」+ 两个合尾标签各自剩余 9 码（ATTACK_ORDER='1234567890'，如 `千1234567890百1234567890十1234567890个1234567890四定千百十合123467890千十个合123456789`）。
+- RULE_VERSION='kill13-tail-v1-two-cold-hewei'，WINDOW=50，TOP_N=2，HOLD_POLICY='cold-hold-top2'，CLOSE_SECONDS=70。
+- 文件（4 个新文件）：lib/kill13_tail.py（604 行）、lib/kill_thirteen_view.py、scripts/run_kill13_tail.py、scripts/enumerate_kill13_baseline.py；数据目录 data/kill13_tail/（.gitignore 内，seals/settlements/baseline_enumeration 只增）。
+- 12 挂接点完成 9 个：/root/run_stats.py（early_panel 与 quiet_panel 两条 lambda 链接在 apply_kill_twelve_block 外层）、lib/hitrate_baseline.py（RULE_BASELINE/LABELS/_kill13_rows/build）、scripts/framework_hitrate_cumulative.py（RULE_BASELINE/LABELS/WINDOWS/cum_kill13/JOBS）、scripts/ops_health_check.py（LEDGER_SIZE_FILES、LEDGER_ALERT_FILES、check_kill13、CHECK_FUNCS、FALLBACK_NAMES）、lib/evidence_backup.py（JSON_DIRS）、lib/attack_editor_view.py（v26 + kill13 攻击语条目）、lib/panel_live_refresh.py（v32 + KILL_THIRTEEN）、ops/crontab.txt（每 5 分钟 sleep 50）、/etc/logrotate.d/penta5。
+- 有意跳过 3 处挂接点（非缺失，已逐项核对语义）：lib/panel_context.py（kill13 无 AI 调用、不需要 panel_context 输入/哈希，避免动 kill3 freeze 登记的共享文件）、lib/model_usage.py（无 AI_RESPONSE_META/模型日志）、scripts/tail_hold_review.py（kill13 的「沿用」是冷榜 top2 沿用，不是命中 hold3 语义，口径不同）。
+- 精确随机期望：10^4 开奖 × C(50,2)=1225 配置精确枚举 = 9,900,000/12,250,000 = 0.8081632653061225 → 按项目口径登记 4 位 0.8082；EXPECTED_ITEMS=2；EXPECTED_BASIS='enumerated-10^4-draws-x-1225-configs'。枚举脚本 scripts/enumerate_kill13_baseline.py 输出 KILL13_BASELINE_ENUMERATION_OK（hit_count_is_constant_45=true，分布 {45: 10000}，configs=1225，耗时 0.17s）。
+- 面板：新 section #kill-thirteen-ai（KILL_THIRTEEN_START/END 标记），标题「❄️ 50 期冷榜 · 两个最冷合尾建议」；显示冷榜前 6（前 2 高亮）、两张合尾卡、沿用/换码轨迹、今日/累计统计（整组 100.00% vs 理论 80.82%）、攻击语 textarea+复制按钮。
+
+### 部署与真实周期证据
+- 备份：/root/ops/kill13-20261107_003532/（manifest.json 含 9 个文件 before/after sha256 与 before_bytes；files/ 为改前副本，含 /root/run_stats.py、/etc/logrotate.d/penta5、ops/crontab.txt；crontab.live.txt 为改前 live crontab）。补丁/取证脚本：/root/ops/kill13-patch/{patch_kill13.py, fix_cum_rule.py, probe_panel.py, probe_panel2.py}。
+- 安装：scripts/crontab_tool.sh install（previous crontab /tmp/crontab.backup.20261107_003757），crontab_tool.sh diff 输出 matches；logrotate --debug /etc/logrotate.d/penta5 通过。
+- 自测：/tmp/kill13_module_test.py 49/49 PASS，EXIT=0（覆盖 50 候选唯一/每组合 count 和=50/冷序单调/选 2/首期无沿用/沿用换码轨迹/攻击语逐字/封存字段/重复封存拒绝/结算 verified/today_stats/version_info/current_summary/deadline_for/视图空态与注入替换/标记各 1 次）；9 个改动文件 py_compile 全过；import smoke 通过。
+- 小问题修正：patch dry-run 的 grep 校验发现 cum_kill13 默认 rule 仍为 'kill12-tail-v1-one-position-one-form'（仅无 seal 时兜底路径，有 seal 时取 seal.rule_version 不受影响），已用 /root/ops/kill13-patch/fix_cum_rule.py 修正为 'kill13-tail-v1-two-cold-hewei'（对应行 scripts/framework_hitrate_cumulative.py:1011），py_compile/import 复验通过。
+- 真实周期 1（cron sleep 50，开奖后自动）：seal ref=20261107008 → target=20261107009，published 2026-11-07T00:40:52.599996+08:00；tail_qbs（千百十）杀 5：count=2 omission=35 rank=1；tail_qsg（千十个）杀 0：count=2 omission=16 rank=2；沿用 0 项/换码 2 项（首期无沿用）。结算 target=20261107009 actual=['1','2','4','7']：qbs=1+2+4=7（杀 5 命中）、qsg=1+4+7=12→2（杀 0 命中），group_hit=true、verified=true、counted=['tail_qbs','tail_qsg']。
+- 真实周期 2：seal ref=20261107009 → target=20261107010，published 2026-11-07T00:45:53.107114+08:00；cold_top 仍为 qbs 杀5 / qsg 杀0，kept 2 项/swapped 0 项，policy note「上期 2 项仍在冷榜前 2，原样沿用」（验证「站得住的继续用」生效）。
+- 面板：panel.html 于 00:45:54 由 run_stats 重生成 376451B；KILL_THIRTEEN_START/END 各 1、标记平衡；区块 data-as-of="20261107009"；攻击语 textarea 与 kill13_tail.build_attack(seal) 逐字一致；#kill13-attack-data JSON {version:1, reference_period:20261107009, target_period:20261107010}；统计「100.00%（1/1 期）」「理论 80.82%」、policy cold-hold-top2 在线；quiet-panel-v32-add-kill13-tail 与 all-attack-editor-v26-kill13-tail 均已注入面板。
+- 统计链路：data/hitrate_baseline.json kill13_tail 行 n=1 hits=1 rate=100.00% expected=0.8082 items=2 rule=kill13-tail-v1-two-cold-hewei verdict=样本不足(n<200)；data/framework_hitrate_cumulative.json kill13_tail n=1 expected 0.8082 items 2 coverage 1.0 first/last=20261107009；data/hitrate_stability.json kill13_tail verdict=ok、cliff=ok（样本不足提示），churn 为空 → 无需白名单登记。
+- 门禁（00:46:54 ops_health，overall=WARN）：kill13_tail OK ref=20261107009 published_at=2026-11-07T00:45:53.107114；ledger_size 含 kill13_tail/seals.json=6.1KiB（阈值 110/120MiB）；manifest_drift 在 refresh_source_manifest.py --root /root/penta5-runner --if-drift 后 OK（baseline /root/backups/auto-baseline-20261107-004652/verification-manifest.json，457 files）；剩余 WARN 均为存量项（kill3_stability missing_slots=22、coverage kill3_tail 92.36%、hitrate_stability 观察 kill3/kill1/kill11/kill12），与 kill13 无关。
+- 基线枚举证据：data/kill13_tail/baseline_enumeration.json（draws=10000、candidates=50、configs=1225、config_draw_pairs=12,250,000、both_hit_pairs=9,900,000、rate_exact=0.8081632653061225、rate_rounded4=0.8082、formula_990_over_1225=true、hit_count_is_constant_45=true）。
+
+### 回滚
+- 代码：git revert 本次 3 个 commit（feat kill13 三件套+枚举 / 派生统计与健康检查挂接 / ops 台账）；面板区块会随 run_stats 链回退消失。
+- 整文件回滚：从 /root/ops/kill13-20261107_003532/files/ 覆盖回 9 个文件（含 /root/run_stats.py、/etc/logrotate.d/penta5、ops/crontab.txt），再 scripts/crontab_tool.sh install + crontab_tool.sh diff；crontab 也可直接 crontab /tmp/crontab.backup.20261107_003757。
+- kill13 无 freeze guard（与 kill11 同类，纯确定性、不调 AI），无需 renew；data/kill13_tail 为只增账本，可保留不影响旧框架；若仅停跑：注释/删除 ops/crontab.txt 的 kill13 行并 install 即可，已封存/结算保留可查。
+- 若只想面板不显示：从 /root/run_stats.py 两条 lambda 链去掉 apply_kill_thirteen_block 外层（备份可恢复）。
+
+### 后续
+- 观察 kill13 累计与换码频率（n<200 前统计仅供参考）；若用户认为换码过频，可把沿用门槛从 top2 放宽到 top3/top5（属口径变更，需新 rule_version 并按升级流程登记基线/白名单）。
+- 冷榜口径如需改用更长窗口（如 70/100 期）同样需新 rule_version。
