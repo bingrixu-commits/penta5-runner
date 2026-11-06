@@ -1,14 +1,13 @@
-"""AI 单位置杀码 + 单双反向形态 + 一合尾 建议面板区块（kill12 独立框架，v1）。
+"""AI 三位置杀码 + 一合尾 建议面板区块（kill12 独立框架，v2）。
 
 数据源 data/kill12_tail/{seals,settlements}.json，由 scripts/run_kill12_tail.py 每期生成。
 与既有框架完全独立：独立 AI 请求 / 封存 / 结算 / 统计 / 面板区块 / 攻击语。
 
 命中口径（写死，面板脚注同步展示）：
-- 位置命中 = 该位置实际开奖号 != 排除码（恰好 1 个位置，1 注/期）；
+- 位置命中 = 该位置实际开奖号 != 排除码（3 个不同位置各 1 注，3 注/期）；
 - 合尾命中 = 该合尾实际和值个位 != 排除码（5 种合尾选 1）；
-- 单双反向形态命中 = 目标期实际四位单双形态串 != 封存形态串（反向排除项，4 字符）；
-- 整组命中 = 1 位置 + 1 项单双反向形态 + 1 合尾同时命中（共 3 项）；
-- 形态推导：被杀位置字符取杀码数字单双的反面（奇→双、偶→单），其余 3 位 AI 自选；
+- 整组命中 = 3 个位置 + 1 个合尾同时命中（共 4 项）；
+- v2 起不再预测单双反向形态；v1 旧封存仍带 form_type/form，卡面/结算按封存自身字段兼容；
 - 无位置/杀码连用限制；合尾 hold3-until-miss 稳定化；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
 - 只使用前 4 球（千/百/十/个），第 5 球不参与。
@@ -25,13 +24,12 @@ START = '<!-- KILL_TWELVE_START -->'
 END = '<!-- KILL_TWELVE_END -->'
 
 # 整组随机基线兜底：(项数, 精确期望命中率)。
-# 3 项 = 1 个定位杀码 + 1 项单双反向形态 + 1 个合尾（整组 3 项）。
-# KILL12_ENUM_PLACEHOLDER: 正式精确枚举值待 enum 队友产出后由 Lead 登记到
-# hitrate_baseline.RULE_BASELINE[('kill12_tail', 'kill12-tail-v1-one-position-one-form')]；
-# 未登记前回退本兜底值（预期 ≈0.7538）。
-FALLBACK_BASELINE = (3, 0.7538)
+# 4 项 = 3 个定位杀码 + 1 个合尾（整组 4 项）。
+# 10^4 开奖空间 x 200000 配置精确枚举 = 1,312,200,000/2,000,000,000 = 0.6561，
+# 与 hitrate_baseline.RULE_BASELINE[('kill12_tail', 'kill12-tail-v2-three-position-one-tail')] 一致。
+FALLBACK_BASELINE = (4, 0.6561)
 
-_TITLE = '🤖 AI 单位置杀码 + 单双形态 + 一合尾建议'
+_TITLE = '🤖 AI 三位置杀码 + 一合尾建议'
 
 STYLE = """
 #kill-twelve-ai{box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;padding:14px;border:1px solid #c7d2fe;border-radius:12px;background:#f8faff;color:#334155;font:14px/1.6 sans-serif;min-width:0;overflow-wrap:anywhere}
@@ -83,15 +81,12 @@ def _stats_html(stats):
     late = stats.get('late') or 0
     positions = stats.get('positions') or {}
     tail_stats = stats.get('tail') or {}
-    form_stats = stats.get('form') or {}
     if total:
         join = ' · '.join([
-            '整组命中率（3 项全中：1 位置 + 1 单双形态 + 1 合尾） <b>%s</b>（%s/%s 期）'
+            '整组命中率（4 项全中：3 位置 + 1 合尾） <b>%s</b>（%s/%s 期）'
             % (_pct(stats.get('group_rate')), stats.get('group_hits'), total),
-            '位置杀码（1 注/期，随机基线90%%） <b>%s</b>（%s/%s 注）'
+            '位置杀码（3 注/期，随机基线90%%） <b>%s</b>（%s/%s 注）'
             % (_pct(positions.get('rate')), positions.get('hits'), positions.get('bets')),
-            '单双反向形态（随机基线93.75%%） <b>%s</b>（%s/%s 期）'
-            % (_pct(form_stats.get('rate')), form_stats.get('hits'), form_stats.get('bets')),
             '合尾杀码（随机基线90%%） <b>%s</b>（%s/%s 期）'
             % (_pct(tail_stats.get('rate')), tail_stats.get('hits'), tail_stats.get('bets')),
             '待核验 <b>%s</b> 期' % pending,
@@ -415,7 +410,7 @@ def render_block():
         html.append('<div class="k1-reason">理由：%s</div>' % reason)
     html.append(_tail_policy_html(seal))
     html.append(_form_derivation(seal))
-    html.append('<div class="k1-drop">整组 3 项：1 定位杀码 + 1 单双反向形态 + 1 合尾；'
+    html.append('<div class="k1-drop">整组 4 项：3 定位杀码 + 1 合尾；'
                 '位置与杀码不做连用限制（完全由模型每期自选）；'
                 '合尾稳定化 hold3-until-miss（命中自动沿用，最多自动沿用 3 期）</div>')
     html.append('<div class="k1-drop">发布 %s · 窗口 %s 期 · 关盘按开奖槽位倒推 70 秒</div>'
@@ -460,7 +455,7 @@ def _attack_html(seal):
         "navigator.clipboard.writeText(t).then(function(){done(true);},fb);}else{fb();}")
     return ('<div class="k1-attack">'
             '<div class="k1-attack-title">攻击语（复制到平台，与八项同格式）</div>'
-            '<textarea id="kill12-attack-text" readonly rows="3" aria-label="AI 单位置+单双形态+一合尾攻击语" '
+            '<textarea id="kill12-attack-text" readonly rows="3" aria-label="AI 三位置+一合尾攻击语" '
             'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
             'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
             + escape(text) + '</textarea>'
@@ -473,13 +468,10 @@ def _attack_html(seal):
 
 def _foot_html():
     return ('<div class="k1-foot">口径（写死）：'
-            '定位杀码 = 该位置实际开奖号 ≠ 排除码（4 个位置选 1，1 注/期）；'
-            '单双反向形态 = 4 字符（仅单/双，按千百十个顺序），被杀位置字符必须取杀码单双反面'
-            '（杀码为奇数→双、偶数→单），其余 3 位由 AI 自选；'
-            '命中 = 目标期实际四位单双形态串 ≠ 封存形态串；'
+            '定位杀码 = 该位置实际开奖号 ≠ 排除码（4 个位置选 3 个不同位置，每位置 1 注、共 3 注/期）；'
             '合尾杀码 = 该合尾实际和值个位 ≠ 排除码（5 种合尾选 1；hold3-until-miss 稳定化：'
             '命中自动沿用、最多自动沿用 3 期；失手或满 3 期后由模型重选，重选可与上期同码；AI 尾项为换码候选）；'
-            '整组命中 = 1 位置 + 1 项单双反向形态 + 1 合尾同时命中（共 3 项）；'
+            '整组 4 项 = 3 个位置 + 1 个合尾，四项同时命中才算整组命中；v2 起不再预测单双反向形态；'
             '位置与杀码不做连用限制（完全由模型每期自选）；'
             '只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；'
             '累计四手连败自本版本上线起跨天叠加：连续 4 期整组未全中记 1 次、8 期记 2 次，'
