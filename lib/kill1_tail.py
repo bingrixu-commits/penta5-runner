@@ -975,14 +975,15 @@ def settle_pending(snapshot=None, now=None):
             kill_number = digit(kill)
             positions[key] = {'kill': str(kill_number), 'actual': str(actual[index]),
                               'hit': kill_number is not None and actual[index] != kill_number}
-        tail = seal.get('tail') or {}
+        tail = seal.get('tail') if isinstance(seal.get('tail'), dict) else {}
         tail_key = tail.get('key')
         tail_kill = digit(tail.get('kill'))
-        actual_tail = tail_actual(actual, tail_key) if tail_key in TAILS else None
-        tail_entry = {'key': tail_key,
-                      'label': TAILS[tail_key]['label'] if tail_key in TAILS else '',
-                      'kill': str(tail_kill), 'actual': str(actual_tail),
-                      'hit': tail_kill is not None and actual_tail is not None and actual_tail != tail_kill}
+        tail_entry = None
+        if tail_key in TAILS and tail_kill is not None:
+            actual_tail = tail_actual(actual, tail_key)
+            tail_entry = {'key': tail_key, 'label': TAILS[tail_key]['label'],
+                          'kill': str(tail_kill), 'actual': str(actual_tail),
+                          'hit': actual_tail != tail_kill}
         form_type = seal.get('form_type')
         kind = {'reverse_parity': 'parity', 'reverse_size': 'size'}.get(form_type)
         sealed_form = seal.get('form')
@@ -1001,7 +1002,8 @@ def settle_pending(snapshot=None, now=None):
                       'actual': actual_form, 'hit': form_hit}
         counted = seal.get('counted') or list(positions)
         group_hit = (all(positions[key]['hit'] for key in counted if key in positions)
-                     and tail_entry['hit'] and form_hit is not False)
+                     and (tail_entry['hit'] if tail_entry is not None else True)
+                     and form_hit is not False)
         published = parse_time(seal.get('published_at'))
         drawn = parse_time(record.get('opentime'))
         verified = (seal.get('publication_state') == 'published' and published is not None
