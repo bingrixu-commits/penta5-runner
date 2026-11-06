@@ -2117,3 +2117,15 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 回退：git revert 2a91c4f（代码）；如需整体回 flash 再 cp -a /root/backups/.env.kill3-pro-trial.20261106-070919 .env（cron 热读）。改动前备份 /root/backups/kill3-medium-20261106-164809/（lib_kill3_tail.py、ops_freeze-guards.json、ops_kill3-freeze.json）。
 - 并行窗口：本批提交前 git status 仅 lib/kill3_tail.py（已先单独提交 2a91c4f）与两个冻结登记文件；未触碰另一窗口 16:46 上线的 kill3 纸面账本（bb85aa2）。
   - 真实周期验证（2026-11-06 17:03）：连续 3 期 medium 生效且已发布——ref 202→203 于 16:52:49 发布 elapsed 102.275s、ref 203→204 于 16:58:14 发布 elapsed 121.64s、ref 204→205 于 17:03:08 发布 elapsed 121.014s（AI_RESPONSE_META 均 reasoning_effort=medium、request_policy_version=kill3-medium-16k-deadline-v1）；对比同日 pro-high 中位 122-137s 改善有限（reasoning_tokens 仍 4430-5236），仍贴近 230s 发布窗，继续观察。面板已正常显示建议（参考期 20261106204 ｜ 目标期 20261106205，panel.html 无「尚未发布」）。另：16:45 那期 ref 20261106201 在改前旧代码（high）下 attempt1 触发 ValueError（大小反向形态在 s 位置必须取杀码形态的反面）、attempt2 被 cron timeout 220 静默终止，仍缺 1 期，与本次改动无关。
+## 2026-11-06 20:50 余额守护/面板 AI 总闸 落地复验（本批无新增业务代码；补推 5 个并行窗口提交）
+
+- 需求链：用户 m00138「好部署落地」——核验 AI 总闸被关后缴费是否自动恢复并读取最新数据，以及面板 AI 状态显示是否已在线上落地。
+- 结论：既有能力全部已落地，本批 0 新增脚本、0 业务代码 commit；本次只做线上证据核验 + 补推积压提交 + 本条台账。
+- 自动暂停/恢复（scripts/ai_balance_guard.py，HEAD 内 commit 9a5b1fd；PAUSE=5.00 / RESUME=6.00 / 连续 2 次确认）：2026-11-06 08:00:01 pause（gen 83→84，余额 4.38）→ 08:14:01 resume（gen 84→85，余额 31.79）；14:26:01 pause（gen 87→88，余额 4.59）→ 14:39:01 resume（gen 88→89，余额 24.37）。crontab 每分钟执行，bash scripts/crontab_tool.sh diff = crontab matches（39 jobs）。
+- 恢复后不补历史期（docstring 与实测一致）：kill1_tail settlements 174 期（pub 14:26:00）→ 177 期（pub 14:40:59），缺 175/176；kill3_tail 173→177，缺 174/175/176；下一轮直接读最近 50 期最新开奖继续发布。
+- 面板：#ai-api-control 命中 1 次，由 tracked lib/ai_control_view.py 生成；penta5_backend_runner.js 的 getPanelHtmlText() 按 panel.html mtime 失效缓存直读磁盘；ai_control_routes.js POST 含 403 admin-required；panel.html data-as-of=20261106249、mtime 2026-11-06 20:48:02、408366 bytes；匿名 /panel.html 401 属预期（未认证）。
+- 门禁：refresh_source_manifest.py --if-drift = no-drift；ops_health_check.py 中 ai_control OK（generation=89、余额 54.48→54.14）、crontab_drift OK、manifest_drift OK、panel_html OK（mtime_age 22s）、pm2 10/10 online；遗留 FAIL/WARN 与本次无关（hitrate_stability 口径清零监控、kill3_stability/coverage 历史窗口）。
+- 补推：14a69a8..b301e91（5 个并行窗口提交 bb85aa2 / a52594f / 2a91c4f / 8fd34d4 / b301e91，kill3 门禁、纸面账本、推理档 medium）已推送 GitHub；推送后 git status --short --branch = main...origin/main（AHEAD=0、工作树干净）。
+- 为何无需重启：guard 由 cron 每分钟新起 python 直读磁盘代码；面板由 run_stats 每期重写、后端按 mtime 读盘；后端 penta5-runner 进程启动时间晚于 ai_control_routes.js（10-23）与 penta5_backend_runner.js（11-05 06:07）最后修改，已在跑当前代码。
+- 备份/回滚：改前 README 备份 /tmp/README.md.bak.<ts>；回滚 git revert 本条 docs 提交（仅文档）。
+- 并行窗口：5 个被推送提交均为 16:37–17:04 另一窗口产出，本次只做推送，不计入本批新代码；本批提交前 git status 干净。
