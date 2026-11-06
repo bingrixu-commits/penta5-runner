@@ -2182,6 +2182,16 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 测试：staged tests/test_kill3_v17.py commit 后 9/9 PASS。
 - 后续：观察 v17 累积至 n≥150；kill11 v2 部署；kill12 是否灵活化待用户确认。
 
+
+## 2026-11-07 00:26 kill12 v3 上线（AI 自选 2~4 位置 + 一合尾，整组 N+1 项）
+
+- 变更：kill12 由 v2 固定三位置升级为 AI 每期自选 N∈{2,3,4} 个不同位置（每位置杀 1 码）+ 1 合尾；RULE_VERSION=kill12-tail-v3-flexible-two-four-position-one-tail，MIN_POSITIONS=2 / MAX_POSITIONS=4，无单双反向形态，合尾保持 hold3-until-miss；封存新增 position_count/expected_items/expected_group_rate/expected_basis 并在结算复制；v1/v2 旧账本按 rule_version 隔离（旧口径 146 期已归档不计入）。
+- 精确基线（闭式 0.9^(n+1)，10^4 开奖 × 全配置空间枚举 + 20 万对 MC 一致）：N=2 72.9000%（3 项）/ N=3 65.6100%（4 项）/ N=4 59.0490%（5 项）；EXPECTED_BASIS=closed-form-0.9^(n+1)。工作区：/root/ops/posvar-b/20261107-c-kill12/（staged + 26 项测试 + 枚举脚本）。
+- 部署：备份 /root/backups/kill12-v3-20261107-001659/manifest.json（9 文件 before sha256 + HEAD）；部署脚本 /root/ops/posvar-b/20261107-c-kill12/deploy_kill12_v3.py。
+- 真实周期证据：首期 v3 seal target=20261107005（N=3，expected_items=4，expected_group_rate=0.6561，expected_basis=closed-form-0.9^(n+1)，published 2026-11-07T00:21:16.884789+08:00）；首条 v3 结算 target=20261107005 verified=True group_hit=False 且 position_count/expected_items/expected_group_rate/expected_basis 已复制；第二期 seal target=20261107006 N=3 published 00:25:55。结算由 v3 代码结算上一期 v2 seal（target=20261107004 group_hit=True）验证旧口径兼容。
+- 统计/门禁：hitrate_baseline 与 framework_hitrate_cumulative 的 kill12 行改为逐期动态期望（label「AI 自选 2~4 位置杀码 + 一合尾（N+1 项）」，expected/items 取封存逐期值，basis per-record-exact）；ops/hitrate_stability_whitelist.json 追加 v3 条目（until 2026-11-08T00:21:00+08:00）；面板 KILL_TWELVE 区块已重生成（标题「🤖 AI 自选 2~4 位置杀码 + 一合尾建议」、N=3 展示、旧「AI 三位置」文案 0 次）。
+- 回滚：cp /root/backups/kill12-v3-20261107-001659/* 回仓库对应路径，或 git revert 本提交；data 内 v3 记录无需删除（rule_version 隔离）。
+
 ## 2026-11-06 23:54 kill11 v2 上线：AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项，逐期动态期望）
 
 - 需求链：用户 m00199「所有模型。定位排除站位不限次数」批 2 第三框架。口径：AI 每期从 4 个位置自选 N∈{2,3,4} 个不同位置、每位置杀 1 码（N 注/期，全部计入整组）；单双反向形态 1 项（所有被杀位置字符取杀码单双的反面，未被杀位置 AI 自选）；合尾 1 项（hold3-until-miss）；整组 = N+2 项；旧 v1 封存/结算不动（按 rule_version 隔离）。
