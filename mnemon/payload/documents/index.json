@@ -35,7 +35,7 @@
       ],
       "createdAt": "2026-11-06T03:04:41.409Z",
       "updatedAt": "2026-11-06T03:04:41.409Z",
-      "lastAccessedAt": "2026-11-06T10:01:55.343Z",
+      "lastAccessedAt": "2026-11-06T13:14:55.076Z",
       "revision": 1,
       "contentHash": "ef288ce9cd49f81aba8370b060faa78f7a61f689cb2aef7a90210426f440d901",
       "sizeBytes": 5491,
@@ -59,7 +59,7 @@
       ],
       "createdAt": "2026-11-06T08:13:05.134Z",
       "updatedAt": "2026-11-06T08:13:05.134Z",
-      "lastAccessedAt": "2026-11-06T10:01:55.343Z",
+      "lastAccessedAt": "2026-11-06T13:14:55.076Z",
       "revision": 1,
       "contentHash": "010aa918f743d47f4c31a7c47952ccbaca186ada02532b3cf7044f4031a452dd",
       "sizeBytes": 8333,
@@ -82,7 +82,7 @@
       ],
       "createdAt": "2026-11-06T08:26:03.567Z",
       "updatedAt": "2026-11-06T08:26:03.567Z",
-      "lastAccessedAt": "2026-11-06T10:01:55.343Z",
+      "lastAccessedAt": "2026-11-06T13:14:55.076Z",
       "revision": 1,
       "contentHash": "b86a7402b77cafc3c42420a290ea09584c736f0a51ca6551c278359dd841c9eb",
       "sizeBytes": 9540,
@@ -101,10 +101,29 @@
       ],
       "createdAt": "2026-11-06T10:02:17.697Z",
       "updatedAt": "2026-11-06T10:02:17.697Z",
-      "lastAccessedAt": "2026-11-06T10:02:17.697Z",
+      "lastAccessedAt": "2026-11-06T13:14:55.076Z",
       "revision": 1,
       "contentHash": "d75285f6bec0195d51f01891f8ca7f679e435e9737399ef068042899579253d5",
       "sizeBytes": 8709,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "ff1dd0eb-a0b7-4615-8ace-405e84c12999",
+      "title": "penta5-runner AI 总闸余额守护：自动暂停/自动恢复语义与缺期不补跑（2026-11-06）",
+      "description": "回答「AI 总闸被关后充值会不会自动恢复、恢复后会不会补读最新数据」的取证型运维说明：唯一总闸与 generation CAS 语义、guard 阈值/确认次数、自动恢复只限自己停的版本、手动关不自动开、恢复后不补历史期；含 2026-11-06 两次自动停/恢复与 kill1/kill3 缺期实证。",
+      "status": "active",
+      "filename": "penta5-runner-ai-2026-11-06-ff1dd0eb.md",
+      "relativePath": "documents/active/penta5-runner-ai-2026-11-06-ff1dd0eb.md",
+      "sourcePaths": [],
+      "sessionIds": [
+        "mnemon-run-v1-91b0009d-cae6-4168-957e-f7edc377357b"
+      ],
+      "createdAt": "2026-11-06T12:38:45.704Z",
+      "updatedAt": "2026-11-06T12:38:45.704Z",
+      "lastAccessedAt": "2026-11-06T12:38:45.704Z",
+      "revision": 1,
+      "contentHash": "a7814af50d88628abe3d0b04e35fe10f905a413b06b3c6c368d20d01e14df532",
+      "sizeBytes": 5268,
       "memoryBodyIds": []
     }
   ]
