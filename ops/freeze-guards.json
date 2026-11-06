@@ -143,13 +143,13 @@
   },
   "kill1_tail": {
    "files": {
-    "lib/kill1_tail.py": "de34dd76e44f6362a5eaa7c00b0243b785d77d0bf2cfeb3299e7a6918b7717f1",
-    "lib/kill_one_view.py": "1140a43f1ce8c691da2fd81ed8160befdba2d3c57edde3bef2555d92b4af6bc8"
+    "lib/kill1_tail.py": "87268bec1d97901a8f48b22c6cf6e1840aaff19ee4fd1d834c0e75a0c44410cc",
+    "lib/kill_one_view.py": "c38b73c23b98fe05099d75935aa134f5bc18c71603fe7002064e6c26bb1424fc"
    },
    "freeze_hours": 72.0,
-   "freeze_ref_period": "20261105123",
-   "frozen_at": "2026-11-05T10:17:59.601539+08:00",
-   "frozen_commit": "905d6e4",
+   "freeze_ref_period": "20261106273",
+   "frozen_at": "2026-11-06T22:46:01.931893+08:00",
+   "frozen_commit": "b4ad1e1",
    "hash_updates": [
     {
      "at": "2026-11-05T12:34:40.692296+08:00",
@@ -230,11 +230,27 @@
      "new_sha256": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
      "old_sha256": "243d7e32a2520f97e1a1105738d1bae0dbc9f5aaf161e6463808d01e3f1609fc",
      "reason": "kill12 上线：panel_context.py 新增 kill12 自选帧（仅 additive，kill11/kill10 行为 A/B 逐字节一致）"
+    },
+    {
+     "at": "2026-11-06T22:29:49.258892+08:00",
+     "commit": "4b211b2",
+     "file": "lib/kill1_tail.py",
+     "new_sha256": "87268bec1d97901a8f48b22c6cf6e1840aaff19ee4fd1d834c0e75a0c44410cc",
+     "old_sha256": "de34dd76e44f6362a5eaa7c00b0243b785d77d0bf2cfeb3299e7a6918b7717f1",
+     "reason": "kill1 v7 上线：AI 每期自选 2~4 个不同位置（每位置杀 1 码）+ 一合尾，整组 N+1 项，逐期期望 0.9^(N+1)；封存 position_count/expected_items/expected_group_rate"
+    },
+    {
+     "at": "2026-11-06T22:29:49.322858+08:00",
+     "commit": "4b211b2",
+     "file": "lib/kill_one_view.py",
+     "new_sha256": "c38b73c23b98fe05099d75935aa134f5bc18c71603fe7002064e6c26bb1424fc",
+     "old_sha256": "1140a43f1ce8c691da2fd81ed8160befdba2d3c57edde3bef2555d92b4af6bc8",
+     "reason": "kill1 v7 面板/文案：标题与口径改自选 2~4 位置 N+1 项、动态整组基线、兼容 v4 历史封存渲染"
     }
    ],
    "label": "单位置杀码(kill1)",
    "min_periods": 100,
-   "rule_version": "kill1-tail-v4-two-position-one-tail",
+   "rule_version": "kill1-tail-v7-flexible-two-four-position-one-tail",
    "shared": {
     "lib/panel_context.py": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f"
    }
@@ -807,6 +823,6 @@
    }
   }
  },
- "updated_at": "2026-11-06T16:49:02.504938+08:00",
+ "updated_at": "2026-11-06T22:46:01.931893+08:00",
  "version": 1
 }

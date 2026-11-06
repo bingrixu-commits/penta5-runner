@@ -2129,3 +2129,19 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 为何无需重启：guard 由 cron 每分钟新起 python 直读磁盘代码；面板由 run_stats 每期重写、后端按 mtime 读盘；后端 penta5-runner 进程启动时间晚于 ai_control_routes.js（10-23）与 penta5_backend_runner.js（11-05 06:07）最后修改，已在跑当前代码。
 - 备份/回滚：改前 README 备份 /tmp/README.md.bak.<ts>；回滚 git revert 本条 docs 提交（仅文档）。
 - 并行窗口：5 个被推送提交均为 16:37–17:04 另一窗口产出，本次只做推送，不计入本批新代码；本批提交前 git status 干净。
+
+## 2026-11-06 22:30 kill1 v7 上线：AI 自选 2~4 位置杀码 + 一合尾（N+1 项，逐期动态期望）
+
+- 需求链：用户 m00199「所有模型。定位排除站位不限次数」——kill1 由固定「两位置 + 一合尾、整组 3 项」改为 AI 每期自选 2~4 个不同位置（每位置杀 1 码）+ 一合尾，整组 N+1 项；随机基线 0.9^(N+1)（N=2 72.90% / N=3 65.61% / N=4 59.05%），按每期封存 actual N 逐期 expected 统计。
+- 代码 commit：b4ad1e1（13 文件）。lib/kill1_tail.py、lib/kill_one_view.py、lib/model_call_rec.py、lib/attack_editor_view.py、lib/tail_hold_max_shadow.py、lib/hitrate_baseline.py、lib/hitrate_display.py、scripts/tail_hold_review.py、scripts/kill1_ab_report.py、scripts/run_kill1_tail.py、scripts/ops_health_check.py、scripts/framework_hitrate_cumulative.py、ops/hitrate_stability_whitelist.json；lib/panel_context.py 未改（无旧口径文案；给 kill1_self 增 position 字段会改 AI prompt，另议）。
+- 规则版本：kill1-tail-v7-flexible-two-four-position-one-tail（MIN_POSITIONS=2 / MAX_POSITIONS=4）。位置稳定化方案 B：最终位置集合恒等于模型本期所选，各位置独立 hold3-until-miss（上一条 v7 seal 计入该位且上期该位命中且 run<3 时沿用封存杀码）；v4 及更早封存不参与 hold 回放，历史统计归档不计入 v7。
+- 封存/结算新增字段：position_count、expected_items=N+1、expected_group_rate=round(0.9**(N+1),6)、expected_basis=closed-form-0.9^(n+1)（结算复制同名字段）；统计侧 DYNAMIC_RULES 按逐期 expected 计算，累计 expected_basis=per-record-exact。
+- 真实周期验证（2026-11-06 22:31–22:44）：
+  - seal ref 20261106270→271：N=2，positions q=4/s=2，expected_items=3，expected_group_rate=0.729；目标期 271 结算 verified=True、group_hit=False（q 中、s 未中、合尾中）。
+  - seal ref 271→272：N=2，b=5/g=7；目标期 272 结算 verified=True、group_hit=True。
+  - seal ref 272→273：模型选 b=1/g=8，因上期同位均命中且 run<3，封存沿用 b=5/g=7、run=2（方案 B 线上实证）。
+- 面板（run_stats 22:32/22:38 重建）：KILL_ONE 区块显示新标题「AI 自选 2~4 位置杀码 + 一合尾建议」、「整组 3 项：2 位置 + 1 合尾（N=2）」、「整组精确基线 72.90%（3 项，N=2）」、位置卡与 v7 footer；统计行 n=1、expected=0.729、verdict=样本不足（n<200）。
+- 冻结：kill1_tail 重登记（lib/kill1_tail.py 87268bec1d97…、lib/kill_one_view.py c38b73c23b98…；freeze_ref_period=20261106269，frozen_commit=b4ad1e1，本版窗口 periods=0/100、hours=0/72）。staged 源文件：/root/ops/posvar-a/20261106141818/orig（17 文件 + sha256sum.txt）。
+- 门禁/监控：ops_health freeze_guards OK；hitrate_stability 由 FAIL（旧「kill1 口径清零 13.8h/163 期」）降为 WARN（观察 kill1_tail/kill3_tail；白名单 kill1 v7 至 2026-11-08T04:21:17）；manifest_drift 当时 FAIL 因并行窗口正在升级 kill12 v2（lib/kill12_tail.py / lib/kill_twelve_view.py / scripts/run_kill12_tail.py 22:43–22:46 在途修改，非本批），待其落定后刷新 baseline。
+- 回滚：git revert b4ad1e1 后将 lib/kill1_tail.py、lib/kill_one_view.py 恢复为 de34dd76e44f… / 1140a43f1ce8…，再运行 python3 scripts/freeze_guard.py init --framework kill1_tail --renew；旧 v4 封存/结算数据未迁移，回滚后统计按 v4 口径恢复。
+- 后续：批 2 kill3 v17（需先建 v17 guard/rollback/预登记基线）+ kill11/12 v2。
