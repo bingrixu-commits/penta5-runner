@@ -146,7 +146,7 @@ def _kill1_entries():
 
 
 def _kill11_entries():
-    '''kill11_tail（AI 单位置 + 单双形态 + 一合尾）的尾项稳定化复盘行。'''
+    '''kill11_tail（AI 自选 2~4 位置 + 单双形态 + 一合尾）的尾项稳定化复盘行。'''
     actuals = {}
     for settlement in (_read(DATA / 'kill11_tail/settlements.json', {}) or {}).get('records') or []:
         nums = settlement.get('actual')
@@ -198,7 +198,7 @@ def _kill12_entries():
 FRAMEWORKS = (
     ('AI自选2~4位置+一合尾', _kill3_entries),
     ('AI自选2~4位置+一合尾', _kill1_entries),
-    ('AI单位置+单双形态+一合尾', _kill11_entries),
+    ('AI自选2~4位置+单双形态+一合尾', _kill11_entries),
     ('AI三位置+一合尾(kill12)', _kill12_entries),
     ('固定八码', _framework_entries),
     ('killer九项', _killer_entries),

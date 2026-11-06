@@ -75,7 +75,7 @@ LABELS = {
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill8_tail': 'AI 四反向冷形态（4 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
-    'kill11_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
+    'kill11_tail': 'AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项）',
     'kill12_tail': 'AI 三位置杀码 + 一合尾（4 项）',
 }
 
@@ -87,6 +87,9 @@ DYNAMIC_RULES = {
     },
     ('kill3_tail', 'kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid'): {
         'label': 'AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现（N+6 项）',
+    },
+    ('kill11_tail', 'kill11-tail-v2-flexible-two-four-position-one-form-one-tail'): {
+        'label': 'AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项）',
     },
 }
 
@@ -374,6 +377,7 @@ def _kill11_rows():
     business_day = _business_start(now)
     hits = 0
     total = 0
+    counted_rows = []
     for record in rows:
         if not isinstance(record, dict) or not record.get('verified'):
             continue
@@ -387,9 +391,11 @@ def _kill11_rows():
             continue
         total += 1
         hits += int(bool(record.get('group_hit')))
+        counted_rows.append(record)
     if not total:
         return []
-    return [_row('kill11_tail', rule, total, hits, 'data/kill11_tail/settlements.json')]
+    return [_row('kill11_tail', rule, total, hits, 'data/kill11_tail/settlements.json',
+                 records=counted_rows)]
 
 
 def _kill12_rows():

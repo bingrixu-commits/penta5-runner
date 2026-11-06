@@ -79,7 +79,7 @@ LABELS = {
     'kill3_tail': 'AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现（N+6 项）',
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
-    'kill11_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
+    'kill11_tail': 'AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项）',
     'kill12_tail': 'AI 三位置杀码 + 一合尾（4 项）',
 }
 
@@ -90,6 +90,9 @@ DYNAMIC_RULES = {
     },
     ('kill3_tail', 'kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid'): {
         'label': 'AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现（N+6 项）',
+    },
+    ('kill11_tail', 'kill11-tail-v2-flexible-two-four-position-one-form-one-tail'): {
+        'label': 'AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项）',
     },
 }
 WINDOWS = {
@@ -913,9 +916,17 @@ def cum_kill11():
     for record in seal_records:
         if isinstance(record, dict) and record.get('target_period'):
             launch.append(record.get('target_period'))
+    expected_map, items_values = {}, []
     for row in settlements.get('records') or []:
         if not isinstance(row, dict):
             continue
+        value = row.get('expected_group_rate')
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and 0.0 < float(value) < 1.0):
+            expected_map[str(row.get('target_period'))] = float(value)
+        count = row.get('expected_items')
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+            items_values.append(count)
         if row.get('target_period'):
             launch.append(row.get('target_period'))
         if not row.get('verified'):
@@ -928,8 +939,15 @@ def cum_kill11():
                 and seal_rule.get(str(row.get('ref_period'))) != rule):
             continue
         records.append((row.get('target_period'), hit, None))
+    dynamic = DYNAMIC_RULES.get(('kill11_tail', rule))
+    label = dynamic['label'] if dynamic else None
+    items = None
+    if dynamic and items_values:
+        items = (items_values[0] if len(set(items_values)) == 1
+                 else '%d~%d' % (min(items_values), max(items_values)))
     return _build('kill11_tail', rule, records, 'data/kill11_tail/settlements.json',
-                  rolling=rolling, launch=launch)
+                  rolling=rolling, launch=launch, expected_map=expected_map or None,
+                  label=label, items=items)
 
 
 def cum_kill12():
