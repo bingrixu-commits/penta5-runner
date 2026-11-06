@@ -71,6 +71,8 @@ RULE_BASELINE = {
     ('kill12_tail', 'kill12-tail-v1-one-position-one-form'): (3, 0.7538),
     # kill12 v2：3 个定位各杀 1 码 + 一合尾（无形态），10^4 开奖 x 200000 配置精确枚举=1,312,200,000/2,000,000,000=0.6561，按项目口径登记 4 位 0.6561
     ('kill12_tail', 'kill12-tail-v2-three-position-one-tail'): (4, 0.6561),
+    # kill12 v4：恢复 v1 语义（1 定位 + 1 单双反向形态 + 1 合尾，3 项），10^4 开奖 x 16000 配置精确枚举=120,600,000/160,000,000=0.75375，按项目口径登记 4 位 0.7538
+    ('kill12_tail', 'kill12-tail-v4-one-position-one-form'): (3, 0.7538),
     # kill13 v1：50 期冷榜取 2 个最冷合尾（纯确定性），整组 2 项；10^4 开奖 x 1225 配置精确枚举=0.8081632653061225
     ('kill13_tail', 'kill13-tail-v1-two-cold-hewei'): (2, 0.8082),
 }
@@ -82,7 +84,7 @@ LABELS = {
     'kill1_tail': 'AI 双位置杀码（3 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
     'kill11_tail': 'AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项）',
-    'kill12_tail': 'AI 自选 2~4 位置杀码 + 一合尾（N+1 项）',
+    'kill12_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',
     'kill13_tail': '冷合尾 2 项（50 期两个最冷合尾，纯确定性）',
 }
 
@@ -961,7 +963,7 @@ def cum_kill12():
     settlements = _read(DATA / 'kill12_tail' / 'settlements.json') or {}
     seals = _read(DATA / 'kill12_tail' / 'seals.json') or {}
     seal_records = seals.get('records') or []
-    rule = 'kill12-tail-v1-one-position-one-form'
+    rule = 'kill12-tail-v4-one-position-one-form'
     if seal_records and isinstance(seal_records[-1], dict):
         rule = seal_records[-1].get('rule_version') or rule
     seal_rule = {str(record.get('ref_period')): record.get('rule_version')

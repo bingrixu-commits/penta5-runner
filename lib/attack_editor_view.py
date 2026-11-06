@@ -18,7 +18,7 @@ const definitions=[
  {id:'kill1-attack-text',copy:'kill1-attack-copy',label:'AI自选2~4位置+一合尾攻击语',data:'kill1-attack-data'},
  {id:'k10-attack',copy:'k10-attack-copy',label:'AI二数合+三数合攻击语'},
  {id:'kill11-attack-text',copy:'kill11-attack-copy',label:'AI自选2~4位置+单双形态+一合尾攻击语',data:'kill11-attack-data'},
- {id:'kill12-attack-text',copy:'kill12-attack-copy',label:'AI自选2~4位置+一合尾攻击语',data:'kill12-attack-data'},
+ {id:'kill12-attack-text',copy:'kill12-attack-copy',label:'AI单位置+单双形态+一合尾攻击语',data:'kill12-attack-data'},
  {id:'kill13-attack-text',copy:'kill13-attack-copy',label:'冷合尾2合尾攻击语',data:'kill13-attack-data'}
 ];
 const entries=new Map();
