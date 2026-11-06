@@ -98,7 +98,7 @@ def _stats_html(stats):
         join += ' · 未计入（发布晚于开奖）%s 期' % late
     legacy = stats.get('legacy') or {}
     if legacy.get('total'):
-        join += (' · 旧口径（v1/v2/v3 含形态封存）%s 期（整组 %s 中）已归档不计入'
+        join += (' · 旧口径（v1–v3 含形态、v6 无合尾封存）%s 期（整组 %s 中）已归档不计入'
                  % (legacy.get('total'), legacy.get('group_hits')))
     win = stats.get('current_win_streak') or 0
     loss = stats.get('current_loss_streak') or 0
