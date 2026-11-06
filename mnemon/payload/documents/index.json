@@ -14,7 +14,7 @@
       ],
       "createdAt": "2026-11-06T00:16:26.957Z",
       "updatedAt": "2026-11-06T00:16:26.957Z",
-      "lastAccessedAt": "2026-11-06T08:25:28.610Z",
+      "lastAccessedAt": "2026-11-06T10:01:55.343Z",
       "revision": 1,
       "contentHash": "3cea350c6143f1f1781011e3bfd31c9376d495e90cf552c34c80f3f265d4067a",
       "sizeBytes": 5674,
@@ -35,7 +35,7 @@
       ],
       "createdAt": "2026-11-06T03:04:41.409Z",
       "updatedAt": "2026-11-06T03:04:41.409Z",
-      "lastAccessedAt": "2026-11-06T08:25:28.610Z",
+      "lastAccessedAt": "2026-11-06T10:01:55.343Z",
       "revision": 1,
       "contentHash": "ef288ce9cd49f81aba8370b060faa78f7a61f689cb2aef7a90210426f440d901",
       "sizeBytes": 5491,
@@ -59,7 +59,7 @@
       ],
       "createdAt": "2026-11-06T08:13:05.134Z",
       "updatedAt": "2026-11-06T08:13:05.134Z",
-      "lastAccessedAt": "2026-11-06T08:25:28.610Z",
+      "lastAccessedAt": "2026-11-06T10:01:55.343Z",
       "revision": 1,
       "contentHash": "010aa918f743d47f4c31a7c47952ccbaca186ada02532b3cf7044f4031a452dd",
       "sizeBytes": 8333,
@@ -82,10 +82,29 @@
       ],
       "createdAt": "2026-11-06T08:26:03.567Z",
       "updatedAt": "2026-11-06T08:26:03.567Z",
-      "lastAccessedAt": "2026-11-06T08:26:03.567Z",
+      "lastAccessedAt": "2026-11-06T10:01:55.343Z",
       "revision": 1,
       "contentHash": "b86a7402b77cafc3c42420a290ea09584c736f0a51ca6551c278359dd841c9eb",
       "sizeBytes": 9540,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "2cb7a64d-2522-48af-b2c0-8ffc890c932e",
+      "title": "penta5-runner：kill3 纸面跟投账本 + v16 门禁自动回滚落地（2026-11-06）",
+      "description": "kill3 纸面影子账本（四定 9900 赔率纸面结算、面板只读块、cron 每 5 分钟增量）与 v16 预登记门禁自动回滚执行器的实现/口径/运维/复用要点；含「一跟就断崖」的 MC 证据与回答「模型为什么不赚钱」的可复用口径。当需要给排除/杀码框架加纸面跟投账本、把预登记门禁升级为自动回滚、或解释追热/累计命中率断崖时参考。",
+      "status": "active",
+      "filename": "penta5-runner-kill3-v16-2026-11-06-2cb7a64d.md",
+      "relativePath": "documents/active/penta5-runner-kill3-v16-2026-11-06-2cb7a64d.md",
+      "sourcePaths": [],
+      "sessionIds": [
+        "mnemon-run-v1-decd1db7-75bb-4d1c-8ca5-062afceb12dd"
+      ],
+      "createdAt": "2026-11-06T10:02:17.697Z",
+      "updatedAt": "2026-11-06T10:02:17.697Z",
+      "lastAccessedAt": "2026-11-06T10:02:17.697Z",
+      "revision": 1,
+      "contentHash": "d75285f6bec0195d51f01891f8ca7f679e435e9737399ef068042899579253d5",
+      "sizeBytes": 8709,
       "memoryBodyIds": []
     }
   ]

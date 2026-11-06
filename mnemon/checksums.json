@@ -4,11 +4,12 @@
     "payload/runtime/memories.json": "94b7da88014c5c2c0dbff6d13aca82b8759e8a7860132b524f294b40cef49cc0",
     "payload/runtime/USER.md": "6bc09f7683dbf157103c80f074b40164d717c13958598f1d0db3d0cfa08cd0af",
     "payload/runtime/MEMORY.md": "649d769ad000b7706356765be5eba74e68e9a9fc2c72b75e204931ef1468c31d",
-    "payload/documents/index.json": "6b01533474bfd73d6fa41709bf3d57baf6865e2b1610052ec2c8d1e4318b4a47",
+    "payload/documents/index.json": "501f64131d4f1fde027be262c2b9426b0d1674c234d487d6ee84155d0fbabefb",
     "payload/documents/active/mnemon-dsh-03ec4e06.md": "ece777f1e33d2d0dca41a40492fa4eb754c1e537ae7356075285b5c80b41ba5d",
     "payload/documents/active/penta5-runner-kill8-v7-v6-2026-11-06-02779d21.md": "8fb51f7d258bd5335d256643002449d3b94e034e9324cc9d3eb467b8f426e073",
     "payload/documents/active/penta5-runner-2026-11-06-c9e2bfd1.md": "cb09ebadaa9f5d6b7b3eff4856b5594651b6c60094febbba156073c002900a37",
     "payload/documents/active/penta5-kill3-70-2026-11-06-66b9c4b9.md": "823fe647f643360619ca69620dcf4ce7b65773d7ac96c0f02199f0604d5384a8",
+    "payload/documents/active/penta5-runner-kill3-v16-2026-11-06-2cb7a64d.md": "f05e1229bda4b006c51b3c9efc3be37fd09375360131b6b88dd3a568ede3017e",
     "payload/data/.dsh-memory-bodies.json": "475da9002e1bf5e324b83f583ced7921cd8308936d74d9e85fd011ea97b03f02",
     "payload/data/0dcb869d-6a01-4654-bf94-c25bd925dc8d/mnemon.db": "48b9c2aa664861352b9b8b237053218ce4f1ed164764eab97f2c0fe702291224",
     "payload/data/default/mnemon.db": "22529105f295a999498a81ac223ca2b0142058c268bc4168919e15681d19ae4d"
