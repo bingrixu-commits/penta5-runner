@@ -257,15 +257,15 @@
   },
   "kill3_tail": {
    "files": {
-    "lib/kill3_tail.py": "ec3cf5121b0c4f91d200bf58a7706f850e02f37f9271a44a2463ebcf61153759",
-    "lib/kill_three_view.py": "f70ee853b2a9514a8ce82aada66d4a1adbba55b1fddec5cd2a50961e9c0704cb",
+    "lib/kill3_tail.py": "0bdae2efb138d5d72a7623d3c448c692d94cbf20502904e0dc0a5bd70aaa1e64",
+    "lib/kill_three_view.py": "c4c853fd4c38a9478735928a074c09755832e3281d44bb8ad9f8b00efd353953",
     "lib/panel_context.py": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
-    "scripts/run_kill3_tail.py": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49"
+    "scripts/run_kill3_tail.py": "417cf436aff46c0edc4ac8ed4d2542c6f5945d8a4f9059c10d8dea48e9345116"
    },
    "freeze_hours": 72.0,
-   "freeze_ref_period": "20261105287",
-   "frozen_at": "2026-11-06T00:00:14.687697+08:00",
-   "frozen_commit": "bec59dd",
+   "freeze_ref_period": "20261106282",
+   "frozen_at": "2026-11-06T23:31:36.318023+08:00",
+   "frozen_commit": "9609ba1",
    "hash_updates": [
     {
      "at": "2026-10-31T22:50:00+08:00",
@@ -738,11 +738,27 @@
      "new_sha256": "ec3cf5121b0c4f91d200bf58a7706f850e02f37f9271a44a2463ebcf61153759",
      "old_sha256": "3bb8d3c0ea2b186fe7b44c9077b8d0c6dc8abb50adef531160bf3753a3431b11",
      "reason": "2026-11-06 推理档 high->medium（用户决定保持 pro：pro 单请求长尾 100-173s 撞 230s 发布窗，今日 12 期超窗缺期）；仅 _post 的 reasoning_effort 与 request_policy_version，不改选码/尾码/8 项结构、不升 RULE_VERSION"
+    },
+    {
+     "at": "2026-11-06T23:31:36.192528+08:00",
+     "commit": "9609ba1",
+     "file": "lib/kill3_tail.py",
+     "new_sha256": "0bdae2efb138d5d72a7623d3c448c692d94cbf20502904e0dc0a5bd70aaa1e64",
+     "old_sha256": "ec3cf5121b0c4f91d200bf58a7706f850e02f37f9271a44a2463ebcf61153759",
+     "reason": "kill3 v17 灵活位置口径升级（AI 自选 2~4 位，N+6 项，逐期动态基线）"
+    },
+    {
+     "at": "2026-11-06T23:31:36.255976+08:00",
+     "commit": "9609ba1",
+     "file": "lib/kill_three_view.py",
+     "new_sha256": "c4c853fd4c38a9478735928a074c09755832e3281d44bb8ad9f8b00efd353953",
+     "old_sha256": "f70ee853b2a9514a8ce82aada66d4a1adbba55b1fddec5cd2a50961e9c0704cb",
+     "reason": "kill3 v17 灵活位置口径升级（面板 v17 门禁行与新口径渲染）"
     }
    ],
    "label": "三位置杀码(kill3)",
    "min_periods": 100,
-   "rule_version": "kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop",
+   "rule_version": "kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid",
    "shared": {}
   },
   "killer": {
@@ -823,6 +839,6 @@
    }
   }
  },
- "updated_at": "2026-11-06T22:46:01.931893+08:00",
+ "updated_at": "2026-11-06T23:31:36.318023+08:00",
  "version": 1
 }
