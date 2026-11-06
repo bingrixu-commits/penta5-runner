@@ -66,6 +66,9 @@ RULE_BASELINE = {
     ('kill12_tail', 'kill12-tail-v1-one-position-one-form'): (3, 0.7538),
     # kill12 v2：3 个定位各杀 1 码 + 一合尾（无形态），10^4 开奖 x 200000 配置精确枚举=1,312,200,000/2,000,000,000=0.6561，按项目口径登记 4 位 0.6561
     ('kill12_tail', 'kill12-tail-v2-three-position-one-tail'): (4, 0.6561),
+    # kill13 v1：50 期冷榜取 2 个最冷合尾（5 种合尾组合 x 尾码 0-9 = 50 候选），整组 2 项。
+    # 10^4 开奖 x C(50,2)=1225 配置精确枚举 = 9,900,000/12,250,000=0.8081632653061225，按项目口径登记 4 位 0.8082
+    ('kill13_tail', 'kill13-tail-v1-two-cold-hewei'): (2, 0.8082),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -77,6 +80,7 @@ LABELS = {
     'kill10_tail': 'AI 二数合+三数合（2 项）',
     'kill11_tail': 'AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项）',
     'kill12_tail': 'AI 自选 2~4 位置杀码 + 一合尾（N+1 项）',
+    'kill13_tail': '冷合尾 2 项（50 期两个最冷合尾，纯确定性）',
 }
 
 # 动态项数规则：expected/items 不再取单一常量，改用封存/结算逐期 expected_group_rate /
@@ -438,6 +442,43 @@ def _kill12_rows():
                  records=counted_rows)]
 
 
+def _kill13_rows():
+    seals = _read(DATA / 'kill13_tail' / 'seals.json') or {}
+    settlements = _read(DATA / 'kill13_tail' / 'settlements.json') or {}
+    records = seals.get('records') if isinstance(seals, dict) else None
+    rows = settlements.get('records') if isinstance(settlements, dict) else None
+    if not records or not rows:
+        return []
+    rule = records[-1].get('rule_version')
+    if not rule:
+        return []
+    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
+                 for record in records if isinstance(record, dict)}
+    now = datetime.now(TZ)
+    business_day = _business_start(now)
+    hits = 0
+    total = 0
+    counted_rows = []
+    for record in rows:
+        if not isinstance(record, dict) or not record.get('verified'):
+            continue
+        if 'counted' not in record:
+            continue
+        if (record.get('rule_version') != rule
+                and seal_rule.get(str(record.get('ref_period'))) != rule):
+            continue
+        day = _period_business_day(record.get('target_period'))
+        if day != business_day:
+            continue
+        total += 1
+        hits += int(bool(record.get('group_hit')))
+        counted_rows.append(record)
+    if not total:
+        return []
+    return [_row('kill13_tail', rule, total, hits, 'data/kill13_tail/settlements.json',
+                 records=counted_rows)]
+
+
 def _as_of(rows):
     candidates = []
     he3 = _read(DATA / 'he3_refine_stats.json') or {}
@@ -459,6 +500,7 @@ def build():
     rows.extend(_kill10_rows())
     rows.extend(_kill11_rows())
     rows.extend(_kill12_rows())
+    rows.extend(_kill13_rows())
     now = datetime.now(TZ)
     return {
         'version': 1,
