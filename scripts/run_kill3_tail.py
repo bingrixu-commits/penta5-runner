@@ -235,12 +235,7 @@ def main():
         f'{kill3_tail.POSITION_LABELS[key]} 杀{prediction["positions"][key]}'
         + ('(仅展示)' if key == display_only else '')
         for key, _label, _index in kill3_tail.POSITIONS if key in prediction['positions'])
-    dropped_raw = prediction.get('dropped')
-    if isinstance(dropped_raw, (list, tuple)):
-        dropped = '、'.join(
-            kill3_tail.POSITION_LABELS.get(item, str(item)) for item in dropped_raw) or '无'
-    else:
-        dropped = kill3_tail.POSITION_LABELS.get(dropped_raw, dropped_raw)
+    dropped = kill3_tail.POSITION_LABELS.get(prediction['dropped'], prediction['dropped'])
     avoid_codes = '-'.join(group['value'] for group in three_avoid)
     print(f'kill3 published: ref={reference} target={target} {picked} · '
           f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]} 放弃:{dropped}'

@@ -257,15 +257,15 @@
   },
   "kill3_tail": {
    "files": {
-    "lib/kill3_tail.py": "0bdae2efb138d5d72a7623d3c448c692d94cbf20502904e0dc0a5bd70aaa1e64",
-    "lib/kill_three_view.py": "c4c853fd4c38a9478735928a074c09755832e3281d44bb8ad9f8b00efd353953",
+    "lib/kill3_tail.py": "ec3cf5121b0c4f91d200bf58a7706f850e02f37f9271a44a2463ebcf61153759",
+    "lib/kill_three_view.py": "f70ee853b2a9514a8ce82aada66d4a1adbba55b1fddec5cd2a50961e9c0704cb",
     "lib/panel_context.py": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
-    "scripts/run_kill3_tail.py": "417cf436aff46c0edc4ac8ed4d2542c6f5945d8a4f9059c10d8dea48e9345116"
+    "scripts/run_kill3_tail.py": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49"
    },
    "freeze_hours": 72.0,
-   "freeze_ref_period": "20261106282",
-   "frozen_at": "2026-11-06T23:31:36.318023+08:00",
-   "frozen_commit": "9609ba1",
+   "freeze_ref_period": "20261110004",
+   "frozen_at": "2026-11-10T00:25:02.561452+08:00",
+   "frozen_commit": "f5076c5",
    "hash_updates": [
     {
      "at": "2026-10-31T22:50:00+08:00",
@@ -758,7 +758,7 @@
    ],
    "label": "三位置杀码(kill3)",
    "min_periods": 100,
-   "rule_version": "kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid",
+   "rule_version": "kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop",
    "shared": {}
   },
   "killer": {
@@ -839,6 +839,6 @@
    }
   }
  },
- "updated_at": "2026-11-06T23:31:36.318023+08:00",
+ "updated_at": "2026-11-10T00:25:02.561452+08:00",
  "version": 1
 }

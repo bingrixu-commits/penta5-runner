@@ -1,4 +1,4 @@
-"""AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现建议面板区块（v17 起替代固定三位置口径）。
+"""AI 三位置杀码 + 一合尾建议面板区块（替代原规则版三位置杀码）。
 
 数据源 data/kill3_tail/{seals,settlements}.json，由 scripts/run_kill3_tail.py 每期生成。
 
@@ -6,7 +6,7 @@
 - 位置命中 = 该位置实际开奖号 != 杀码；
 - 合尾命中 = 该合尾实际和值个位 != 排除码；
 - 反向形态命中 = 目标期实际四位单双/大小形态 != 封存形态（反向排除项）；
-- 整组命中 = AI 自选 N 个位置（N=2~4，全部计入）+ 1 个合尾 + 2 项反向形态 + 三数共现避开 3 组同时命中（共 N+6 项）；
+- 整组命中 = 2 个计入位置 + 1 个合尾 + 2 项反向形态 + 三数共现避开 3 组同时命中（共 8 项）；
 - 三数共现避开 1/2/3 组由系统按目标期给定（data/state.json extraKills），每组算 1 项，
   单项命中 = 该组 3 个数字未全部出现在 4 球开奖号中，单项基线 97.96%；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
@@ -82,60 +82,21 @@ def _clock(value):
     return moment.strftime('%H:%M:%S')
 
 
-def _latest_seal_baseline(rule=None):
-    """最近一期同 rule 封存的期望口径（position_count/expected_items/expected_group_rate）。
-
-    v17 起整组项数与期望基线随每期自选 N 变化，面板从这里取动态值；v16 旧封存没有
-    expected_* 字段时按位置数补齐，历史渲染保持可读。
-    """
-    try:
-        seals = kill3_tail.load_seals()
-    except Exception:
-        return None
-    rule = rule or str(getattr(kill3_tail, 'RULE_VERSION', '') or '')
-    for seal in reversed(seals if isinstance(seals, list) else []):
-        if not isinstance(seal, dict):
-            continue
-        if str(seal.get('rule_version') or '') != rule:
-            continue
-        try:
-            count = int(seal.get('position_count')) if seal.get('position_count') is not None else kill3_tail.seal_position_count(seal)
-        except Exception:
-            continue
-        items = seal.get('expected_items')
-        if items is None:
-            try:
-                items = kill3_tail.expected_items(count)
-            except Exception:
-                items = count + 6
-        rate = seal.get('expected_group_rate')
-        if rate is None:
-            try:
-                rate = kill3_tail.expected_group_rate(count)
-            except Exception:
-                rate = None
-        return {'items': int(items), 'count': count, 'rate': rate}
-    return None
-
-def _stats_html(stats, seal=None):
+def _stats_html(stats):
     total = stats.get('total') or 0
     pending = stats.get('pending') or 0
     late = stats.get('late') or 0
-    baseline = _latest_seal_baseline() or {}
-    position_count = None
-    if isinstance(seal, dict):
-        position_count = kill3_tail.seal_position_count(seal) or None
-    position_count = position_count or baseline.get('count')
-    group_items = baseline.get('items') or (kill3_tail.expected_items(position_count) if position_count else None)
-    items_text = ('%d 项' % group_items) if group_items else 'N+6 项'
-    count_text = ('%d' % position_count) if position_count else 'N'
     if total:
         tail_stats = stats.get('tail') or {}
         tail_ci = _wilson(tail_stats.get('hits'), tail_stats.get('bets'))
-        tail_ci_text = (f'，95%CI {tail_ci[0] * 100:.1f}–{tail_ci[1] * 100:.1f}%' if tail_ci else '')
+        tail_ci_text = (f'，95%CI {tail_ci[0] * 100:.1f}–{tail_ci[1] * 100:.1f}%'
+                        if tail_ci else '')
         patterns = stats.get('patterns') or {}
         parity = patterns.get('reverse_parity') or {}
         size = patterns.get('reverse_size') or {}
+        counted_positions = int(getattr(kill3_tail, 'COUNTED_POSITIONS', 2))
+        three_avoid_items = int(getattr(kill3_tail, 'THREE_AVOID_ITEMS', 3))
+        group_items = counted_positions + 3 + three_avoid_items
         merge_avoid = (stats.get('three_avoid') or {}).get('merged') or {}
         per_avoid = (stats.get('three_avoid') or {}).get('per_group') or {}
         per_avoid_text = ' / '.join(
@@ -143,9 +104,9 @@ def _stats_html(stats, seal=None):
                        (per_avoid.get(key) or {}).get('label') or key)
             for key in getattr(kill3_tail, 'THREE_AVOID_KEYS', ()))
         join = ' · '.join([
-            f'整组命中率（{items_text}全中：{count_text} 位置 + 合尾 + 2 形态 + 三数共现 3 组；N=2~4 每期自选） <b>{_pct(stats.get("group_rate"))}</b>'
+            f'整组命中率（{group_items} 项全中：{counted_positions} 位置 + 合尾 + 2 形态 + 三数共现 {three_avoid_items} 组） <b>{_pct(stats.get("group_rate"))}</b>'
             f'（{stats.get("group_hits")}/{total} 期）',
-            f'位置杀码（每期 N 注、N=2~4，随机基线90%） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
+            f'位置杀码（{counted_positions} 注/期，随机基线90%） <b>{_pct(stats.get("positions", {}).get("rate"))}</b>'
             f'（{stats.get("positions", {}).get("hits")}/{stats.get("positions", {}).get("bets")} 注）',
             f'合尾杀码（随机基线90%） <b>{_pct(tail_stats.get("rate"))}</b>'
             f'（{tail_stats.get("hits")}/{tail_stats.get("bets")} 期{tail_ci_text}）',
@@ -175,6 +136,7 @@ def _stats_html(stats, seal=None):
         join += (f' · 单项样本 n={total}（&lt;200 属小样本：90% 项 1σ≈{sigma:.1f}pp、'
                  f'2σ≈{2 * sigma:.1f}pp），单日单项只作波动参考')
     return f'<div class="k3-stats"><span>{join}</span></div>'
+
 
 def _settlement_line(settlement):
     if not isinstance(settlement, dict):
@@ -210,7 +172,7 @@ def _settlement_line(settlement):
 
 
 def _form_derivation(seal):
-    """Show how the two reverse forms were derived (killed digits 反向 + 弃位冷热)."""
+    """Show how the two reverse forms were derived from the three killed digits."""
     positions = seal.get('positions') or {}
     if not isinstance(positions, dict):
         return ''
@@ -225,31 +187,17 @@ def _form_derivation(seal):
         parts.append(f'{label}{positions[key]}→{parity}/{size}')
     if not parts:
         return ''
-    dropped_value = seal.get('dropped')
-    if isinstance(dropped_value, list):
-        dropped_keys = dropped_value
-    elif dropped_value:
-        dropped_keys = [dropped_value]
-    else:
-        dropped_keys = []
+    dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
     cold = seal.get('dropped_form_cold') if isinstance(seal.get('dropped_form_cold'), dict) else None
-    if cold and isinstance(dropped_keys, list) and all(isinstance(cold.get(key), dict) for key in dropped_keys) and dropped_keys:
-        notes = []
-        for key in dropped_keys:
-            label = kill3_tail.POSITION_LABELS.get(key, key)
-            form = cold.get(key) or {}
-            notes.append(f'弃位{label}按该位置冷热取{form.get("parity", "-")}/{form.get("size", "-")}')
-        dropped_note = '；' + '、'.join(notes) + '（v17 起，v16 旧封存同机制）'
-    elif cold and cold.get('parity') and cold.get('size'):
-        label = kill3_tail.POSITION_LABELS.get(dropped_keys[0], dropped_keys[0]) if dropped_keys else '-'
-        dropped_note = f'；弃位{label}按该位置冷热取{cold["parity"]}/{cold["size"]}（v16 起）'
+    if cold and cold.get('parity') and cold.get('size'):
+        dropped_note = f'；弃位{dropped}按该位置冷热取{cold["parity"]}/{cold["size"]}（v16 起）'
     else:
-        dropped_note = ''
-    count = len(positions)
-    return ('形态取反（按被杀的 %d 个位置）：' % count + ' · '.join(parts) + dropped_note)
+        dropped_note = f'；弃位{dropped}字符自选（v15 旧封存）'
+    return ('形态取反（按 3 个被杀位置，含仅展示位）：' + ' · '.join(parts) + dropped_note)
+
 
 def _version_html():
-    """口径追溯行：当前 revision、自哪期起、本版期数、按每期 N 的动态期望基线（只读）。"""
+    """口径追溯行：当前 revision、自哪期起、本版期数、精确基线（只读）。"""
     try:
         info = kill3_tail.version_info()
     except Exception:
@@ -258,7 +206,6 @@ def _version_html():
         rule = str(info.get('rule_version') or '')
         first = info.get('first_ref')
         count = int(info.get('count') or 0)
-        baseline = _latest_seal_baseline(rule) or {}
         base = None
         try:
             from hitrate_baseline import RULE_BASELINE
@@ -268,24 +215,19 @@ def _version_html():
         parts = ['口径 ' + escape(rule)]
         if first:
             parts.append('自 ref ' + escape(str(first)) + ' 起（本版 ' + str(count) + ' 期）')
-        if baseline.get('rate') is not None and baseline.get('items'):
-            parts.append('最新一期整组期望 %.2f%%（%d 项，N=%s）'
-                         % (float(baseline['rate']) * 100.0, int(baseline['items']),
-                            baseline.get('count')))
-            parts.append('按 N 精确基线：N=2 %.2f%% / N=3 %.2f%% / N=4 %.2f%%'
-                         % (0.5863 * 100, 0.5168 * 100, 0.4557 * 100))
-        elif base:
+        if base:
             parts.append('整组精确基线 %.2f%%（%d 项）' % (base[1] * 100.0, base[0]))
         parts.append('口径已冻结：变更走影子验证（ops/kill3-stability-plan.md）')
         return '<div class="k3-drop">' + ' · '.join(parts) + '</div>'
     except Exception:
         return ''
 
+
 def _cumulative_html():
     """只读：本版累计命中率 + 回撤参照 + 项级命中（数据源 data/hitrate_stability.json）。
 
     与 _stats_html 的今日口径并列展示、不替代；只统计开奖前已发布、开奖后核验的记录，
-    整组 = N+6 项同时命中（N 每期自选 2~4）。载荷缺失/版本不符/异常时返回空串，页面保持原样。
+    整组 = 8 项同时命中。载荷缺失/版本不符/异常时返回空串，页面保持原样。
     """
     try:
         path = Path('/root/penta5-runner/data/hitrate_stability.json')
@@ -375,55 +317,62 @@ def _num(value):
     return ('%.2f' % float(value)) if isinstance(value, (int, float)) else '-'
 
 
-V17_GATE_PATH = DATA_DIR / 'kill3_v17_guard.json'
-V17_RULE = 'kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid'
-V17_GATE_BASELINE = {2: 0.5863, 3: 0.5168, 4: 0.4557}
-V16_RULE = 'kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop'
-
-
 def _gate_html():
-    """只读：kill3 v17 预登记门禁进度（data/kill3_v17_guard.json）+ v16 历史门禁停用行。
+    """只读：kill3 v16 预登记回滚门禁进度（数据源 data/kill3_v16_guard.json）。
 
-    门禁计算在 lib/kill3_v17_guard.py，由 scripts/ops_health_check.py 周期性写入该 JSON；
-    本函数只展示。触发条件见 ops/kill3-stability-plan.md §9（v17 段）。
+    门禁计算在 lib/kill3_v16_guard.py，由 scripts/ops_health_check.py 每 10 分钟写入该 JSON，
+    本函数只做展示。触发条件：n>=150 且 (z<-2.5 或 命中率<50%)；触发后按
+    ops/kill3-stability-plan.md §9 执行 scripts/kill3_v16_rollback.py --execute。
+    现行口径不是 v16 时只在门禁已落盘为 inactive 时显示一行停用说明；异常返回空串。
     """
     try:
         rule = str(getattr(kill3_tail, 'RULE_VERSION', '') or '')
-        parts = []
-        report = None
         try:
-            report = json.loads(V17_GATE_PATH.read_text(encoding='utf-8'))
+            report = json.loads(GATE_PATH.read_text(encoding='utf-8'))
         except Exception:
             report = None
-        if isinstance(report, dict) and str(report.get('rule_version') or '') == rule:
-            n = report.get('n') or 0
-            hits = report.get('hits') or 0
-            rate = report.get('rate')
-            expected = report.get('expected')
-            verdict = report.get('verdict') or report.get('status') or '-'
-            thresholds = report.get('thresholds') or {}
-            parts.append('<b>v17 门禁</b> 样本 %s 期 · 命中 %s · 本版 %s vs 期望 %s · z=%s · 判定「%s」'
-                         '（预登记 n≥%s、z&lt;%s 或 命中率&lt;%s）'
-                         % (n, hits, _pct(rate), _pct(expected), _num(report.get('z')),
-                            escape(str(verdict)),
-                            thresholds.get('n_trigger', '-'),
-                            thresholds.get('z_trigger', '-'),
-                            _pct(thresholds.get('rate_floor'))))
-        elif isinstance(report, dict):
-            parts.append('v17 门禁报告 rule 不匹配（报告 %s），等待本轮写入'
-                         % escape(str(report.get('rule_version') or '-')))
-        else:
-            parts.append('v17 门禁报告未生成（data/kill3_v17_guard.json 缺失）')
-        try:
-            old = json.loads(GATE_PATH.read_text(encoding='utf-8'))
-            if isinstance(old, dict):
-                parts.append('v16 门禁停用（现行口径 %s；历史 v16 样本 %s 期，判定「%s」）'
-                             % (escape(rule), old.get('n'), escape(str(old.get('verdict') or '-'))))
-        except Exception:
-            pass
-        return '<div class="k3-drop">' + ' · '.join(parts) + '</div>'
+        if not isinstance(report, dict):
+            report = None
+        if rule != V16_RULE:
+            if report is not None:
+                n = report.get('n') if isinstance(report.get('n'), int) else 0
+                return ('<div class="k3-drop">v16 门禁停用（现行口径 ' + escape(rule or '-')
+                        + '，历史 v16 样本 ' + str(n) + ' 期）</div>')
+            return ''
+        pre_registered = ('n≥' + str(GATE_N) + ' 且 (z&lt;' + ('%.1f' % GATE_Z)
+                          + ' 或 命中率&lt;' + ('%.0f%%' % (GATE_RATE_FLOOR * 100.0))
+                          + ') 触发；触发后按 ops/kill3-stability-plan.md §9 执行 '
+                          '<code>python3 scripts/kill3_v16_rollback.py --execute</code>')
+        if report is None:
+            return ('<div class="k3-drop">预登记回滚门禁（v16）：' + pre_registered + '</div>')
+        status = str(report.get('status') or '')
+        n = report.get('n') if isinstance(report.get('n'), int) else 0
+        hits = report.get('hits') if isinstance(report.get('hits'), int) else 0
+        rate = report.get('rate')
+        expected = report.get('expected')
+        if not isinstance(expected, (int, float)):
+            expected = GATE_BASELINE
+        z = report.get('z')
+        if status == 'inactive':
+            return ('<div class="k3-drop">v16 已回滚，本门禁停用（历史 v16 样本 '
+                    + str(n) + ' 期）</div>')
+        if status == 'triggered':
+            return ('<div class="k3-acc" style="margin-top:6px;padding-top:6px;'
+                    'border-top:1px dashed #fecaca;font-size:13px;color:#b91c1c;line-height:1.7">'
+                    '<b>⚠ v16 预登记门禁已触发</b>（n=' + str(n) + '，命中率 ' + _pct(rate)
+                    + ' vs 基线 ' + _pct(expected) + '，z=' + _num(z) + '）：按 '
+                    'ops/kill3-stability-plan.md §9 执行 '
+                    '<code>python3 scripts/kill3_v16_rollback.py --execute</code> 回滚到 v15</div>')
+        verdict = str(report.get('verdict') or '')
+        return ('<div class="k3-acc" style="margin-top:6px;padding-top:6px;'
+                'border-top:1px dashed #c7d2fe;font-size:13px;color:#475569;line-height:1.7">'
+                '<b>预登记回滚门禁（v16）</b> 进度 ' + str(n) + '/' + str(GATE_N) + ' 期'
+                ' · 本版 ' + _pct(rate) + '（' + str(hits) + '/' + str(n) + '）vs 基线 '
+                + _pct(expected) + ' · z=' + _num(z) + ' · 判定「' + escape(verdict)
+                + '」（' + pre_registered + '）</div>')
     except Exception:
         return ''
+
 
 def render_block():
     try:
@@ -437,20 +386,18 @@ def render_block():
                 body += (f'<div class="k3-meta">最近一次：参考期 {escape(str(previous.get("ref_period", "")))}'
                          f' · 目标期 {escape(str(previous.get("target_period", "")))}</div>')
             return (f'{START}<section id="kill-three-ai"><style>{STYLE}</style>'
-                    f'<h3>🤖 AI 自选 2~4 位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}{_cumulative_html()}{_gate_html()}{_version_html()}'
+                    f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>{body}{_stats_html(stats)}{_cumulative_html()}{_gate_html()}{_version_html()}'
                     f'{_foot_html()}</section>{END}')
         positions = seal.get('positions') or {}
-        position_count = kill3_tail.seal_position_count(seal) or len(positions)
         display_only = seal.get('display_only')
-        if display_only:
-            counted_note = '其中 2 个计入整组、1 个仅展示（v16 旧封存）'
-        else:
-            counted_note = f'全部 {position_count} 个计入整组'
+        counted_note = ('其中 2 个计入整组、1 个仅展示' if display_only
+                        else '全部计入整组')
         cards = []
         for key, label, _index in kill3_tail.POSITIONS:
             if key not in positions:
                 continue
-            sub = ('排除 1 码（仅展示，不计入整组）' if key == display_only else '排除 1 码（计入整组）')
+            sub = ('排除 1 码（仅展示，不计入整组）' if key == display_only
+                   else '排除 1 码')
             cards.append(
                 f'<div class="k3-card"><div class="k3-pos">{label}</div>'
                 f'<div class="k3-kill">{escape(str(positions.get(key, "-")))}</div>'
@@ -479,15 +426,7 @@ def render_block():
                 f'<div class="k3-pos">三数共现 {escape(str(group.get("label") or ""))}</div>'
                 f'<div class="k3-form">{escape(code)}</div>'
                 f'<div class="k3-sub">排除该组三数共现</div></div>')
-        dropped_value = seal.get('dropped')
-        if isinstance(dropped_value, list):
-            dropped_labels = [kill3_tail.POSITION_LABELS.get(key, key) for key in dropped_value]
-            dropped_text = '、'.join(dropped_labels) if dropped_labels else '无（4 个位置全部选中）'
-            drop_line = (f'放弃位置：{escape(dropped_text)}'
-                         f'（AI 本期选 {position_count} 个位置，{counted_note}）')
-        else:
-            dropped = kill3_tail.POSITION_LABELS.get(dropped_value, dropped_value or '-')
-            drop_line = f'放弃位置：{escape(str(dropped))}（AI 选 {position_count} 个位置，{counted_note}）'
+        dropped = kill3_tail.POSITION_LABELS.get(seal.get('dropped'), seal.get('dropped') or '-')
         reason = escape(str(seal.get('reason') or '')) or '（无）'
         seal_tail_policy = seal.get('tail_policy') or {}
         if (seal_tail_policy.get('reused_previous') is True
@@ -495,7 +434,8 @@ def render_block():
             reason += ('<span style="color:#92400e;">（尾码已按稳定化沿用上期，'
                        '模型理由中的合尾为换码候选）</span>')
         derivation = _form_derivation(seal)
-        derive_html = (f'<div class="k3-drop">{escape(derivation)}</div>' if derivation else '')
+        derive_html = (f'<div class="k3-drop">{escape(derivation)}</div>'
+                       if derivation else '')
         tail_policy = seal.get('tail_policy') or {}
         restrict_html = ''
         if tail_policy.get('policy'):
@@ -536,18 +476,20 @@ def render_block():
             verify = '已封存，等待发布确认。'
         return (f'{START}<section id="kill-three-ai" data-as-of="{escape(str(seal.get("ref_period", "")))}">'
                 f'<style>{STYLE}</style>'
-                f'<h3>🤖 AI 自选 2~4 位置杀码 + 一合尾建议</h3>'
+                f'<h3>🤖 AI 三位置杀码 + 一合尾建议</h3>'
                 f'<div class="k3-meta">{meta}</div>'
                 f'<div class="k3-grid">{"".join(cards)}</div>'
-                f'<div class="k3-drop">{drop_line}</div>'
+                f'<div class="k3-drop">放弃位置：{escape(str(dropped))}'
+                f'（AI 选 3 个位置，{counted_note}）</div>'
                 f'{restrict_html}{position_html}{derive_html}'
                 f'<div class="k3-reason">理由：{reason}</div>'
-                f'{_stats_html(stats, seal)}{_cumulative_html()}{_gate_html()}{_version_html()}'
+                f'{_stats_html(stats)}{_cumulative_html()}{_gate_html()}{_version_html()}'
                 f'<div class="k3-verify">{verify}</div>'
                 f'{_attack_html(seal)}'
                 f'{_foot_html()}</section>{END}')
     except Exception:
         return ''
+
 
 def _attack_html(seal):
     """与八项独立框架同格式的攻击语 + 复制按钮（可被全局攻击语编辑框接管）。"""
@@ -578,8 +520,8 @@ def _attack_html(seal):
         "if(navigator.clipboard&&navigator.clipboard.writeText){"
         "navigator.clipboard.writeText(t).then(function(){done(true);},fb);}else{fb();}")
     return ('<div class="k3-attack">'
-            '<div class="k3-attack-title">攻击语（复制到平台，与整组同格式）</div>'
-            '<textarea id="kill3-attack-text" readonly rows="3" aria-label="AI 自选位置+一合尾攻击语" '
+            '<div class="k3-attack-title">攻击语（复制到平台，与八项同格式）</div>'
+            '<textarea id="kill3-attack-text" readonly rows="3" aria-label="AI 三位置+一合尾攻击语" '
             'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
             'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
             + escape(text) + '</textarea>'
@@ -592,22 +534,22 @@ def _attack_html(seal):
 
 def _foot_html():
     return ('<div class="k3-foot">'
-            '由 DeepSeek 决定：从千/百/十/个中自选 2~4 个不同位置、每个位置排除 1 码，所选项全部计入整组与攻击语；'
-            '未选位置为放弃位，其形态字符由系统按该位置近 50 期冷热确定（v17 起）。'
-            '合尾从 5 种中选 1 种排除 1 个和尾数字（合尾由模型自主决定，按 hold3-until-miss 稳定化沿用），并给出两项四位反向形态。<br>'
+            '由 DeepSeek 决定：从千/百/十/个中选 3 个位置各排除 1 码、放弃 1 个位置；'
+            '3 个位置中只有 2 个计入整组与攻击语，第 3 个仅展示、不计入；'
+            '合尾从 5 种中选 1 种排除 1 个和尾数字（合尾与位置/弃位均由模型自主决定，无自动沿用、无连用期数上限、无强制换码），并给出两项四位反向形态。<br>'
             '位置杀码、放弃位置与合尾均无轮换限制，每期由模型自主决定。<br>'
-            '命中 = 该位置实际开奖号<b>不在</b>杀码上（统计本期所选 N 个位置）；'
+            '命中 = 该位置实际开奖号<b>不在</b>杀码上（只统计 2 个计入位置）；'
             '合尾命中 = 该合尾实际和值个位<b>不在</b>排除码上；'
             '反向形态命中 = 实际四位单双/大小形态<b>不等于</b>封存形态'
-            '（被杀位置都取杀码形态反面；弃位字符按该位置冷热取）。<br>'
+            '（3 个被杀位置都取杀码形态反面，含仅展示位置；弃位字符自 v16 起按该位置冷热取冷）。<br>'
             '三数共现避开 1/2/3 组由系统按目标期给定、各算 1 项（单项基线 97.96%：'
             '该组 3 个数字<b>未全部</b>出现在 4 球开奖号中即命中）；<br>'
-            '整组命中 = N 个所选位置 + 1 个合尾 + 2 项反向形态 + 三数共现 3 组，共 N+6 项同时命中（N 每期由 AI 自选 2~4，'
-            '期望基线按每期实际 N 分别取 N=2 58.63% / N=3 51.68% / N=4 45.57%）；'
-            '旧口径（v1–v16）的封存记录保留但不计入本统计；'
+            '2 个计入位置 + 1 个合尾 + 2 项反向形态 + 三数共现 3 组共 8 项同时命中才算整组命中；'
+            '旧口径（v1–v9）的封存记录保留但不计入本统计；'
             '只统计开奖前发布、开奖后核验的记录；累计四手连败自本版本上线起跨天叠加：连续 4 期整组未全中记 1 次、8 期记 2 次，赢一次清零，不随 05:00 清零；北京时间 05:00 清零（用于当日命中率等当日统计）；只使用前 4 球（千/百/十/个），第 5 球不参与；'
             '平台提前 70 秒关盘。'
             '</div>')
+
 
 def apply_kill_three_block(content, report=None):
     """原地替换/插入 AI 三位置+一合尾区块；任何异常原样返回 content。"""
