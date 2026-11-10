@@ -2365,3 +2365,18 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 
 ### 后续
 - 观察累计至 n≥200 再评估（当前 n=2）；窗口长度如需改（如 30→50）属口径变更，要新 rule_version 并按升级流程登记基线/白名单。
+### cold30 / cold15 部署落地（2026-11-10 14:52，脚本 5293e9f）
+
+**本批范围**：定位冷码 cold30/cold15 两框架上线后的落地固化（只读自检脚本入库 + 真实周期取证 + 门禁复验），不改业务口径。
+
+- **脚本入库**：`scripts/check_cold_frameworks.py`（只读自检：封存/结算/面板/派生统计/crontab/logrotate 共 90 项），commit `5293e9f`；已改为按 `__file__` 推导仓库根，可从任意 cwd（实测 `/tmp`）运行，`SUMMARY: fails=0`，跑完不新增工作树文件。
+- **为何无需重启**：cold30/cold15 由 cron 每 5 分钟新起 `python3 -u scripts/run_cold30_tail.py` 直读磁盘代码；面板由 `sync_state_to_panel.py` → `/root/run_stats.py` 每期重建，后端 `penta5_backend_runner.js:15226` 为 `return path.join(__dirname, "panel.html")` 直读磁盘。故 pm2 常驻进程的 uptime/restarts 与本次落地无关，无需 restart。
+- **真实周期取证**（同一 cron 自行触发，前 14:53:08 → 后 14:56:34，间隔 195s）：
+  - cold30：seals 4→5、settlements 3→4；新结算 `20261110179 actual=9160 group_hit=True`；新封存 `ref=20261110179→180 published_at=2026-11-10T14:55:57.626073+08:00`（千0百0十4个4）；今日 4 期 3 中=75%，单注 15/16=93.75%。
+  - cold15：seals 4→5、settlements 3→4；新结算 `20261110179 group_hit=False`；新封存 `ref=20261110179→180 published_at=2026-11-10T14:56:03.286736+08:00`（千0百0十3个4）；今日 2/4=50%，单注 14/16=87.5%。
+  - 面板 `data-as-of` 20261110178→20261110179，`panel.html` mtime 14:56:32；`data/state.json latestRecord.period=20261110179`；cron 日志 mtime 14:55:59.52 / 14:56:05.95。
+- **门禁**：`refresh_source_manifest.py --root /root/penta5-runner --if-drift` → `baseline-written`（470 files，`/root/backups/auto-baseline-20261110-145818/verification-manifest.json`）；`ops_health_check.py` 中 `manifest_drift OK`、`cold30_tail OK ref=20261110179 published_at=2026-11-10T14:55:57.626073+08:00`、`cold15_tail OK ref=20261110179 published_at=2026-11-10T14:56:03.286736+08:00`、`panel_html OK mtime=2026-11-10T14:58:22+08:00`；`check_cold_frameworks.py` 从 `/tmp` 跑 `fails=0`。其余 FAIL（kill3_stability / coverage / hitrate_stability）为 kill3 覆盖率历史缺口，`data/ops_alerts.log` 显示 00:50–05:00 起即存在，早于本批 14:33 挂接，不属本批；`kill14_tail warn` 为并行窗口在途新框架尚未首封存。
+- **启动键鉴权复核**：`kill8_run_routes.js:43-46` 未认证一律 401 `authentication-required`（实测无 cookie `POST /api/kill8-run` → HTTP 401，响应 `{"ok":false,"error":"authentication-required"}`）；GET 只读 200。POST 付费启动按 2026-11-06 用户明确要求「任何已登录账号可点」，`role !== 'admin' && role !== 'viewer'` 才拒，属既有设计，本批未改。`ai_control_routes.js:112/:117` 仍 admin-only（`can_control: role === 'admin'` + 403 `admin-required`）。
+- **运维提示（并行窗口在途）**：14:55:58 一次 `Statistics sync refresh failed … returncode=1`，原因是另一窗口正在打 `/root/run_stats.py` 补丁，期间出现 `SyntaxError: invalid syntax`（line 586，apply_kill_fourteen_block 链）；该文件 14:56:32 写回并通过 `py_compile`，面板随后重建（`data-as-of=20261110179`）。属并行窗口在途编辑，非本批引入。
+- **未落地项**：无。脚本 commit `5293e9f` 与本节 doc commit 均已推送；并行窗口 7 个 `M` 文件与 kill14 未跟踪文件不属本批，未纳入。
+- **落地审计报告**：`/root/ops/deploy-audit-20261110/deploy-audit.md`（HEAD/origin/main/AHEAD/BEHIND + 本批/并行窗口/未落地项三组 + 落地表）。
