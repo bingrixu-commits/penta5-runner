@@ -487,10 +487,9 @@ def refresh(*, root=ROOT):
     data = build(root=root)
     payload = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     _write_atomic(Path(root) / 'data' / 'tail_hold_max_shadow.json', payload)
-    fragment = render_block(data)
-
-    def transform(html):
-        return apply_block(html, fragment)
-
-    update_panel(transform, path=Path(root) / 'panel.html')
+    try:
+        import stats_page_view
+        stats_page_view.write_page(root=Path(root))
+    except Exception as error:
+        print('STATS_PAGE_REFRESH_FAILED error_type=' + type(error).__name__, flush=True)
     return data

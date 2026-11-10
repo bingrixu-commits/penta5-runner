@@ -28,10 +28,11 @@ Deliberate exclusions (same policy as evidence_backup._complete_sources):
   * directories data, node_modules, .git, backups, logs, __pycache__ and any
     dot-directory;
   * .env*, *.pem, *.key and set_new_key.py (credential material);
-  * panel.html and hitrate.html, generated display snapshots rewritten by the
-    panel refresh loop (every few minutes) and the /hitrate page loop (every
-    15 minutes).  evidence_backup archives panel.html as snapshots/panel.html,
-    not as a source.  Tracking either file here would report drift constantly.
+  * panel.html, hitrate.html and stats.html, generated display snapshots rewritten by the
+    panel refresh loop (every few minutes), the /hitrate page loop (every
+    15 minutes) and the /stats page (on every panel refresh and shadow run).
+    evidence_backup archives panel.html as snapshots/panel.html,
+    not as a source.  Tracking these files here would report drift constantly.
 
 Writes are atomic (temp file + os.replace, mode 0600) and are verified again by
 calling newest_source_manifest()/_source_entries() after the rename.  Every
@@ -58,7 +59,7 @@ EXCLUDE_DIRS = {'data', 'node_modules', '.git', '__pycache__', 'logs', 'backups'
 EXCLUDE_NAMES = {'set_new_key.py'}
 EXCLUDE_SUFFIXES = {'.pem', '.key'}
 # Generated display snapshot, rewritten on every panel refresh; see docstring.
-VOLATILE_GENERATED = {'panel.html', 'hitrate.html'}
+VOLATILE_GENERATED = {'panel.html', 'hitrate.html', 'stats.html'}
 # The only path outside the repo that evidence_backup's allow-list accepts.
 RUN_STATS = Path('/root/run_stats.py')
 # evidence_backup._source_entries refuses manifests with fewer rows.

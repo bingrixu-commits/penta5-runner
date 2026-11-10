@@ -390,7 +390,7 @@ def apply_hitrate_baseline_block(content, report=None):
 # 2026-11-01 主面板入口：大表已移到独立统计页 /hitrate（用户要求隐藏大表）
 # 面板只保留一行入口；保留 HITRATE_BASE_START/END 标记，
 # 供 lib/tail_stability_shadow.py 的 HITRATE_BASE_END 锚点继续使用。
-ENTRY_TEXT = '整组命中率 vs 随机期望（累计·版本锁定）已移到独立统计页'
+ENTRY_TEXT = '统计明细与候选对照已移到独立页面'
 
 
 def render_entry():
@@ -400,9 +400,11 @@ def render_entry():
         f'padding:9px 14px;border:1px dashed #a5b4fc;border-radius:12px;background:#f8faff;'
         f'color:#334155;font:13px/1.55 sans-serif">'
         f'<b>🗂 {ENTRY_TEXT}</b>：'
-        f'<a href="/hitrate" target="_blank" rel="noopener" style="color:#1d4ed8;font-weight:700">'
-        f'→ 打开命中率统计页</a>'
-        f'<span style="color:#64748b"> · 主面板不再内嵌大表（各框架「整组命中率 vs 随机期望」集中在该页）</span>'
+        f'<a href="/hitrate" target="_blank" rel="noopener" style="color:#1d4ed8;font-weight:700;margin-right:14px">'
+        f'→ 命中率统计页（整组累计）</a>'
+        f'<a href="/stats" target="_blank" rel="noopener" style="color:#7c3aed;font-weight:700">'
+        f'→ 统计与候选对照页（归因/稳定性/真实命中率/模型调用/影子）</a>'
+        f'<span style="color:#64748b"> · 主面板不再内嵌大表与明细候选区块</span>'
         f'</section>{END}'
     )
 
