@@ -2508,3 +2508,9 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - v3 累计从 n=1 起算（v2 的 305 期不并入 v3 行），观察至 n≥200 再评估；当前每期 3 注、理论基线 72.90%。
 - 攻击语口径：3 个被杀位置各保留 9 码 + 1 个未选位置 10 码 + 四定，无合尾/无除。
 - 面板自动刷新：live-refresh 版本串已升 v35，攻击语编辑器 v29，旧页面需 Ctrl+F5 一次。
+
+### 后续观测（16:30 追加）
+- cron 继续自动运行：v3 已封存 10 期（20261110188 → 20261110197）、结算 9 期（target 189–197），整组命中 7/9 = 77.78%，单注 25/27 = 92.59%；未中两期为 target 194（十位杀0，实际开0）与 target 197（十位杀8，实际开8）。
+- 派生统计链路跟进正常：data/hitrate_baseline.json 16:26:55 为 n=9 · hits=7 · rate=77.78%；data/framework_hitrate_cumulative.json 16:22:18 与 data/hitrate_stability.json 16:28:01 为 n=8 · hits=7 · rate=87.50% · CI95 [52.91%, 97.76%] · p=0.352852（观察/样本不足，白名单降噪生效）；面板「本版累计」已于 16:28 重渲染为该行。
+- ops_health 16:06:26：kill11_tail OK（ref=20261110193 published 16:05:56）；overall=FAIL 仅剩存量 coverage 与 hitrate_stability（kill3_tail 历史覆盖缺口/口径清零），kill11 在观察名单。
+- 余额提醒（与本次升级无关）：model_usage WARN，AI 余额 ¥25.41，按近 1h 扣费速率约剩 2.0 小时。
