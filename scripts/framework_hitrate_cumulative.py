@@ -79,6 +79,8 @@ RULE_BASELINE = {
     ('cold30_tail', 'cold30-tail-v1-four-position-cold'): (4, 0.6561),
     ('cold15_tail', 'cold15-tail-v1-four-position-cold'): (4, 0.6561),
     # kill14 v1：四位置各排除 1 码（AI 每期选码；两窗口都连败的位置强制取该位置冷码第 1 个），整组 4 项；10^4 开奖 x 10^4 配置精确枚举 = 0.6561
+    # kill14 v2：四位置各排除 1 码（AI 每期选码；70/50/30/15 任一窗口连败的位置强制取该位置冷码第 1 个），整组 4 项；10^4 开奖 x 10^4 配置精确枚举 = 0.6561
+    ('kill14_tail', 'kill14-tail-v2-four-position-cold-multi-window'): (4, 0.6561),
     ('kill14_tail', 'kill14-tail-v1-four-position-cold-on-loss'): (4, 0.6561),
 }
 LABELS = {
@@ -93,7 +95,7 @@ LABELS = {
     'kill13_tail': '冷合尾 2 项（50 期两个最冷合尾，纯确定性）',
     'cold30_tail': '定位冷码 4 项（最新 30 期每位置最冷 1 码，纯确定性）',
     'cold15_tail': '定位冷码 4 项（最新 15 期每位置最冷 1 码，纯确定性）',
-    'kill14_tail': '定位排除 4 项（四位置各排除 1 码，AI 每期选码，连败位置取冷码第 1 个）',
+    'kill14_tail': '定位排除 4 项（四位置各排除 1 码，AI 每期选码，任一窗口连败位置取冷码第 1 个）',
 }
 
 # 动态项数规则：expected 取逐期 expected_group_rate（由封存/结算写入），items 取 expected_items 区间。
