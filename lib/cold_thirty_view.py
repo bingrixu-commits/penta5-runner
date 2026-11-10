@@ -34,6 +34,7 @@ STYLE = """
 #cold-thirty-ai .c30-kill{margin:4px 0 2px;font-size:24px;font-weight:800;color:#b91c1c;letter-spacing:2px}
 #cold-thirty-ai .c30-cold{margin:2px 0;color:#475569;font-size:12.5px}
 #cold-thirty-ai .c30-keep{color:#065f46;font-size:13px;font-family:ui-monospace,Consolas,monospace}
+#cold-thirty-ai .c30-hit{margin:4px 0 0;padding-top:4px;border-top:1px dashed #fde68a;color:#0369a1;font-size:12.5px;font-weight:600}
 #cold-thirty-ai .c30-table{width:100%;border-collapse:collapse;margin:8px 0;font-size:12.5px}
 #cold-thirty-ai .c30-table th,#cold-thirty-ai .c30-table td{padding:3px 6px;border-bottom:1px solid #e2e8f0;text-align:left}
 #cold-thirty-ai .c30-table th{color:#92400e;background:#fef3c7}
@@ -79,7 +80,63 @@ def _remaining(kill):
     return ''.join(char for char in cold30_tail.ATTACK_ORDER if char != text)
 
 
-def _position_card(item):
+def _position_history(stats):
+    """Per-position single-code hit rate: today + same-version cumulative (verified rows only)."""
+    today = stats.get('per_position') if isinstance(stats, dict) else None
+    version = {}
+    try:
+        settlements = cold30_tail.load_settlements()
+    except Exception:
+        settlements = []
+    for row in settlements or []:
+        if not isinstance(row, dict) or row.get('verified') is not True:
+            continue
+        if row.get('rule_version') != cold30_tail.RULE_VERSION:
+            continue
+        for item in row.get('positions') or []:
+            if not isinstance(item, dict):
+                continue
+            key = item.get('key')
+            if key not in ('q', 'b', 's', 'g'):
+                continue
+            slot = version.setdefault(key, {'bets': 0, 'hits': 0})
+            slot['bets'] += 1
+            if item.get('hit') is True:
+                slot['hits'] += 1
+    merged = {}
+    for key in ('q', 'b', 's', 'g'):
+        slot = {}
+        if isinstance(today, dict) and isinstance(today.get(key), dict):
+            slot['today'] = today[key]
+        if key in version:
+            slot['version'] = version[key]
+        if slot:
+            merged[key] = slot
+    return merged
+
+
+def _position_hit_line(history, key):
+    slot = history.get(key) if isinstance(history, dict) else None
+    if not isinstance(slot, dict):
+        return ''
+    parts = []
+    today = slot.get('today')
+    if isinstance(today, dict) and today.get('bets'):
+        parts.append('本日 %s/%s（%s）' % (_escape(today.get('hits', 0)),
+                                          _escape(today.get('bets', 0)),
+                                          _pct(today.get('rate'))))
+    version = slot.get('version')
+    if isinstance(version, dict) and version.get('bets'):
+        bets = int(version.get('bets') or 0)
+        hits = int(version.get('hits') or 0)
+        parts.append('本版累计 %s/%s（%s）' % (_escape(hits), _escape(bets),
+                                             _pct((hits / float(bets)) if bets else None)))
+    if not parts:
+        return ''
+    return '<div class="c30-hit">单码命中率 ' + ' · '.join(parts) + '</div>'
+
+
+def _position_card(item, history=None):
     if not isinstance(item, dict):
         return ''
     kill = _escape(item.get('kill'))
@@ -93,6 +150,7 @@ def _position_card(item):
                    _escape(item.get('omission') if item.get('omission') is not None else '-'),
                    _escape(item.get('rank') if item.get('rank') is not None else '-')))
     card.append('<div class="c30-keep">保留码 ' + _escape(_remaining(kill)) + '</div>')
+    card.append(_position_hit_line(history, item.get('key')))
     card.append('</div>')
     return ''.join(card)
 
@@ -288,6 +346,7 @@ def render_block():
             stats = cold30_tail.today_stats()
         except Exception:
             stats = {}
+    history = _position_history(stats)
     seal = summary.get('seal') or summary.get('previous')
     settlement = summary.get('settlement')
     if not isinstance(seal, dict):
@@ -306,7 +365,7 @@ def render_block():
     html.append('<div class="c30-meta">参考期 %s · 目标期 %s · 窗口 %s 期 · 生成 %s · 数据源 前四球（千/百/十/个）</div>'
                 % (_escape(ref), _escape(target), _escape(seal.get('window')),
                    _clock(seal.get('generated_at'))))
-    html.append('<div class="c30-grid">' + ''.join(_position_card(item) for item in positions) + '</div>')
+    html.append('<div class="c30-grid">' + ''.join(_position_card(item, history) for item in positions) + '</div>')
     html.append(_cold_table(seal.get('cold_ranking') or []))
     reason = seal.get('reason')
     if reason:
