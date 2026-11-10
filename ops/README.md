@@ -2514,3 +2514,35 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 派生统计链路跟进正常：data/hitrate_baseline.json 16:26:55 为 n=9 · hits=7 · rate=77.78%；data/framework_hitrate_cumulative.json 16:22:18 与 data/hitrate_stability.json 16:28:01 为 n=8 · hits=7 · rate=87.50% · CI95 [52.91%, 97.76%] · p=0.352852（观察/样本不足，白名单降噪生效）；面板「本版累计」已于 16:28 重渲染为该行。
 - ops_health 16:06:26：kill11_tail OK（ref=20261110193 published 16:05:56）；overall=FAIL 仅剩存量 coverage 与 hitrate_stability（kill3_tail 历史覆盖缺口/口径清零），kill11 在观察名单。
 - 余额提醒（与本次升级无关）：model_usage WARN，AI 余额 ¥25.41，按近 1h 扣费速率约剩 2.0 小时。
+
+## 2026-11-10 16:51 kill1 v8 口径升级（AI 双定位杀码 + 共现三组 + 二数合/三数合，整组 7 项）
+
+### 变更
+- 用户需求（原话）：「这个框架改定位固定排除俩个位置各一码，合尾删除，取面板共现三组，跟下面二数合三数合」→ 问卷确认：①AI 每期自选恰好 2 个不同位置各杀 1 码（不固定位置、不用 hold3）；②三数共现组直接取 state.currentPrediction.extraKills（threeDigitAvoid/threeDigitHit/threeDigitAvoid2，即面板共现三组）；③he2/he3 取 kill10 同目标期封存；④合尾项彻底删除；整组固定 7 项。
+- 升版：RULE_VERSION='kill1-tail-v8-two-position-three-avoid-he2-he3'、PROMPT_VERSION 同步 v8；POSITION_COUNT=2、THREE_AVOID_ITEMS=3、HE2_KEEP_COUNT=4、HE3_KEEP_COUNT=5、EXPECTED_ITEMS=7、EXPECTED_GROUP_RATE=0.6997、EXPECTED_BASIS='enumerated-10^4-draws-x-600x120^3x5x200-configs'。
+- 整组基线：配置空间 600(C(4,2)*100) × 120^3 × 5 × 200 = 1,036,800,000,000，精确枚举 7,254,570,939,888,960 / 1.0368e16 = 279883138113/400000000000 = 0.6997078452825 → 登记 0.6997；边际 位置 0.81 / 三组合并 0.9405510833333（≠0.9796^3）/ he2 0.9808 / he3 0.9375；朴素相乘 0.7005177441 偏高 8.1e-4（整组不可概率相乘）。注：120^3 按独立同分布上界口径（生成器三组实际无放回，可达空间精确 0.6993332523，差 3.75e-4，历史 875 期无法区分，按项目惯例维持 0.6997）；docstring 已注明。
+- 文件（16 个）：lib/kill1_tail.py 重写（v8 核心：三组校验/二数合三数合校验/kill10_keeps/7 项结算）；lib/kill_one_view.py 重写（7 卡、未选位置说明、7 项结算行、攻击语、69.97% 基线）；scripts/run_kill1_tail.py（three-avoid 与 kill10 keeps 双等待）；派生：lib/hitrate_baseline.py 与 scripts/framework_hitrate_cumulative.py 登记 ('kill1_tail', v8):(7,0.6997)、lib/hitrate_display.py、lib/panel_context.py、lib/panel_live_refresh.py（v36）、lib/attack_editor_view.py（v30）、lib/model_call_rec.py、scripts/ops_health_check.py、lib/tail_hold_max_shadow.py 与 scripts/tail_hold_review.py 删除 kill1 行；ops 登记 ops/freeze-guards.json（kill1 v8 + shared panel_context 7dbb3e91）、ops/kill3-freeze.json（panel_context 追平 7dbb3e91）、ops/hitrate_stability_whitelist.json（until=2026-11-12T17:00:00+08:00）。
+- 删除：合尾（tail/tail_policy）与旧形态字段；settle_pending 按 rule_version 兼容 v1~v7 旧封存，v8 把 2 位置 + 3 共现组 + he2 + he3 全部 AND 进 group_hit。
+
+### 部署与真实周期证据
+- 备份：/root/ops/kill1-v8-20261110-163918（16 个被覆盖文件 + git-head.txt/git-status.txt/sha-before.txt）。上传 16 文件远端 sha256 全部与本机 release 一致（清单存 penta5-kill1v8-build/verify/release_shas.json），远端 python3 -m py_compile 全部改动文件 OK。
+- 周期 1：ref=20261110200 → target=20261110201，published_at=2026-11-10T16:41:11.013427+08:00（开奖 16:40:12，deadline 16:44:02，早 171s）；positions 百位 杀8 · 个位 杀3；three_avoid 避开1组=246 · 避开2组=236 · 避开3组=067（source=state.currentPrediction.extraKills）；he2=0268（4 码，kill10 ref=20261110200 published 16:41:04）、he3=01457（5 码，同源）；expected_items=7、expected_group_rate=0.6997；攻击语「百位 杀8 · 个位 杀3 · 除对数246-236-067 · 二数合0268三数合01457各」。
+- 周期 2：ref=20261110201 → target=20261110202，published_at=2026-11-10T16:46:34.254775+08:00（AI 25.1s）；positions 千位 杀2 · 百位 杀5；he2=0268、he3=01457、三组 246/236/067 同前。
+- 首个 v8 结算：target=20261110201 实际 3/4/6/7 → 百位 8≠4 ✓ · 个位 3≠7 ✓ · 避开1组 246 ✓ · 避开2组 236 ✓ · 避开3组 067 ✓ · 二数合 0268→实际 01379 ✓ · 三数合 01457→实际 3467 ✓；group_hit=true、verified=true（7 项全部命中）。
+- 面板（run_stats 16:48:01 重建）：#kill-one-ai data-as-of=20261110201、7 张卡（2 位置 + 3 共现 + he2 4 码 + he3 5 码）、结算行 7 项逐项命中·整组 命中·已验证、今日整组 1/1、连中 1/连败 0、已发布 2 期、攻击语 4 个锚点齐全；页面含 quiet-panel-v36-kill1v8 与 all-attack-editor-v30-kill1v8；旧 v7「合尾」文案 0 处。
+
+### 统计链路与门禁（16:52 复核）
+- data/hitrate_baseline.json（16:46:52）：kill1_tail rule=v8、items=7、expected=0.6997、n=1、hits=1、rate=100%、label 新、verdict 样本不足(n<200)。
+- framework_hitrate_cumulative / hitrate_stability 按 15 分钟节拍自动跟进（16:52:18 生成 v8 行：n=2、hits=2、expected=0.6997；hitrate_stability 按 13/28/43/58 分节拍随后自动跟进，面板「本版累计」随之刷新）；统计链路无手工 trigger。
+- freeze_guard status：kill1_tail rule=v8、changes=-（无变更）；ops_health freeze_guards 变更 0；ops/kill3-freeze.json 已追平 panel_context 7dbb3e91，check_kill3_freeze 不再报 shared 变更。
+- scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift 重建 baseline 后 manifest_drift 恢复 OK；ops_health overall 仅剩存量 coverage/hitrate_stability（kill3_tail 历史缺口与口径清零风险），本次改动未新增 FAIL/WARN。
+
+### 回滚
+- 文件：cp -a /root/ops/kill1-v8-20261110-163918/ 下 lib/scripts/ops 覆盖回 v7 版本（sha-before.txt 核对），python3 -m py_compile 后跑 scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift；crontab 无需改（行不变）。
+- 代码：git revert c553717（16 文件）；数据按 rule_version 隔离（v8 封存/结算不回滚、不影响历史），面板随下一轮 run_stats 自动回退。
+- 白名单条目 until=2026-11-12T17:00:00+08:00 自动失效。
+
+### 后续/边界
+- v8 累计从 n=1 起算（v1~v7 旧封存按 rule_version 隔离不并入），观察至 n≥200 再评估；整组 7 项、理论基线 69.97%。
+- 三组来自面板 extraKills（确定性候选），he2/he3 直接取 kill10 同目标期封存（kill10 先发布；kill1 等待上限 min(deadline-20s, start+75s)，若未就绪则跳过该窗口）。
+- 用户侧已打开的面板需 Ctrl+F5 一次（panel_live_refresh v36 / 攻击语编辑器 v30 版本切换）。
