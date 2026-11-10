@@ -35,7 +35,7 @@
       ],
       "createdAt": "2026-11-06T03:04:41.409Z",
       "updatedAt": "2026-11-06T03:04:41.409Z",
-      "lastAccessedAt": "2026-11-06T17:09:12.828Z",
+      "lastAccessedAt": "2026-11-10T08:00:45.655Z",
       "revision": 1,
       "contentHash": "ef288ce9cd49f81aba8370b060faa78f7a61f689cb2aef7a90210426f440d901",
       "sizeBytes": 5491,
@@ -59,7 +59,7 @@
       ],
       "createdAt": "2026-11-06T08:13:05.134Z",
       "updatedAt": "2026-11-06T08:13:05.134Z",
-      "lastAccessedAt": "2026-11-06T17:02:48.815Z",
+      "lastAccessedAt": "2026-11-10T07:45:10.087Z",
       "revision": 1,
       "contentHash": "010aa918f743d47f4c31a7c47952ccbaca186ada02532b3cf7044f4031a452dd",
       "sizeBytes": 8333,
@@ -82,7 +82,7 @@
       ],
       "createdAt": "2026-11-06T08:26:03.567Z",
       "updatedAt": "2026-11-06T08:26:03.567Z",
-      "lastAccessedAt": "2026-11-06T15:29:53.349Z",
+      "lastAccessedAt": "2026-11-10T07:45:10.087Z",
       "revision": 1,
       "contentHash": "b86a7402b77cafc3c42420a290ea09584c736f0a51ca6551c278359dd841c9eb",
       "sizeBytes": 9540,
@@ -139,7 +139,7 @@
       ],
       "createdAt": "2026-11-06T15:30:37.399Z",
       "updatedAt": "2026-11-06T15:30:37.399Z",
-      "lastAccessedAt": "2026-11-06T17:09:12.828Z",
+      "lastAccessedAt": "2026-11-10T07:45:10.087Z",
       "revision": 1,
       "contentHash": "1f1a5a44fedaff8d429185a52739bf50b99fe1f606dfb081500ed6d2b2d9c570",
       "sizeBytes": 8020,
@@ -165,7 +165,7 @@
       ],
       "createdAt": "2026-11-06T17:04:08.977Z",
       "updatedAt": "2026-11-06T17:04:08.977Z",
-      "lastAccessedAt": "2026-11-06T17:09:12.828Z",
+      "lastAccessedAt": "2026-11-10T08:00:45.655Z",
       "revision": 1,
       "contentHash": "24c1cac4df7b01a704263b4ee479a82a55fe9ec518c60b1d49658a53e5e7672e",
       "sizeBytes": 6900,
@@ -184,10 +184,56 @@
       ],
       "createdAt": "2026-11-06T17:09:42.225Z",
       "updatedAt": "2026-11-06T17:09:42.225Z",
-      "lastAccessedAt": "2026-11-06T17:09:42.225Z",
+      "lastAccessedAt": "2026-11-10T08:00:45.655Z",
       "revision": 1,
       "contentHash": "edff70c9294c6581b03df9b3738d891ca57ac7c2a71fec75439e86c0d3525933",
       "sizeBytes": 8468,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "02a2155b-94cf-4035-b8c6-a8930c160050",
+      "title": "penta5-runner kill14 v2：定位排除冷码窗口并入 30/15 期 + 任一窗口连败强制（2026-11-10）",
+      "description": "kill14 定位排除由 v1（70/50 两窗口都连败强制）升级为 v2（冷码窗口 70/50/30/15，任一窗口连败即强制取该位置冷码第 1）的口径、代码改动、封存/结算真实证据、提交与回滚、并行窗口 ours-only 提交技巧。回答「kill14 现在怎么选码/连败强制怎么算/窗口有哪些/基线多少/怎么回滚/上线证据」时参考。",
+      "status": "active",
+      "filename": "penta5-runner-kill14-v2-30-15-2026-11-10-02a2155b.md",
+      "relativePath": "documents/active/penta5-runner-kill14-v2-30-15-2026-11-10-02a2155b.md",
+      "sourcePaths": [
+        "kill14_build/kill14_tail.py",
+        "kill14_build/kill_fourteen_view.py",
+        "kill14_build/run_kill14_tail.py",
+        "kill14_build/check_kill14_framework.py",
+        "kill14_build/readme_kill14_v2_entry.md"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-17f590de-d4af-40e6-ab81-23244d39835d"
+      ],
+      "createdAt": "2026-11-10T07:45:38.195Z",
+      "updatedAt": "2026-11-10T07:45:38.195Z",
+      "lastAccessedAt": "2026-11-10T08:00:45.655Z",
+      "revision": 1,
+      "contentHash": "89cb6754229127b5386692a5d833e9ff69a9cd48af13c0d506344b48832bb293",
+      "sizeBytes": 7366,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "caeb51b2-f2a1-4b50-871d-40d9a71d210c",
+      "title": "penta5-runner cold30 / cold15：定位冷码独立框架与每位置单码命中率标注（2026-11-10）",
+      "description": "cold30/cold15 两个纯确定性四位置定位冷码框架的口径、精确基线 0.6561、代码/数据/挂接点、每位置单码命中率标注实现、部署验证流程、真实周期与提交回滚。回答「cold30/cold15 怎么算/怎么上线/命中率标注怎么做的/怎么回滚」时参考。",
+      "status": "active",
+      "filename": "penta5-runner-cold30-cold15-2026-11-10-caeb51b2.md",
+      "relativePath": "documents/active/penta5-runner-cold30-cold15-2026-11-10-caeb51b2.md",
+      "sourcePaths": [
+        "cold-framework-build"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-4a93d366-3b78-47ff-9d6e-f44fa225008b"
+      ],
+      "createdAt": "2026-11-10T08:01:10.927Z",
+      "updatedAt": "2026-11-10T08:01:10.927Z",
+      "lastAccessedAt": "2026-11-10T08:01:10.927Z",
+      "revision": 1,
+      "contentHash": "3c733b02f45804eca31decd315b5f347882257923066c21cc2a8cda1469eebbd",
+      "sizeBytes": 9343,
       "memoryBodyIds": []
     }
   ]

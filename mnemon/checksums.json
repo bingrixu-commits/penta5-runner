@@ -4,7 +4,7 @@
     "payload/runtime/memories.json": "72f95a8de95f8874c42f584bbcbfe7ffd69ca39ddf9fd15ae814681eecbdbd75",
     "payload/runtime/USER.md": "6bc09f7683dbf157103c80f074b40164d717c13958598f1d0db3d0cfa08cd0af",
     "payload/runtime/MEMORY.md": "a06f8ea9cdda996b7cd0db6aa04fd7240523b45f2dfbbfa3ac89faeff45a4ed2",
-    "payload/documents/index.json": "6573de92817fc59ae7114560b983b12d0041e8b56796d3d9b355bfac247f9e2f",
+    "payload/documents/index.json": "4aa62e2f26802ba0987975f7dc3bcedc882e34c5b698b79641d214093d8dfd99",
     "payload/documents/active/mnemon-dsh-03ec4e06.md": "ece777f1e33d2d0dca41a40492fa4eb754c1e537ae7356075285b5c80b41ba5d",
     "payload/documents/active/penta5-runner-kill8-v7-v6-2026-11-06-02779d21.md": "8fb51f7d258bd5335d256643002449d3b94e034e9324cc9d3eb467b8f426e073",
     "payload/documents/active/penta5-runner-2026-11-06-c9e2bfd1.md": "cb09ebadaa9f5d6b7b3eff4856b5594651b6c60094febbba156073c002900a37",
@@ -14,6 +14,8 @@
     "payload/documents/active/penta5-runner-kill12-v2-2026-11-06-7b9973e0.md": "3eb2c66f1c700702e1c04d3a1996727a1f6af1aaf99bd8cad8b62c418460c2c8",
     "payload/documents/active/penta5-runner-kill1-v7-kill3-v17-kill11-v2-kill1-ea2d6c9e.md": "f02969fe7fa5de2581edcccaef2b87408672cae217bf830b8ed30c1ff3a74850",
     "payload/documents/active/penta5-runner-kill13-2-df30b2dd.md": "f6aa34d301ce6638ad19abb30b8d661f3e4cbecf5123c3d2ce4cafa01716d208",
+    "payload/documents/active/penta5-runner-kill14-v2-30-15-2026-11-10-02a2155b.md": "1a10fd90a76737a6af9c10cef1bac73d921f0a47e2fdae435b9b49b2ced87f0b",
+    "payload/documents/active/penta5-runner-cold30-cold15-2026-11-10-caeb51b2.md": "617369bae0f04c0fae02f5660baa533dc1115fb3731541668914058b7779f897",
     "payload/data/.dsh-memory-bodies.json": "5b2f4b8606f292951e2c604702c0d31401f2ebc90f0e87934607b27515339c73",
     "payload/data/0dcb869d-6a01-4654-bf94-c25bd925dc8d/mnemon.db": "ddc328ac4d9c86b8f05eedfbfb55b6b493d4b0e33d4a8e6f0bc6a96e9eea3605",
     "payload/data/default/mnemon.db": "790b6c4ea91f9179c4819f8ae8a4ac9731ead61b6281c7891ab93fb4947ba402"
