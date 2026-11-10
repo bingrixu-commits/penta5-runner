@@ -2468,3 +2468,43 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - 验证：`/tmp/coldhit/ab_test.py` 去掉新增 hit 行后与旧渲染逐字节相等、4 行数据独立复算一致、div 配平（该脚本对 render_block 断言 START/END 是误报，标记只在 apply 注入）；`/tmp/coldhit/apply_test.py` APPLY_RESULT PASS；`/tmp/coldhit/verify_panel.py` PANEL_RESULT PASS（整页 32 区块零不配平）。只读自检 `scripts/check_cold_frameworks.py` → fails=0（90 项）。`ops_health_check.py` 15:57:32 cold30_tail / cold15_tail / panel_html 均 OK；改源码后 `refresh_source_manifest.py --root /root/penta5-runner --if-drift` 重建基线 → `/root/backups/auto-baseline-20261110-155726/verification-manifest.json`，`manifest_drift OK`。
 - 回滚：`git revert 57b51bc`（纯展示改动，无数据/状态迁移）。原始两文件（sha256 与改前一致）、取证脚本与 evidence.txt 存放在 `/root/ops/cold-hitrate-20261110-1554/{old,scripts}/`。
 - 并行窗口：本次仅提交上述 2 个视图文件；工作树另有 kill11/kill14 等 12 个在途 M 文件，不属本批、未触碰。
+
+## 2026-11-10 16:00 kill11 v3 口径升级（固定三定位杀码，删除单双形态与合尾）
+
+### 变更
+- 用户需求（原话）：「这个框架，就保留3个定位就可以了。其他项目清除了」→ 问卷确认口径 A：AI 每期从 千/百/十/个 中固定选恰好 3 个不同位置、每个位置各排除 1 码；删除单双反向形态与合尾；整组固定 3 项。
+- 随机基线：(9/10)^3=0.729，由 10^4 开奖 × C(4,3)*10^3=4000 配置空间精确枚举校验（29,160,000/40,000,000）；不再有 N+2 项与 N 浮动口径。
+- 升版：RULE_VERSION='kill11-tail-v3-three-position'、PROMPT_VERSION='kill11-tail-prompt-v3-three-position'；POSITION_COUNT=3、EXPECTED_ITEMS=3、EXPECTED_GROUP_RATE=0.729、EXPECTED_BASIS='enumerated-10^4-draws-x-4000-configs'。
+- 文件：lib/kill11_tail.py（normalize_response 恰好 3 个不同位置；build_prompt 无 tail/form、任务 5 条、JSON 3 positions；create_seal 无 tail/tail_policy/form_type/form；settle_pending 兼容 v1/v2 旧封存：tail 按 LEGACY_TAIL_INDICES 的 sum(actual[idx])%10、form 按 4 字单双串补算，仅用于历史核验展示且并入组命中；today_stats 只统计 v3 记录、legacy 单列）、lib/kill_eleven_view.py（重写：3 张位置卡 + 未选位置说明 + 理由 + 3 项基线 + 结算行(含旧版尾/形态历史备注) + 统计 + 本版累计 + 版本 + 攻击语；START/END 与 #kill-eleven-ai、攻击语 ids 不变）、scripts/run_kill11_tail.py（删 previous_tail/apply_tail_policy；print 只列 3 位置）。
+- 派生登记：lib/hitrate_baseline.py 与 scripts/framework_hitrate_cumulative.py 新增 ('kill11_tail','kill11-tail-v3-three-position'): (3, 0.729) 并更新 LABELS['kill11_tail']='定位杀码 3 项（AI 自选 3 个位置各杀 1 码）'（旧 v2 label 仅保留在 DYNAMIC_RULES 历史行，供旧版本回放展示）；lib/panel_context.py 删除 kill11 形态/合尾字段；lib/attack_editor_view.py 版本 v29 与 label「AI三定位杀码攻击语」；lib/panel_live_refresh.py 版本串 v35；scripts/tail_hold_review.py 删除 kill11 合尾行；scripts/ops_health_check.py check_kill11 文案改 v3（逻辑通用不变）；ops/hitrate_stability_whitelist.json 登记 v3 过渡期（until=2026-11-12T16:10:00+08:00）；ops/freeze-guards.json 登记 lib/panel_context.py 受控共享变更（kill3_tail files sha a85bd147→d34a0342，另 4 框架 shared 同步；均注明仅改 _kill11_self()/_ai_self_frame(kill11_tail) 分支，kill3/killer/framework/he3/kill1 行为不变）。
+- 本机自测（/tmp/selftest_kill11_v3.py，远端 49 PASS / 0 FAIL）：常量与 4000 配置精确枚举=0.729、normalize 2/4 项/重复位置/越界/缺位置均拒绝、build_attack 9+9+10+四定且无合/除、create_seal 无 tail/form、settle v3 与 legacy v2、today_stats、build_prompt 50 期与 3 项 JSON、视图渲染/幂等/兜底锚点、runner expected_reference。
+
+### 部署与真实周期证据
+- 备份：/root/ops/kill11-v3-20261110-153626/（11 个被覆盖文件 + SHA256SUMS；另含 freeze-guards.json.pre-shared-sync）。
+- 部署 sha256（远端 py_compile 全 OK，grep 无 TAIL_POLICY/apply_tail_policy/previous_tail/four_loss/REVERSE_KEYS/FORM_CHARS 残留）：lib/kill11_tail.py dea89f30…（37713B）、lib/kill_eleven_view.py 43f41ea1…（18189B）、scripts/run_kill11_tail.py 8b435c3f…（5333B）、lib/hitrate_baseline.py b6164c0e…、scripts/framework_hitrate_cumulative.py e3093a9e…、lib/panel_context.py d34a0342…、lib/attack_editor_view.py 5b3629e8…、lib/panel_live_refresh.py 0c9fd5bd…、scripts/tail_hold_review.py 8a7f0e5b…、scripts/ops_health_check.py 6efe9b4f…、ops/hitrate_stability_whitelist.json 00dfae9b…、ops/freeze-guards.json 5365c38f…。
+- cron（每 5 分钟，行不变）自 2026-11-10 15:40 起以 v3 运行；连续 5 期封存、4 期结算全部 hit：
+  - ref=20261110188→20261110189 published 15:41:00.740404「千位 杀1 · 百位 杀2 · 十位 杀0」（AI 15.09s）；
+  - ref=20261110189→20261110190 published 15:45:48.854973「千位 杀9 · 百位 杀6 · 个位 杀3」（3.37s）；
+  - ref=20261110190→20261110191 published 15:50:48.759106「百位 杀8 · 十位 杀7 · 个位 杀2」；
+  - ref=20261110191→20261110192 published 15:56:05.985184「千位 杀8 · 十位 杀9 · 个位 杀7」；
+  - ref=20261110192→20261110193 published 16:00:49.238812「千位 杀5 · 百位 杀2 · 十位 杀3」。
+- 结算：target=20261110189/190/191/192 四条 v3 记录 group_hit=true、verified=true（无 tail/form 字段）；v2 旧封存 target=20261110188 同批结算 group_hit=false、verified=true，legacy 尾/形态字段照旧保留在账本。
+- 面板（run_stats 重建后）：#kill-eleven-ai data-as-of=20261110192、标题「🎯 定位杀码 3 项（AI 选 3 个位置 · 每位置各杀 1 码）」、3 张位置卡（无形态/合尾卡）、整组 3 项·理论基线 72.90%、上期核验逐项 ✓、今日整组 4/4、今日单注 12/12、待核验 1 期、本版累计 n=2、攻击语 3 段 9 码 + 1 段 10 码 + 四定；页面已含 quiet-panel-v35 与 all-attack-editor-v29-kill11v3（旧页面需 Ctrl+F5 一次）。
+
+### 统计链路与门禁（16:03 复核）
+- data/hitrate_baseline.json：kill11_tail row rule=v3、items=3、expected=0.729、n=3、hits=3、label 新（生成 15:56:55）。
+- data/framework_hitrate_cumulative.json：kill11_tail row rule=v3、label 新、items=3、expected=0.729、n=2（15:52:19；下一轮 16:07 自动跟进）。
+- data/hitrate_stability.json：kill11_tail row rule=v3、n=2、expected=0.729、churn observed_change（新口径首行，已登记过渡期白名单 until=2026-11-12T16:10，降级为 WATCH 不告警）。
+- scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift → baseline-written 471 files（/root/backups/auto-baseline-20261110-155837/verification-manifest.json）。
+- ops_health（16:03:15）：kill11_tail OK ref=20261110192 / freeze_guards OK（变更 0）/ manifest_drift OK / crontab_drift OK（44 jobs）/ ledger_size kill11_tail/seals.json=9.5MiB；overall=FAIL 仅剩存量 coverage 与 hitrate_stability（kill3_tail 历史覆盖缺口与口径清零风险，与 kill11 无关；本次改动未新增 FAIL/WARN）。
+
+### 回滚
+- 文件：从 /root/ops/kill11-v3-20261110-153626/ 覆盖回 v2 版本，python3 -m py_compile 后跑 scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift；crontab 无需改（行不变）。
+- 代码：git revert 本批 feat commit 3206160（12 文件）；面板区块随下一轮 run_stats 自动回退。
+- 数据：kill11 封存/结算按 rule_version 隔离，v1/v2/v3 互不串计；回退后旧数据保留、统计自动回到 v2 行。
+- freeze-guards：如需一并回退受控登记，恢复 /root/ops/kill11-v3-20261110-153626/freeze-guards.json.pre-shared-sync（随后 ops_health 会重新提示 panel_context 共享变更）。
+
+### 后续/边界
+- v3 累计从 n=1 起算（v2 的 305 期不并入 v3 行），观察至 n≥200 再评估；当前每期 3 注、理论基线 72.90%。
+- 攻击语口径：3 个被杀位置各保留 9 码 + 1 个未选位置 10 码 + 四定，无合尾/无除。
+- 面板自动刷新：live-refresh 版本串已升 v35，攻击语编辑器 v29，旧页面需 Ctrl+F5 一次。
