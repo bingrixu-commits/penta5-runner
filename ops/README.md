@@ -2289,3 +2289,38 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 
 ### 后续
 - 观察 v4 累积至 n≥200；v1/v2/v3 均已归档不计入现行口径。
+
+## 2026-11-10 14:42 面板 7 个明细/候选区块移入独立 /stats 页（用户要求的「隐藏」）
+
+### 变更
+- 用户按截图指认 7 个区块要求从主面板隐藏：HITRATE_ATTRIBUTION、HITRATE_STABILITY、REAL_HIT、MODEL_CALL_REC、TAIL_STABILITY_SHADOW、POSITION_KILL_SHADOW、TAIL_HOLD_MAX_SHADOW。按确认方案移入独立子页 /stats（stats.html），主面板 HITRATE_BASE 入口行保留并扩成两条链接（/hitrate 整组累计 + /stats 统计与候选对照）。
+- 新增 lib/stats_page_view.py：独立页壳（仿 hitrate_page_view：1280 宽、返回面板/整组命中率/逐日明细导航、原子写 + chmod 0644），按原顺序复用 7 个 view 模块的 render_block()（归因、稳定性、真实命中、模型调用推荐，再三个影子块读 data/*_shadow.json）；单块渲染异常只显示 section.err，不拖垮整页。
+- 新增 scripts/refresh_stats_page.py（手动刷新入口，compute_model_call=True）。
+- lib/model_retirement.py 新增 DETAIL_MARKERS（上述 7 个 marker）并入 strip_retired_panels 循环：每轮面板重建时把 7 块从 panel.html 剥除（与 selected7/cold 退役机制同源，对仍在跑的旧进程回写有防护）。
+- lib/hitrate_baseline_view.py：ENTRY_TEXT 改为「统计明细与候选对照已移到独立页面」，入口行两链接（/hitrate + /stats）。
+- 三个影子 refresh() 尾部不再 update_panel(panel.html)，改为 import stats_page_view; write_page(root=...)（失败只打 STATS_PAGE_REFRESH_FAILED，JSON 采集与 return data 不变）。
+- /root/run_stats.py（非 git、已双向备份）：early_panel 与 quiet_panel 两条 lambda 链去掉 apply_model_call_rec_block / apply_real_hit_block / apply_hitrate_attribution_block / apply_hitrate_stability_block（各 2 次，共 8 处平衡括号解包），保留 apply_three_avoid2/hitrate_entry/cold30/cold15/.../strip_retired_panels；quiet 链后新增 try: stats_page_view.write_page(compute_model_call=True)，正常打 Stats detail page written，异常记 Stats detail page deferred: Type。
+- penta5_backend_runner.js（保持 CRLF）：新增 isStatsPath（/stats 与 /stats.html）/sendStatsHtml，并挂到 isViewerAllowedRequest、safeLoginNextPath、未登录 GET→登录页（next=/stats）、登录后 GET 分派、404 endpoints 列表（GET /stats）。
+- scripts/refresh_source_manifest.py：VOLATILE_GENERATED 增加 stats.html（与 panel.html/hitrate.html 同策略：根目录生成快照不纳入 source manifest，避免影子每 5 分钟重建造成持续 drift）。
+- 生成方：/root/run_stats.py 每轮统计刷新写一次；三个影子每 5 分钟重建一次（纯展示）。服务方：pm2 penta5-runner 读 __dirname/stats.html。
+
+### 数据/口径
+- 仅动展示层：封存、结算、攻击语、影子采集 JSON、hitrate_baseline/framework_hitrate_cumulative 等统计链一律未改；stats_page_view 只是把同一批 render_block 输出拼到新页。
+- 主面板 7 个区块不再内嵌，但数据文件位置与更新节拍不变（归因 10min、稳定性 15min、真实命中随 run_stats、模型调用随 run_stats、三个影子 */5）；/stats 页随 run_stats 与影子重建。
+
+### 部署证据
+- 备份：/root/backups/panel-stats-move-20261110-143851/（panel.html、/root/run_stats.py、backend js、refresh_source_manifest.py、5 个 lib 文件；BEFORE.sha256 与 AFTER.sha256）。
+- 补丁脚本 /tmp/panelhide/patch_stats_migration.py：dry-run 全部 plan 通过后 --apply；/root/run_stats.py 用平衡括号解包删除而非整文件覆盖（避免覆盖并行窗口 14:32 的 cold30/cold15 改动）。py_compile 8 个 py 全过、node --check 通过。
+- 生成：python3 scripts/refresh_stats_page.py → stats.html 33656B，7 个区块 START 标记各 1、无 section.err；导航 /panel、/hitrate、/accuracy 齐全。
+- 单跑 /root/run_stats.py（14:40，EXIT=0，refresh_total 62.07s）：日志出现 Stats detail page written；panel.html 409332B，7 个 marker 计数全 0，HITRATE_BASE 入口文本「统计明细与候选对照已移到独立页面」且含 href="/stats"；其余 KILL_ONE/KILL_THREE/HITRATE_BASE/THREE_AVOID2/COLD_THIRTY/COLD_FIFTEEN/PENTA5_STATS_PANEL 各 1。
+- pm2 restart penta5-runner（14:41，id5）：未登录 GET /stats 与 /stats.html → 200 登录页；admin 与 viewer 登录后 /stats、/stats.html → 200 33656B，标题「统计与候选对照」；/panel 200 409KB、/hitrate 200。
+- 真实自动周期复核：14:42 面板刷新链路自动重跑 run_stats（新期），panel.html 410786B 仍 7 marker=0，stats.html 同步重建（33657B），三个影子 cron 日志无 STATS_PAGE_REFRESH_FAILED。
+- 兼容性：panel_live_refresh 的 names 列表未改（新页不再有 7 块，ranges()/apply() 对缺失区块静默跳过）；已经打开旧版面板的标签页在下一轮 refresh 会因 missing-section 停止自动刷新，Ctrl+F5 一次即可。
+- 门禁：收尾跑 scripts/refresh_source_manifest.py --if-drift（stats.html 已在 VOLATILE_GENERATED，README 变更后重刷 baseline）与 scripts/ops_health_check.py；结果见本次收尾输出。
+
+### 回滚
+- 代码：git revert 本 commit（fa8a167；回滚后 git update-index --no-skip-worktree stats.html）。再从备份目录恢复 /root/run_stats.py 与 panel.html，跑一次 /root/run_stats.py（剥除名单消失后 7 块由 apply 链写回主面板）。
+- 只关独立页：/root/run_stats.py 删 stats write 块、三个影子恢复 update_panel 即可；stats.html 可保留不访问。
+
+### 未做/边界
+- 未改 /hitrate 大表页；未改 crontab；未重启 shadow/pm2-panel-sync（它们每轮新起解释器，读磁盘代码即生效）。
