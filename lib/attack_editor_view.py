@@ -4,10 +4,10 @@ import re
 
 SCRIPT_ID = 'penta5-attack-editor-control'
 SCRIPT = r'''<script id="penta5-attack-editor-control">
-/* all-attack-editor-v27-cold30-cold15 */
+/* all-attack-editor-v28-kill14 */
 (function(){
 'use strict';
-const version='all-attack-editor-v27-cold30-cold15',previous=window.__PENTA5_ATTACK_EDITOR__;
+const version='all-attack-editor-v28-kill14',previous=window.__PENTA5_ATTACK_EDITOR__;
 if(previous&&previous.version===version){previous.check();return;}
 if(previous&&typeof previous.destroy==='function')previous.destroy();
 const definitions=[
@@ -21,7 +21,8 @@ const definitions=[
  {id:'kill12-attack-text',copy:'kill12-attack-copy',label:'AI单位置+单双形态+一合尾攻击语',data:'kill12-attack-data'},
  {id:'kill13-attack-text',copy:'kill13-attack-copy',label:'冷合尾2合尾攻击语',data:'kill13-attack-data'},
  {id:'cold30-attack-text',copy:'cold30-attack-copy',label:'最新30期定位冷码攻击语',data:'cold30-attack-data'},
- {id:'cold15-attack-text',copy:'cold15-attack-copy',label:'最新15期定位冷码攻击语',data:'cold15-attack-data'}
+ {id:'cold15-attack-text',copy:'cold15-attack-copy',label:'最新15期定位冷码攻击语',data:'cold15-attack-data'},
+ {id:'kill14-attack-text',copy:'kill14-attack-copy',label:'定位排除攻击语',data:'kill14-attack-data'}
 ];
 const entries=new Map();
 const styleId='penta5-attack-editor-style',sourceAttribute='data-penta5-attack-editor-source';

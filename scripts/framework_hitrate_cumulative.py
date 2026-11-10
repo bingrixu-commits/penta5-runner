@@ -78,6 +78,8 @@ RULE_BASELINE = {
     # cold30/cold15 v1：最新 30/15 期各位置最冷 1 码（四位置 = 4 项）；10^4 开奖 x 10^4 配置精确枚举 = 0.6561
     ('cold30_tail', 'cold30-tail-v1-four-position-cold'): (4, 0.6561),
     ('cold15_tail', 'cold15-tail-v1-four-position-cold'): (4, 0.6561),
+    # kill14 v1：四位置各排除 1 码（AI 每期选码；两窗口都连败的位置强制取该位置冷码第 1 个），整组 4 项；10^4 开奖 x 10^4 配置精确枚举 = 0.6561
+    ('kill14_tail', 'kill14-tail-v1-four-position-cold-on-loss'): (4, 0.6561),
 }
 LABELS = {
     'killer': '智能深排 killer（9 项）',
@@ -91,6 +93,7 @@ LABELS = {
     'kill13_tail': '冷合尾 2 项（50 期两个最冷合尾，纯确定性）',
     'cold30_tail': '定位冷码 4 项（最新 30 期每位置最冷 1 码，纯确定性）',
     'cold15_tail': '定位冷码 4 项（最新 15 期每位置最冷 1 码，纯确定性）',
+    'kill14_tail': '定位排除 4 项（四位置各排除 1 码，AI 每期选码，连败位置取冷码第 1 个）',
 }
 
 # 动态项数规则：expected 取逐期 expected_group_rate（由封存/结算写入），items 取 expected_items 区间。
@@ -120,6 +123,7 @@ WINDOWS = {
     'kill13_tail': '当前规则版本累计',
     'cold30_tail': '当前规则版本累计',
     'cold15_tail': '当前规则版本累计',
+    'kill14_tail': '当前规则版本累计',
 }
 ROLLING_WINDOWS = (('24h', 288), ('7d', 2016))
 ROLLING_RECENT_PERIODS = 24
@@ -1154,6 +1158,54 @@ def cum_cold15():
                   label=label, items=items)
 
 
+def cum_kill14():
+    settlements = _read(DATA / 'kill14_tail' / 'settlements.json') or {}
+    seals = _read(DATA / 'kill14_tail' / 'seals.json') or {}
+    seal_records = seals.get('records') or []
+    rule = 'kill14-tail-v1-four-position-cold-on-loss'
+    if seal_records and isinstance(seal_records[-1], dict):
+        rule = seal_records[-1].get('rule_version') or rule
+    seal_rule = {str(record.get('ref_period')): record.get('rule_version')
+                 for record in seal_records if isinstance(record, dict)}
+    records, rolling, launch = [], [], []
+    for record in seal_records:
+        if isinstance(record, dict) and record.get('target_period'):
+            launch.append(record.get('target_period'))
+    expected_map, items_values = {}, []
+    for row in settlements.get('records') or []:
+        if not isinstance(row, dict):
+            continue
+        value = row.get('expected_group_rate')
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and 0.0 < float(value) < 1.0):
+            expected_map[str(row.get('target_period'))] = float(value)
+        count = row.get('expected_items')
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+            items_values.append(count)
+        if row.get('target_period'):
+            launch.append(row.get('target_period'))
+        if not row.get('verified'):
+            continue
+        if 'counted' not in row:
+            continue
+        hit = bool(row.get('group_hit'))
+        rolling.append((row.get('target_period'), hit))
+        if (row.get('rule_version') != rule
+                and seal_rule.get(str(row.get('ref_period'))) != rule):
+            continue
+        records.append((row.get('target_period'), hit, None))
+    dynamic = DYNAMIC_RULES.get(('kill14_tail', rule))
+    label = dynamic['label'] if dynamic else None
+    items = None
+    if dynamic and items_values:
+        items = (items_values[0] if len(set(items_values)) == 1
+                 else '%d~%d' % (min(items_values), max(items_values)))
+    return _build('kill14_tail', rule, records, 'data/kill14_tail/settlements.json',
+                  rolling=rolling, launch=launch, expected_map=expected_map or None,
+                  label=label, items=items)
+
+
+
 def build():
     rows = []
     errors = []
@@ -1168,7 +1220,8 @@ def build():
                        ('kill12_tail', cum_kill12),
                        ('kill13_tail', cum_kill13),
                        ('cold30_tail', cum_cold30),
-                       ('cold15_tail', cum_cold15)):
+                       ('cold15_tail', cum_cold15),
+                       ('kill14_tail', cum_kill14)):
         try:
             row = func()
             if row and row.get('n'):
