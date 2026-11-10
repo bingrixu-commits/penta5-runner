@@ -1,11 +1,11 @@
-"""定位排除（kill14 独立框架，v1，AI 每期选码）。
+"""定位排除（kill14 独立框架，v2，AI 每期选码）。
 
 口径（写死，面板脚注同步展示）：
 - 四个位置（千/百/十/个）每期各排除 1 个码（0-9），整组固定 4 项全部计入整组；
-- 面板依据：近 70 期与 50 期各位置冷码榜（窗口内出现次数升序、同次数当前遗漏降序、再按码升序），
+- 面板依据：近 70 / 50 / 30 / 15 期各位置冷码榜（窗口内出现次数升序、同次数当前遗漏降序、再按码升序），
   以及按「冷码榜前 3 码杀号」口径统计的逐位置当前连败 / 连中状态（与面板冷码杀号战绩同口径）；
-- AI 规则：某位置在 70 期与 50 期两个窗口都处于「连败」时，该位置排除码必须取该位置冷码第 1 个
-  （70 期或 50 期窗口由 AI 自行决定）；其余位置（连中或两窗口状态不一致）由 AI 自行选 1 码；
+- AI 规则：某位置在 70 / 50 / 30 / 15 任一个窗口处于「连败」时，该位置排除码必须取该位置冷码第 1 个
+  （候选 = 所有处于连败窗口的冷码第 1 个，由 AI 任选其一）；四个窗口都不连败的位置由 AI 自行选 1 码；
 - 不设沿用 / 换码（hold），每期严格由 AI 重新选择并封存；
 - 命中 = 该位置实际开奖号 != 该位置排除码（单项随机 90%）；
 - 整组命中 = 4 项同时命中；整组随机基线 = (9/10)^4 = 65.61%，
@@ -40,7 +40,8 @@ SETTLEMENTS_PATH = DATA_DIR / 'settlements.json'
 STATE_PATH = ROOT / 'data' / 'state.json'
 
 WINDOW = 70
-STATS_WINDOWS = (70, 50)
+# 冷码窗口：70 / 50 为 v1 原口径，30 / 15 为用户 2026-11-10 新增的短窗冷码框架（任一窗口连败即强制）。
+STATS_WINDOWS = (70, 50, 30, 15)
 TOP = 3
 CLOSE_SECONDS = 70
 MIN_REQUEST_SECONDS = 20.0
@@ -64,8 +65,10 @@ POSITION_INDEX = {key: index for key, _label, index in POSITIONS}
 ATTACK_ORDER = '1234567890'
 ATTACK_POSITION_LABELS = {'q': '千', 'b': '百', 's': '十', 'g': '个'}
 
-RULE_VERSION = 'kill14-tail-v1-four-position-cold-on-loss'
-PROMPT_VERSION = 'kill14-tail-prompt-v1-four-position-cold-on-loss'
+RULE_VERSION = 'kill14-tail-v2-four-position-cold-multi-window'
+PROMPT_VERSION = 'kill14-tail-prompt-v2-four-position-cold-multi-window'
+# v1 封存 / 结算按自身 rule_version 保留，不回填、不删除。
+LEGACY_RULES = ('kill14-tail-v1-four-position-cold-on-loss',)
 EXPECTED_ITEMS = 4
 # 10^4 开奖空间 x 每位置 10 码配置，精确枚举：4 位置各自 (9/10) 独立 -> 6561/10000。
 EXPECTED_GROUP_RATE = 0.6561
@@ -259,15 +262,24 @@ def build_context(rows):
     states = {str(window): position_state(rows, window=window) for window in STATS_WINDOWS}
     enforced = []
     for key, label, _index in POSITIONS:
-        loss70 = states['70']['positions'][key]['current_loss_streak']
-        loss50 = states['50']['positions'][key]['current_loss_streak']
-        if loss70 > 0 and loss50 > 0:
-            enforced.append({
-                'key': key,
-                'label': label,
-                'allowed': [windows['70']['cold_first'][key], windows['50']['cold_first'][key]],
-                'loss_streak': {'70': loss70, '50': loss50},
-            })
+        loss_streak = {str(window): states[str(window)]['positions'][key]['current_loss_streak']
+                       for window in STATS_WINDOWS}
+        losing_windows = [window for window in STATS_WINDOWS
+                          if loss_streak[str(window)] > 0]
+        if not losing_windows:
+            continue
+        allowed = []
+        for window in losing_windows:
+            code = windows[str(window)]['cold_first'][key]
+            if code not in allowed:
+                allowed.append(code)
+        enforced.append({
+            'key': key,
+            'label': label,
+            'allowed': allowed,
+            'loss_streak': loss_streak,
+            'losing_windows': losing_windows,
+        })
     latest_digits = {key: str(rows[-1][POSITION_INDEX[key]]) for key, _label, _index in POSITIONS}
     return {
         'windows': windows,
@@ -325,12 +337,15 @@ def build_prompt(reference, target, rows, *, context=None, previous_seal=None,
     enforced_lines = []
     for item in context.get('enforced') or []:
         allowed = ' / '.join(str(code) for code in item['allowed'])
+        losing = item.get('losing_windows') or []
+        streak_text = '、'.join('%d 期连败 %d' % (window, item['loss_streak'][str(window)])
+                                for window in losing)
         enforced_lines.append(
-            '· %s：70 期连败 %d、50 期连败 %d → 排除码必须取该位置冷码第 1 个，'
-            '允许 %s（70 期冷 1 / 50 期冷 1 任选其一）'
-            % (item['label'], item['loss_streak']['70'], item['loss_streak']['50'], allowed))
+            '· %s：%s → 排除码必须取该位置冷码第 1 个，允许 %s'
+            '（候选为上述连败窗口的冷码第 1 个，任选其一）'
+            % (item['label'], streak_text, allowed))
     if not enforced_lines:
-        enforced_lines.append('· 本期没有两窗口同时连败的位置：四个位置都由你自主选 1 码。')
+        enforced_lines.append('· 本期没有处于连败的窗口位置：四个位置都由你自主选 1 码。')
     forced_keys = {item['key'] for item in context.get('enforced') or []}
     free_labels = '、'.join(label for key, label, _index in POSITIONS if key not in forced_keys) or '无'
     latest = rows[-1]
@@ -359,7 +374,7 @@ def build_prompt(reference, target, rows, *, context=None, previous_seal=None,
         '以下是真实的最近 %d 期开奖前四位（按时间先后排序，'
         '最新已开奖参考期号:%s，预测目标期号:%s）：\n'
         '%s\n\n'
-        '【各位置冷码榜（70 期窗口 / 50 期窗口，各位置 Top3）】\n'
+        '【各位置冷码榜（%s，各位置 Top3）】\n'
         '%s\n'
         '%s'
         '【最新一期开奖前四位（参考期 %s）】\n'
@@ -370,8 +385,8 @@ def build_prompt(reference, target, rows, *, context=None, previous_seal=None,
         '1. 对 千 / 百 / 十 / 个 四个位置各排除 1 个数字（0-9），固定 4 项全部计入整组，'
         '不得少于也不得多于 4 项；\n'
         '2. 强制规则：上面列出的「连败位置」的排除码必须取该位置冷码第 1 个'
-        '（70 期或 50 期窗口任选其一，且必须等于允许值）；其余位置（%s）由你结合面板数据'
-        '自主选 1 码；\n'
+        '（必须等于给出的允许值之一；允许值来自该位置处于连败的窗口的冷码第 1 个）；'
+        '其余位置（%s）由你结合面板数据自主选 1 码；\n'
         '3. 命中口径：目标期该位置实际开奖号不等于该位置排除码即该项命中（单项随机 90%%）；'
         '4 项同时命中才算整组命中（整组随机基线 65.61%%）；\n'
         '4. 冷码、连败 / 连中、遗漏只是历史特征，不能据此断言未来概率；不要为换而换，'
@@ -383,6 +398,7 @@ def build_prompt(reference, target, rows, *, context=None, previous_seal=None,
         '注意：positions 必须恰好 4 项，key 分别为 q / b / s / g（顺序不限），'
         'kill 为 0-9 整数；不需要输出其它字段。'
     ) % (WINDOW, reference, target, history,
+         ' / '.join('%d 期窗口' % window for window in STATS_WINDOWS),
          '\n'.join(cold_lines), '\n'.join(state_lines), reference, latest_line,
          '\n'.join(enforced_lines), free_labels)
     if panel_section:
@@ -643,14 +659,22 @@ def _enrich_positions(prediction, context):
     for item in prediction.get('positions') or []:
         key = item['key']
         kill = str(item['kill'])
-        top3 = context['windows']['70']['cold_top3'].get(key) or []
-        detail = next((entry for entry in top3 if str(entry.get('code')) == kill), None)
-        if kill == str(context['windows']['70']['cold_first'].get(key)):
-            basis = 'cold70-rank1'
-        elif kill == str(context['windows']['50']['cold_first'].get(key)):
-            basis = 'cold50-rank1'
-        else:
-            basis = 'ai'
+        basis = 'ai'
+        detail = None
+        for window in STATS_WINDOWS:
+            block = context['windows'][str(window)]
+            if kill == str(block['cold_first'].get(key)):
+                basis = 'cold%d-rank1' % window
+                detail = next((entry for entry in block['cold_top3'].get(key) or []
+                               if str(entry.get('code')) == kill), None)
+                break
+        if detail is None:
+            for window in STATS_WINDOWS:
+                detail = next((entry for entry in
+                               context['windows'][str(window)]['cold_top3'].get(key) or []
+                               if str(entry.get('code')) == kill), None)
+                if detail is not None:
+                    break
         enriched.append({
             'key': key,
             'label': POSITION_LABELS[key],

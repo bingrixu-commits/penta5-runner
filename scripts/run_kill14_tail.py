@@ -3,9 +3,9 @@
 流程：
 1. 等待本期开奖数据就绪（最多 55 秒）；
 2. 结算上一期已开奖的封存（只追加，不改封存）；
-3. 若本期参考期尚无封存，则读取近 70 / 50 期冷码榜与逐位置连败 / 连中状态，
+3. 若本期参考期尚无封存，则读取近 70 / 50 / 30 / 15 期冷码榜与逐位置连败 / 连中状态，
    在发布窗口内请求一次 DeepSeek（最多 3 次尝试）：四个位置各排除 1 码，
-   70 / 50 期两个窗口都连败的位置强制取该位置冷码第 1 个，其余位置由 AI 自选；
+   任一窗口连败的位置强制取该位置冷码第 1 个（候选 = 连败窗口的冷码第 1），其余位置由 AI 自选；
 4. 封存 → 标记已发布 → 写面板区块。任何失败只记录，不补发历史期。
 """
 from datetime import timedelta
@@ -73,9 +73,16 @@ def _picked_text(seal):
         if not isinstance(item, dict):
             continue
         basis = str(item.get('basis') or '')
-        note = {'cold70-rank1': '连败强制·70期冷1' if item.get('enforced') else '70期冷1',
-                'cold50-rank1': '连败强制·50期冷1' if item.get('enforced') else '50期冷1',
-                'ai': 'AI自选'}.get(basis, basis or '-')
+        window = None
+        if basis.startswith('cold') and basis.endswith('-rank1'):
+            digits = basis[4:-6]
+            if digits.isdigit():
+                window = int(digits)
+        if window is not None:
+            note = ('连败强制·%d期冷1' if item.get('enforced')
+                    else '%d期冷1') % window
+        else:
+            note = 'AI自选' if basis == 'ai' else (basis or '-')
         parts.append('%s排%s(%s)' % (item.get('label') or item.get('key'), item.get('kill'), note))
     return ' · '.join(parts)
 
@@ -103,8 +110,9 @@ def main():
     rows = [row for row in rows if len(row) == 4]
     context = kill14_tail.build_context(rows)
     enforced = context.get('enforced') or []
-    print('kill14 cold context: windows=70/50 rows=%d enforced=%s'
-          % (len(rows), ','.join(str(item.get('key')) for item in enforced) or '-'))
+    print('kill14 cold context: windows=%s rows=%d enforced=%s'
+          % ('/'.join(str(window) for window in kill14_tail.STATS_WINDOWS), len(rows),
+             ','.join(str(item.get('key')) for item in enforced) or '-'))
     previous_seal = seals[-1] if seals else None
     panel_snapshot = panel_context.build(reference, target, extra_panel_input=True)
     _panel_text, _panel_sha = panel_context.prompt_text(panel_snapshot)

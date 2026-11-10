@@ -1,13 +1,13 @@
-"""定位排除（kill14 独立框架，v1）面板区块。
+"""定位排除（kill14 独立框架，v2）面板区块。
 
 数据源 data/kill14_tail/{seals,settlements}.json，由 scripts/run_kill14_tail.py 每期生成。
 与既有框架完全独立：独立封存 / 结算 / 统计 / 面板区块 / 攻击语；每期调用 AI 选码。
 
 命中口径（写死，面板脚注同步展示）：
 - 四个位置（千/百/十/个）每期各排除 1 个码（0-9），整组固定 4 项全部计入整组；
-- 面板依据：近 70 / 50 期各位置冷码榜，以及按「冷码榜前 3 码杀号」口径统计的逐位置连败 / 连中；
-- AI 规则：某位置在 70 期与 50 期两个窗口都连败时，排除码必须取该位置冷码第 1 个
-  （70 / 50 期窗口由 AI 选择）；其余位置由 AI 自主选 1 码；
+- 面板依据：近 70 / 50 / 30 / 15 期各位置冷码榜，以及按「冷码榜前 3 码杀号」口径统计的逐位置连败 / 连中；
+- AI 规则：某位置在 70 / 50 / 30 / 15 任一个窗口连败时，排除码必须取该位置冷码第 1 个
+  （候选 = 所有处于连败窗口的冷码第 1 个，由 AI 选择）；其余位置由 AI 自主选 1 码；
 - 命中 = 该位置实际开奖号 != 该位置排除码（单项 90%）；
 - 整组命中 = 4 项同时命中；整组随机基线 65.61%（(9/10)^4，10^4 开奖空间精确枚举）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
@@ -58,6 +58,8 @@ STYLE = """
 _BASIS_TEXT = {
     'cold70-rank1': '70 期冷码第 1',
     'cold50-rank1': '50 期冷码第 1',
+    'cold30-rank1': '30 期冷码第 1',
+    'cold15-rank1': '15 期冷码第 1',
     'ai': 'AI 自选',
 }
 
@@ -87,6 +89,15 @@ def _remaining(kill):
     return ''.join(char for char in kill14_tail.ATTACK_ORDER if char != text)
 
 
+def _basis_window(item):
+    basis = str(item.get('basis') or '')
+    if basis.startswith('cold') and basis.endswith('-rank1'):
+        digits = basis[4:-6]
+        if digits.isdigit():
+            return int(digits)
+    return None
+
+
 def _basis_text(item):
     basis = str(item.get('basis') or '')
     text = _BASIS_TEXT.get(basis, basis or '-')
@@ -104,8 +115,11 @@ def _position_card(item):
     card.append('<div class="k14-card-head">' + label + '位</div>')
     card.append('<div class="k14-kill">排除 ' + kill + '</div>')
     card.append('<div class="k14-basis">' + _escape(_basis_text(item)) + '</div>')
-    card.append('<div class="k14-cold">近 70 期出现 %s 次 · 当前遗漏 %s 期 · 冷度排名 %s</div>'
-                % (_escape(item.get('count') if item.get('count') is not None else '-'),
+    window = _basis_window(item)
+    source = ('近 %d 期' % window) if window else '冷码榜'
+    card.append('<div class="k14-cold">%s出现 %s 次 · 当前遗漏 %s 期 · 冷度排名 %s</div>'
+                % (source,
+                   _escape(item.get('count') if item.get('count') is not None else '-'),
                    _escape(item.get('omission') if item.get('omission') is not None else '-'),
                    _escape(item.get('rank') if item.get('rank') is not None else '-')))
     card.append('<div class="k14-keep">保留码 ' + _escape(_remaining(kill)) + '</div>')
@@ -124,7 +138,7 @@ def _cold_table(ranking):
     if not isinstance(ranking, dict) or not ranking:
         return ''
     html = []
-    for window in ('70', '50'):
+    for window in [str(value) for value in kill14_tail.STATS_WINDOWS]:
         block = ranking.get(window)
         if not isinstance(block, dict) or not block:
             continue
@@ -247,9 +261,15 @@ def _enforced_html(seal):
     keys = [str(key) for key in (seal.get('enforced_positions') or [])]
     if not keys:
         return ''
-    labels = [kill14_tail.POSITION_LABELS.get(key, key) for key in keys]
+    allowed = seal.get('enforced_allowed') or {}
+    labels = []
+    for key in keys:
+        label = kill14_tail.POSITION_LABELS.get(key, key)
+        codes = [str(code) for code in (allowed.get(key) or [])]
+        labels.append(label + '位（冷码第 1：' + '/'.join(codes) + '）'
+                      if codes else label + '位')
     free = [label for key, label in kill14_tail.POSITION_LABELS.items() if key not in keys]
-    return ('<div class="k14-note">本期强制位置（70 / 50 期两窗口都连败 → 取该位置冷码第 1 个）：%s；'
+    return ('<div class="k14-note">本期强制位置（任一连败窗口 → 取该位置冷码第 1 个）：%s；'
             '自主位置：%s</div>'
             % (_escape('、'.join(labels)), _escape('、'.join(free) if free else '无')))
 
@@ -296,10 +316,10 @@ def _attack_html(seal):
 
 def _foot_html():
     return ('<div class="k14-foot">口径（写死）：四个位置（千/百/十/个）每期各排除 1 个码（0-9），'
-            '整组固定 4 项全部计入整组；面板依据为近 70 / 50 期各位置冷码榜（出现次数升序、'
+            '整组固定 4 项全部计入整组；面板依据为近 70 / 50 / 30 / 15 期各位置冷码榜（出现次数升序、'
             '同次数当前遗漏降序、再按码升序）与按冷码榜前 3 码杀号口径统计的逐位置连败 / 连中；'
-            'AI 规则：某位置在 70 期与 50 期两个窗口都连败时，排除码必须取该位置冷码第 1 个'
-            '（70 / 50 期窗口由 AI 选择），其余位置由 AI 自主选 1 码；不设沿用 / 换码，每期重选；'
+            'AI 规则：某位置在 70 / 50 / 30 / 15 任一个窗口连败时，排除码必须取该位置冷码第 1 个'
+            '（候选 = 所有连败窗口的冷码第 1 个，由 AI 选择），其余位置由 AI 自主选 1 码；不设沿用 / 换码，每期重选；'
             '命中 = 该位置实际开奖号 != 排除码（单项 90%）；整组命中 = 4 项同时命中；'
             '整组随机基线 = (9/10)^4 = 65.61%，用 10^4 开奖空间精确枚举校验；'
             '只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；'

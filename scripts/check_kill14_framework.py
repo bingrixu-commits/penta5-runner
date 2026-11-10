@@ -15,9 +15,11 @@ from hashlib import sha256
 from pathlib import Path
 
 POSITIONS = (('q', '千', 0), ('b', '百', 1), ('s', '十', 2), ('g', '个', 3))
-STATS_WINDOWS = (70, 50)
+STATS_WINDOWS = (70, 50, 30, 15)
 TOP = 3
 WINDOW = 70
+# v1 口径的封存仍按 v1 规则（70/50 两窗口都连败）独立复算，不回填。
+LEGACY_RULES = ('kill14-tail-v1-four-position-cold-on-loss',)
 
 
 def load_json(path, default=None):
@@ -93,27 +95,43 @@ def position_state(rows, window, top=TOP):
     return states
 
 
-def build_context(rows):
-    windows = {}
-    for window in STATS_WINDOWS:
+def build_context(rows, windows=STATS_WINDOWS):
+    """独立复算冷榜 / 连败状态；同时给出「全部窗口连败」(v1 口径) 与「任一窗口连败」(v2 口径)。"""
+    windows = tuple(int(value) for value in windows)
+    cold = {}
+    for window in windows:
         ranked = rankings(rows[-window:], window)
-        windows[str(window)] = {
+        cold[str(window)] = {
             'window': window,
             'cold_top3': {key: ranked[key][:TOP] for key, _label, _index in POSITIONS},
             'cold_first': {key: ranked[key][0]['code'] for key, _label, _index in POSITIONS},
         }
-    states = {str(window): position_state(rows, window) for window in STATS_WINDOWS}
-    enforced = {}
+    states = {str(window): position_state(rows, window) for window in windows}
+    enforced_any = {}
+    enforced_all = {}
     for key, label, _index in POSITIONS:
-        loss70 = states['70'][key]['current_loss_streak']
-        loss50 = states['50'][key]['current_loss_streak']
-        if loss70 > 0 and loss50 > 0:
-            enforced[key] = {
-                'key': key, 'label': label,
-                'allowed': [windows['70']['cold_first'][key], windows['50']['cold_first'][key]],
-                'loss_streak': {'70': loss70, '50': loss50},
+        loss_streak = {str(window): states[str(window)][key]['current_loss_streak']
+                       for window in windows}
+        losing = [window for window in windows if loss_streak[str(window)] > 0]
+        if losing:
+            allowed = []
+            for window in losing:
+                code = cold[str(window)]['cold_first'][key]
+                if code not in allowed:
+                    allowed.append(code)
+            enforced_any[key] = {
+                'key': key, 'label': label, 'allowed': allowed,
+                'loss_streak': loss_streak, 'losing_windows': losing,
             }
-    return {'windows': windows, 'states': states, 'enforced': enforced}
+        if losing and len(losing) == len(windows):
+            enforced_all[key] = {
+                'key': key, 'label': label,
+                'allowed': [cold[str(window)]['cold_first'][key] for window in windows],
+                'loss_streak': loss_streak,
+            }
+    return {'windows': cold, 'states': states,
+            'enforced': enforced_any, 'enforced_any': enforced_any,
+            'enforced_all': enforced_all}
 
 
 def main():
@@ -146,7 +164,7 @@ def main():
 
     print('===== %s =====' % kill14_tail.RULE_VERSION)
     check(kill14_tail.WINDOW == 70, 'module.window', str(kill14_tail.WINDOW))
-    check(tuple(kill14_tail.STATS_WINDOWS) == (70, 50), 'module.stats_windows',
+    check(tuple(kill14_tail.STATS_WINDOWS) == (70, 50, 30, 15), 'module.stats_windows',
           str(kill14_tail.STATS_WINDOWS))
     check(kill14_tail.TOP == 3, 'module.top', str(kill14_tail.TOP))
     check(kill14_tail.EXPECTED_ITEMS == 4, 'module.expected_items',
@@ -157,8 +175,10 @@ def main():
           'module.closure_9_4_over_10_4', '6561/10000')
     check(kill14_tail.EXPECTED_BASIS == 'enumerated-10^4-draws-x-10^4-configs',
           'module.expected_basis', kill14_tail.EXPECTED_BASIS)
-    check(kill14_tail.PROMPT_VERSION == 'kill14-tail-prompt-v1-four-position-cold-on-loss',
+    check(kill14_tail.PROMPT_VERSION == 'kill14-tail-prompt-v2-four-position-cold-multi-window',
           'module.prompt_version', kill14_tail.PROMPT_VERSION)
+    check(tuple(getattr(kill14_tail, 'LEGACY_RULES', ())) == LEGACY_RULES,
+          'module.legacy_rules', str(getattr(kill14_tail, 'LEGACY_RULES', ())))
 
     key_name = 'kill14_tail'
     reg_key = (key_name, kill14_tail.RULE_VERSION)
@@ -181,7 +201,7 @@ def main():
           'ops_health.ledger_alert_label')
     check('kill14_tail' in evidence_backup.JSON_DIRS, 'evidence_backup.json_dirs')
     check('KILL_FOURTEEN' in panel_live_refresh.REFRESH_SCRIPT and
-          'quiet-panel-v34-add-kill14' in panel_live_refresh.REFRESH_SCRIPT,
+          "var version='quiet-panel-v" in panel_live_refresh.REFRESH_SCRIPT,
           'panel_refresh.script')
     check('kill14-attack-text' in attack_editor_view.SCRIPT, 'attack_editor.definition')
 
@@ -222,7 +242,9 @@ def main():
         ref = str(seal.get('ref_period'))
         target = str(seal.get('target_period'))
         label = ref + '->' + target
-        check(seal.get('rule_version') == kill14_tail.RULE_VERSION, 'seal.rule', label)
+        seal_rule = str(seal.get('rule_version') or '')
+        check(seal_rule in (kill14_tail.RULE_VERSION,) + LEGACY_RULES, 'seal.rule',
+              label + ' ' + seal_rule)
         positions = [item for item in (seal.get('positions') or []) if isinstance(item, dict)]
         keys = [str(item.get('key')) for item in positions]
         check(keys == ['q', 'b', 's', 'g'], 'seal.positions', label + ' ' + str(keys))
@@ -248,26 +270,32 @@ def main():
                                  separators=(',', ':'))
             check(sha256(payload.encode('utf-8')).hexdigest() == seal.get('input_sha256'),
                   'seal.input_sha256_recomputed', label + ' rows=%d' % len(window_rows))
-            ctx = build_context(rows)
+            # 保持封存里的窗口顺序（v1: 70/50；v2: 70/50/30/15），与运行时判定顺序一致。
+            stored_windows = tuple(int(str(w)) for w in (seal.get('cold_ranking') or {}))
+            expected_windows = ((70, 50) if seal_rule in LEGACY_RULES else STATS_WINDOWS)
+            check(stored_windows == expected_windows, 'seal.windows_recorded',
+                  label + ' ' + str(stored_windows))
+            ctx = build_context(rows, stored_windows)
             latest_ctx = ctx
-            recomputed_cold = {str(w): ctx['windows'][str(w)]['cold_top3'] for w in STATS_WINDOWS}
+            recomputed_cold = {str(w): ctx['windows'][str(w)]['cold_top3']
+                               for w in stored_windows}
             check(recomputed_cold == (seal.get('cold_ranking') or {}),
                   'seal.cold_ranking_recomputed', label)
             stored_state = seal.get('position_state') or {}
-            recomputed_state = {str(w): ctx['states'][str(w)] for w in STATS_WINDOWS}
+            recomputed_state = {str(w): ctx['states'][str(w)] for w in stored_windows}
 
             def _streaks_only(state):
                 return {str(w): {key: {field: value for field, value in item.items()
                                       if field != 'samples'}
                                  for key, item in (state.get(str(w)) or {}).items()}
-                        for w in STATS_WINDOWS}
+                        for w in stored_windows}
 
             check(_streaks_only(recomputed_state) == _streaks_only(stored_state),
                   'seal.position_state_recomputed', label)
             trimmed = len(records) - len(rows)
             drift_notes = []
             samples_ok = True
-            for window in STATS_WINDOWS:
+            for window in stored_windows:
                 for key, _label, _index in POSITIONS:
                     stored = ((stored_state.get(str(window)) or {}).get(key) or {}).get('samples')
                     recomputed = recomputed_state[str(window)][key]['samples']
@@ -279,29 +307,53 @@ def main():
             check(samples_ok, 'seal.position_state_samples_drift',
                   label + ' rows=%d trimmed=%d ' % (len(rows), trimmed) +
                   ' '.join(drift_notes))
-            enforced_keys = set(ctx['enforced'])
+            rule_enforced = (ctx['enforced_all'] if seal_rule in LEGACY_RULES
+                             else ctx['enforced_any'])
+            enforced_keys = set(rule_enforced)
             check(sorted(enforced_keys) == sorted(seal.get('enforced_positions') or []),
                   'seal.enforced_positions_recomputed',
                   label + ' ' + str(sorted(enforced_keys)))
-            allowed = {k: ctx['enforced'][k]['allowed'] for k in ctx['enforced']}
+            allowed = {k: rule_enforced[k]['allowed'] for k in rule_enforced}
             check(allowed == (seal.get('enforced_allowed') or {}),
                   'seal.enforced_allowed_recomputed', label)
             for item in positions:
                 key = str(item.get('key'))
                 kill = str(item.get('kill'))
-                cold70 = ctx['windows']['70']['cold_first'][key]
-                cold50 = ctx['windows']['50']['cold_first'][key]
-                expected_basis = ('cold70-rank1' if kill == cold70 else
-                                  'cold50-rank1' if kill == cold50 else 'ai')
+                detail = None
+                if seal_rule in LEGACY_RULES:
+                    cold70 = ctx['windows']['70']['cold_first'][key]
+                    cold50 = ctx['windows']['50']['cold_first'][key]
+                    expected_basis = ('cold70-rank1' if kill == cold70 else
+                                      'cold50-rank1' if kill == cold50 else 'ai')
+                    detail = next((entry for entry in ctx['windows']['70']['cold_top3'][key]
+                                   if entry['code'] == kill), None)
+                    allowed_codes = (cold70, cold50)
+                else:
+                    expected_basis = 'ai'
+                    for window in stored_windows:
+                        block = ctx['windows'][str(window)]
+                        if kill == block['cold_first'][key]:
+                            expected_basis = 'cold%d-rank1' % window
+                            detail = next((entry for entry in block['cold_top3'][key]
+                                           if entry['code'] == kill), None)
+                            break
+                    if detail is None:
+                        for window in stored_windows:
+                            detail = next((entry for entry in
+                                           ctx['windows'][str(window)]['cold_top3'][key]
+                                           if entry['code'] == kill), None)
+                            if detail is not None:
+                                break
+                    allowed_codes = tuple(ctx['windows'][str(w)]['cold_first'][key]
+                                          for w in stored_windows)
                 check(item.get('basis') == expected_basis, 'seal.position_basis',
                       '%s %s kill=%s basis=%s' % (label, key, kill, item.get('basis')))
                 check(item.get('enforced') is (key in enforced_keys), 'seal.position_enforced',
                       '%s %s' % (label, key))
                 if key in enforced_keys:
-                    check(kill in (cold70, cold50), 'seal.enforced_kill_allowed',
-                          '%s %s kill=%s allowed=%s/%s' % (label, key, kill, cold70, cold50))
-                detail = next((entry for entry in ctx['windows']['70']['cold_top3'][key]
-                               if entry['code'] == kill), None)
+                    check(kill in allowed_codes, 'seal.enforced_kill_allowed',
+                          '%s %s kill=%s allowed=%s' % (label, key, kill,
+                                                         '/'.join(allowed_codes)))
                 if detail:
                     check((item.get('count'), item.get('omission'), item.get('rank')) ==
                           (detail['count'], detail['omission'], detail['rank']),
@@ -338,7 +390,9 @@ def main():
               'settle.group_hit', '%s=%s' % (target, row.get('group_hit')))
         check(row.get('counted') == ['q', 'b', 's', 'g'], 'settle.counted', target)
         check(row.get('verified') is True, 'settle.verified', target)
-        check(row.get('rule_version') == kill14_tail.RULE_VERSION, 'settle.rule', target)
+        check(str(row.get('rule_version') or '') in
+              (kill14_tail.RULE_VERSION,) + LEGACY_RULES, 'settle.rule',
+              target + ' ' + str(row.get('rule_version')))
         check(row.get('expected_items') == 4 and
               abs(float(row.get('expected_group_rate') or 0) - 0.6561) < 1e-12,
               'settle.expected_fields', target)
