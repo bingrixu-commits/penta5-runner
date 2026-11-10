@@ -2458,3 +2458,13 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - v2 累计从 n=1 起算（v1 的 5 封存 / 6 结算不并入 v2 行），观察至 n≥200 再评估。任一窗口连败强制已在真实周期触发 2 次（个位、千位），面板依据列与封存 enforced_positions/enforced_allowed 一致。
 - cold30_tail / cold15_tail 框架本体继续独立跑批与独立统计；本批只把它们的窗口并入 kill14 的冷码口径与强制判定。
 - 用户侧已打开的面板需 Ctrl+F5 一次（并行窗口的 refresh/attack 版本串升级，属正常版本切换）。
+
+## 2026-11-10 15:57 cold30 / cold15 每位置单码命中率标注上线
+
+- 需求：用户（m00439）「单个位置给我标识命中率」——在 cold30 / cold15 面板的四位置定位卡上，逐位置显示该位置杀码的单码命中率。
+- 口径（只展示，不改规则）：本日 = 业务日 05:00 起 `today_stats().per_position` 的 bets/hits；本版累计 = `settlements.json` 中 `verified is True` 且 `rule_version` 等于当前 RULE_VERSION 的记录，按位置 key（q/b/s/g）计 bets/hits；两者皆空时不渲染该行，原卡片逐字节不变；命中率保留两位小数。
+- 改动：`lib/cold_thirty_view.py`（17567→21902 B，sha256 `9b7203b4…`→`7b50ae25…`）、`lib/cold_fifteen_view.py`（17599→21935 B，sha256 `61af655e…`→`c585aa60…`）；新增 `_position_history()` / `_position_hit_line()`，`_position_card()` 增加可选 `history` 参数并在「保留码」行后插入 `<div class="c30-hit">单码命中率 本日 H/T（R%） · 本版累计 H/T（R%）</div>`（c15 同构，样式类 `c15-hit`）。提交 `57b51bc`（2 files, +122/-4）。不改封存/结算/规则/攻击语；不升 panel-live-refresh 版本（COLD_THIRTY / COLD_FIFTEEN 已在 names 名单），无新面板区块。
+- 上线与真实周期：15:55:58 / 15:56:02 cron 自行发布 ref=20261110191→target=20261110192 并重建面板；panel.html mtime 15:56:36，两区块各 grep 到 1 行「单码命中率」；data-as-of=20261110191。示例读数（截至 15:56，今日 16 期已核验；框架当天上线故本日=本版累计）：cold30 千 16/16（100%）· 百 12/16（75%）· 十 16/16 · 个 16/16；cold15 千 16/16 · 百 13/16（81.25%）· 十 14/16（87.5%）· 个 15/16（93.75%）。
+- 验证：`/tmp/coldhit/ab_test.py` 去掉新增 hit 行后与旧渲染逐字节相等、4 行数据独立复算一致、div 配平（该脚本对 render_block 断言 START/END 是误报，标记只在 apply 注入）；`/tmp/coldhit/apply_test.py` APPLY_RESULT PASS；`/tmp/coldhit/verify_panel.py` PANEL_RESULT PASS（整页 32 区块零不配平）。只读自检 `scripts/check_cold_frameworks.py` → fails=0（90 项）。`ops_health_check.py` 15:57:32 cold30_tail / cold15_tail / panel_html 均 OK；改源码后 `refresh_source_manifest.py --root /root/penta5-runner --if-drift` 重建基线 → `/root/backups/auto-baseline-20261110-155726/verification-manifest.json`，`manifest_drift OK`。
+- 回滚：`git revert 57b51bc`（纯展示改动，无数据/状态迁移）。原始两文件（sha256 与改前一致）、取证脚本与 evidence.txt 存放在 `/root/ops/cold-hitrate-20261110-1554/{old,scripts}/`。
+- 并行窗口：本次仅提交上述 2 个视图文件；工作树另有 kill11/kill14 等 12 个在途 M 文件，不属本批、未触碰。
