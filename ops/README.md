@@ -2324,3 +2324,44 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 
 ### 未做/边界
 - 未改 /hitrate 大表页；未改 crontab；未重启 shadow/pm2-panel-sync（它们每轮新起解释器，读磁盘代码即生效）。
+
+## 2026-11-10 14:35 cold30 / cold15 上线（定位冷码：最新 30 / 15 期各位置最冷 1 码，纯确定性）
+
+### 变更
+- 用户需求（原话）：「帮我新建俩个冷码框架，最新30期定位冷码，最新15期定位冷码」。按一次确认的整组口径落两个同构独立框架：cold30 = 最新 30 期窗口；cold15 = 最新 15 期窗口。
+- 口径：窗口取近 N 期（前 4 球 千/百/十/个）逐位置统计 0-9 码出现次数，冷序 = 出现次数升序 → 当前遗漏降序 → 码升序；每位置取第 1 冷各杀 1 码 = 整组 4 项，四个位置的开奖号都不等于被杀码才算整组命中（杀号语义：(9/10)^4）。不设 hold/沿用（每期严格按窗口重算，避免 11-01 退役冷码家族 hold 口径的争议），不调 DeepSeek，0 API 成本。
+- 常量：RULE_VERSION='cold30-tail-v1-four-position-cold' / 'cold15-tail-v1-four-position-cold'；WINDOW=30/15；TOP_N=1；CLOSE_SECONDS=70；EXPECTED_ITEMS=4；EXPECTED_GROUP_RATE=0.6561；EXPECTED_BASIS='enumerated-10^4-draws-x-10^4-configs'。
+- 文件：lib/cold30_tail.py、lib/cold15_tail.py、lib/cold_thirty_view.py、lib/cold_fifteen_view.py、scripts/run_cold30_tail.py、scripts/run_cold15_tail.py、scripts/check_cold_frameworks.py（只读落地自检）；数据目录 data/cold30_tail/、data/cold15_tail/（.gitignore 内，只增账本）。
+- 面板：新 section #cold-thirty-ai（COLD_THIRTY_START/END，标题「🎯 30 期定位冷码（每位置最冷 1 码 · 确定性）」）与 #cold-fifteen-ai（COLD_FIFTEEN_START/END，15 期同构）；每卡显示四位置定位卡（杀码/出现次数/当前遗漏/冷度排名）、每位置冷榜前 3、今日统计、当前连中/连败、本版累计（读 hitrate_stability）、攻击语 textarea + 复制按钮。
+- 攻击语：四位置段各保留 9 码（排除杀码）+「四定」，如 `千123456789百123456789十123456789个123456789四定`，与 kill1/kill3 位置段格式一致。
+- 挂接点 9 处全部完成：/root/run_stats.py（early_panel 与 quiet_panel 两条 lambda 链接入 apply_cold_thirty_block / apply_cold_fifteen_block）、lib/hitrate_baseline.py（RULE_BASELINE/LABELS/_cold30_rows/_cold15_rows/build）、scripts/framework_hitrate_cumulative.py（RULE_BASELINE/LABELS/WINDOWS/cum_cold30/cum_cold15/funcs）、scripts/ops_health_check.py（LEDGER_SIZE_FILES/LEDGER_ALERT_FILES/check_cold30/check_cold15/CHECK_FUNCS/FALLBACK_NAMES）、ops/crontab.txt（每 5 分钟，sleep 55/60 错峰）、/etc/logrotate.d/penta5、lib/panel_live_refresh.py（quiet-panel-v33-add-cold30-cold15 + COLD_THIRTY/COLD_FIFTEEN）、lib/attack_editor_view.py（all-attack-editor-v27-cold30-cold15 + 两条攻击语条目）、lib/evidence_backup.py（JSON_DIRS）。
+- 精确随机期望：10^4 开奖空间 × 10^4 四位置配置空间 = 10^8 pairs 精确枚举，命中组对 65,610,000 → 0.6561000000；闭式 9^4/10^4 = 6561/10000 交叉校验一致（cross_check=true）。
+
+### 部署与真实周期证据
+- 备份：/root/ops/cold30-cold15-20261110-143256/（backup/ 9 个改前文件、before.sha256、after.sha256、manifest.json；外部运维文件 /root/run_stats.py 备份在 backup/external-root-run_stats.py）。补丁脚本 /tmp/cold-build/patch_hooks.py：dry-run 25 edits 全绿后 --apply，写后内存 compile() 全部 OK + POST_CHECKS 全 OK。
+- 安装：6 个新文件 sftp 上传且 sha256 与本地一致；mkdir data/cold30_tail data/cold15_tail；远端 py_compile / import 冒烟通过；scripts/crontab_tool.sh install（旧 crontab 备份 /tmp/crontab.backup.20261110_143315）后 diff matches（43 jobs）；/etc/logrotate.d/penta5 已含两个新日志。
+- cron 行（锁防重入）：cold30 `*/5 * * * * flock -n /var/lock/penta5-cold30t.lock bash -c 'sleep 55 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_cold30_tail.py >> data/cold30_tail_cron.log 2>&1'`；cold15 同构（sleep 60、锁 penta5-cold15t.lock、日志 data/cold15_tail_cron.log）。
+- 首期：ref=20261110175 → target=20261110176，cold30 published_at=2026-11-10T14:35:57.792808+08:00（千杀0 百杀9 十杀4 个杀0）；cold15 千杀0 百杀0 十杀2 个杀0。
+- 首期结算 target=20261110176 actual=7523：cold30 group_hit=True（四项全对）；cold15 group_hit=False（十位 2 == 杀 2）；两条 verified=True、counted=['q','b','s','g']、expected_group_rate=0.6561。
+- 第二期封存与结算：ref=20261110176→target=20261110177，published_at≈14:45:57；结算 target=20261110177 actual=9982 → cold30 False、cold15 True。第三期 ref=20261110177→target=20261110178 已于 14:45:57/14:46:03 发布，等待开奖后结算。
+- 截至 14:50 两框架各 3 条封存 / 2 条结算；今日各 1/2 期（今日单注 7/8 = 87.50%），本版累计 n=2。
+- 面板：panel.html 重生成后 #cold-thirty-ai / #cold-fifteen-ai data-as-of="20261110177"，版本串 quiet-panel-v33-add-cold30-cold15 存在，攻击语 id cold30-attack-text / cold15-attack-text 各 2 处（textarea + 复制脚本），文案「近 30 期」「近 15 期」在线。
+- 只读落地自检 scripts/check_cold_frameworks.py：两框架各 45 项、共 90 项全 PASS（fails=0），覆盖口径常量/闭式基线/两个注册表/封存 input_sha256 独立重算（窗口 30/15 行）/发布早于目标开奖/结算逐项复算与开奖号核对/面板区块与 data-as-of/crontab baseline+live/logrotate/派生统计 JSON/视图渲染。
+
+### 统计链路
+- data/hitrate_baseline.json：cold30_tail、cold15_tail 行，rule 对应 v1、items=4、expected=0.6561，label「定位冷码 4 项（最新 30 期每位置最冷 1 码，纯确定性）」/「…15 期…」。
+- data/framework_hitrate_cumulative.json：两行 expected=0.6561、expected_basis=per-record-exact、coverage=1.0（逐期取封存 expected_group_rate）。
+- data/hitrate_stability.json：两行 expected=0.6561、cum_verdict=样本不足(n<200)、无 churn → 无需白名单登记（与 kill13 同策略：新 key 首登不触发 churn）。
+- ops_health：check_cold30 / check_cold15 已注册（7 分钟宽限；已发布 → OK，未封存且 age≤420s → OK waiting，否则 FAIL missing seal）；ledger_size 已纳入 cold30_tail/cold15_tail seals.json。
+
+### 门禁（14:50 收尾复核）
+- ops_health_check.py：cold30_tail / cold15_tail = OK（waiting: latest=20261110178 seal_ref=20261110177）；manifest_drift OK（基线 /root/backups/auto-baseline-20261110-144315/verification-manifest.json）；crontab_drift OK（43 jobs matches）；ledger_size 含 cold30_tail/seals.json=10.4KiB、cold15_tail/seals.json=10.4KiB（阈值 110/120MiB）。
+- overall=FAIL 仅剩存量项：coverage（kill3_tail 56.60% 与历史缺口）、hitrate_stability（kill3_tail 断崖/口径清零风险）——均为本次上线前已存在的既有告警，与本批 cold30/cold15 无关。
+
+### 回滚
+- 代码：git revert 95b6dba fef3003（本批 2 个功能 commit）及本条 docs commit；面板区块随下一轮 run_stats 自动回退。
+- 整文件回滚：从 /root/ops/cold30-cold15-20261110-143256/backup/ 覆盖 9 个文件（external-root-run_stats.py → /root/run_stats.py），py_compile 后跑 scripts/refresh_source_manifest.py --if-drift；crontab 直接恢复 /tmp/crontab.backup.20261110_143315，或从 ops/crontab.txt 删 cold 两行后 install。
+- 数据：两框架封存/结算按 rule_version 隔离，回退后不会被误计入；data/cold30_tail、data/cold15_tail 只增账本可保留。若只停跑：从 ops/crontab.txt 删 cold 两行并 install，面板保留只读展示（不再更新）。
+
+### 后续
+- 观察累计至 n≥200 再评估（当前 n=2）；窗口长度如需改（如 30→50）属口径变更，要新 rule_version 并按升级流程登记基线/白名单。
