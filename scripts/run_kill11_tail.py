@@ -1,4 +1,6 @@
-"""AI 自选 2~4 位置 + 单双反向形态 + 一合尾 每期任务（cron 每 5 分钟，开奖后启动）。
+"""定位杀码 3 项 每期任务（cron 每 5 分钟，开奖后启动）。
+
+口径 v3：AI 每期从 千/百/十/个 中固定选 3 个不同位置、各排除 1 码；整组固定 3 项，无单双形态、无合尾。
 
 流程：
 1. 等待本期开奖数据就绪（最多 55 秒）；
@@ -86,7 +88,6 @@ def main():
     deadline, target = kill11_tail.deadline_for(reference)
     rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
     previous_seal = seals[-1] if seals else None
-    previous_tail = (previous_seal.get('tail') or {}) if isinstance(previous_seal, dict) else {}
     panel_snapshot = panel_context.build(
         reference, target,
         kill11_stats=kill11_tail.today_stats(),
@@ -94,9 +95,7 @@ def main():
     _panel_text, _panel_sha = panel_context.prompt_text(panel_snapshot)
     print('kill11 panel context sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
     prompt, audit = kill11_tail.build_prompt(
-        reference, target, rows,
-        previous_tail=previous_tail if isinstance(previous_tail, dict) else None,
-        panel_snapshot=panel_snapshot)
+        reference, target, rows, panel_snapshot=panel_snapshot)
     try:
         prediction, generated_at, meta = kill11_tail.request_prediction(
             prompt, reference, target, deadline)
@@ -108,8 +107,6 @@ def main():
     if rejection:
         print(f'kill11 publication rejected after inference: {rejection}; ref={reference}')
         return 0
-    settlements = kill11_tail.load_settlements()
-    prediction = kill11_tail.apply_tail_policy(prediction, seals, settlements)
     seal = kill11_tail.create_seal(reference, target, latest.get('opentime'), prediction,
                                   prompt, audit, generated_at, meta)
     kill11_tail.save_seal(seal)
@@ -123,15 +120,8 @@ def main():
     picked = ' · '.join('%s 杀%s' % (kill11_tail.POSITION_LABELS[key],
                                       prediction['positions'][key])
                          for key in prediction.get('counted') or [])
-    print(f'kill11 published: ref={reference} target={target} rule={kill11_tail.RULE_VERSION} {picked} · '
-          f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]}')
-    tail_policy = prediction.get('tail_policy') or {}
-    if tail_policy:
-        print('kill11 tail policy: ' + str(tail_policy.get('note'))
-              + ' · sealed=' + str(prediction['tail'].get('key')) + '/'
-              + str(prediction['tail'].get('kill'))
-              + ' · model=' + str((tail_policy.get('model_tail') or {}).get('key')) + '/'
-              + str((tail_policy.get('model_tail') or {}).get('kill')))
+    print(f'kill11 published: ref={reference} target={target} '
+          f'rule={kill11_tail.RULE_VERSION} {picked}')
     return 0
 
 

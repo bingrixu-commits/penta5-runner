@@ -59,6 +59,13 @@
       "registered_at": "2026-11-07T01:31:26+08:00"
     },
     {
+      "key": "kill11_tail",
+      "rule": "kill11-tail-v3-three-position",
+      "until": "2026-11-12T16:10:00+08:00",
+      "reason": "kill11 v3 固定 3 个定位各杀 1 码（删除单双形态与合尾，整组固定 3 项，10^4 开奖 x 4000 配置精确枚举基线 72.9000%）的有意升级（首封存后观察），过渡期 churn 告警登记降噪；旧 v1/v2 封存与结算保持不动、按 rule_version 隔离",
+      "registered_at": "2026-11-10T16:05:00+08:00"
+    },
+    {
       "key": "kill14_tail",
       "rule": "kill14-tail-v2-four-position-cold-multi-window",
       "until": "2026-11-11T16:00:00+08:00",

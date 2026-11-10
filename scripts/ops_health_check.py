@@ -550,7 +550,7 @@ def check_kill10(ctx):
 
 
 def check_kill11(ctx):
-    '''AI 自选 2~4 位置杀码 + 单双形态 + 一合尾（N+2 项）：最新已开奖期应有开奖前封存；超时未封存/未发布即告警。'''
+    '''定位杀码 3 项（AI 自选 3 个位置各杀 1 码，无形态/无合尾）：最新已开奖期应有开奖前封存；超时未封存/未发布即告警。'''
     latest = ctx.get('latest')
     if not isinstance(latest, dict) or not latest.get('ref'):
         return _entry('kill11_tail', WARN, 'latest draw unknown')

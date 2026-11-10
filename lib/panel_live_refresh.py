@@ -10,7 +10,7 @@ from attack_editor_view import install_attack_editor
 REFRESH_SCRIPT = r'''<script id="penta5-refresh-control">
 (function(){
   'use strict';
-  var version='quiet-panel-v34-add-kill14',old=window.__PENTA5_LIVE_PANEL__;
+  var version='quiet-panel-v35-kill11v3',old=window.__PENTA5_LIVE_PANEL__;
   if(old&&old.version===version){window.fetchState=old.refresh;return;}
   if(old&&old.timer)clearInterval(old.timer);
   if(old&&old.availabilityTimer)clearInterval(old.availabilityTimer);
