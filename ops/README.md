@@ -2421,3 +2421,40 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 ### 后续/边界
 - 观察累计至 n≥200 再评估；「两窗口同时连败」强制分支当前尚未在真实周期触发（自测 + 自检已覆盖；当前 70/50 两窗口四位置 current_loss_streak 全为 0），触发后会在面板依据列显示「连败强制·70/50 期冷码第 1」，并在封存 enforced_positions 记录。
 - 攻击语口径与 kill1/kill3 位置段一致（四段各 9 码 + 四定）；用户侧已打开的面板因 attack editor 版本升 v28，需要 Ctrl+F5 一次才能恢复自动刷新。
+
+## 2026-11-10 15:31 kill14 v2 口径升级（冷码窗口并入冷 15/冷 30；任一窗口连败即强制）
+
+### 变更
+- 用户需求（原话）：「我增加了15期跟30期冷码框架。，加这俩个框架进去，」→ 两轮问卷钉死：① 两个新框架「纳入 kill14 的冷码窗口」；② 强制语义「任一窗口连败即强制」。
+- 口径：STATS_WINDOWS 由 (70,50) 扩为 (70,50,30,15)；WINDOW 仍 70（history 串与 input_sha256 payload 仍取最近 70 期，保证同输入可复算）；整组仍固定 4 项（千/百/十/个 各排除 1 码），随机基线 (9/10)^4=0.6561 不变。
+- 强制规则：某位置在 70/50/30/15 任一窗口 current_loss_streak>0 → 该位置排除码必须取该位置冷码第 1 个；允许值 = 处于连败窗口的冷码第 1 个（按 70/50/30/15 顺序去重），AI 从中任选并给理由；其余位置 AI 自主选 1 码。normalize_response 与封存侧 enforced_allowed 双向校验。
+- 升版：RULE_VERSION='kill14-tail-v2-four-position-cold-multi-window'、PROMPT_VERSION 同步升 v2；LEGACY_RULES=('kill14-tail-v1-four-position-cold-on-loss',)；v1 封存/结算保持不动、按 rule_version 隔离。
+- 文件：lib/kill14_tail.py（多窗口冷榜/任一窗口连败强制/四窗口 basis）、lib/kill_fourteen_view.py（四窗口冷榜表 + 强制说明 + basis 窗口映射）、scripts/run_kill14_tail.py（上下文与依据文案）、scripts/check_kill14_framework.py（rule-aware 四窗口复算 + samples 漂移断言）、lib/hitrate_baseline.py 与 scripts/framework_hitrate_cumulative.py（登记 v2 基线 (4,0.6561)、LABELS 改「任一窗口连败位置取冷码第 1 个」）、ops/hitrate_stability_whitelist.json（v2 过渡期 churn 降噪）。
+- 挂接点沿用 v1 已完成的 9 类，本批未再改（面板版本串/攻击语等仍由 v1 登记；并行窗口另把 refresh/attack 版本串升到 v35/v29，与本批无关）。
+
+### 部署与真实周期证据
+- 本机文件 sha256（远端 base64 解码后 digest 一致）：lib/kill14_tail.py 4753175c310d…（44146B）、lib/kill_fourteen_view.py 68d0288623a2…（21938B）、scripts/run_kill14_tail.py ef600205ef50…（6659B）、scripts/check_kill14_framework.py 3ccc4b19dd17…（24765B）。备份：/root/ops/kill14-v2-files-20261110-152619/backup/、/root/ops/kill14-v2-20261110-152624/backup/（两份派生统计）、/root/ops/kill14-v2-whitelist-20261110-153808/backup/。
+- 自测：/tmp/test_kill14_remote.py → pass=11 fail=0（四窗口榜单 / enforced 任一窗口 / allowed 去重 / 四窗口 basis 与 detail / prompt 四窗口 / 原有结算·统计·攻击语用例）。
+- 首个 v2 封存：ref=20261110186 → target=20261110187，published_at=2026-11-10T15:31:43.548626+08:00；cold_ranking 四窗口 ['70','50','30','15']；「千0(70期冷1) 百3(AI自选) 十4(70期冷1) 个4(连败强制·70期冷1)」，enforced_positions=['g']、enforced_allowed={'g':['4']}；cron 日志 `kill14 cold context: windows=70/50/30/15 rows=800 enforced=g`；AI 一次成功（33.4s，deepseek-flash，prompt 5883/completion 4916）。
+- 第二期 v2 封存：ref=20261110187 → target=20261110188，published_at=2026-11-10T15:36:19.021496+08:00；「千0(连败强制·70期冷1) 百2(70期冷1) 十4(70期冷1) 个4(70期冷1)」，enforced_positions=['q']。
+- 首个 v2 结算：target=20261110187 actual=['8','6','6','1'] → 四项全对（8≠0、6≠3、6≠4、1≠4），group_hit=True、verified=True。
+- 面板：run_stats 重建后 #kill-fourteen-ai data-as-of=20261110187、提示词版本 v2、四位置卡（含「连败强制·70 期冷 1」）/四窗口冷榜/65.61% 基线/攻击语在线；v1 结算保留在账本但按 rule 隔离、不计入 v2 行。
+
+### 统计链路与门禁（15:39 复核）
+- data/hitrate_baseline.json：kill14_tail 行 rule=v2、items=4、expected=0.6561、n=1、hits=1。
+- data/framework_hitrate_cumulative.json：rows=12、as_of=20261110187。
+- data/hitrate_stability.json：kill14_tail rule=v2，n=1、w100=w300=100%、expected=0.6561；口径升级当口 churn 触发「口径清零风险」，已登记 ops/hitrate_stability_whitelist.json（until=2026-11-11T16:00:00+08:00，entries=10）降级为 WATCH。
+- refresh_source_manifest.py --root /root/penta5-runner --if-drift → baseline-written 471 files（/root/backups/auto-baseline-20261110-153911/verification-manifest.json）。
+- ops_health：kill14_tail OK ref=20261110187 / manifest_drift OK / crontab_drift OK（44 jobs）/ ledger_size kill14_tail/seals.json=186.7KiB；overall=FAIL 仅剩存量 coverage 与 hitrate_stability（kill3_tail 历史缺口），另 freeze_guards 的 WARN 来自并行窗口 lib/panel_context.py 共享变更，与本批无关。
+- scripts/check_kill14_framework.py：fails=0（v1 5 条 + v2 2 条封存全部按 rule_version 做 rule-aware 复算，含四窗口 cold_ranking/position_state/basis/allowed/发布早于目标开奖）。
+
+### 回滚
+- 文件：从 /root/ops/kill14-v2-files-20261110-152619/backup/ 与 /root/ops/kill14-v2-20261110-152624/backup/ 覆盖回 v1 版本，py_compile 后跑 refresh_source_manifest.py --root /root/penta5-runner --if-drift；crontab 无需改（行不变）。
+- 数据：账本按 rule_version 隔离，v1/v2 互不串计，无需清理 data/kill14_tail。
+- 代码：git revert 本批 3 个 commit；白名单条目可保留（过期自动失效）或删除。
+- 恢复 v1 展示：面板随下一轮 run_stats 自动回退（区块仍只读展示）。
+
+### 后续/边界
+- v2 累计从 n=1 起算（v1 的 5 封存 / 6 结算不并入 v2 行），观察至 n≥200 再评估。任一窗口连败强制已在真实周期触发 2 次（个位、千位），面板依据列与封存 enforced_positions/enforced_allowed 一致。
+- cold30_tail / cold15_tail 框架本体继续独立跑批与独立统计；本批只把它们的窗口并入 kill14 的冷码口径与强制判定。
+- 用户侧已打开的面板需 Ctrl+F5 一次（并行窗口的 refresh/attack 版本串升级，属正常版本切换）。
