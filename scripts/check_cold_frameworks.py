@@ -14,9 +14,6 @@ import sys
 from hashlib import sha256
 from pathlib import Path
 
-BASE_CHECKS = []
-
-
 def load_json(path, default=None):
     try:
         return json.loads(Path(path).read_text(encoding='utf-8'))
@@ -26,7 +23,9 @@ def load_json(path, default=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', default='/root/penta5-runner')
+    parser.add_argument('--root',
+                        default=str(Path(__file__).resolve().parents[1]),
+                        help='仓库根；默认按本文件位置推导，任意 cwd 可跑')
     args = parser.parse_args()
     root = Path(args.root)
     sys.path.insert(0, str(root))
