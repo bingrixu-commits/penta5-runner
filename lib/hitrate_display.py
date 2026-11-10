@@ -87,21 +87,56 @@ def _kill3_items(row):
 
 
 def _kill1_items(row):
-    """kill1 当期命中项数 (hits, total)；counted 位置数 + 1 合尾（v4=3 项，v7 起 N+1 项）。"""
+    """kill1 当期命中项数 (hits, total)。
+
+    v8 = counted 位置（2 项）+ 三数共现 3 组 + 二数合 + 三数合（整组 7 项）；
+    旧封存（v1~v7）按自身字段兼容：合尾 / 单双形态计入，缺失字段不计。
+    """
     try:
         counted = row.get('counted') or []
         positions = row.get('positions') or {}
-        tail = row.get('tail') or {}
         flags = []
         for key in counted:
             flag = (positions.get(key) or {}).get('hit')
             if not isinstance(flag, bool):
                 return None
             flags.append(flag)
-        flag = tail.get('hit')
-        if not isinstance(flag, bool):
+        for key in ('three_avoid', 'he2_keep', 'he3_keep'):
+            if key not in row:
+                continue
+            if key == 'three_avoid':
+                groups = row.get('three_avoid') or []
+                if not isinstance(groups, list):
+                    return None
+                for group in groups:
+                    if not isinstance(group, dict):
+                        return None
+                    flag = group.get('hit')
+                    if not isinstance(flag, bool):
+                        return None
+                    flags.append(flag)
+                continue
+            entry = row.get(key)
+            if not isinstance(entry, dict):
+                return None
+            flag = entry.get('hit')
+            if not isinstance(flag, bool):
+                return None
+            flags.append(flag)
+        if 'tail' in row:
+            tail = row.get('tail') or {}
+            flag = tail.get('hit')
+            if not isinstance(flag, bool):
+                return None
+            flags.append(flag)
+        if 'form' in row:
+            form = row.get('form') or {}
+            flag = form.get('hit')
+            if not isinstance(flag, bool):
+                return None
+            flags.append(flag)
+        if not flags:
             return None
-        flags.append(flag)
         return sum(1 for flag in flags if flag), len(flags)
     except Exception:
         return None

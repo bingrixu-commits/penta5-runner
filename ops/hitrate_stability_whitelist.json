@@ -1,76 +1,83 @@
 {
-  "version": 1,
-  "note": "已登记的有意口径升级：按 key + rule 精确匹配，until 前把「版本切换过渡期」的 churn 告警降级为观察(watch)，不抑制覆盖断崖/短期陡降等其他护栏；过期自动失效，可长期保留作台账。",
-  "entries": [
-    {
-      "key": "kill1_tail",
-      "rule": "kill1-tail-v4-two-position-one-tail",
-      "until": "2026-11-06T10:30:00+08:00",
-      "reason": "kill1 v4 双位置+一合尾有意升级（2026-11-05 10:16 首封存 / 10:28 首次观测），过渡期 churn 告警已登记降噪；24h 后阈值本身也会自愈",
-      "registered_at": "2026-11-05T19:39:31+08:00"
-    },
-    {
-      "key": "kill3_tail",
-      "rule": "kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop",
-      "until": "2026-11-07T02:00:00+08:00",
-      "reason": "kill3 v16 弃位形态按冷热取冷的有意升级（2026-11-06 00:01 首封存 / 00:13 首次观测），过渡期 churn 告警已登记降噪；24h 后阈值本身也会自愈",
-      "registered_at": "2026-11-06T01:16:08+08:00"
-    },
-    {
-      "key": "kill1_tail",
-      "rule": "kill1-tail-v7-flexible-two-four-position-one-tail",
-      "until": "2026-11-08T04:21:17+08:00",
-      "reason": "kill1 v7 AI 自选 2~4 位置+一合尾的有意升级（首封存后观察），过渡期 churn 告警登记降噪；动态期望基线按逐期 expected_group_rate 计算",
-      "registered_at": "2026-11-06T22:21:17+08:00"
-    },
-    {
-      "key": "kill12_tail",
-      "rule": "kill12-tail-v2-three-position-one-tail",
-      "until": "2026-11-08T23:15:00+08:00",
-      "reason": "kill12 v2 三位置+一合尾（去形态、整组 4 项、精确基线 65.61%）的有意升级（2026-11-06 22:45 首封存），过渡期 churn 告警登记降噪；旧 v1 封存与结算保持不动、已归档不计入",
-      "registered_at": "2026-11-06T23:08:00+08:00"
-    },
-    {
-      "key": "kill3_tail",
-      "rule": "kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid",
-      "until": "2026-11-07T23:59:00+08:00",
-      "reason": "kill3 v17 AI 自选 2~4 位置+一合尾+两反向形态+三数共现（整组 N+6 项，逐期精确基线 N=2 58.63% / N=3 51.68% / N=4 45.57%）的有意升级（首封存后观察），过渡期 churn 告警登记降噪；旧 v16 封存与结算保持不动、按 rule_version 隔离",
-      "registered_at": "2026-11-06T23:24:31+08:00"
-    },
-    {
-      "key": "kill11_tail",
-      "rule": "kill11-tail-v2-flexible-two-four-position-one-form-one-tail",
-      "until": "2026-11-08T01:00:00+08:00",
-      "reason": "kill11 v2 AI 自选 2~4 位置+单双形态+一合尾（整组 N+2 项，逐期精确基线 N=2 67.2750% / N=3 59.9850% / N=4 53.4240%）的有意升级（首封存后观察），过渡期 churn 告警登记降噪；旧 v1 封存与结算保持不动、按 rule_version 隔离",
-      "registered_at": "2026-11-06T23:41:47+08:00"
-    },
-    {
-      "key": "kill12_tail",
-      "rule": "kill12-tail-v3-flexible-two-four-position-one-tail",
-      "until": "2026-11-08T00:21:00+08:00",
-      "reason": "kill12 v3 AI 自选 2~4 位置+一合尾（整组 N+1 项，逐期精确基线 N=2 72.9000% / N=3 65.6100% / N=4 59.0490%）的有意升级（2026-11-07 00:21:16 首封存），过渡期 churn 告警登记降噪；旧 v1/v2 封存与结算保持不动、按 rule_version 隔离",
-      "registered_at": "2026-11-07T00:26:39+08:00"
-    },
-    {
-      "key": "kill12_tail",
-      "rule": "kill12-tail-v4-one-position-one-form",
-      "until": "2026-11-09T01:30:00+08:00",
-      "reason": "kill12 v4 恢复 1 定位 + 1 单双反向形态 + 1 合尾（整组 3 项，10^4 开奖 x 16000 配置精确枚举基线 75.3750%）的有意升级（2026-11-07 首封存后观察），过渡期 churn 告警登记降噪；旧 v1/v2/v3 封存与结算保持不动、按 rule_version 隔离",
-      "registered_at": "2026-11-07T01:31:26+08:00"
-    },
-    {
-      "key": "kill11_tail",
-      "rule": "kill11-tail-v3-three-position",
-      "until": "2026-11-12T16:10:00+08:00",
-      "reason": "kill11 v3 固定 3 个定位各杀 1 码（删除单双形态与合尾，整组固定 3 项，10^4 开奖 x 4000 配置精确枚举基线 72.9000%）的有意升级（首封存后观察），过渡期 churn 告警登记降噪；旧 v1/v2 封存与结算保持不动、按 rule_version 隔离",
-      "registered_at": "2026-11-10T16:05:00+08:00"
-    },
-    {
-      "key": "kill14_tail",
-      "rule": "kill14-tail-v2-four-position-cold-multi-window",
-      "until": "2026-11-11T16:00:00+08:00",
-      "reason": "kill14 v2 有意升级：冷码窗口由 70/50 扩为 70/50/30/15（并入冷 15/冷 30 框架），强制规则改为任一窗口连败即取该位置冷码第 1 个（2026-11-10 15:31 首封存 / 15:37 首次观测），过渡期 churn 告警登记降噪；旧 v1 封存与结算保持不动、按 rule_version 隔离",
-      "registered_at": "2026-11-10T15:42:00+08:00"
-    }
-  ]
+ "entries": [
+  {
+   "key": "kill1_tail",
+   "reason": "kill1 v4 双位置+一合尾有意升级（2026-11-05 10:16 首封存 / 10:28 首次观测），过渡期 churn 告警已登记降噪；24h 后阈值本身也会自愈",
+   "registered_at": "2026-11-05T19:39:31+08:00",
+   "rule": "kill1-tail-v4-two-position-one-tail",
+   "until": "2026-11-06T10:30:00+08:00"
+  },
+  {
+   "key": "kill3_tail",
+   "reason": "kill3 v16 弃位形态按冷热取冷的有意升级（2026-11-06 00:01 首封存 / 00:13 首次观测），过渡期 churn 告警已登记降噪；24h 后阈值本身也会自愈",
+   "registered_at": "2026-11-06T01:16:08+08:00",
+   "rule": "kill3-tail-v16-hot-cold-repeat-neighbor-hold-shadow-two-counted-three-avoid-cold-drop",
+   "until": "2026-11-07T02:00:00+08:00"
+  },
+  {
+   "key": "kill1_tail",
+   "reason": "kill1 v7 AI 自选 2~4 位置+一合尾的有意升级（首封存后观察），过渡期 churn 告警登记降噪；动态期望基线按逐期 expected_group_rate 计算",
+   "registered_at": "2026-11-06T22:21:17+08:00",
+   "rule": "kill1-tail-v7-flexible-two-four-position-one-tail",
+   "until": "2026-11-08T04:21:17+08:00"
+  },
+  {
+   "key": "kill12_tail",
+   "reason": "kill12 v2 三位置+一合尾（去形态、整组 4 项、精确基线 65.61%）的有意升级（2026-11-06 22:45 首封存），过渡期 churn 告警登记降噪；旧 v1 封存与结算保持不动、已归档不计入",
+   "registered_at": "2026-11-06T23:08:00+08:00",
+   "rule": "kill12-tail-v2-three-position-one-tail",
+   "until": "2026-11-08T23:15:00+08:00"
+  },
+  {
+   "key": "kill3_tail",
+   "reason": "kill3 v17 AI 自选 2~4 位置+一合尾+两反向形态+三数共现（整组 N+6 项，逐期精确基线 N=2 58.63% / N=3 51.68% / N=4 45.57%）的有意升级（首封存后观察），过渡期 churn 告警登记降噪；旧 v16 封存与结算保持不动、按 rule_version 隔离",
+   "registered_at": "2026-11-06T23:24:31+08:00",
+   "rule": "kill3-tail-v17-flexible-two-four-position-one-tail-two-form-three-avoid",
+   "until": "2026-11-07T23:59:00+08:00"
+  },
+  {
+   "key": "kill11_tail",
+   "reason": "kill11 v2 AI 自选 2~4 位置+单双形态+一合尾（整组 N+2 项，逐期精确基线 N=2 67.2750% / N=3 59.9850% / N=4 53.4240%）的有意升级（首封存后观察），过渡期 churn 告警登记降噪；旧 v1 封存与结算保持不动、按 rule_version 隔离",
+   "registered_at": "2026-11-06T23:41:47+08:00",
+   "rule": "kill11-tail-v2-flexible-two-four-position-one-form-one-tail",
+   "until": "2026-11-08T01:00:00+08:00"
+  },
+  {
+   "key": "kill12_tail",
+   "reason": "kill12 v3 AI 自选 2~4 位置+一合尾（整组 N+1 项，逐期精确基线 N=2 72.9000% / N=3 65.6100% / N=4 59.0490%）的有意升级（2026-11-07 00:21:16 首封存），过渡期 churn 告警登记降噪；旧 v1/v2 封存与结算保持不动、按 rule_version 隔离",
+   "registered_at": "2026-11-07T00:26:39+08:00",
+   "rule": "kill12-tail-v3-flexible-two-four-position-one-tail",
+   "until": "2026-11-08T00:21:00+08:00"
+  },
+  {
+   "key": "kill12_tail",
+   "reason": "kill12 v4 恢复 1 定位 + 1 单双反向形态 + 1 合尾（整组 3 项，10^4 开奖 x 16000 配置精确枚举基线 75.3750%）的有意升级（2026-11-07 首封存后观察），过渡期 churn 告警登记降噪；旧 v1/v2/v3 封存与结算保持不动、按 rule_version 隔离",
+   "registered_at": "2026-11-07T01:31:26+08:00",
+   "rule": "kill12-tail-v4-one-position-one-form",
+   "until": "2026-11-09T01:30:00+08:00"
+  },
+  {
+   "key": "kill11_tail",
+   "reason": "kill11 v3 固定 3 个定位各杀 1 码（删除单双形态与合尾，整组固定 3 项，10^4 开奖 x 4000 配置精确枚举基线 72.9000%）的有意升级（首封存后观察），过渡期 churn 告警登记降噪；旧 v1/v2 封存与结算保持不动、按 rule_version 隔离",
+   "registered_at": "2026-11-10T16:05:00+08:00",
+   "rule": "kill11-tail-v3-three-position",
+   "until": "2026-11-12T16:10:00+08:00"
+  },
+  {
+   "key": "kill14_tail",
+   "reason": "kill14 v2 有意升级：冷码窗口由 70/50 扩为 70/50/30/15（并入冷 15/冷 30 框架），强制规则改为任一窗口连败即取该位置冷码第 1 个（2026-11-10 15:31 首封存 / 15:37 首次观测），过渡期 churn 告警登记降噪；旧 v1 封存与结算保持不动、按 rule_version 隔离",
+   "registered_at": "2026-11-10T15:42:00+08:00",
+   "rule": "kill14-tail-v2-four-position-cold-multi-window",
+   "until": "2026-11-11T16:00:00+08:00"
+  },
+  {
+   "key": "kill1_tail",
+   "reason": "kill1 v8 双定位杀码 + 共现避开三组 + 二数合/三数合（删合尾与形态，整组 7 项，10^4 枚举精确基线 0.6997）的有意升级（首封存后观察），过渡期 churn 告警登记降噪；旧 v1~v7 封存与结算保持不动、按 rule_version 隔离。",
+   "registered_at": "2026-11-10T16:38:12+08:00",
+   "rule": "kill1-tail-v8-two-position-three-avoid-he2-he3",
+   "until": "2026-11-12T17:00:00+08:00"
+  }
+ ],
+ "note": "已登记的有意口径升级：按 key + rule 精确匹配，until 前把「版本切换过渡期」的 churn 告警降级为观察(watch)，不抑制覆盖断崖/短期陡降等其他护栏；过期自动失效，可长期保留作台账。",
+ "version": 1
 }

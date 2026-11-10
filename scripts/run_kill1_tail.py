@@ -1,10 +1,15 @@
-"""AI 自选 2~4 位置杀码 + 一合尾 每期任务（cron 每 5 分钟，开奖后启动）。
+"""AI 双定位杀码 + 三数共现避开三组 + 二数合/三数合 每期任务（cron 每 5 分钟，开奖后启动）。
+
+口径 v8：AI 每期从 千/百/十/个 中固定选 2 个不同位置、各排除 1 码；整组固定 7 项 =
+2 个位置 + 三数共现避开 1/2/3 组（系统按目标期给定）+ 二数合保留 4 码 + 三数合保留 5 码
+（取 kill10 同目标期已发布封存）。无合尾、无单双形态。
 
 流程：
 1. 等待本期开奖数据就绪（最多 55 秒）；
 2. 结算上一期已开奖的封存（只追加，不改封存）；
 3. 若本期参考期尚无封存，则在发布窗口内请求一次 DeepSeek（最多 3 次尝试）；
-4. 封存 → 标记已发布 → 写面板区块。任何失败只记录，不补发历史期。
+4. 取三数共现 3 组（state.currentPrediction）与 kill10 同目标期 he2/he3 封存（带等待）；
+5. 封存 → 标记已发布 → 写面板区块。任何失败只记录，不补发历史期。
 """
 from datetime import timedelta
 from pathlib import Path
@@ -25,6 +30,8 @@ from panel_io import update_panel
 from kill_one_view import apply_kill_one_block
 
 WAIT_SECONDS = 55.0
+THREE_AVOID_WAIT_SECONDS = 30.0
+KILL10_WAIT_SECONDS = 75.0
 _LOCK_HANDLE = None
 
 
@@ -49,6 +56,31 @@ def wait_for_source(seconds=WAIT_SECONDS):
         time.sleep(1.0)
 
 
+def wait_three_avoid(target, seconds=THREE_AVOID_WAIT_SECONDS):
+    """与 kill3 同源的三数共现 3 组；state.currentPrediction 在开奖后约 7 秒生成。"""
+    started = time.monotonic()
+    while True:
+        groups = kill1_tail.resolve_three_avoid(target)
+        if groups:
+            return groups
+        if time.monotonic() - started > seconds:
+            return []
+        time.sleep(2.0)
+
+
+def wait_kill10_keeps(target, reference, deadline, seconds=KILL10_WAIT_SECONDS):
+    """取 kill10 同目标期已发布封存的 he2_keep/he3_keep；超时返回 None（不编造）。"""
+    limit = min(deadline - timedelta(seconds=20), beijing_now() + timedelta(seconds=seconds))
+    while True:
+        keeps = kill1_tail.kill10_keeps(target, reference)
+        if keeps:
+            return keeps
+        now = beijing_now()
+        if now >= limit:
+            return None
+        time.sleep(2.0)
+
+
 def publish_block():
     update_panel(lambda page: apply_kill_one_block(page))
 
@@ -63,27 +95,6 @@ def _acquire_job_lock():
         fcntl.flock(_LOCK_HANDLE, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise SystemExit(0)
-
-
-# --- kill1 pro-vs-flash 影子 A/B 挂钩（只读；任何异常都不影响主体发布） ---
-def _ab_record_raw_and_shadow(prediction, meta, reference, target, prompt):
-    """落 flash 原始预测到 A/B 台账，并 spawn pro 影子；本函数永不抛异常。"""
-    import os
-    try:
-        import kill1_ab
-        kill1_ab.record_flash_raw(
-            prediction, meta, reference, target, prompt,
-            log=lambda message: print(message))
-        kill1_ab.spawn_pro_shadow(
-            prompt, reference, target,
-            log=lambda message: print(message))
-    except Exception as error:
-        try:
-            print('kill1 ab hook failed: %s: %s'
-                  % (type(error).__name__, str(error)[:120]))
-        except Exception:
-            pass
-# --- A/B 挂钩结束 ---
 
 
 def main():
@@ -107,16 +118,21 @@ def main():
     deadline, target = kill1_tail.deadline_for(reference)
     rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
     previous_seal = seals[-1] if seals else None
-    previous_tail = (previous_seal.get('tail') or {}) if isinstance(previous_seal, dict) else {}
     panel_snapshot = panel_context.build(
         reference, target,
         kill1_stats=kill1_tail.today_stats(),
         kill1_previous=previous_seal)
     _panel_text, _panel_sha = panel_context.prompt_text(panel_snapshot)
     print('kill1 panel context sha=%s bytes=%d' % (_panel_sha[:16], len(_panel_text)))
+    three_avoid = wait_three_avoid(target)
+    if not three_avoid:
+        print(f'kill1 skipped: three-avoid-groups-not-ready; ref={reference} target={target}')
+        return 1
+    print('kill1 three-avoid: ' + ' · '.join(item['label'] + '=' + item['value']
+                                             for item in three_avoid))
     prompt, audit = kill1_tail.build_prompt(
         reference, target, rows,
-        previous_tail=previous_tail if isinstance(previous_tail, dict) else None,
+        three_avoid=three_avoid,
         panel_snapshot=panel_snapshot)
     try:
         prediction, generated_at, meta = kill1_tail.request_prediction(
@@ -124,17 +140,29 @@ def main():
     except Exception as error:
         print(f"kill1 request failed: {type(error).__name__}: {str(error)[:140]}")
         return 1
-    _ab_record_raw_and_shadow(prediction, meta, reference, target, prompt)
+    keeps = wait_kill10_keeps(target, reference, deadline)
+    if not keeps:
+        print(f'kill1 skipped: kill10-he2-he3-not-ready; ref={reference} target={target}')
+        return 1
+    print('kill1 kill10 keeps: he2=%s he3=%s (ref=%s published=%s)'
+          % (keeps['he2_keep'], keeps['he3_keep'],
+             keeps.get('ref_period'), keeps.get('published_at')))
     fresh = load_snapshot(persist=False)
     rejection = publication_rejection(reference, fresh, beijing_now())
     if rejection:
         print(f'kill1 publication rejected after inference: {rejection}; ref={reference}')
         return 0
-    settlements = kill1_tail.load_settlements()
-    prediction = kill1_tail.apply_position_policy(prediction, seals, settlements)
-    prediction = kill1_tail.apply_tail_policy(prediction, seals, settlements)
+    extra = {
+        'three_avoid': three_avoid,
+        'three_avoid_source': 'state.currentPrediction.extraKills',
+        'he2_keep': keeps['he2_keep'],
+        'he3_keep': keeps['he3_keep'],
+        'kill10_ref_period': keeps.get('ref_period'),
+        'kill10_target_period': keeps.get('target_period'),
+        'kill10_published_at': keeps.get('published_at'),
+    }
     seal = kill1_tail.create_seal(reference, target, latest.get('opentime'), prediction,
-                                  prompt, audit, generated_at, meta)
+                                  prompt, audit, generated_at, meta, extra=extra)
     kill1_tail.save_seal(seal)
     kill1_tail.mark_published(reference)
     try:
@@ -146,30 +174,10 @@ def main():
     picked = ' · '.join('%s 杀%s' % (kill1_tail.POSITION_LABELS[key],
                                       prediction['positions'][key])
                          for key in prediction.get('counted') or [])
-    print(f'kill1 published: ref={reference} target={target} rule={kill1_tail.RULE_VERSION} {picked} · '
-          f'{prediction["tail"]["label"]}合尾 杀{prediction["tail"]["kill"]}')
-    position_policy = prediction.get('position_policy') or {}
-    if position_policy:
-        items = position_policy.get('items')
-        if isinstance(items, dict) and items:
-            for key, _label, _index in kill1_tail.POSITIONS:
-                item = items.get(key)
-                if not isinstance(item, dict):
-                    continue
-                print('kill1 position policy: %s %s · sealed=%s · model=%s'
-                      % (item.get('label'), item.get('note'),
-                         item.get('sealed_kill'), item.get('model_kill')))
-        else:
-            print('kill1 position policy: ' + str(position_policy.get('note'))
-                  + ' · sealed=' + str(position_policy.get('sealed_kill'))
-                  + ' · model=' + str(position_policy.get('model_kill')))
-    tail_policy = prediction.get('tail_policy') or {}
-    if tail_policy:
-        print('kill1 tail policy: ' + str(tail_policy.get('note'))
-              + ' · sealed=' + str(prediction['tail'].get('key')) + '/'
-              + str(prediction['tail'].get('kill'))
-              + ' · model=' + str((tail_policy.get('model_tail') or {}).get('key')) + '/'
-              + str((tail_policy.get('model_tail') or {}).get('kill')))
+    print(f'kill1 published: ref={reference} target={target} '
+          f'rule={kill1_tail.RULE_VERSION} {picked} · '
+          f'除对数{"-".join(item["value"] for item in three_avoid)} · '
+          f'二数合{keeps["he2_keep"]}三数合{keeps["he3_keep"]}各')
     return 0
 
 

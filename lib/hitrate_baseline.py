@@ -52,6 +52,9 @@ RULE_BASELINE = {
     ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v3-position-hold3'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v4-two-position-one-tail'): (3, 0.729),
+    # kill1 v8：AI 固定选 2 个不同位置各杀 1 码 + 三数共现避开 1/2/3 组 + 二数合保留 4 码 + 三数合保留 5 码（取 kill10 同目标期封存），整组 7 项；
+    # 10^4 开奖 x (C(4,2)*10*10) x 120^3 x 5 x 200 = 1,036,800,000,000 配置精确枚举 = 0.6997078452825，按项目口径登记 0.6997
+    ('kill1_tail', 'kill1-tail-v8-two-position-three-avoid-he2-he3'): (7, 0.6997),
     ('kill8_tail', 'kill8-tail-v1-cold-forms'): (2, 0.8789),
     ('kill8_tail', 'kill8-tail-v2-reverse-cold-forms'): (2, 0.8789),
     ('kill8_tail', 'kill8-tail-v3-four-reverse-cold-forms'): (4, 0.7733),
@@ -89,7 +92,7 @@ LABELS = {
     'framework': '固定八码框架（8 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现（N+6 项）',
-    'kill1_tail': 'AI 双位置杀码（3 项）',
+    'kill1_tail': 'AI 双定位杀码 + 共现避开三组 + 二数合/三数合（7 项）',
     'kill8_tail': 'AI 四反向冷形态（4 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
     'kill11_tail': '定位杀码 3 项（AI 自选 3 个位置各杀 1 码）',

@@ -64,6 +64,9 @@ RULE_BASELINE = {
     ('kill1_tail', 'kill1-tail-v2-hot-repeat-one-form'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v3-position-hold3'): (3, 0.7538),
     ('kill1_tail', 'kill1-tail-v4-two-position-one-tail'): (3, 0.729),
+    # kill1 v8：固定 2 个定位各杀 1 码 + 三数共现3组 + 二数合4码/三数合5码（取 kill10 同目标期封存），整组 7 项；
+    # 10^4 开奖 x 600x120^3x5x200 配置精确枚举 = 0.6997078452825，登记 0.6997
+    ('kill1_tail', 'kill1-tail-v8-two-position-three-avoid-he2-he3'): (7, 0.6997),
     ('kill10_tail', 'kill10-tail-v1-he2-he3'): (2, 0.92022400),
     # KILL11_ENUM_PLACEHOLDER: 已由 10^4 开奖 x 16000 配置精确枚举确认 120,600,000/160,000,000=0.75375，按项目口径登记 4 位 0.7538
     ('kill11_tail', 'kill11-tail-v1-one-position-one-form'): (3, 0.7538),
@@ -91,7 +94,7 @@ LABELS = {
     'framework': '固定八码框架（8 项）',
     'he3_refine': '合尾 he3 剩余 5 码',
     'kill3_tail': 'AI 自选 2~4 位置杀码 + 一合尾 + 两反向形态 + 三数共现（N+6 项）',
-    'kill1_tail': 'AI 双位置杀码（3 项）',
+    'kill1_tail': 'AI 双定位杀码 + 共现避开三组 + 二数合/三数合（7 项）',
     'kill10_tail': 'AI 二数合+三数合（2 项）',
     'kill11_tail': '定位杀码 3 项（AI 自选 3 个位置各杀 1 码）',
     'kill12_tail': 'AI 单位置杀码 + 单双形态 + 一合尾（3 项）',

@@ -74,13 +74,21 @@
      "new_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
      "old_sha256": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
      "reason": "shared 同步：kill11 v3 三定位升级只改 lib/panel_context.py 的 _kill11_self()/_ai_self_frame(kind=kill11_tail) 分支，不改其他框架的上下文/渲染路径；受控共享文件变更登记（kill11 v3 已上线并过真实周期）。"
+    },
+    {
+     "at": "2026-11-10T16:38:12+08:00",
+     "commit": "",
+     "file": "lib/panel_context.py",
+     "new_sha256": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf",
+     "old_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
+     "reason": "kill1 v8 升级共享 lib/panel_context.py（仅 kill1 自观测/注入字段变更，kill3/he3/killer/framework 路径逐字节未变），共享文件登记同步。"
     }
    ],
    "label": "R1 框架",
    "min_periods": 100,
    "rule_version": "marginal-frequency-v2",
    "shared": {
-    "lib/panel_context.py": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb"
+    "lib/panel_context.py": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf"
    }
   },
   "he3_refine": {
@@ -148,24 +156,32 @@
      "new_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
      "old_sha256": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
      "reason": "shared 同步：kill11 v3 三定位升级只改 lib/panel_context.py 的 _kill11_self()/_ai_self_frame(kind=kill11_tail) 分支，不改其他框架的上下文/渲染路径；受控共享文件变更登记（kill11 v3 已上线并过真实周期）。"
+    },
+    {
+     "at": "2026-11-10T16:38:12+08:00",
+     "commit": "",
+     "file": "lib/panel_context.py",
+     "new_sha256": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf",
+     "old_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
+     "reason": "kill1 v8 升级共享 lib/panel_context.py（仅 kill1 自观测/注入字段变更，kill3/he3/killer/framework 路径逐字节未变），共享文件登记同步。"
     }
    ],
    "label": "he3 精修",
    "min_periods": 100,
    "rule_version": "he3-refine-v3-panel-context",
    "shared": {
-    "lib/panel_context.py": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb"
+    "lib/panel_context.py": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf"
    }
   },
   "kill1_tail": {
    "files": {
-    "lib/kill1_tail.py": "87268bec1d97901a8f48b22c6cf6e1840aaff19ee4fd1d834c0e75a0c44410cc",
-    "lib/kill_one_view.py": "c38b73c23b98fe05099d75935aa134f5bc18c71603fe7002064e6c26bb1424fc"
+    "lib/kill1_tail.py": "926c218daf8660183d7e1d419f7e1d4854b8825ca59db1f91e7d463764b9153c",
+    "lib/kill_one_view.py": "3f1344239805dfcaefabc5644dc884ce2359a7da93884804670a1e6ebe236b79"
    },
    "freeze_hours": 72.0,
    "freeze_ref_period": "20261106273",
-   "frozen_at": "2026-11-06T22:46:01.931893+08:00",
-   "frozen_commit": "b4ad1e1",
+   "frozen_at": "2026-11-10T16:38:12+08:00",
+   "frozen_commit": "",
    "hash_updates": [
     {
      "at": "2026-11-05T12:34:40.692296+08:00",
@@ -270,20 +286,44 @@
      "new_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
      "old_sha256": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
      "reason": "shared 同步：kill11 v3 三定位升级只改 lib/panel_context.py 的 _kill11_self()/_ai_self_frame(kind=kill11_tail) 分支，不改其他框架的上下文/渲染路径；受控共享文件变更登记（kill11 v3 已上线并过真实周期）。"
+    },
+    {
+     "at": "2026-11-10T16:38:12+08:00",
+     "commit": "",
+     "file": "lib/kill1_tail.py",
+     "new_sha256": "926c218daf8660183d7e1d419f7e1d4854b8825ca59db1f91e7d463764b9153c",
+     "old_sha256": "87268bec1d97901a8f48b22c6cf6e1840aaff19ee4fd1d834c0e75a0c44410cc",
+     "reason": "kill1 v8 口径升级（用户 m00003）：AI 固定选 2 个不同定位各杀 1 码 + 三数共现避开 1/2/3 组 + 二数合保留 4 码/三数合保留 5 码（取 kill10 同目标期封存），删除合尾与形态，整组 7 项；10^4 开奖 x 600x120^3x5x200 配置精确枚举基线 0.6997（精确 0.6997078452825，独立复算 0E-13 一致）。"
+    },
+    {
+     "at": "2026-11-10T16:38:12+08:00",
+     "commit": "",
+     "file": "lib/kill_one_view.py",
+     "new_sha256": "3f1344239805dfcaefabc5644dc884ce2359a7da93884804670a1e6ebe236b79",
+     "old_sha256": "c38b73c23b98fe05099d75935aa134f5bc18c71603fe7002064e6c26bb1424fc",
+     "reason": "kill1 v8 面板同步：7 张卡（2 定位 + 共现 3 组 + he2/he3）、整组理论基线 69.97%、攻击语/统计/口径脚注全部按 v8 重写。"
+    },
+    {
+     "at": "2026-11-10T16:38:12+08:00",
+     "commit": "",
+     "file": "lib/panel_context.py",
+     "new_sha256": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf",
+     "old_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
+     "reason": "kill1 v8 升级共享 lib/panel_context.py：仅 _kill1_self() 与 _ai_self_frame(kind=kill1_tail) 分支改为 three_avoid/he2_keep/he3_keep 字段；HEAD→v8 diff 仅 10 行，其他框架的注入/渲染路径未变。"
     }
    ],
    "label": "单位置杀码(kill1)",
    "min_periods": 100,
-   "rule_version": "kill1-tail-v7-flexible-two-four-position-one-tail",
+   "rule_version": "kill1-tail-v8-two-position-three-avoid-he2-he3",
    "shared": {
-    "lib/panel_context.py": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb"
+    "lib/panel_context.py": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf"
    }
   },
   "kill3_tail": {
    "files": {
     "lib/kill3_tail.py": "ec3cf5121b0c4f91d200bf58a7706f850e02f37f9271a44a2463ebcf61153759",
     "lib/kill_three_view.py": "f70ee853b2a9514a8ce82aada66d4a1adbba55b1fddec5cd2a50961e9c0704cb",
-    "lib/panel_context.py": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
+    "lib/panel_context.py": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf",
     "scripts/run_kill3_tail.py": "b079639086126bb973a865616bb694d82e40537d582d40810402c2b4bae75c49"
    },
    "freeze_hours": 72.0,
@@ -786,6 +826,14 @@
      "new_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
      "old_sha256": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
      "reason": "kill11 v3 三定位升级（删除单双形态与合尾，整组 3 项）：仅改 _kill11_self()/_ai_self_frame(kind=kill11_tail) 分支，不改 kill3 选码/统计/渲染路径；受控共享文件变更登记"
+    },
+    {
+     "at": "2026-11-10T16:38:12+08:00",
+     "commit": "",
+     "file": "lib/panel_context.py",
+     "new_sha256": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf",
+     "old_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
+     "reason": "kill1 v8 升级共享 lib/panel_context.py（仅 kill1 自观测/注入字段变更，kill3/he3/killer/framework 路径逐字节未变），共享文件登记同步。"
     }
    ],
    "label": "三位置杀码(kill3)",
@@ -869,16 +917,24 @@
      "new_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
      "old_sha256": "a85bd147001b0a69873695833e81ea4c48400011d6920575669de8ed9fdd0d0f",
      "reason": "shared 同步：kill11 v3 三定位升级只改 lib/panel_context.py 的 _kill11_self()/_ai_self_frame(kind=kill11_tail) 分支，不改其他框架的上下文/渲染路径；受控共享文件变更登记（kill11 v3 已上线并过真实周期）。"
+    },
+    {
+     "at": "2026-11-10T16:38:12+08:00",
+     "commit": "",
+     "file": "lib/panel_context.py",
+     "new_sha256": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf",
+     "old_sha256": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb",
+     "reason": "kill1 v8 升级共享 lib/panel_context.py（仅 kill1 自观测/注入字段变更，kill3/he3/killer/framework 路径逐字节未变），共享文件登记同步。"
     }
    ],
    "label": "智能排除(killer)",
    "min_periods": 100,
    "rule_version": "conditional-transition-v1",
    "shared": {
-    "lib/panel_context.py": "d34a034264f0a850fd4d64a9dabe247646f9c6301317d9754fe3ba1a65add1cb"
+    "lib/panel_context.py": "7dbb3e91212ba3375a3df45f00ea38fb6220ebb57d41e5b61ae5a25f26590dcf"
    }
   }
  },
- "updated_at": "2026-11-10T15:54:01.027672+08:00",
+ "updated_at": "2026-11-10T16:38:12+08:00",
  "version": 1
 }

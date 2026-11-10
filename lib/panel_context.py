@@ -181,15 +181,15 @@ def _kill1_self(reference, kill1_stats, kill1_previous):
     previous = None
     if isinstance(kill1_previous, dict):
         previous = _pick(kill1_previous, ('ref_period', 'target_period', 'rule_version',
-                                          'positions', 'counted', 'tail', 'tail_policy',
-                                          'position_policy',
+                                          'positions', 'counted', 'three_avoid',
+                                          'he2_keep', 'he3_keep',
                                           'generated_at', 'published_at'))
     stats = None
     if isinstance(kill1_stats, dict):
         stats = _pick(kill1_stats, ('total', 'group_hits', 'group_rate',
-                                    'positions', 'tail', 'form',
+                                    'positions', 'three_avoid', 'he2_keep', 'he3_keep',
                                     'current_win_streak', 'current_loss_streak',
-                                    'max_loss_streak', 'four_loss_cycles',
+                                    'max_loss_streak',
                                     'pending', 'latest_period'))
     if previous is None and stats is None:
         return None
@@ -314,7 +314,7 @@ def _ai_self_frame(kind):
     if kind == 'kill3_tail':
         fields += ['display_only', 'counted', 'reverse_parity', 'reverse_size']
     elif kind == 'kill1_tail':
-        fields += ['counted', 'position_policy']
+        fields += ['counted', 'three_avoid', 'he2_keep', 'he3_keep']
     elif kind == 'kill10_tail':
         fields += ['he2_keep', 'he3_keep']
     elif kind == 'kill11_tail':

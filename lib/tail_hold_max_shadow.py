@@ -39,7 +39,6 @@ FRAMEWORK_FIELDS = (('he_q3_kill', 'qbs'), ('he_h3_kill', 'bsg'))
 
 # (框架 id, 面板名, 分组粒度, 沿用是否要求上一封存目标期与当前参考期连续)
 FRAMEWORKS = (
-    ('kill1_tail', 'AI自选2~4位置(kill1)', 'single', False),
     ('kill3_tail', 'AI三位置(kill3)', 'single', False),
     ('framework', '固定八码框架', 'pair', True),
     ('killer', 'killer九项', 'triple', True),
