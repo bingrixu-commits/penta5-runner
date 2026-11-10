@@ -2380,3 +2380,44 @@ kill2_tail（现行 RULE_VERSION `kill2-tail-v2-three-select-two-counted`，v3.5
 - **运维提示（并行窗口在途）**：14:55:58 一次 `Statistics sync refresh failed … returncode=1`，原因是另一窗口正在打 `/root/run_stats.py` 补丁，期间出现 `SyntaxError: invalid syntax`（line 586，apply_kill_fourteen_block 链）；该文件 14:56:32 写回并通过 `py_compile`，面板随后重建（`data-as-of=20261110179`）。属并行窗口在途编辑，非本批引入。
 - **未落地项**：无。脚本 commit `5293e9f` 与本节 doc commit 均已推送；并行窗口 7 个 `M` 文件与 kill14 未跟踪文件不属本批，未纳入。
 - **落地审计报告**：`/root/ops/deploy-audit-20261110/deploy-audit.md`（HEAD/origin/main/AHEAD/BEHIND + 本批/并行窗口/未落地项三组 + 落地表）。
+
+## 2026-11-10 15:12 kill14 上线（定位排除：四位置各排除 1 码 / AI 每期选码 / 连败位置强制取冷码第 1）
+
+### 变更
+- 用户需求（原话）：「新建一个定位排除，四个位置各排除一码。根据面板数据一个个抠没定位连败的，就抠那个位置排除」+「四个位置，如果败连败就取冷码第一个」。
+- 口径（两轮问卷钉死）：整组固定 4 项 = 千/百/十/个 各排除 1 码，四个位置的开奖号都不等于该位置排除码才算整组命中（杀号语义，理论基线 9^4/10^4 = 0.6561，10^4 开奖空间 × 10^4 配置空间精确枚举 65,610,000/100,000,000 与闭式交叉校验一致）。无合尾/无形态/无 hold，每期严格重算。
+- 选码规则（AI 每期选）：某位置在 70 期与 50 期两个窗口都处于「连败」（该窗口 Top3 杀码口径 current_loss_streak>0）→ 该位置排除码强制取该位置冷码第 1 个，允许取 70 期或 50 期任一窗口的冷 1（AI 自选并给理由）；其余位置由 AI 看面板数据自选 1 码并给理由。连败强制在 normalize_response 与封存侧双向校验（违反抛「连败位置 X 的排除码必须取该位置冷码第 1 个」）。
+- 常量：RULE_VERSION='kill14-tail-v1-four-position-cold-on-loss'；WINDOW=70；STATS_WINDOWS=(70,50)；TOP=3；EXPECTED_ITEMS=4；EXPECTED_GROUP_RATE=0.6561；PROMPT_VERSION='kill14-tail-prompt-v1-four-position-cold-on-loss'；CLOSE_SECONDS=70；MAX_TOKENS=12288；REASONING_EFFORT='high'。
+- 文件：lib/kill14_tail.py（1025 行；模块内用 build_rankings/position_state 从 history 直接算冷榜与连败状态，与面板 data/cold_hit_stats.json 的 per_position[key]['3'] 逐字段一致，自测已证）；lib/kill_fourteen_view.py（面板区块）；scripts/run_kill14_tail.py（cron 入口）；scripts/check_kill14_framework.py（只读自检）；data/kill14_tail/{seals,settlements}.json（.gitignore 内，只增账本）。
+- 面板：新 section #kill-fourteen-ai（KILL_FOURTEEN_START/END，标题「🎯 定位排除（四位置各排 1 码 · AI 每期选码）」），每期显示四位置排除码 + 依据（连败强制·70/50 期冷码第 1 / AI 自选）+ 近 70 期出现次数/遗漏/排名 + 保留码；70/50 两窗口冷榜前 3；今日整组/单注/强制位单注、当前连中连败、本版累计、理论基线 65.61%；攻击语 textarea id=kill14-attack-text（四位置段各 9 码 + 四定）。
+- 挂接点（9 类全部完成）：/root/run_stats.py（import 区 + early_panel/quiet_panel 两条 lambda 链，插在 apply_cold_thirty_block 与 apply_cold_fifteen_block 之间）；lib/panel_live_refresh.py（quiet-panel-v34-add-kill14 + names 加 KILL_FOURTEEN）；lib/attack_editor_view.py（all-attack-editor-v28-kill14 + kill14 攻击语条目）；lib/evidence_backup.py（JSON_DIRS）；lib/hitrate_baseline.py（RULE_BASELINE/LABELS/_kill14_rows/build）；scripts/framework_hitrate_cumulative.py（RULE_BASELINE/LABELS/WINDOWS/cum_kill14/注册表）；scripts/ops_health_check.py（LEDGER_SIZE_FILES/LEDGER_ALERT_FILES/check_kill14/CHECK_FUNCS/FALLBACK_NAMES）；ops/crontab.txt（sleep 65）；/etc/logrotate.d/penta5；.env（PENTA5_MODEL_KILL14=deepseek-flash）。
+
+### 部署与真实周期证据
+- 备份：/root/ops/kill14-hooks-20261110-145451/backup/（9 个改前文件 + 外部 /root/run_stats.py）、manifest.json。补丁脚本 /tmp/kill14_upload/patch_hooks.py + verify_hooks.py：25 edits，PY_COMPILE OK、IMPORT_OK、13 条 POSTCHECK 全 OK、APPLY_OK。
+- 安装：lib/kill14_tail.py 42968B sha256 de0bab…；scripts/run_kill14_tail.py 6388B sha256 9d49ed7e…；lib/kill_fourteen_view.py 上传后 py_compile OK；mkdir data/kill14_tail；scripts/crontab_tool.sh install（旧 crontab 备份 /tmp/crontab.backup.20261110_145650）后 diff matches（44 jobs，CRON_LINES=48）；/etc/logrotate.d/penta5 含 kill14_tail_cron.log。
+- cron 行：`*/5 * * * * flock -n /var/lock/penta5-kill14t.lock bash -c 'sleep 65 && cd /root/penta5-runner && timeout --kill-after=5s 220 python3 -u scripts/run_kill14_tail.py >> data/kill14_tail_cron.log 2>&1'`。
+- 首期：ref=20261110180 → target=20261110181，cron 15:01:05 起跑，published_at=2026-11-10T15:02:36.501355+08:00（早于 target 开奖 15:05）；AI 首次 attempt 超时后 attempt2 200（1.469s，deepseek-flash，prompt 5908/completion 58）；`千排0(AI自选) · 百排2(70期冷1) · 十排4(70期冷1) · 个排5(AI自选)`，enforced=[]（当时无两窗口同时连败位置）。
+- 首期结算：target=20261110181 actual=['7','5','8','1'] → group_hit=True（7≠0、5≠2、8≠4、1≠5），verified=True、counted=['q','b','s','g']、expected_group_rate=0.6561。
+- 第二期：ref=20261110181→target=20261110182 published_at≈15:06:22（`千0 百2 十4 个4`），结算 target=20261110182 group_hit=True；第三期 ref=20261110182→target=20261110183 published_at=2026-11-10T15:11:12.828021+08:00（`千3 百2 十4 个4`）。截至 15:12 封存 3 条 / 结算 2 条，今日 2/2 整组命中、单注 8/8。
+- 面板：panel.html KILL_FOURTEEN marker 各 1、#kill-fourteen-ai data-as-of=20261110182、版本串 quiet-panel-v34-add-kill14、攻击语 all-attack-editor-v28-kill14 + kill14-attack-text 在线；四位置卡/两窗口冷榜/65.61% 基线/攻击语均渲染（view.render 6301B）。
+- 自测（/tmp/test_kill14_remote.py）：11/11 通过，覆盖 rankings 独立复算、context 强制规则、面板连胜口径逐字段一致、normalize_response 4 项与连败违规、prompt/audit、seal 生命周期、结算/统计/attack、请求重试与超时拒绝、view 幂等、runner 时间槽。
+- 只读自检 scripts/check_kill14_framework.py：fails=0（模块常量/四个注册表/逐封存 input_sha256+cold_ranking+position_state+强制位+各位置 basis/发布早于目标开奖/逐结算复算/面板/cron baseline+live/logrotate/.env/派生统计三 JSON/view/攻击语）。position_state 的 samples 字段按口径校验漂移（stored-recomputed == 快照 800 行裁掉的期数），连败/连胜四字段严格相等。
+
+### 统计链路
+- data/hitrate_baseline.json：kill14_tail 行，item=4、expected=0.6561、label「定位排除 4 项（四位置各排除 1 码，AI 每期选码，连败位置取冷码第 1 个）」。
+- data/framework_hitrate_cumulative.json：kill14_tail 行，expected=0.6561、coverage=1.0。
+- data/hitrate_stability.json：kill14_tail 行 n=1、w100=100%、expected=0.6561、cum_verdict=样本不足(n<200)，无 churn → 无需白名单登记。
+- ops_health：check_kill14 已注册（7 分钟宽限；published 对上 ref → OK），ledger_size 纳入 kill14_tail/seals.json=67.8KiB。
+
+### 门禁（15:12 收尾复核）
+- refresh_source_manifest.py --root /root/penta5-runner --if-drift → baseline-written 471 files（/root/backups/auto-baseline-20261110-151211/verification-manifest.json）。
+- ops_health：kill14_tail OK ref=20261110182 published_at=2026-11-10T15:11:12.828021+08:00；manifest_drift OK；crontab_drift OK（44 jobs）；overall=FAIL 仅剩存量项 coverage/hitrate_stability（kill3_tail 历史覆盖缺口，与 kill14 无关）。
+
+### 回滚
+- 代码：git revert 本批 2 个功能 commit + 1 个 docs commit；面板区块随下一轮 run_stats 自动回退。
+- 整文件回滚：从 /root/ops/kill14-hooks-20261110-145451/backup/ 覆盖 9 个文件（root_run_stats.py → /root/run_stats.py），py_compile 后跑 scripts/refresh_source_manifest.py --root /root/penta5-runner --if-drift；crontab 恢复 /tmp/crontab.backup.20261110_145650，或从 ops/crontab.txt 删 kill14 行后 install。
+- 数据：kill14 封存/结算按 rule_version 隔离，回退后不会被误计入；data/kill14_tail 只增账本可保留。只停跑：删 crontab 行并 install，面板保留只读展示。
+
+### 后续/边界
+- 观察累计至 n≥200 再评估；「两窗口同时连败」强制分支当前尚未在真实周期触发（自测 + 自检已覆盖；当前 70/50 两窗口四位置 current_loss_streak 全为 0），触发后会在面板依据列显示「连败强制·70/50 期冷码第 1」，并在封存 enforced_positions 记录。
+- 攻击语口径与 kill1/kill3 位置段一致（四段各 9 码 + 四定）；用户侧已打开的面板因 attack editor 版本升 v28，需要 Ctrl+F5 一次才能恢复自动刷新。
