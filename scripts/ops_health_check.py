@@ -138,6 +138,8 @@ LEDGER_SIZE_FILES = (
     'kill11_tail/seals.json',
     'kill12_tail/seals.json',
     'kill13_tail/seals.json',
+    'cold30_tail/seals.json',
+    'cold15_tail/seals.json',
 )
 # 达到 110/120MiB 即预警的账本（对齐 128MiB json.load 读取上限）
 LEDGER_ALERT_FILES = {
@@ -147,6 +149,8 @@ LEDGER_ALERT_FILES = {
     'kill11_tail/seals.json': 'kill11 封存账本',
     'kill12_tail/seals.json': 'kill12 封存账本',
     'kill13_tail/seals.json': 'kill13 封存账本',
+    'cold30_tail/seals.json': 'cold30 封存账本',
+    'cold15_tail/seals.json': 'cold15 封存账本',
 }
 LEDGER_HE3_WARN_BYTES = 110 * 1024 * 1024
 LEDGER_HE3_FAIL_BYTES = 120 * 1024 * 1024
@@ -674,6 +678,92 @@ def check_kill13(ctx):
                       % (ref, seal_ref or '-', round(age)), {'ref': ref})
     age_text = _age_text(age) if isinstance(age, (int, float)) else 'unknown'
     return _entry('kill13_tail', FAIL,
+                  'missing seal for latest=%s seal_ref=%s age=%s'
+                  % (ref, seal_ref or '-', age_text), {'ref': ref})
+
+
+def check_cold30(ctx):
+    '''最新 30 期定位冷码（四位置各杀 1 码）：最新已开奖期应有开奖前封存；超时未封存/未发布即告警。'''
+    latest = ctx.get('latest')
+    if not isinstance(latest, dict) or not latest.get('ref'):
+        return _entry('cold30_tail', WARN, 'latest draw unknown')
+    path = ctx['root'] / 'data' / 'cold30_tail' / 'seals.json'
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        # 上线首期：开奖后 7 分钟宽限内允许 seals.json 尚未落盘；超过宽限视为任务掉链。
+        opened = _parse_time(latest.get('opentime'))
+        age = None if opened is None else ctx['now'].timestamp() - opened.timestamp()
+        if isinstance(age, (int, float)) and age <= 420:
+            return _entry('cold30_tail', WARN,
+                          'waiting first seal: latest=%s age=%ss (%s)'
+                          % (str(latest.get('ref') or ''), round(age), exc))
+        return _entry('cold30_tail', FAIL, 'missing/unreadable seals.json: %s' % exc)
+    records = payload.get('records') if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        return _entry('cold30_tail', FAIL, 'seals.json has no records list')
+    seal = next((item for item in reversed(records) if isinstance(item, dict)), None)
+    ref = str(latest.get('ref') or '')
+    opened = _parse_time(latest.get('opentime'))
+    age = None if opened is None else ctx['now'].timestamp() - opened.timestamp()
+    seal_ref = str(seal.get('ref_period') or '') if isinstance(seal, dict) else ''
+    if seal_ref == ref:
+        state = str(seal.get('publication_state') or 'unknown')
+        published = seal.get('published_at')
+        if state == 'published' and published:
+            return _entry('cold30_tail', OK,
+                          'ref=%s published_at=%s' % (ref, published), {'ref': ref})
+        return _entry('cold30_tail', WARN,
+                      'ref=%s state=%s (not published)' % (ref, state), {'ref': ref})
+    if isinstance(age, (int, float)) and age <= 420:
+        return _entry('cold30_tail', OK,
+                      'waiting: latest=%s seal_ref=%s age=%ss'
+                      % (ref, seal_ref or '-', round(age)), {'ref': ref})
+    age_text = _age_text(age) if isinstance(age, (int, float)) else 'unknown'
+    return _entry('cold30_tail', FAIL,
+                  'missing seal for latest=%s seal_ref=%s age=%s'
+                  % (ref, seal_ref or '-', age_text), {'ref': ref})
+
+
+def check_cold15(ctx):
+    '''最新 30 期定位冷码（四位置各杀 1 码）：最新已开奖期应有开奖前封存；超时未封存/未发布即告警。'''
+    latest = ctx.get('latest')
+    if not isinstance(latest, dict) or not latest.get('ref'):
+        return _entry('cold15_tail', WARN, 'latest draw unknown')
+    path = ctx['root'] / 'data' / 'cold15_tail' / 'seals.json'
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        # 上线首期：开奖后 7 分钟宽限内允许 seals.json 尚未落盘；超过宽限视为任务掉链。
+        opened = _parse_time(latest.get('opentime'))
+        age = None if opened is None else ctx['now'].timestamp() - opened.timestamp()
+        if isinstance(age, (int, float)) and age <= 420:
+            return _entry('cold15_tail', WARN,
+                          'waiting first seal: latest=%s age=%ss (%s)'
+                          % (str(latest.get('ref') or ''), round(age), exc))
+        return _entry('cold15_tail', FAIL, 'missing/unreadable seals.json: %s' % exc)
+    records = payload.get('records') if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        return _entry('cold15_tail', FAIL, 'seals.json has no records list')
+    seal = next((item for item in reversed(records) if isinstance(item, dict)), None)
+    ref = str(latest.get('ref') or '')
+    opened = _parse_time(latest.get('opentime'))
+    age = None if opened is None else ctx['now'].timestamp() - opened.timestamp()
+    seal_ref = str(seal.get('ref_period') or '') if isinstance(seal, dict) else ''
+    if seal_ref == ref:
+        state = str(seal.get('publication_state') or 'unknown')
+        published = seal.get('published_at')
+        if state == 'published' and published:
+            return _entry('cold15_tail', OK,
+                          'ref=%s published_at=%s' % (ref, published), {'ref': ref})
+        return _entry('cold15_tail', WARN,
+                      'ref=%s state=%s (not published)' % (ref, state), {'ref': ref})
+    if isinstance(age, (int, float)) and age <= 420:
+        return _entry('cold15_tail', OK,
+                      'waiting: latest=%s seal_ref=%s age=%ss'
+                      % (ref, seal_ref or '-', round(age)), {'ref': ref})
+    age_text = _age_text(age) if isinstance(age, (int, float)) else 'unknown'
+    return _entry('cold15_tail', FAIL,
                   'missing seal for latest=%s seal_ref=%s age=%s'
                   % (ref, seal_ref or '-', age_text), {'ref': ref})
 
@@ -1984,6 +2074,8 @@ CHECK_FUNCS = (
     check_kill11,
     check_kill12,
     check_kill13,
+    check_cold30,
+    check_cold15,
     check_kill3_stability,
     check_kill3_v16_gate,
     check_kill3_v17_gate,
@@ -2020,6 +2112,8 @@ FALLBACK_NAMES = {
     'check_kill11': ('kill11_tail',),
     'check_kill12': ('kill12_tail',),
     'check_kill13': ('kill13_tail',),
+    'check_cold30': ('cold30_tail',),
+    'check_cold15': ('cold15_tail',),
     'check_kill3_stability': ('kill3_stability',),
     'check_kill3_v16_gate': ('kill3_v16_gate',),
     'check_kill3_v17_gate': ('kill3_v17_gate',),
