@@ -38,6 +38,9 @@ SCRIPT = r"""
       var cell=node('ai-scope-state-'+r.scope);
       var btn=node('ai-scope-btn-'+r.scope);
       if(cell){cell.textContent=r.enabled?'运行中':'已停用';cell.className=r.enabled?'on':'off';}
+      var keycell=node('ai-scope-key-'+r.scope);
+      if(keycell){keycell.textContent=r.own_key?'独立 key':'共享 key';
+        keycell.style.color=r.own_key?'#15803d':'#92400e';}
       if(btn){btn.textContent=r.enabled?'停止':'启动';btn.className=r.enabled?'stop':'start';
         btn.setAttribute('data-action',r.enabled?'stop':'start');
         btn.disabled=!r.can_control&&false;}
@@ -98,9 +101,10 @@ def render_control():
         label = '停止' if row['enabled'] else '启动'
         btn_cls = 'stop' if row['enabled'] else 'start'
         body.append(
-            '<tr><td>%s</td><td><code>%s</code></td><td>%s</td><td>%s</td>'
+            '<tr><td>%s</td><td><code>%s</code></td>'
+            '<td><span id="ai-scope-key-%s">%s</span></td><td>%s</td>'
             '<td><button id="ai-scope-btn-%s" class="%s" data-action="%s">%s</button></td></tr>'
-            % (escape(row['label']), escape(row['scope']),
+            % (escape(row['label']), escape(row['scope']), escape(row['scope']),
                '独立 key' if row['own_key'] else '共享 key',
                '<span id="ai-scope-state-%s" class="%s">%s</span>' % (escape(row['scope']), cls, state),
                escape(row['scope']), btn_cls, action, label))
