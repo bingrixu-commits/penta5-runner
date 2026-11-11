@@ -12,6 +12,7 @@
 """
 import argparse
 import json
+import time
 import os
 import sys
 import urllib.error
@@ -29,6 +30,34 @@ BALANCE_TIMEOUT = 10
 BALANCE_ENV_KEYS = ('PENTA5_FRAMEWORK_API_KEY', 'PENTA5_KILLER_API_KEY')
 STATE_NAME = 'ai_balance_guard.json'
 PAUSE_CONFIRMATIONS = 2
+
+# --- 按作用域余额检查的缓存：避免每分钟对 N 把 key 各查一次 ---
+SCOPE_CACHE_PATH = ROOT / 'data' / 'ai_scope_balance_cache.json'
+SCOPE_CACHE_TTL = 240  # 秒
+
+
+def _load_scope_cache():
+    try:
+        return json.loads(SCOPE_CACHE_PATH.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_scope_cache(cache):
+    try:
+        SCOPE_CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False), encoding='utf-8')
+    except OSError:
+        pass
+
+
+def _cached_balance(cache, scope, key, url, now):
+    entry = cache.get(scope) or {}
+    if entry.get('key_tail') == key[-6:] and (now - entry.get('at', 0)) < SCOPE_CACHE_TTL:
+        return entry.get('result') or {'ok': False, 'error': 'cached'}
+    result = fetch_balance(url, key)
+    cache[scope] = {'key_tail': key[-6:], 'at': now, 'result': result}
+    return result
+
 # 余额低于该值(5 元，用户 2026-11-05「全部完善」把 1 元上调)就提前停，避免 0 元附近
 # 发请求吃 HTTP 402 漏期（2026-11-05 03:29 用 1 元阈值时余额已掉到 0.25 才停，欠费 7 分钟漏 2 期）。
 # 充值后要回到 RESUME_BALANCE_CNY(6 元) 以上才恢复，形成 1 元回差防抖。
@@ -258,13 +287,15 @@ def main(argv=None):
 
     # --- 按框架的独立额度守卫：只处理配置了独立 key 的作用域 ---
     scope_results = []
+    scope_cache = _load_scope_cache()
     try:
         import ai_scope
     except Exception:
         ai_scope = None
     if ai_scope is not None:
         for scope, scoped_key in ai_scope.scopes_with_keys():
-            info = fetch_balance(args.balance_url, scoped_key)
+            info = _cached_balance(scope_cache, scope, scoped_key, args.balance_url,
+                                    time.time())
             value = info.get('total_balance')
             entry = ai_scope.scope_entry(ai_scope.read_state(), scope)
             enabled = entry.get('enabled') is not False
@@ -290,6 +321,7 @@ def main(argv=None):
 
     if not args.dry_run:
         save_state(state_path(root), state)
+        _save_scope_cache(scope_cache)
 
     scope_changed = any(row.get('action') in ('pause', 'resume') for row in scope_results)
     notable = (args.verbose or args.dry_run or result['action'] != 'none' or scope_changed

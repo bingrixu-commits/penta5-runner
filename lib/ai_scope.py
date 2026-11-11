@@ -46,6 +46,32 @@ SCOPES = {
     'replay':    {'label': '回放/实验',           'key_env': 'PENTA5_API_KEY_REPLAY'},
 }
 DEFAULT_SCOPE_ENV = 'PENTA5_AI_SCOPE'
+ENV_PATH = ROOT / '.env'
+_env_loaded = False
+
+
+def load_env_once():
+    """把 .env 读进 os.environ（setdefault，不覆盖已注入的值）。
+
+    cron 进程不继承 .env，CLI 与余额守卫都需要这一步，否则看不到独立密钥。
+    """
+    global _env_loaded
+    if _env_loaded:
+        return
+    _env_loaded = True
+    try:
+        raw = ENV_PATH.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def current_scope():
@@ -150,6 +176,7 @@ def key_for(scope):
     spec = SCOPES.get(scope)
     if not spec:
         return ''
+    load_env_once()
     value = os.getenv(spec['key_env']) or ''
     return value.strip()
 
@@ -157,6 +184,7 @@ def key_for(scope):
 def scopes_with_keys(document=None):
     """[(scope, key)] —— 已配置独立密钥的作用域，供余额守卫逐个核对。"""
     document = document or read_state()
+    load_env_once()
     result = []
     for scope in SCOPES:
         key = key_for(scope)

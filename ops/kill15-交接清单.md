@@ -56,3 +56,54 @@ pm2 restart penta5-runner            # 若涉及主 runner
 ```
 
 数据库全量备份：`/root/backups/db-20261112-043237/penta5.sql.gz`（145 MB，`gzip -t` 通过）。
+
+---
+
+## 六、按框架隔离 AI 调用（2026-11-12 06:52 落地）
+
+### 做了什么
+
+| 层 | 实现 | 效果 |
+| --- | --- | --- |
+| 开关 | `lib/ai_scope.py` + `data/ai_scope_control.json`，叠在全局开关之上 | 每个框架可单独停启，互不影响 |
+| 密钥 | `scripts/with_scope.sh` 按作用域注入独立 key 到 `DEEPSEEK_API_KEY` | 一把 key 泄露/吊销只影响一个框架 |
+| 余额 | `ai_balance_guard` 逐 key 核对（240 秒缓存），低于阈值只暂停对应作用域 | 单框架烧爆不会拖停全部 |
+| 调度 | 13 条 AI cron 全部 `with_scope.sh <scope>` 包裹 | cron 天然按框架隔离 |
+
+### 10 把独立 key（DeepSeek 账号内）
+
+| key 名 | 绑定作用域 |
+| --- | --- |
+| penta5-killer | killer |
+| penta5-framework | framework |
+| penta5-he3 | he3 |
+| penta5-kill1 | kill1 |
+| penta5-kill3 | kill3 |
+| penta5-kill11 | kill11 |
+| penta5-kill14 | kill14 |
+| penta5-kill15 | kill15 |
+| penta5-cold | cold15 + cold30（共用） |
+| penta5-replay | replay / 实验 |
+
+kill10 / kill12 / kill13 未分配独立 key，继续回退共享 `DEEPSEEK_API_KEY`。
+
+### 重要限制
+
+**DeepSeek 的余额是账号级的，不按 key 分。** 所以这 10 把 key 共享同一份余额：
+- 能做到：独立吊销、独立识别、独立开关；
+- 做不到：独立的额度池。要真额度隔离，必须开多个 DeepSeek 账号，各自充值。
+
+### 常用命令
+
+```bash
+python3 scripts/ai_scope_control.py status
+python3 scripts/ai_scope_control.py stop  --scope kill14
+python3 scripts/ai_scope_control.py start --scope kill14
+python3 scripts/ai_scope_control.py stop-all
+```
+
+### 注意
+
+- `.env` 里 `PENTA5_API_KEY_*` 已填好，改完 key 不必重启，下一次 cron 自动生效；
+- `with_scope.sh` 会显式 `source .env`，因为 cron 不继承环境变量；
+- 余额守卫的缓存文件 `data/ai_scope_balance_cache.json` 只存 key 尾部 6 位，不存明文。

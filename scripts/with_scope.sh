@@ -8,6 +8,12 @@ shift
 cd /root/penta5-runner || exit 1
 export PENTA5_AI_SCOPE="$scope"
 
+# cron 不继承 .env，这里显式加载（与其它 runner 脚本一致）
+set -a
+# shellcheck disable=SC1091
+. ./.env 2>/dev/null || true
+set +a
+
 key_env=$(python3 -c "
 import sys
 sys.path.insert(0, 'lib')
