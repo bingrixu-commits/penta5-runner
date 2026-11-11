@@ -49,6 +49,13 @@ v3 用“完整方案窗口”把它锁死。
 - 但该回放结束后若做代码指纹复核，`lib/kill15_tail.py` 哈希已变（v3），属预期；
   如需严格“同代码”复核，用 git `03bcc15`（v2）对照。
 - 线上 cron 自 05:35 起使用 v3，封存 `prompt_version` 应为 v3、`policy.scheme_repeat_window=2`。
+- **已确认**：2026-11-12 05:35:26 cron 首期 v3 封存成功
+  `20261112067→068`（`prompt_version=kill15-tail-prompt-v3-inertia-guard`，
+  `policy.scheme_reuse_forbidden=true`、`scheme_repeat_window=2`，attempt 1 一次通过，无拒收重试）；
+  分配 `A=百 / B=千、十、个（B2/B3/B1）`，与上期 `A=千` 不同，且与近 2 期完整方案均不同。
+- 备注：v2 上线期间（05:20–05:31）曾出现 `066→067` 方案 = `064→065` 方案
+  （A=千/B=百十个/B1B2B3，隔 2 期复现），正是 v3 护栏要拦的“两套方案交替”；
+  v3 上线后首期即未再复现。
 
 ## 6. 观察点
 
