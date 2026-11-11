@@ -1,7 +1,7 @@
 'use strict';
 
-// 按框架分页：/f/<scope> 从 panel.html 中抽出该框架区块，套上导航单独成页。
-// 数据永远取自最新的 panel.html，不需要生成静态副本。
+// 按框架分页：/f/<scope> 从 panel.html 抽出该框架区块，套导航单独成页。
+// 每页只带「本框架自己的」启停开关，不再列出其它框架。
 const fs = require('fs');
 const path = require('path');
 
@@ -26,13 +26,22 @@ const PAGE_HEAD = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"
 <title>%TITLE% · Penta5</title>
 <style>
 body{margin:0;background:#f1f5f9;font:14px/1.6 system-ui,sans-serif;color:#0f172a}
-.fw-nav{position:sticky;top:0;z-index:9;display:flex;gap:6px;flex-wrap:wrap;align-items:center;
- padding:10px 12px;background:#0f172a;color:#e2e8f0}
-.fw-nav a{color:#cbd5e1;text-decoration:none;padding:4px 9px;border-radius:6px;font-size:13px}
+.fw-nav{position:sticky;top:0;z-index:9;display:flex;gap:4px;flex-wrap:wrap;align-items:center;
+ padding:8px 12px;background:#0f172a;color:#e2e8f0}
+.fw-nav a{color:#cbd5e1;text-decoration:none;padding:3px 8px;border-radius:6px;font-size:13px}
 .fw-nav a:hover{background:#1e293b;color:#fff}
 .fw-nav a.active{background:#2563eb;color:#fff}
-.fw-nav .brand{font-weight:700;color:#fff;margin-right:8px}
-.fw-wrap{padding:8px 0 24px}
+.fw-nav .brand{font-weight:700;color:#fff;margin-right:6px}
+.fw-wrap{padding:6px 0 24px}
+.fw-switch{max-width:1240px;margin:10px auto;padding:10px 14px;border:1px solid #cbd5e1;
+ border-radius:10px;background:#fff;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:13px}
+.fw-switch .st{font-weight:700}
+.fw-switch .on{color:#15803d}.fw-switch .off{color:#b91c1c}
+.fw-switch button{padding:3px 12px;border-radius:6px;border:1px solid #94a3b8;background:#fff;cursor:pointer}
+.fw-switch button.stop{border-color:#fca5a5;color:#b91c1c}
+.fw-switch button.start{border-color:#86efac;color:#15803d}
+.fw-switch input{padding:2px 6px;border:1px solid #cbd5e1;border-radius:5px;font-size:12px;width:110px}
+.fw-switch .msg{color:#92400e;font-size:12px}
 .fw-missing{margin:24px auto;max-width:640px;padding:16px;border:1px solid #fca5a5;
  border-radius:10px;background:#fef2f2;color:#991b1b}
 </style></head><body>`;
@@ -41,9 +50,7 @@ function nav(active) {
   const links = FRAMEWORKS.map(f =>
     `<a href="/f/${f.scope}"${f.scope === active ? ' class="active"' : ''}>${f.title.split(' ')[0]}</a>`
   ).join('');
-  return `<nav class="fw-nav"><a class="brand" href="/">Penta5</a>` +
-         `<a href="/f/"${active === '' ? ' class="active"' : ''}>框架总览</a>${links}` +
-         `<a href="/" title="完整面板">完整面板</a></nav>`;
+  return `<nav class="fw-nav"><a class="brand" href="/f/"${active === '' ? ' class="active"' : ''}>总览</a>${links}</nav>`;
 }
 
 function extract(html, marker) {
@@ -56,27 +63,79 @@ function extract(html, marker) {
   return html.slice(i, j + end.length);
 }
 
+// 单框架开关：状态用会话读取（只读），启动/停止需要管理员账号密码
+function switchBlock(fw) {
+  return `<section class="fw-switch" data-scope="${fw.scope}">
+<strong>${fw.title}</strong>
+<span class="st" id="fw-state">读取中…</span>
+<button id="fw-toggle" disabled>…</button>
+<details style="margin-left:auto"><summary style="cursor:pointer;color:#475569">管理员操作</summary>
+<span style="margin-left:8px">账号 <input id="fw-user" autocomplete="username"></span>
+<span style="margin-left:6px">密码 <input id="fw-pass" type="password" autocomplete="current-password"></span>
+</details>
+<span class="msg" id="fw-msg"></span>
+</section>
+<script>
+(function(){
+  var SCOPE='${fw.scope}';
+  function n(id){return document.getElementById(id);}
+  function say(t){n('fw-msg').textContent=t||'';}
+  function creds(){return {u:(n('fw-user').value||'').trim(),p:n('fw-pass').value||''};}
+  function auth(c){return 'Basic '+btoa(unescape(encodeURIComponent(c.u+':'+c.p)));}
+  function paint(on){
+    var s=n('fw-state'),b=n('fw-toggle');
+    s.textContent=on?'运行中':'已停用';s.className='st '+(on?'on':'off');
+    b.textContent=on?'停止':'启动';b.className=on?'stop':'start';
+    b.dataset.action=on?'stop':'start';b.disabled=false;
+  }
+  function read(){
+    fetch('/api/ai-scope',{credentials:'same-origin',cache:'no-store'})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(!d.ok){say('读取失败：'+(d.error||''));return;}
+        var row=(d.scopes||[]).filter(function(x){return x.scope===SCOPE;})[0];
+        if(!row){say('该框架未注册开关');return;}
+        paint(row.enabled);
+      }).catch(function(){say('读取失败：网络错误');});
+  }
+  function change(action){
+    var c=creds();
+    if(!c.u||!c.p){say('请先展开「管理员操作」填账号密码再切换');return;}
+    fetch('/api/ai-scope',{method:'POST',credentials:'same-origin',cache:'no-store',
+      headers:{'Content-Type':'application/json',Authorization:auth(c)},
+      body:JSON.stringify({action:action,scope:SCOPE})})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(!d.ok){say('操作失败：'+(d.error||''));return;}
+        paint(d.enabled);say(action==='stop'?'已停止，下一周期不再拉起进程':'已启动');
+      }).catch(function(){say('操作失败：网络错误');});
+  }
+  n('fw-toggle').addEventListener('click',function(){change(this.dataset.action||'stop');});
+  read();
+  setInterval(read,60000);
+})();
+</script>`;
+}
+
 function indexPage(html) {
   const items = FRAMEWORKS.map(f => {
     const has = html.includes(`<!-- ${f.marker}_START -->`);
     return `<tr><td><a href="/f/${f.scope}">${f.title}</a></td>` +
            `<td><code>${f.scope}</code></td><td>${has ? '已渲染' : '无区块'}</td></tr>`;
   }).join('');
-  const control = extract(html, 'AI_SCOPE');
   return `${PAGE_HEAD.replace('%TITLE%', '框架总览')}${nav('')}<div class="fw-wrap">
 <section style="max-width:1000px;margin:12px auto;padding:14px;background:#fff;border:1px solid #e2e8f0;border-radius:12px">
-<h3 style="margin:0 0 8px">框架总览（每个框架单独一页）</h3>
+<h3 style="margin:0 0 8px">框架总览（每框架一页）</h3>
 <table style="width:100%;border-collapse:collapse;font-size:13px">
 <thead><tr><th style="text-align:left">框架</th><th style="text-align:left">作用域</th><th style="text-align:left">状态</th></tr></thead>
-<tbody>${items}</tbody></table></section>${control}</div></body></html>`;
+<tbody>${items}</tbody></table></section></div></body></html>`;
 }
 
 function frameworkPage(html, fw) {
   const block = extract(html, fw.marker);
   const body = block || `<div class="fw-missing">该框架暂时没有面板区块（${fw.marker} 标记不存在）。</div>`;
-  const control = extract(html, 'AI_SCOPE');
   return `${PAGE_HEAD.replace('%TITLE%', fw.title)}${nav(fw.scope)}` +
-         `<div class="fw-wrap">${body}${control}</div>`;
+         `<div class="fw-wrap">${switchBlock(fw)}${body}</div>`;
 }
 
 function createFrameworkPageHandler(options) {
@@ -91,7 +150,6 @@ function createFrameworkPageHandler(options) {
     if (!m) return false;
     const role = authRoleForRequest(req);
     if (role !== 'admin' && role !== 'viewer') {
-      // 与站点一致：未登录先去登录页，登录后回跳
       res.writeHead(302, {'Location': '/', 'Cache-Control': 'no-store'});
       res.end();
       return true;
