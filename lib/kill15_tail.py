@@ -906,7 +906,7 @@ def create_seal(reference, target, reference_open_time, prediction, rows, *,
         'model_label': (response_meta or {}).get('model_label'),
         'model_metadata': response_meta,
         'data_source': 'data/stats_draw_history.json:first-four-balls',
-        'mode': 'shadow',
+        'mode': 'panel',
     }
     if isinstance(extra, dict):
         for key, value in extra.items():
