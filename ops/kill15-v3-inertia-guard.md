@@ -87,3 +87,55 @@ v3 用“完整方案窗口”把它锁死。
   `refresh_source_manifest.py --if-drift` 重建基线后恢复 ok；
   overall=fail 当前仅剩 AI 停机窗口（00:47–04:42）造成的历史 coverage 缺口，与 kill15 无关。
 
+
+## 8. 规则代际分账 + 四码去重 + 面板接入（2026-11-12 06:00 落地）
+
+### 8.1 规则代际分账
+
+此前 `PROMPT_VERSION` 已升到 v3，但 `RULE_VERSION` 一直停在 v1，导致账本无法按规则代际切分。
+本次修正：
+
+- `RULE_VERSION = 'kill15-tail-v3-inertia-guard'`，与 `PROMPT_VERSION` 对齐；
+- 新增 `LEGACY_RULES = ('kill15-tail-v1-ab-position-kill', 'kill15-tail-v2-anticollapse')`；
+- 已发布的 14 条旧记录**原地不动、不迁移**，按自身 `rule_version` 保留；
+- 统计/回放按 `rule_version` 过滤，跨代际不混算。
+
+### 8.2 规则 7：四码不得与上期完全相同
+
+v2/v3 的硬校验拦住了「A/B 组合照搬」和「完整方案近 2 期重复」，但漏了一种钻空子：
+**四个杀码原样复制、只改 A/B 分配**。本次补上：
+
+- `build_context` 下发 `last_kills`；
+- `normalize_response` 增加规则 7 硬校验，四码与上期全同 → `raise` 拒收重试；
+- prompt 的【后台防塌方核心规则】新增第 6 条，输出格式说明同步补充。
+
+### 8.3 面板接入（真正落地）
+
+- 新增 `lib/kill_fifteen_view.py`：渲染 `<!-- KILL_FIFTEEN_START/END -->` 区块
+  （四位杀号卡 + A/B 分组 + 子策略 + 今日/累计战绩 + 最近 5 期结算 + 口径脚注）；
+- `scripts/run_kill15_tail.py` 接入 `panel_io.update_panel`，与 kill3/kill14 同一发布管线：
+  封存 → `mark_published` → `publish_block()`；写面板失败 → `mark_publication_failed` 回滚到 prepared；
+- 已存在封存时也会**恢复面板区块**（防止面板被重建后区块丢失）；
+- 封存 `mode` 由 `shadow` 改为 `panel`。
+
+### 8.4 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 区块渲染 | 3187 bytes，markers 正确，重复套用幂等 |
+| 面板实际内容 | `http://127.0.0.1:3010/`（经 nginx:3001 反代，需 Basic）已出现 kill15 区块 |
+| 规则 7 单元测试 | 四码全同 → 正确拒收；正常路径通过 |
+| 线上首期 v3 | `20261112072→073`，`rule_version=v3`、`mode=panel`、`published`，06:00:37 |
+| 健康巡检 | `kill15_tail`=ok、`kill15_policy`=ok、`kill15_retry`=ok |
+
+### 8.5 一个部署时序坑（备忘）
+
+cron 每 5 分钟先 `sleep 25` 再启动进程；进程启动瞬间就 import 模块。
+**在 cron 启动之后、import 之前上传代码，本轮仍跑旧代码**——06:00 那期曾因此仍写 v1。
+判断是否生效要看**下一轮**封存的 `rule_version`，不是看文件 mtime。建议改完代码等到下一个整 5 分钟之后再验证。
+
+### 8.6 当前进度
+
+- 线上：16 期封存 / 13 期结算；
+- 200 期 v2 大样本回放：跑至 137/200，整组 103/137 = 75.18%、单码 506/548 = 92.34%（未完成，勿下结论）；
+- 余额：41.33 元（守卫阈值 5 元暂停 / 6 元恢复）。
