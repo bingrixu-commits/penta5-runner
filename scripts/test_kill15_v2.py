@@ -254,6 +254,151 @@ def test_review_scheduler_catchup():
             setattr(kill15_tail, name, value)
 
 
+def test_review_replay_e2e():
+    """用 45 期 v4 回放的真实记录跑端到端复盘（bucket 1，30 期）。"""
+    import json as _json
+    import tempfile
+    replay_path = Path('/root/penta5-runner/data/kill15_tail/replay_v4.json')
+    if not replay_path.exists():
+        print('SKIP replay-e2e: replay_v4.json 不存在')
+        return
+    records = [row for row in
+               (_json.loads(replay_path.read_text(encoding='utf-8')).get('records') or [])
+               if row.get('rule_version') == kill15_tail.RULE_VERSION
+               and isinstance(row.get('positions'), dict)][:45]
+    if len(records) < 30:
+        print('SKIP replay-e2e: 回放记录不足 30 期（%d）' % len(records))
+        return
+    seals, settlements, snapshot_records = [], [], []
+    for row in records:
+        target = str(row.get('target_period'))
+        allocation = row.get('allocation') or {}
+        positions = row.get('positions') or {}
+        seals.append({
+            'version': 1, 'rule_version': kill15_tail.RULE_VERSION,
+            'prompt_version': row.get('prompt_version') or kill15_tail.PROMPT_VERSION,
+            'ref_period': str(row.get('ref_period')), 'target_period': target,
+            'publication_state': 'published',
+            'published_at': '2026-11-12T06:00:00+08:00',
+            'allocation': allocation,
+            'positions': {key: {'kill': (positions.get(key) or {}).get('kill')}
+                          for key in KEYS},
+            'a_cap': row.get('a_cap'),
+            'candidate_pools': row.get('candidate_pools') or {},
+            'self_check': row.get('self_check') or {},
+            'policy': {'b_rotation_forced': True, 'review_periods': 30},
+        })
+        settlements.append({
+            'rule_version': kill15_tail.RULE_VERSION,
+            'ref_period': str(row.get('ref_period')), 'target_period': target,
+            'open_time': '2026-11-12T06:05:00+08:00',
+            'allocation': allocation, 'positions': positions,
+            'group_hit': row.get('group_hit'),
+            'position_hits': row.get('position_hits'),
+        })
+        snapshot_records.append({
+            'period': target,
+            'numbers': [int((positions.get(key) or {}).get('actual')) for key in KEYS],
+        })
+    names = ('SEALS_PATH', 'SETTLEMENTS_PATH', 'REVIEWS_PATH', 'REVIEW_ALERTS_PATH')
+    saved = {name: getattr(kill15_tail, name) for name in names}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kill15_tail.SEALS_PATH = root / 'seals.json'
+            kill15_tail.SETTLEMENTS_PATH = root / 'settlements.json'
+            kill15_tail.REVIEWS_PATH = root / 'reviews.json'
+            kill15_tail.REVIEW_ALERTS_PATH = root / 'review_alerts.log'
+            kill15_tail.SEALS_PATH.write_text(
+                _json.dumps({'version': 1, 'records': seals}), encoding='utf-8')
+            kill15_tail.SETTLEMENTS_PATH.write_text(
+                _json.dumps({'version': 1, 'records': settlements}), encoding='utf-8')
+            created = kill15_tail.run_scheduled_review(
+                snapshot={'records': snapshot_records})
+            buckets = [item.get('review_bucket') for item in created]
+            if buckets != [1]:
+                FAILED.append('回放端到端复盘 bucket 错误: %r' % (buckets,))
+                return
+            review = created[0]
+            if review.get('status') != 'ok' or review.get('discrepancies'):
+                FAILED.append('回放端到端复盘不一致: %r' % (review.get('discrepancies'),))
+            elif review.get('reviewed_periods') != 30:
+                FAILED.append('回放端到端复盘期数错误: %r' % (review.get('reviewed_periods'),))
+            else:
+                rates = review.get('rates') or {}
+                group = rates.get('group') or {}
+                print('PASS replay-e2e: 真实回放 45 期自动复盘 bucket 1 -> ok'
+                      '（样本 30 期，整组 %s/%s，不一致 0）'
+                      % (group.get('hits'), group.get('bets')))
+    finally:
+        for name, value in saved.items():
+            setattr(kill15_tail, name, value)
+
+
+def test_cycle_record_e2e():
+    """第 41 期周期起点：save_seal 写 cycles.json 第 2 条 + previous_cycle 汇总 + 幂等。"""
+    import json as _json
+    import tempfile
+    names = ('SEALS_PATH', 'SETTLEMENTS_PATH', 'CYCLES_PATH', 'REVIEWS_PATH',
+             'REVIEW_ALERTS_PATH')
+    saved = {name: getattr(kill15_tail, name) for name in names}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kill15_tail.SEALS_PATH = root / 'seals.json'
+            kill15_tail.SETTLEMENTS_PATH = root / 'settlements.json'
+            kill15_tail.CYCLES_PATH = root / 'cycles.json'
+            kill15_tail.REVIEWS_PATH = root / 'reviews.json'
+            kill15_tail.REVIEW_ALERTS_PATH = root / 'review_alerts.log'
+            rows = load_rows()
+            settlements = [{
+                'rule_version': kill15_tail.RULE_VERSION,
+                'ref_period': str(20261112000 + index),
+                'target_period': str(20261112001 + index),
+                'allocation': {'a': ['q'], 'b': ['b', 's', 'g'],
+                               'b_sub': {'b': 'B1', 's': 'B2', 'g': 'B3'}},
+                'positions': {key: {'hit': True} for key in KEYS},
+                'group_hit': True,
+            } for index in range(kill15_tail.CYCLE_PERIODS)]
+            kill15_tail.SETTLEMENTS_PATH.write_text(
+                _json.dumps({'version': 1, 'records': settlements}), encoding='utf-8')
+            context = kill15_tail.build_context(rows, settlements=settlements)
+            if not context['cycle']['is_cycle_start'] or context['cycle']['cycle_no'] != 1:
+                FAILED.append('构造第 2 轮上下文失败: %r' % (context['cycle'],))
+                return
+            prediction = {
+                'allocation': {'a': ['q'], 'b': ['b', 's', 'g'],
+                               'b_sub': {'b': 'B1', 's': 'B2', 'g': 'B3'}},
+                'kills': {key: context['positions'][key]['pool'][0] for key in KEYS},
+                'self_check': {key: True for key in kill15_tail.SELF_CHECK_KEYS},
+            }
+            seal = kill15_tail.create_seal(
+                '20261112090', '20261112091', '2026-11-12T07:00:00+08:00',
+                prediction, rows, context=context)
+            kill15_tail.save_seal(seal)
+            cycles = kill15_tail.load_cycles()
+            if len(cycles) != 1 or int(cycles[0].get('cycle_no') or 0) != 1:
+                FAILED.append('周期起点记录错误: %r' % (cycles,))
+                return
+            previous = cycles[0].get('previous_cycle') or {}
+            if previous.get('settled') != kill15_tail.CYCLE_PERIODS:
+                FAILED.append('前一周期汇总错误: %r' % (previous,))
+                return
+            seal2 = kill15_tail.create_seal(
+                '20261112091', '20261112092', '2026-11-12T07:05:00+08:00',
+                prediction, rows, context=context)
+            kill15_tail.save_seal(seal2)
+            if len(kill15_tail.load_cycles()) != 1:
+                FAILED.append('周期起点记录非幂等（重复写入）')
+            else:
+                print('PASS cycle-record-e2e: 第 2 轮起点写入 cycles.json'
+                      '（previous_cycle settled=%d），重复封存不重复写'
+                      % (previous.get('settled'),))
+    finally:
+        for name, value in saved.items():
+            setattr(kill15_tail, name, value)
+
+
 def main():
     rows = load_rows()
     high_b = [settlement(['q'], ['b', 's', 'g'],
@@ -510,6 +655,10 @@ def main():
 
     # ---- 15. 复盘调度：错过的 bucket 依次补跑、幂等、forced 不计合规 ----
     test_review_scheduler_catchup()
+
+    # ---- 16. 真实回放端到端复盘 + 第 2 轮周期起点写入 ----
+    test_review_replay_e2e()
+    test_cycle_record_e2e()
 
     print()
     if FAILED:

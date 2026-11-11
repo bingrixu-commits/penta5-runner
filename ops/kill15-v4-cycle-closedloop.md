@@ -158,3 +158,15 @@
   （retry 近 6h runs=27 retries=0 failures=0）。
 - 面板显示「第1轮 9/40期 ｜ 复盘待到期（8/30 期，还差 22 期）」，与账本一致（forced #1 不再冒充合规）。
 
+### 8.1 落地完善（07:18，含页面接入与端到端验证）
+
+| 项 | 结果 |
+| --- | --- |
+| `/f/kill15` 新框架页接入 | 用 node 直接调用 `framework_pages.js` 的页面处理器离线渲染：HTTP 200、7556 bytes、含 `KILL_FIFTEEN` 区块、标题「kill15 分位杀号 · Penta5」；总览页 kill15 显示「已渲染」 ✅ |
+| 3010 端口实网探测 | 失败/超时——并行会话正在改造 panel/登录并反复重启后端（pm2 `penta5-runner` restarts=6、unstable=0、CPU 高），属其进行中的部署窗口，非 kill15 问题；待其稳定后复测 |
+| 真实回放端到端复盘 | 用 `replay_v4.json` 45 期真实记录重建临时账本 → 自动生成 bucket 1 复盘：30 期样本、整组 22/30、不一致 0、status=ok ✅ |
+| 第 2 轮周期写入 e2e | 临时账本 40 期 → `save_seal` 写入 `cycles.json` 第 2 条（`previous_cycle.settled=40`）；重复封存不重复写（幂等）✅ |
+| 回归自测 | `test_kill15_v2.py` 全部通过（新增 replay-e2e / cycle-record-e2e 两项端到端）；`test_kill15_health.py` 20 项、`test_kill15_runner.py` 4 项通过 |
+| 发布锚点 | git tag `kill15-v4.1` → 代码提交 `99bbe1b`（回滚用 `git revert 99bbe1b` 或 checkout 该 tag 前的 `20040ed`） |
+
+
