@@ -25,7 +25,7 @@ import ops_health_check as health  # noqa: E402
 FAILED = []
 TZ = health.TZ
 NOW = datetime.now(TZ)
-PROMPT = 'kill15-tail-prompt-v4-cycle-closedloop'
+PROMPT = 'kill15-tail-prompt-v4.2-substrategy-defs'
 RULE = 'kill15-tail-v4-cycle-closedloop'
 POOLS = {'q': [1, 2, 3, 4, 5], 'b': [2, 3, 4, 5, 6],
          's': [3, 4, 5, 6, 7], 'g': [4, 5, 6, 7, 8]}

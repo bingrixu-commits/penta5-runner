@@ -20,6 +20,9 @@
   （Hit-A/Hit-B 只统计本轮周期内最近 15 期，runaway 连击同样只在轮内累计）；
   B 组三子策略每期强制轮换（任一 B 号位不得连续两期使用同一子策略）；
   每 REVIEW_PERIODS=30 期自动抽样复盘，核对封存/结算账本与原始开奖是否一致；
+- 子策略定义下发（v4.2）：A=池内遗漏最大、B1=池内近 30 期最热、B2=池内近 3 期深冷刚开出
+  （池内无标的时按「候选不足」降级为遗漏最大）、B3=单双/大小偏弱侧遗漏最大；后端在 prompt
+  中下发每号位的策略候选，并在复盘记录中统计 A/B1/B2/B3 语义符合率，防止“名义策略漂移”；
 - 命中 = 该号位实际开奖号 != 该号位杀码（单项随机 90%）；整组随机基线 (9/10)^4 = 65.61%；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零。
 
@@ -89,7 +92,7 @@ POSITION_LABELS = {key: label for key, label, _index in POSITIONS}
 POSITION_INDEX = {key: index for key, _label, index in POSITIONS}
 
 RULE_VERSION = 'kill15-tail-v4-cycle-closedloop'
-PROMPT_VERSION = 'kill15-tail-prompt-v4-cycle-closedloop'
+PROMPT_VERSION = 'kill15-tail-prompt-v4.2-substrategy-defs'
 # 旧代际记录原样保留、不迁移；统计与回放按 rule_version 切分。
 LEGACY_RULES = (
     'kill15-tail-v1-ab-position-kill',
@@ -267,6 +270,88 @@ def deep_cold_burst(rows, draws=3, threshold=DEEP_COLD_OMISSION):
     return total
 
 
+def _omission_before(rows, end_index, position, digit):
+    """digit 在 rows[end_index] 开出之前的连续遗漏期数。"""
+    gap = end_index
+    for offset in range(1, end_index + 1):
+        if rows[end_index - offset][position] == digit:
+            gap = offset - 1
+            break
+    return gap
+
+
+def _last_deep_cold_digits(rows, ref_index, position, draws=3,
+                           threshold=DEEP_COLD_OMISSION):
+    """近 draws 期里“深冷刚开出”的码（开出前遗漏 >= threshold）。"""
+    came = set()
+    for draw_index in range(max(0, ref_index - draws + 1), ref_index + 1):
+        digit = rows[draw_index][position]
+        if _omission_before(rows, draw_index, position, digit) >= threshold:
+            came.add(int(digit))
+    return came
+
+
+def _shape_reverse_candidate(pool, omission, rows, ref_index, position,
+                             window=HOT_WINDOW):
+    """B3 形态对冲：近 30 期单双/大小中偏弱一侧里遗漏最大的码。"""
+    sample = rows[max(0, ref_index - window + 1):ref_index + 1]
+    if not sample:
+        return max(pool, key=lambda digit: (omission[digit], -digit))
+    total = len(sample)
+    odd = sum(1 for row in sample if row[position] % 2 == 1)
+    big = sum(1 for row in sample if row[position] >= 5)
+    parity_gap = abs(2 * odd - total) / float(total)
+    size_gap = abs(2 * big - total) / float(total)
+    parity_weak_is_odd = odd <= total - odd
+    size_weak_is_big = big <= total - big
+    candidates = []
+    for digit in pool:
+        if parity_gap >= size_gap:
+            keep = ((digit % 2 == 1) == parity_weak_is_odd)
+        else:
+            keep = ((digit >= 5) == size_weak_is_big)
+        if keep:
+            candidates.append(digit)
+    if not candidates:
+        candidates = list(pool)
+    return max(candidates, key=lambda digit: (omission[digit], -digit))
+
+
+def strategy_hints(rows, ref_index, position, pool):
+    """按契约定义算出的本期策略候选（不改候选池，只给模型明确选码依据）。
+
+    A  = 池内当前遗漏最大者（同遗漏取号码小者）
+    B1 = 池内近 30 期出现次数最多者（同热度取遗漏大者）
+    B2 = 池内“近 3 期深冷刚开出”的码；池内无合法标的时标记 b2_fallback=True，
+         降级为池内遗漏最大者（由 prompt 要求 reason 标注「候选不足」）
+    B3 = 近 30 期单双/大小偏弱一侧里遗漏最大者
+    """
+    if not pool:
+        return None
+    rows_before = rows[:ref_index + 1]
+    omission = omission_map(rows_before, position)
+    hot = hot_map(rows_before, position)
+    a_digit = max(pool, key=lambda digit: (omission[digit], -digit))
+    b1_digit = max(pool, key=lambda digit: (hot[digit], -digit))
+    deep_cold = _last_deep_cold_digits(rows, ref_index, position)
+    hits = sorted(deep_cold & set(int(digit) for digit in pool))
+    if hits:
+        b2_digit = max(hits, key=lambda digit: (omission[digit], -digit))
+        b2_fallback = False
+    else:
+        b2_digit = a_digit
+        b2_fallback = True
+    b3_digit = _shape_reverse_candidate(pool, omission, rows, ref_index, position)
+    return {
+        'a': a_digit,
+        'b1': b1_digit,
+        'b2': b2_digit,
+        'b2_fallback': b2_fallback,
+        'b2_pool_hits': hits,
+        'b3': b3_digit,
+    }
+
+
 def _allocation_key(record):
     allocation = record.get('allocation') or {}
     a = tuple(sorted(str(key) for key in allocation.get('a') or []))
@@ -403,6 +488,10 @@ def build_context(rows, settlements=None):
             'hot30': {str(digit): hot[digit] for digit in range(10)},
         }
     burst = deep_cold_burst(rows)
+    ref_index = len(rows) - 1
+    strategy = {}
+    for key, _label, index in POSITIONS:
+        strategy[key] = strategy_hints(rows, ref_index, index, positions[key]['pool'])
     cycle = cycle_state(settlements)
     perf = performance_from_settlements(current_cycle_settlements(settlements))
     runaway = runaway_state(settlements)
@@ -417,6 +506,7 @@ def build_context(rows, settlements=None):
               if isinstance(row.get('allocation'), dict)]
     return {
         'positions': positions,
+        'strategy': strategy,
         'regime': {'cold_burst_3': burst,
                    'label': '冷反弹活跃' if burst >= 3 else '冷沉寂'},
         'performance': perf,
@@ -459,13 +549,24 @@ def _scheme_text(allocation):
 
 
 def build_prompt(reference, target, rows, *, context=None):
-    """Frozen prompt v3: anti-collapse rules + anti-inertia scheme guard, numbers only."""
+    """Frozen prompt v4.2: anti-collapse + anti-inertia + explicit substrategy definitions."""
     rows = _normalize_rows(rows)
     context = context or build_context(rows)
     pool_lines = []
     for key, label, _index in POSITIONS:
         item = context['positions'][key]
         pool_lines.append('· %s位候选池（只能从这里选）：%s' % (label, _pool_line(item, context)))
+
+    strategy_lines = []
+    strategy_hints_map = context.get('strategy') or {}
+    for key, label, _index in POSITIONS:
+        hint = strategy_hints_map.get(key) or {}
+        if not hint:
+            continue
+        b2_text = ('%d（候选不足→按池内遗漏最大）' % hint['b2']
+                   if hint.get('b2_fallback') else str(hint['b2']))
+        strategy_lines.append('· %s位策略候选：A=%d｜B1=%d｜B2=%s｜B3=%d'
+                              % (label, hint['a'], hint['b1'], b2_text, hint['b3']))
 
     perf = context['performance']
     regime = context['regime']
@@ -484,29 +585,40 @@ def build_prompt(reference, target, rows, *, context=None):
         '你不得自行遍历历史、自行统计期数、自行计算遗漏或命中率，一律以下发数值为准。\n\n'
         '【后端下发数据（参考期 %s → 目标期 %s）】' % (reference, target)
     )
-    data_lines = [
-        '\n'.join(pool_lines),
-        '· 盘面：%s（近3期深冷开出 %d 枚）' % (regime['label'], regime['cold_burst_3']),
-        '· 近15期绩效：Hit-A %s（样本 %d）／Hit-B %s（样本 %d）'
-        % (_pct(perf['hit_a_15']), perf['a_n'], _pct(perf['hit_b_15']), perf['b_n']),
-        '· 顺局预警：%s（同一套分配连续命中 %d 期）'
-        % ('是' if runaway_hit else '否', runaway.get('consecutive_same_allocation')),
-        '· 上期方案：%s' % _scheme_text(last),
-        '· 前第2期方案（本期禁止重复）：%s' % two_ago_text,
-        '· 本轮周期：第 %d 轮 · 第 %d/%d 期（胜率统计只在本轮周期内累计，跨轮清零）'
-        % (cycle['cycle_no'] + 1, cycle['cycle_pos'], cycle['cycle_periods']),
-        '· 本期 A 组号位上限：%d 个（下限 1 个，禁止 A=0）' % context['a_cap'],
-        '· 本期 B 子策略强制轮换：是（每个 B 号位都必须与上期不同；B 占多个号位时子策略互不重复）',
-    ]
+    data_lines = (
+        ['\n'.join(pool_lines)]
+        + strategy_lines
+        + [
+            '· 盘面：%s（近3期深冷开出 %d 枚）' % (regime['label'], regime['cold_burst_3']),
+            '· 近15期绩效：Hit-A %s（样本 %d）／Hit-B %s（样本 %d）'
+            % (_pct(perf['hit_a_15']), perf['a_n'], _pct(perf['hit_b_15']), perf['b_n']),
+            '· 顺局预警：%s（同一套分配连续命中 %d 期）'
+            % ('是' if runaway_hit else '否', runaway.get('consecutive_same_allocation')),
+            '· 上期方案：%s' % _scheme_text(last),
+            '· 前第2期方案（本期禁止重复）：%s' % two_ago_text,
+            '· 本轮周期：第 %d 轮 · 第 %d/%d 期（胜率统计只在本轮周期内累计，跨轮清零）'
+            % (cycle['cycle_no'] + 1, cycle['cycle_pos'], cycle['cycle_periods']),
+            '· 本期 A 组号位上限：%d 个（下限 1 个，禁止 A=0）' % context['a_cap'],
+            '· 本期 B 子策略强制轮换：是（每个 B 号位都必须与上期不同；B 占多个号位时子策略互不重复）',
+        ]
+    )
     if cycle.get('is_cycle_start'):
         data_lines.append(
             '· 周期软重置：本期为第 %d 轮起点，历史胜率偏好已清空——A/B 配比与四个号位'
             '必须仅依据本期下发指标重新推导，禁止参照上一轮任何配置'
             % (cycle['cycle_no'] + 1))
+    strategy_defs = (
+        '【A/B 三子策略定义（后端已按定义算好候选，四个杀码必须按定义选）】\n'
+        'A（遗漏系）= 该号位候选池内当前遗漏最大的码；\n'
+        'B1（热码杀）= 池内近 30 期出现次数最多的码；\n'
+        'B2（反弹杀）= 池内“近 3 期深冷刚开出”的码；池内无合法标的时按「候选不足」'
+        '降级为池内遗漏最大，并在 reason 注明；\n'
+        'B3（形态对冲）= 近 30 期单双/大小中偏弱一侧里遗漏最大的码。\n\n'
+    )
     alloc_rules = (
         '【A/B 配比规则】\n'
         '1. A 组号位数量必须在 1 到本期上限之间；禁止四个号位全部给 A；\n'
-        '2. 遗漏系 A 适合冷号延续；对冲 B 用于分散，B 必须标明子策略 B1/B2/B3；\n'
+        '2. 遗漏系 A 取池内遗漏最大；对冲 B 按 B1/B2/B3 定义选码，B 必须标明子策略；\n'
         '3. Hit-A 偏低或过高都要减少 A；Hit-A、Hit-B 同时低于 70% 时 A 只留 1 个；\n'
         '4. B 子策略强制轮换：每个 B 号位每期都必须与上期使用不同的子策略；'
         'B 占多个号位时子策略也不得重复；\n'
@@ -528,7 +640,9 @@ def build_prompt(reference, target, rows, *, context=None):
         '6. 杀码去重：四个杀码不得与上期四个杀码完全相同——即使 A/B 分配变了，'
         '四码原样照搬同样拒收，必须按本期指标重新选码；\n'
         '7. 周期纪律：每 %d 期为一轮，跨轮历史胜率偏好清零，必须按本期指标重新推导配比；'
-        'B 组三子策略每期强制轮换，任何 B 号位不得连续两期使用同一子策略。\n\n'
+        'B 组三子策略每期强制轮换，任何 B 号位不得连续两期使用同一子策略；\n'
+        '8. 子策略定义纪律：A 组号位杀码必须取该号位 A 候选；B1/B2/B3 必须取对应策略候选'
+        '（B2 候选不足时按降级规则），不得改用池内其它码。\n\n'
         % CYCLE_PERIODS
     )
     checklist = (
@@ -539,7 +653,8 @@ def build_prompt(reference, target, rows, *, context=None):
         '3. dispersed：B 占多个号位时子策略不重复，且每个 B 号位子策略与上期不同，'
         '四号位策略错落；\n'
         '4. cold_rebound_adjusted：冷反弹活跃时 A 已压到上限内且保留对冲 B（未触发也填 true）；\n'
-        '5. pool_confirmed：四个杀码全部在对应号位候选池内，无池外码。\n'
+        '5. pool_confirmed：四个杀码全部在对应号位候选池内，且与对应策略候选一致'
+        '（B2 候选不足时按降级候选），无池外码。\n'
         '自检缺项或任一项为 false，后端直接拒收并重试。\n\n'
     )
     output_spec = (
@@ -551,11 +666,14 @@ def build_prompt(reference, target, rows, *, context=None):
         '"dispersed":true,"cold_rebound_adjusted":true,"pool_confirmed":true},'
         '"reason":"40字以内"}\n'
         '注意：allocation.a 与 allocation.b 合起来必须恰好是 q/b/s/g 四个键；'
-        'b_sub 的键必须与 allocation.b 一致；kills 的四个值必须取自对应号位候选池；'
+        'b_sub 的键必须与 allocation.b 一致；kills 的四个值必须取自对应号位候选池，'
+        '并与该号位对应策略候选一致（B2 允许候选不足降级）；'
         'A 组号位数量必须在 1..上限 之间；完整方案（分配+B 子策略）不得与最近 2 期重复；'
         '每个 B 号位子策略必须与上期不同；四个杀码不得与上期完全相同。'
     )
-    prompt = '\n'.join([header] + data_lines + ['', alloc_rules + hard_rules + checklist + output_spec])
+    prompt = '\n'.join([header] + data_lines
+                       + ['', strategy_defs + alloc_rules + hard_rules
+                          + checklist + output_spec])
 
     audit = {
         'version': PROMPT_VERSION,
@@ -565,6 +683,12 @@ def build_prompt(reference, target, rows, *, context=None):
         'history_sha256': sha256(json.dumps(rows[-WINDOW:], separators=(',', ':')).encode('utf-8')).hexdigest(),
         'rows': [[str(value) for value in row] for row in rows[-WINDOW:]],
         'candidate_pools': {key: context['positions'][key]['pool'] for key in POSITION_KEYS},
+        'strategy_candidates': {
+            key: {'a': hint['a'], 'b1': hint['b1'], 'b2': hint['b2'],
+                  'b2_fallback': hint['b2_fallback'], 'b3': hint['b3']}
+            for key, hint in (context.get('strategy') or {}).items() if hint
+        },
+        'substrategy_defs': 1,
         'omission': {key: context['positions'][key]['omission'] for key in POSITION_KEYS},
         'hot30': {key: context['positions'][key]['hot30'] for key in POSITION_KEYS},
         'regime': context['regime'],
@@ -989,6 +1113,7 @@ def create_seal(reference, target, reference_open_time, prediction, rows, *,
             'scheme_repeat_window': SCHEME_REPEAT_WINDOW,
             'b_sub_dispersion_required': True,
             'b_rotation_forced': True,
+            'substrategy_defs': 1,
             'cycle_periods': CYCLE_PERIODS,
             'cycle_no': cycle.get('cycle_no'),
             'cycle_pos': cycle.get('cycle_pos'),
@@ -1231,6 +1356,83 @@ def _wilson_interval(successes, trials, z=1.96):
     return max(0.0, center - margin), min(1.0, center + margin)
 
 
+def strategy_conformance(seals, settlements, history, rule_version=RULE_VERSION):
+    """统计已结算期的 A/B1/B2/B3 语义符合率（只读；用于发现“名义策略漂移”）。"""
+    periods = sorted(str(period) for period in (history or {}))
+    digits_rows, index_by_period = [], {}
+    for period in periods:
+        digits = (history or {}).get(period)
+        try:
+            values = [int(value) for value in list(digits or [])[:4]]
+        except (TypeError, ValueError):
+            continue
+        if len(values) != 4 or any(value < 0 or value > 9 for value in values):
+            continue
+        index_by_period[period] = len(digits_rows)
+        digits_rows.append(values)
+    seals_by_target = {}
+    for seal in seals or []:
+        if not isinstance(seal, dict):
+            continue
+        if str(seal.get('rule_version') or '') != str(rule_version):
+            continue
+        target = str(seal.get('target_period') or '')
+        if target:
+            seals_by_target[target] = seal
+    stats = {scope: {'total': 0, 'match': 0} for scope in ('A', 'B1', 'B2', 'B3')}
+    for row in generation_settlements(settlements, rule_version):
+        seal = seals_by_target.get(str(row.get('target_period') or ''))
+        if seal is None:
+            continue
+        ref_index = index_by_period.get(str(seal.get('ref_period') or ''))
+        if ref_index is None:
+            continue
+        pools = seal.get('candidate_pools') or {}
+        allocation = seal.get('allocation') or {}
+        subs = allocation.get('b_sub') or {}
+        for key in POSITION_KEYS:
+            position = POSITION_INDEX[key]
+            item = (seal.get('positions') or {}).get(key) or {}
+            try:
+                kill = int(item.get('kill'))
+            except (TypeError, ValueError):
+                continue
+            pool = []
+            for digit in pools.get(key) or []:
+                try:
+                    pool.append(int(digit))
+                except (TypeError, ValueError):
+                    continue
+            if not pool:
+                continue
+            hint = strategy_hints(digits_rows, ref_index, position, pool)
+            if not hint:
+                continue
+            if key in (allocation.get('a') or []):
+                scope = 'A'
+                expected = hint['a']
+            else:
+                scope = str(subs.get(key) or '').upper()
+                expected = {'B1': hint['b1'], 'B2': hint['b2'],
+                            'B3': hint['b3']}.get(scope)
+            if scope not in stats or expected is None:
+                continue
+            stats[scope]['total'] += 1
+            if kill == expected:
+                stats[scope]['match'] += 1
+    scopes = []
+    for scope in ('A', 'B1', 'B2', 'B3'):
+        total = stats[scope]['total']
+        match = stats[scope]['match']
+        scopes.append({
+            'scope': scope,
+            'total': total,
+            'match': match,
+            'rate': (match / float(total)) if total else None,
+        })
+    return {'scopes': scopes, 'reviewed_periods': len(seals_by_target)}
+
+
 def _parse_iso(value):
     if not value:
         return None
@@ -1386,6 +1588,13 @@ def audit_settlements(seals, settlements, history, sample=REVIEW_SAMPLE,
         elif EXPECTED_GROUP_RATE > high:
             warnings.append('整组命中率显著低于随机基线 65.61%%（95%%CI %.1f%%–%.1f%%），'
                             '需复核候选池/配比口径' % (100 * low, 100 * high))
+    semantics = strategy_conformance(seals, settlements, history, rule_version)
+    for item in semantics['scopes']:
+        if item['scope'] in ('B1', 'B2', 'B3') and item['total'] >= 5 \
+                and isinstance(item['rate'], (int, float)) and item['rate'] < 0.5:
+            warnings.append('子策略语义符合率偏低：%s %d/%d（%.0f%%），疑似名义策略漂移'
+                            % (item['scope'], item['match'], item['total'],
+                               100 * item['rate']))
     return {
         'status': 'ok' if not discrepancies else 'mismatch',
         'rule_version': str(rule_version),
@@ -1404,6 +1613,7 @@ def audit_settlements(seals, settlements, history, sample=REVIEW_SAMPLE,
         },
         'baseline': {'group_rate': EXPECTED_GROUP_RATE,
                      'expected_basis': EXPECTED_BASIS},
+        'semantics': semantics,
     }
 
 
@@ -1418,6 +1628,7 @@ def _append_review_alert(record):
         'to_target': record.get('to_target'),
         'discrepancies': record.get('discrepancies') or [],
         'warnings': record.get('warnings') or [],
+        'semantics': record.get('semantics') or {},
     }, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     try:
         with open(REVIEW_ALERTS_PATH, 'a', encoding='utf-8') as stream:

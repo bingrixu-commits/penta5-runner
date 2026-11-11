@@ -414,7 +414,9 @@ def main():
     for needle in ('长期运行·防塌方核心规则', '禁止惯性复制上期方案', '前第2期方案',
                    '最近 2 期', '每期强制自检清单', 'allocation_rederived',
                    '候选不足', 'self_check', '顺局风控',
-                   '本轮周期', 'B 子策略强制轮换', '周期纪律'):
+                   '本轮周期', 'B 子策略强制轮换', '周期纪律',
+                   'A/B 三子策略定义', 'B1（热码杀）', 'B2（反弹杀）', 'B3（形态对冲）',
+                   '位策略候选'):
         if needle not in prompt:
             FAILED.append('prompt 缺少 %r' % needle)
     if '%%' in prompt or '%s' in prompt:
@@ -429,7 +431,11 @@ def main():
         FAILED.append('audit.cycle 错误')
     if audit.get('b_rotation_forced') is not True or audit.get('rotation_required') is not True:
         FAILED.append('audit.rotation_required/b_rotation_forced 错误')
-    print('PASS prompt v4 (%d chars, version=%s, cycle=%s)'
+    if audit.get('substrategy_defs') != 1:
+        FAILED.append('audit.substrategy_defs 错误')
+    if set(audit.get('strategy_candidates') or {}) != set(kill15_tail.POSITION_KEYS):
+        FAILED.append('audit.strategy_candidates 号位不全')
+    print('PASS prompt v4.2 (%d chars, version=%s, cycle=%s)'
           % (len(prompt), audit['version'], audit.get('cycle')))
 
     # ---- 2. 合法输出通过（v2+v3+v4 全部检查）----
@@ -629,6 +635,11 @@ def main():
     else:
         print('PASS review: 3 期一致样本 -> ok（整组 %d/%d）'
               % (good['rates']['group']['hits'], good['rates']['group']['bets']))
+    semantics = good.get('semantics') or {}
+    if {item.get('scope') for item in semantics.get('scopes') or []} != {'A', 'B1', 'B2', 'B3'}:
+        FAILED.append('复盘缺 semantics 结构: %r' % (semantics,))
+    else:
+        print('PASS review semantics: A/B1/B2/B3 符合率已入复盘记录')
     early = kill15_tail.audit_settlements(seals, settlements, history, upto=2)
     if early['reviewed_periods'] != 2 or early.get('to_target') != settlements[1].get('target_period'):
         FAILED.append('复盘 upto 窗口切片错误: %r' % (

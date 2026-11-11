@@ -169,4 +169,15 @@
 | 回归自测 | `test_kill15_v2.py` 全部通过（新增 replay-e2e / cycle-record-e2e 两项端到端）；`test_kill15_health.py` 20 项、`test_kill15_runner.py` 4 项通过 |
 | 发布锚点 | git tag `kill15-v4.1` → 代码提交 `99bbe1b`（回滚用 `git revert 99bbe1b` 或 checkout 该 tag 前的 `20040ed`） |
 
+### 8.2 v4.2 子策略定义下发（2026-11-12 07:50）
+
+- `PROMPT_VERSION → kill15-tail-prompt-v4.2-substrategy-defs`（`RULE_VERSION` 仍 v4，统计代际不变）。
+- prompt 新增【A/B 三子策略定义】与每号位「策略候选」行：A=池内遗漏最大、B1=池内近30期最热、
+  B2=池内近3期深冷刚开出（无标的时按「候选不足」降级并在 reason 注明）、B3=单双/大小偏弱侧遗漏最大。
+- 复盘 `reviews.json` 新增 `semantics`：A/B1/B2/B3 语义符合率（<50% 写 warning）；`kill15_review` 详情带出。
+- 验证：staged 回放 12 期符合率 100%/100%/100%/100%（旧 prompt 实测 B1 25%、B2 0%、B3 0%）；
+  线上首期 `094→095` 四码 4/4 与候选一致、attempt 1、五项探针 ok。
+- 旧版备份 `/root/backups/kill15-tail-prompt-v4-cycle-closedloop.py`；B2 与候选池互斥问题待决策
+  （详见 `ops/kill15-drift-diagnosis-20261112.md` §9.5）。
+
 

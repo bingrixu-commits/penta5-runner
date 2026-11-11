@@ -1115,12 +1115,25 @@ def _kill15_review_entry(root):
     rates = scheduled[latest_bucket].get('rates')
     rates = rates if isinstance(rates, dict) else {}
     group = rates.get('group') if isinstance(rates.get('group'), dict) else {}
+    semantics = scheduled[latest_bucket].get('semantics')
+    semantic_text = ''
+    if isinstance(semantics, dict) and isinstance(semantics.get('scopes'), list):
+        parts = []
+        for item in semantics['scopes']:
+            if not isinstance(item, dict) or not item.get('total'):
+                continue
+            rate = item.get('rate')
+            if isinstance(rate, (int, float)):
+                parts.append('%s=%.0f%%' % (item.get('scope'), 100 * rate))
+        if parts:
+            semantic_text = '；语义 ' + ' '.join(parts)
     remainder = (expected + 1) * review_periods - total
     return _entry('kill15_review', OK,
-                  '已复盘 %d 次（最新 bucket %d：样本 %s 期，整组 %s/%s）；下次还差 %d 期'
+                  '已复盘 %d 次（最新 bucket %d：样本 %s 期，整组 %s/%s%s）；下次还差 %d 期'
                   % (len(scheduled), latest_bucket,
                      scheduled[latest_bucket].get('reviewed_periods'),
-                     group.get('hits'), group.get('bets'), max(0, remainder)),
+                     group.get('hits'), group.get('bets'),
+                     semantic_text, max(0, remainder)),
                   {'buckets': sorted(scheduled), 'review_periods': review_periods})
 
 
