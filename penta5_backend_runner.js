@@ -17337,7 +17337,7 @@ async function handleRequest(req, res) {
   }
   if (!authRole) {
     if (req.method === "GET" && (pathname === "/" || pathname === "/panel")) {
-      sendPasswordLoginHtml(req, res, "", "/panel");
+      sendPasswordLoginHtml(req, res, "", pathname === "/" ? "/f/" : "/panel");
       return;
     }
     if (req.method === "GET" && isAttackTxtPublicPath(pathname)) {
@@ -17647,7 +17647,12 @@ async function handleRequest(req, res) {
       sendJson(res, result && result.ok === false ? 500 : 200, { ...result, truthMetrics: metrics || null });
       return;
     }
-    if (req.method === "GET" && (pathname === "/" || pathname === "/panel")) {
+    if (req.method === "GET" && pathname === "/") {
+      res.writeHead(302, {"Location": "/f/", "Cache-Control": "no-store"});
+      res.end();
+      return;
+    }
+    if (req.method === "GET" && pathname === "/panel") {
       sendPanelHtml(req, res);
       return;
     }

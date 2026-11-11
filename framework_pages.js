@@ -91,9 +91,9 @@ function createFrameworkPageHandler(options) {
     if (!m) return false;
     const role = authRoleForRequest(req);
     if (role !== 'admin' && role !== 'viewer') {
-      res.writeHead(401, {'Content-Type': 'text/plain; charset=utf-8',
-        'WWW-Authenticate': 'Basic realm="penta5"'});
-      res.end('authentication required');
+      // 与站点一致：未登录先去登录页，登录后回跳
+      res.writeHead(302, {'Location': '/', 'Cache-Control': 'no-store'});
+      res.end();
       return true;
     }
     let html;
