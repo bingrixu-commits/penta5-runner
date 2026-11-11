@@ -9,7 +9,11 @@
   B2 反弹杀（近 3 期深冷刚开出）、B3 形态对冲（单双/大小失衡反向侧遗漏最大者）；
 - A 号位上限：冷反弹活跃（近 3 期深冷 >=3）->1；否则 2；Hit-A<70% 或 >88% 再压 1；
   Hit-A、Hit-B 双低 -> 1；下限 1；
-- Hit-B < 70% 时 B 子策略必须与上期不同；runaway_warning 时强制打乱分配；
+- Hit-B < 70% 时 B 子策略必须与上期不同；同一套分配连续命中 14 期（顺局）时强制打乱分配；
+- 防塌方 v2（长期运行核心规则）：A/B 号位组合禁止直接沿用上期（每次必须重新推导）；
+  A 组下限 1 个号位（禁止 A=0）；B 占多个号位时子策略不得重复（分散）；
+  runaway_warning 时必须打乱 A/B 分布并轮换全部 B 子策略；
+  每期必须输出 self_check 五项自检且全为 true，缺项或 false 一律拒收重试；
 - 命中 = 该号位实际开奖号 != 该号位杀码（单项随机 90%）；整组随机基线 (9/10)^4 = 65.61%；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零。
 
@@ -71,7 +75,14 @@ POSITION_LABELS = {key: label for key, label, _index in POSITIONS}
 POSITION_INDEX = {key: index for key, _label, index in POSITIONS}
 
 RULE_VERSION = 'kill15-tail-v1-ab-position-kill'
-PROMPT_VERSION = 'kill15-tail-prompt-v1-ab-position-kill'
+PROMPT_VERSION = 'kill15-tail-prompt-v2-anticollapse'
+SELF_CHECK_KEYS = (
+    'allocation_rederived',
+    'runaway_shuffled',
+    'dispersed',
+    'cold_rebound_adjusted',
+    'pool_confirmed',
+)
 EXPECTED_ITEMS = 4
 EXPECTED_GROUP_RATE = 0.6561
 EXPECTED_BASIS = 'enumerated-10^4-draws-x-10^4-configs'
@@ -249,14 +260,21 @@ def performance_from_settlements(settlements, window=HIT_WINDOW):
 
 
 def runaway_state(settlements):
-    """Consecutive settled periods sharing one identical allocation."""
-    keys = [_allocation_key(row) for row in settlements if isinstance(row.get('allocation'), dict)]
-    if not keys:
+    """顺局预警：同一套 A/B 分配连续命中（整组全中）的期数。
+
+    安全规则原文：runaway_warning = 连续 14 期同一套分配命中。
+    任一条件被打破（分配变化 / 该期未整组命中）即中断连击，重新计数。
+    """
+    rows = [row for row in settlements
+            if isinstance(row.get('allocation'), dict) and 'group_hit' in row]
+    if not rows:
         return {'consecutive_same_allocation': 0, 'runaway_warning': False}
-    last = keys[-1]
+    last_key = _allocation_key(rows[-1])
     streak = 0
-    for key in reversed(keys):
-        if key != last:
+    for row in reversed(rows):
+        if _allocation_key(row) != last_key:
+            break
+        if row.get('group_hit') is not True:
             break
         streak += 1
     return {'consecutive_same_allocation': streak,
@@ -327,13 +345,13 @@ def _pct(value):
 
 
 def build_prompt(reference, target, rows, *, context=None):
-    """Frozen prompt: the operator rules plus backend-precomputed numbers only."""
+    """Frozen prompt v2: operator rules (long-run anti-collapse) plus backend numbers only."""
     rows = _normalize_rows(rows)
     context = context or build_context(rows)
-    lines = []
+    pool_lines = []
     for key, label, _index in POSITIONS:
         item = context['positions'][key]
-        lines.append('· %s位候选池（只能从这里选）：%s' % (label, _pool_line(item, context)))
+        pool_lines.append('· %s位候选池（只能从这里选）：%s' % (label, _pool_line(item, context)))
 
     perf = context['performance']
     regime = context['regime']
@@ -344,48 +362,70 @@ def build_prompt(reference, target, rows, *, context=None):
     last_sub = '、'.join('%s=%s' % (POSITION_LABELS.get(key, key), sub)
                          for key, sub in (last.get('b_sub') or {}).items()) or '无'
     rotation = (isinstance(perf['hit_b_15'], (int, float)) and perf['hit_b_15'] < 0.70)
+    runaway_hit = runaway.get('runaway_warning') is True
 
-    prompt = (
-        '你是「分位杀号决策引擎」。四个号位：千位、百位、十位、个位。每期每个号位，'
-        '在下面给出的合法候选池中选 1 个杀码。\n'
+    header = (
+        '你是「分位杀号决策引擎」。四个号位：千位、百位、十位、个位。'
+        '每期每个号位，在下面给出的合法候选池中选 1 个杀码。\n'
         '所有开奖历史、遗漏运算、候选池、深冷统计、滚动命中率、顺局标记均由后端预先计算完成，'
         '你不得自行遍历历史、自行统计期数、自行计算遗漏或命中率，一律以下发数值为准。\n\n'
-        '【后端下发数据（参考期 %s → 目标期 %s）】\n'
-        '%s\n'
-        '· 盘面：%s（近3期深冷开出 %d 枚）\n'
-        '· 近15期绩效：Hit-A %s（样本 %d）／Hit-B %s（样本 %d）\n'
-        '· 顺局预警：%s（连续同分配 %d 期）\n'
-        '· 上期分配：A %s／B %s／子策略 %s\n'
-        '· 本期 A 组号位上限：%d 个\n\n'
+        '【后端下发数据（参考期 %s → 目标期 %s）】' % (reference, target)
+    )
+    data_lines = [
+        '\n'.join(pool_lines),
+        '· 盘面：%s（近3期深冷开出 %d 枚）' % (regime['label'], regime['cold_burst_3']),
+        '· 近15期绩效：Hit-A %s（样本 %d）／Hit-B %s（样本 %d）'
+        % (_pct(perf['hit_a_15']), perf['a_n'], _pct(perf['hit_b_15']), perf['b_n']),
+        '· 顺局预警：%s（同一套分配连续命中 %d 期）'
+        % ('是' if runaway_hit else '否', runaway.get('consecutive_same_allocation')),
+        '· 上期分配：A %s／B %s／子策略 %s' % (last_a, last_b, last_sub),
+        '· 本期 A 组号位上限：%d 个（下限 1 个，禁止 A=0）' % context['a_cap'],
+        '· 本期 B 子策略强制轮换：%s'
+        % ('是（Hit-B 低于 70% 或顺局预警）' if (rotation or runaway_hit) else '否'),
+    ]
+    alloc_rules = (
         '【A/B 配比规则】\n'
-        '1. A 组号位数量不得超过本期上限；禁止四个号位全部给 A；\n'
+        '1. A 组号位数量必须在 1 到本期上限之间；禁止四个号位全部给 A；\n'
         '2. 遗漏系 A 适合冷号延续；对冲 B 用于分散，B 必须标明子策略 B1/B2/B3；\n'
-        '3. Hit-A 偏低或过高都要减少 A；Hit-A、Hit-B 同时低于 70%% 时 A 只留 1 个；\n'
-        '4. Hit-B 低于 70%% 时，B 子策略必须与上期不同（强制轮换）；\n'
-        '5. 顺局预警为“是”时必须打乱 A/B 号位分布，不得沿用上期组合；\n'
-        '6. 四个号位的策略尽量错落，不要高度趋同。\n\n'
-        '【强制自检（输出前逐条核对）】\n'
-        '1. 四个杀码必须都落在对应号位候选池内，严禁选池外的码；\n'
-        '2. A 组号位数量不超过本期上限；\n'
-        '3. A+B 恰好覆盖千/百/十/个四个号位，不重不漏；\n'
-        '4. 四个杀码均为 0-9 整数；\n'
-        '5. 若 Hit-B 低于 70%%，B 子策略与上期不同。\n\n'
+        '3. Hit-A 偏低或过高都要减少 A；Hit-A、Hit-B 同时低于 70% 时 A 只留 1 个；\n'
+        '4. Hit-B 低于 70% 时，全部 B 子策略必须与上期不同（强制轮换）；\n'
+        '5. 四个号位的策略尽量错落，不要高度趋同；B 占多个号位时子策略不得重复。\n\n'
+    )
+    hard_rules = (
+        '【长期运行·防塌方核心规则（每期必须执行，禁止惯性）】\n'
+        '1. 禁止惯性复制上期方案：本期 A/B 号位组合必须依据本期下发指标重新推导，'
+        '不得直接沿用上期搭配（组合与上期完全相同直接拒收）；\n'
+        '2. 顺局风控：顺局预警为「是」（连续同分配 ≥14 期）时，必须立即打乱 A/B 号位分布，'
+        '并轮换全部 B 子策略，打破长期拟合惯性，规避拐点塌方；\n'
+        '3. 分散原则：A、B 策略错落分布在四个号位，避免策略高度趋同，'
+        '防止行情一变多个号位同时失效；\n'
+        '4. 冷反弹阶段：盘面为「冷反弹活跃」时，主动降低遗漏系 A 占比（取上限内最小值 1 个），'
+        '提高对冲 B 权重，抵御冷号批量爆发带来的连续出错；\n'
+        '5. 候选池纪律：四个杀码严格取自对应号位候选池；池内无合适标的时不得自选、'
+        '不得放宽或收紧排除标准，理由标注「候选不足」。\n\n'
+    )
+    checklist = (
+        '【每期强制自检清单（不可跳过，必须写入 self_check，全部为 true 才允许发布）】\n'
+        '1. allocation_rederived：A/B 组合已按本期指标重新推导，且与上期组合不同；\n'
+        '2. runaway_shuffled：顺局预警时已打乱 A/B 分布并轮换 B 子策略（未触发也填 true）；\n'
+        '3. dispersed：B 占多个号位时子策略不重复，四号位策略错落；\n'
+        '4. cold_rebound_adjusted：冷反弹活跃时 A 已压到上限内且保留对冲 B（未触发也填 true）；\n'
+        '5. pool_confirmed：四个杀码全部在对应号位候选池内，无池外码。\n'
+        '自检缺项或任一项为 false，后端直接拒收并重试。\n\n'
+    )
+    output_spec = (
         '只输出严格 JSON（不要输出分析过程、代码块或额外文字）：\n'
-        '{"allocation":{"a":["q","b"],"b":["s","g"],'
-        '"b_sub":{"s":"B1","g":"B2"}},"kills":{"q":3,"b":0,"s":8,"g":2},'
+        '{"allocation":{"a":["q"],"b":["b","s","g"],'
+        '"b_sub":{"b":"B1","s":"B2","g":"B3"}},'
+        '"kills":{"q":9,"b":0,"s":8,"g":2},'
+        '"self_check":{"allocation_rederived":true,"runaway_shuffled":true,'
+        '"dispersed":true,"cold_rebound_adjusted":true,"pool_confirmed":true},'
         '"reason":"40字以内"}\n'
         '注意：allocation.a 与 allocation.b 合起来必须恰好是 q/b/s/g 四个键；'
-        'b_sub 的键必须与 allocation.b 一致；kills 的四个值必须取自对应号位候选池。'
-    ) % (
-        reference, target,
-        '\n'.join(lines),
-        regime['label'], regime['cold_burst_3'],
-        _pct(perf['hit_a_15']), perf['a_n'],
-        _pct(perf['hit_b_15']), perf['b_n'],
-        '是' if runaway['runaway_warning'] else '否', runaway['consecutive_same_allocation'],
-        last_a, last_b, last_sub,
-        context['a_cap'],
+        'b_sub 的键必须与 allocation.b 一致；kills 的四个值必须取自对应号位候选池；'
+        'A 组号位数量必须在 1..上限 之间，且 A/B 组合不得与上期相同。'
     )
+    prompt = '\n'.join([header] + data_lines + ['', alloc_rules + hard_rules + checklist + output_spec])
 
     audit = {
         'version': PROMPT_VERSION,
@@ -401,9 +441,13 @@ def build_prompt(reference, target, rows, *, context=None):
         'performance': context['performance'],
         'runaway': context['runaway'],
         'a_cap': context['a_cap'],
+        'a_min': 1,
         'last_allocation': context['last_allocation'],
-        'rotation_required': (isinstance(perf['hit_b_15'], (int, float))
-                              and perf['hit_b_15'] < 0.70),
+        'rotation_required': rotation or runaway_hit,
+        'runaway_shuffle_required': runaway_hit,
+        'allocation_reuse_forbidden': True,
+        'b_sub_dispersion_required': True,
+        'self_check_required': list(SELF_CHECK_KEYS),
     }
     return prompt, audit
 
@@ -455,31 +499,69 @@ def normalize_response(response, context=None, audit=None):
             raise ValueError('kill15 missing kill for %s' % key)
         parsed_kills[key] = _kill_digit(kills.get(key))
 
+    current_subs = {key: str(b_sub[key]).strip().upper() for key in b_keys}
+
     if context is not None:
         cap = int(context.get('a_cap') or 2)
+        last = context.get('last_allocation') or {}
+        perf = context.get('performance') or {}
+        hit_b = perf.get('hit_b_15') if isinstance(perf, dict) else None
+        runaway = context.get('runaway') or {}
+        runaway_hit = runaway.get('runaway_warning') is True
+
+        # 防塌方 v2 · 规则1：禁止惯性复制上期 A/B 组合
+        last_a = set(str(key) for key in (last.get('a') or []))
+        last_b = set(str(key) for key in (last.get('b') or []))
+        if (last_a or last_b) and set(a_keys) == last_a and set(b_keys) == last_b:
+            raise ValueError('禁止惯性复制上期方案：A/B 号位组合与上期相同，'
+                             '必须按本期下发指标重新推导')
+
+        # 防塌方 v2 · 规则4：A 组下限 1，冷反弹活跃时上限为 1（由 a_cap 给出）
+        if len(a_keys) < 1:
+            raise ValueError('A 组至少保留 1 个遗漏系号位（禁止 A=0）')
         if len(a_keys) > cap:
             raise ValueError('A 组号位 %d 个超过本期上限 %d 个' % (len(a_keys), cap))
+
+        # 防塌方 v2 · 规则3：B 子策略不得重复（策略趋同）
+        if len(current_subs) >= 2 and len(set(current_subs.values())) < len(current_subs):
+            raise ValueError('B 子策略不得重复（%s），四个号位策略必须错落分散'
+                             % '、'.join('%s=%s' % (POSITION_LABELS[key], sub)
+                                          for key, sub in current_subs.items()))
+
+        # 防塌方 v2 · 规则5：杀码必须在后端候选池内
         for key in POSITION_KEYS:
             pool = [int(digit) for digit in context['positions'][key]['pool']]
             if parsed_kills[key] not in pool:
                 raise ValueError('%s位杀码 %d 不在候选池 %s 内'
                                  % (POSITION_LABELS[key], parsed_kills[key], pool))
-        last = context.get('last_allocation') or {}
-        perf = context.get('performance') or {}
-        hit_b = perf.get('hit_b_15') if isinstance(perf, dict) else None
-        if isinstance(hit_b, (int, float)) and hit_b < 0.70:
+
+        # 防塌方 v2 · 规则2：runaway 或 Hit-B 偏低时，B 子策略必须逐位轮换
+        if runaway_hit or (isinstance(hit_b, (int, float)) and hit_b < 0.70):
             last_sub = {str(k): str(v).upper() for k, v in (last.get('b_sub') or {}).items()}
-            current = {k: str(v).upper() for k, v in b_sub.items()}
-            if last_sub and all(current.get(k) == last_sub.get(k) for k in current):
-                raise ValueError('Hit-B 低于 70%% 时 B 子策略必须与上期不同')
+            unchanged = [POSITION_LABELS.get(key, key) for key, sub in current_subs.items()
+                         if last_sub.get(key) == sub]
+            if unchanged:
+                raise ValueError('B 子策略必须轮换：%s位子策略与上期相同'
+                                 % '、'.join(unchanged))
+
+    # 强制自检清单：缺项或任一项非 true 一律拒收
+    self_check = response.get('self_check')
+    failed = []
+    if not isinstance(self_check, dict):
+        failed = list(SELF_CHECK_KEYS)
+    else:
+        failed = [key for key in SELF_CHECK_KEYS if self_check.get(key) is not True]
+    if failed:
+        raise ValueError('kill15 强制自检未通过或缺失：%s' % '、'.join(failed))
 
     return {
         'allocation': {
             'a': [key for key in POSITION_KEYS if key in a_keys],
             'b': [key for key in POSITION_KEYS if key in b_keys],
-            'b_sub': {key: str(b_sub[key]).upper() for key in POSITION_KEYS if key in b_keys},
+            'b_sub': {key: current_subs[key] for key in POSITION_KEYS if key in b_keys},
         },
         'kills': parsed_kills,
+        'self_check': {key: True for key in SELF_CHECK_KEYS},
         'reason': str(response.get('reason') or '').strip()[:200],
     }
 
@@ -640,6 +722,46 @@ def request_prediction(prompt, reference, target, deadline, context, log=print):
                        % (MAX_ATTEMPTS, last_error or 'unknown'))
 
 
+def request_prediction_anytime(prompt, reference, target, context, log=print):
+    """Replay variant: same request/validation, without the pre-close window gate.
+
+    Only for historical replay where the target period has already been drawn;
+    the prompt still contains nothing but data up to `reference`.
+    """
+    messages = [{'role': 'user', 'content': prompt}]
+    last_error = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        require_ai_enabled(clock=beijing_now)
+        emit_http_phase(log, reference, attempt, 'start')
+        started = time.monotonic()
+        try:
+            envelope = _post(messages, 120.0)
+        except ProviderHTTPError as error:
+            emit_http_phase(log, reference, attempt, 'complete', status=error.status)
+            last_error = str(error)
+            if error.status in NONRETRYABLE_HTTP_STATUSES:
+                break
+        except Exception as error:
+            emit_http_phase(log, reference, attempt, 'complete', status='error')
+            last_error = '%s: %s' % (type(error).__name__, str(error)[:120])
+        else:
+            emit_http_phase(log, reference, attempt, 'complete', status=200)
+            try:
+                payload = strict_json_object(envelope['content'])
+                prediction = normalize_response(payload, context)
+            except ValueError as error:
+                last_error = str(error)
+            else:
+                meta = _metadata(reference, attempt, envelope.get('model') or resolve_model(),
+                                 envelope, time.monotonic() - started)
+                return prediction, meta
+        if attempt >= MAX_ATTEMPTS:
+            break
+        time.sleep(3.0)
+    raise RuntimeError('kill15 replay inference failed after %d attempt(s): %s'
+                       % (MAX_ATTEMPTS, last_error or 'unknown'))
+
+
 # ---------------------------------------------------------------------------
 # 封存 / 发布 / 结算
 # ---------------------------------------------------------------------------
@@ -693,6 +815,14 @@ def create_seal(reference, target, reference_open_time, prediction, rows, *,
         'performance': context['performance'],
         'runaway': context['runaway'],
         'candidate_pools': {key: context['positions'][key]['pool'] for key in POSITION_KEYS},
+        'self_check': prediction.get('self_check') or {},
+        'policy': {
+            'a_min': 1,
+            'allocation_reuse_forbidden': True,
+            'b_sub_dispersion_required': True,
+            'runaway_shuffle_required': bool(audit.get('runaway_shuffle_required')),
+            'rotation_required': bool(audit.get('rotation_required')),
+        },
         'reason': str(prediction.get('reason') or '')[:200],
         'window': len(window_rows),
         'expected_items': EXPECTED_ITEMS,
