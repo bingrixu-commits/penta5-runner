@@ -17079,7 +17079,7 @@ function safeLoginNextPath(raw) {
   const text = String(raw || "").trim();
   // 框架分页（/f/ 与 /f/<scope>）也允许作为登录回跳目标
   if (/^\/f(?:\/[a-z0-9]{2,16})?\/?$/.test(text)) return text;
-  if (text === "/attack-txt" || text === "/gongjiyu" || text === "/panel" || isAccuracyPath(text) || isHitratePath(text) || isStatsPath(text)) return text;
+  if (text === "/attack-txt" || text === "/gongjiyu" || text === "/panel" || text === "/full" || isAccuracyPath(text) || isHitratePath(text) || isStatsPath(text)) return text;
   return "/f/";
 }
 
@@ -17655,6 +17655,11 @@ async function handleRequest(req, res) {
       return;
     }
     if (req.method === "GET" && pathname === "/panel") {
+      res.writeHead(302, {"Location": "/f/", "Cache-Control": "no-store"});
+      res.end();
+      return;
+    }
+    if (req.method === "GET" && pathname === "/full") {
       sendPanelHtml(req, res);
       return;
     }
