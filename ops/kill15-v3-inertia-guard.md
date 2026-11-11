@@ -63,3 +63,27 @@ v3 用“完整方案窗口”把它锁死。
 1. 前 5 期关注是否出现“方案与前第2期重复”的拒收重试；若重试率高，考虑把窗口降为 1（仅上期）或放宽子策略映射。
 2. 记录 v2（12 期小样本）与 v3 上线后影子命中，`data/kill15_tail/{seals,settlements}.json` 按 `prompt_version` 分组统计。
 3. 200 期 v2 大样本跑完后，用其置信区间判断 v2 防塌方对命中率的真实影响；v3 再单独积累样本。
+
+## 7. 健康巡检注册（2026-11-12 05:46 落地）
+
+`scripts/ops_health_check.py`（cron `*/10`，写 `data/ops_health.json` / `ops_alerts.log`）
+新增 kill15 三探针，纳入既有巡检总表：
+
+| 探针 | 判据 |
+| --- | --- |
+| `kill15_tail` | 最新已开奖期应有开奖前封存并发布；开奖后 7 分钟宽限内 waiting=ok，超时未封存/未发布 fail |
+| `kill15_policy` | 最新封存按 prompt 版本复核规则：候选池内选码、A∈[1,a_cap]、B 子策略不重复、与上期分配不同、完整方案不与近 2 期重复、self_check 五项全 true、prompt_version 与 `lib/kill15_tail.py` 一致；规则违规 fail，版本漂移 warn |
+| `kill15_retry` | 近 6h cron 日志 runs/retries/failures；≥3 次重试、重试率≥25%、或出现失败 → warn |
+
+同步落地的配套项：
+
+- `ops/crontab.txt` 快照补齐 kill15 cron 行，`crontab_drift` 由 warn → ok（45 jobs）；
+- `ledger_size` 纳入 `kill15_tail/seals.json`、`kill15_tail/settlements.json`；
+- `provider_402` 日志清单纳入 `kill15_tail_cron.log`；
+- 自测 `scripts/test_kill15_health.py`：10 项全过（正常封存 + 5 类违规注入 + 版本漂移 + 重试/失败 + 封存滞后 + 未发布）；
+- 首跑结果（2026-11-12 05:47）：`kill15_tail`=ok（ref=20261112069 published）、
+  `kill15_policy`=ok、`kill15_retry`=ok（runs=11 retries=0 failures=0）；
+- `manifest_drift` 因本次源码变更一度 fail，已按日常流程
+  `refresh_source_manifest.py --if-drift` 重建基线后恢复 ok；
+  overall=fail 当前仅剩 AI 停机窗口（00:47–04:42）造成的历史 coverage 缺口，与 kill15 无关。
+

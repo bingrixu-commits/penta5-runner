@@ -10,6 +10,9 @@ Collects a fixed set of probes into one JSON report plus a human table:
   kill3_freeze       freeze stamp: rule_version + monitored source hashes unchanged, period progress
   stat50_seal        max prediction_seals key in data/stat50_compare_seals.json
   he3_refine         reference_period lag + status
+  kill15_tail        kill15 最新期封存/发布是否及时（开奖后 7 分钟宽限）
+  kill15_policy      kill15 v2/v3 防塌方规则合规复核（候选池/自检/分散/惯性护栏/版本漂移）
+  kill15_retry       kill15 近 6h 模型调用重试/失败统计
   panel_html         panel.html mtime age (warn > 10 min, fail > 30 min)
   evidence_backup    /root/evidence-archives/latest-verified.json age + archive file
   manifest_drift     evidence_backup.newest_source_manifest() still matches live sources
@@ -104,7 +107,8 @@ PROVIDER_402_LOGS = (
     'kill1_tail_cron.log',
     'kill10_tail_cron.log',
     'kill11_tail_cron.log',
-    'kill12_tail_cron.log',)
+    'kill12_tail_cron.log',
+    'kill15_tail_cron.log',)
 PROVIDER_402_PATTERN = re.compile(r'"status"\s*:\s*402(?!\d)|HTTP\s+402(?!\d)')
 PROVIDER_402_AT_RE = re.compile(r'"at"\s*:\s*"([^"]+)"')
 PROVIDER_402_WINDOW_SECONDS = 30 * 60
@@ -130,6 +134,19 @@ KILL3_LATENCY_FAIL_SECONDS = 300
 KILL3_FREEZE_JSON = 'ops/kill3-freeze.json'
 KILL3_FREEZE_HOURS = 72
 KILL3_FREEZE_PERIODS = 100
+# kill15 分位杀号（影子跑）：封存及时性 + v2/v3 防塌方规则合规 + 近 6h 重试/失败。
+KILL15_SEAL_GRACE_SECONDS = 420
+KILL15_POLICY_DEPTH = 3
+KILL15_RETRY_WINDOW_SECONDS = 6 * 3600
+KILL15_RETRY_WARN_COUNT = 3
+KILL15_RETRY_WARN_RATIO = 0.25
+KILL15_CRON_LOG = 'kill15_tail_cron.log'
+KILL15_POSITIONS = ('q', 'b', 's', 'g')
+KILL15_B_SUBS = ('B1', 'B2', 'B3')
+KILL15_SELF_CHECK_KEYS = ('allocation_rederived', 'runaway_shuffled', 'dispersed',
+                          'cold_rebound_adjusted', 'pool_confirmed')
+KILL15_PROMPT_VERSION_RE = re.compile(r"PROMPT_VERSION\s*=\s*'([^']+)'")
+KILL15_LOG_TAIL_BYTES = 512 * 1024
 LEDGER_SIZE_FILES = (
     'he3_refine_seals.json',
     'he3_refine_hit_stats.json',
@@ -141,6 +158,8 @@ LEDGER_SIZE_FILES = (
     'cold30_tail/seals.json',
     'cold15_tail/seals.json',
     'kill14_tail/seals.json',
+    'kill15_tail/seals.json',
+    'kill15_tail/settlements.json',
 )
 # 达到 110/120MiB 即预警的账本（对齐 128MiB json.load 读取上限）
 LEDGER_ALERT_FILES = {
@@ -153,6 +172,7 @@ LEDGER_ALERT_FILES = {
     'cold30_tail/seals.json': 'cold30 封存账本',
     'cold15_tail/seals.json': 'cold15 封存账本',
     'kill14_tail/seals.json': 'kill14 封存账本',
+    'kill15_tail/seals.json': 'kill15 封存账本',
 }
 LEDGER_HE3_WARN_BYTES = 110 * 1024 * 1024
 LEDGER_HE3_FAIL_BYTES = 120 * 1024 * 1024
@@ -812,6 +832,258 @@ def check_kill14(ctx):
 
 
 
+
+
+def _kill15_allocation_key(allocation):
+    allocation = allocation if isinstance(allocation, dict) else {}
+    return (tuple(sorted(str(key) for key in allocation.get('a') or [])),
+            tuple(sorted(str(key) for key in allocation.get('b') or [])))
+
+
+def _kill15_scheme(allocation):
+    allocation = allocation if isinstance(allocation, dict) else {}
+    subs = allocation.get('b_sub') if isinstance(allocation.get('b_sub'), dict) else {}
+    return (_kill15_allocation_key(allocation),
+            tuple(sorted((str(key), str(value).upper()) for key, value in subs.items())))
+
+
+def _kill15_prompt_major(version):
+    match = re.search(r'-prompt-v(\d+)', str(version or ''))
+    return int(match.group(1)) if match else 0
+
+
+def _kill15_expected_prompt(root):
+    path = Path(root) / 'lib' / 'kill15_tail.py'
+    try:
+        text = path.read_text(encoding='utf-8')
+    except OSError as exc:
+        return None, 'cannot read lib/kill15_tail.py: %s' % exc
+    match = KILL15_PROMPT_VERSION_RE.search(text)
+    if not match:
+        return None, 'PROMPT_VERSION not found in lib/kill15_tail.py'
+    return match.group(1), None
+
+
+def _kill15_audit_seal(seal, past):
+    """Return (hard_violations, soft_warnings) for one kill15 seal.
+
+    past: newest-first list of the previous sealed periods (any prompt version), used
+    for the rule1 / v3 inertia comparisons exactly like the live backend does.
+    """
+    hard, soft = [], []
+    allocation = seal.get('allocation') if isinstance(seal.get('allocation'), dict) else {}
+    a_keys = [str(key) for key in allocation.get('a') or []]
+    b_keys = [str(key) for key in allocation.get('b') or []]
+    b_sub = allocation.get('b_sub') if isinstance(allocation.get('b_sub'), dict) else {}
+    if sorted(a_keys + b_keys) != sorted(KILL15_POSITIONS):
+        hard.append('allocation 未恰好覆盖 q/b/s/g')
+        return hard, soft
+    if not b_keys:
+        hard.append('B 组为空')
+    if len(a_keys) < 1:
+        hard.append('A=0（规则4 违反）')
+    cap = seal.get('a_cap')
+    if isinstance(cap, int) and len(a_keys) > cap:
+        hard.append('A 组 %d 个超过上限 %d（规则4 违反）' % (len(a_keys), cap))
+    if set(str(key) for key in b_sub) != set(b_keys):
+        hard.append('b_sub 键与 B 组不一致')
+    subs = [str(value).upper() for value in b_sub.values()]
+    if any(sub not in KILL15_B_SUBS for sub in subs):
+        hard.append('b_sub 非法值（须 B1/B2/B3）')
+    if len(b_keys) >= 2 and len(set(subs)) < len(subs):
+        hard.append('B 子策略重复（规则3 违反）')
+    pools = seal.get('candidate_pools') if isinstance(seal.get('candidate_pools'), dict) else {}
+    for key in KILL15_POSITIONS:
+        item = (seal.get('positions') or {}).get(key)
+        if not isinstance(item, dict):
+            hard.append('%s 位缺杀码记录' % key)
+            continue
+        try:
+            kill = int(item.get('kill'))
+        except (TypeError, ValueError):
+            hard.append('%s 位杀码非法' % key)
+            continue
+        pool = pools.get(key)
+        if isinstance(pool, list):
+            try:
+                normalized = [int(digit) for digit in pool]
+            except (TypeError, ValueError):
+                normalized = None
+            if normalized is not None and kill not in normalized:
+                hard.append('%s 位杀码 %d 不在候选池（规则5 违反）' % (key, kill))
+    prompt_version = str(seal.get('prompt_version') or '')
+    major = _kill15_prompt_major(prompt_version)
+    if not prompt_version:
+        soft.append('prompt_version 缺失')
+    if major >= 2:
+        self_check = seal.get('self_check') if isinstance(seal.get('self_check'), dict) else {}
+        missing = [key for key in KILL15_SELF_CHECK_KEYS if self_check.get(key) is not True]
+        if missing:
+            hard.append('强制自检缺失/未通过: %s' % ','.join(missing))
+    if major >= 3:
+        policy = seal.get('policy') if isinstance(seal.get('policy'), dict) else {}
+        window = policy.get('scheme_repeat_window')
+        if not isinstance(window, int) or window < 1:
+            hard.append('policy.scheme_repeat_window 缺失')
+        elif window != 2:
+            soft.append('scheme_repeat_window=%s（预期 2）' % window)
+        if policy.get('scheme_reuse_forbidden') is not True:
+            hard.append('policy.scheme_reuse_forbidden 缺失')
+    if past:
+        previous = past[0] if isinstance(past[0], dict) else None
+        if _kill15_allocation_key(allocation) == _kill15_allocation_key(previous):
+            hard.append('与上期 A/B 组合相同（规则1 违反）')
+        current = _kill15_scheme(allocation)
+        for offset, older in enumerate(past, 1):
+            if not isinstance(older, dict):
+                continue
+            if _kill15_scheme(older.get('allocation')) == current:
+                hard.append('完整方案与前 %d 期重复（v3 惯性护栏违反）' % offset)
+    return hard, soft
+
+
+def _kill15_log_stats(root, now):
+    path = Path(root) / 'data' / KILL15_CRON_LOG
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - KILL15_LOG_TAIL_BYTES))
+            text = stream.read()
+    except OSError as exc:
+        return None, 'cannot read %s: %s' % (KILL15_CRON_LOG, exc)
+    lines = text.splitlines()
+    cutoff = now - timedelta(seconds=KILL15_RETRY_WINDOW_SECONDS)
+    attempts = {}
+    first_window_index = None
+    for index, line in enumerate(lines):
+        if 'AI_HTTP_PHASE' not in line:
+            continue
+        try:
+            event = json.loads(line[line.index('{'):])
+        except (ValueError, IndexError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        at = _parse_time(event.get('at'))
+        if at is not None and at < cutoff:
+            continue
+        if first_window_index is None:
+            first_window_index = index
+        ref = str(event.get('ref') or '')
+        if not ref:
+            continue
+        try:
+            attempt = int(event.get('attempt') or 1)
+        except (TypeError, ValueError):
+            attempt = 1
+        attempts.setdefault(ref, set()).add(attempt)
+    runs = len(attempts)
+    retried = sum(1 for tries in attempts.values() if max(tries) >= 2)
+    failures = 0
+    if first_window_index is not None:
+        for index in range(first_window_index, len(lines)):
+            if lines[index].startswith('kill15 failed'):
+                failures += 1
+    return {'runs': runs, 'retries': retried,
+            'ratio': (retried / float(runs)) if runs else 0.0,
+            'failures': failures}, None
+
+
+def _kill15_retry_entry(ctx):
+    stats, error = _kill15_log_stats(ctx['root'], ctx['now'])
+    if stats is None:
+        return _entry('kill15_retry', WARN, error or 'no cron log')
+    detail = ('近%.0fh: runs=%d retries=%d(%s) failures=%d'
+              % (KILL15_RETRY_WINDOW_SECONDS / 3600.0, stats['runs'], stats['retries'],
+                 ('%.0f%%' % (100.0 * stats['ratio'])) if stats['runs'] else '-',
+                 stats['failures']))
+    if stats['failures'] > 0 or (stats['retries'] >= KILL15_RETRY_WARN_COUNT
+                                 or (stats['retries'] >= 2
+                                     and stats['ratio'] >= KILL15_RETRY_WARN_RATIO)):
+        return _entry('kill15_retry', WARN, detail, stats)
+    return _entry('kill15_retry', OK, detail, stats)
+
+
+def check_kill15(ctx):
+    """kill15 分位杀号（影子跑）：封存及时性 / v2+v3 规则合规 / 近 6h 重试失败。"""
+    latest = ctx.get('latest') if isinstance(ctx.get('latest'), dict) else None
+    root = ctx['root']
+    entries = []
+    payload, error = _load_json(root / 'data' / 'kill15_tail' / 'seals.json')
+    records = payload.get('records') if isinstance(payload, dict) else None
+    if not isinstance(records, list) or not records:
+        opened = _parse_time(latest.get('opentime')) if latest else None
+        age = None if opened is None else ctx['now'].timestamp() - opened.timestamp()
+        ref = str((latest or {}).get('ref') or '')
+        if isinstance(age, (int, float)) and age <= KILL15_SEAL_GRACE_SECONDS:
+            entries.append(_entry('kill15_tail', WARN,
+                                  'waiting first seal: latest=%s age=%ss (%s)'
+                                  % (ref, round(age), error or 'empty')))
+        else:
+            entries.append(_entry('kill15_tail', FAIL,
+                                  'missing/unreadable seals.json: %s' % (error or 'empty')))
+        entries.append(_entry('kill15_policy', FAIL, 'no seals to audit'))
+        entries.append(_kill15_retry_entry(ctx))
+        return entries
+    usable = [item for item in records if isinstance(item, dict)]
+    seal = usable[-1] if usable else {}
+    ref = str((latest or {}).get('ref') or '')
+    opened = _parse_time((latest or {}).get('opentime')) if latest else None
+    age = None if opened is None else ctx['now'].timestamp() - opened.timestamp()
+    seal_ref = str(seal.get('ref_period') or '')
+    if latest is None or not ref:
+        entries.append(_entry('kill15_tail', WARN,
+                              'latest draw unknown (seal_ref=%s)' % (seal_ref or '-')))
+    elif seal_ref == ref:
+        state = str(seal.get('publication_state') or 'unknown')
+        if state == 'published' and seal.get('published_at'):
+            entries.append(_entry('kill15_tail', OK,
+                                  'ref=%s published_at=%s'
+                                  % (ref, seal.get('published_at')), {'ref': ref}))
+        else:
+            entries.append(_entry('kill15_tail', WARN,
+                                  'ref=%s state=%s (not published)' % (ref, state),
+                                  {'ref': ref}))
+    elif isinstance(age, (int, float)) and age <= KILL15_SEAL_GRACE_SECONDS:
+        entries.append(_entry('kill15_tail', OK,
+                              'waiting: latest=%s seal_ref=%s age=%ss'
+                              % (ref, seal_ref or '-', round(age)), {'ref': ref}))
+    else:
+        entries.append(_entry('kill15_tail', FAIL,
+                              'missing seal for latest=%s seal_ref=%s age=%s'
+                              % (ref, seal_ref or '-', _age_text(age)),
+                              {'ref': ref}))
+
+    expected, expected_error = _kill15_expected_prompt(root)
+    past = list(reversed([item for item in usable[:-1]][-2:]))
+    hard, soft = _kill15_audit_seal(seal, past)
+    label = str(seal.get('target_period') or seal.get('ref_period') or '?')
+    hard = ['%s %s' % (label, problem) for problem in hard]
+    soft = ['%s %s' % (label, warning) for warning in soft]
+    latest_version = str(seal.get('prompt_version') or '')
+    if expected_error:
+        soft.append(expected_error)
+    elif expected and latest_version and latest_version != expected:
+        soft.append('prompt_version=%s 与 lib 期望 %s 不一致（部署/回滚漂移）'
+                    % (latest_version, expected))
+    if hard:
+        entries.append(_entry('kill15_policy', FAIL,
+                              'v2/v3 规则违规 %d 项: %s'
+                              % (len(hard), '; '.join(hard[:4])),
+                              {'violations': hard}))
+    elif soft:
+        entries.append(_entry('kill15_policy', WARN, '; '.join(soft[:4]),
+                              {'warnings': soft}))
+    else:
+        entries.append(_entry('kill15_policy', OK,
+                              '最新期 v2/v3 合规（prompt=%s，候选池/A→上限/子策略分散/惯性护栏/自检全过）'
+                              % (latest_version or '?'),
+                              {'prompt_version': latest_version,
+                               'expected': expected,
+                               'audited_periods': 1 + len(past)}))
+    entries.append(_kill15_retry_entry(ctx))
+    return entries
 
 
 def check_kill3_stability(ctx):
@@ -2123,6 +2395,7 @@ CHECK_FUNCS = (
     check_cold30,
     check_cold15,
     check_kill14,
+    check_kill15,
     check_kill3_stability,
     check_kill3_v16_gate,
     check_kill3_v17_gate,
@@ -2162,6 +2435,7 @@ FALLBACK_NAMES = {
     'check_cold30': ('cold30_tail',),
     'check_cold15': ('cold15_tail',),
     'check_kill14': ('kill14_tail',),
+    'check_kill15': ('kill15_tail', 'kill15_policy', 'kill15_retry'),
     'check_kill3_stability': ('kill3_stability',),
     'check_kill3_v16_gate': ('kill3_v16_gate',),
     'check_kill3_v17_gate': ('kill3_v17_gate',),

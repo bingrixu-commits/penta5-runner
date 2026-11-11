@@ -46,3 +46,4 @@
 
 # seal/hit_stats 滚动归档：每天把超 2 天期号按月压到 data/archive/*.json.gz，主文件留近期窗口（read_full 透明合并冷分片）
 30 3 * * * flock -n /var/lock/penta5-seal-archive.lock bash -c 'cd /root/penta5-runner && timeout --kill-after=10s 600 python3 -u scripts/archive_seals.py --target he3_refine_seals --keep-days 2 --apply >> data/seal_archive_cron.log 2>&1'
+*/5 * * * * flock -n /var/lock/penta5-kill15.lock bash -c 'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 python3 -u scripts/run_kill15_tail.py >> data/kill15_tail_cron.log 2>&1'
