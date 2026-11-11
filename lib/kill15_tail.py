@@ -56,7 +56,8 @@ REASONING_EFFORT = 'high'
 NONRETRYABLE_HTTP_STATUSES = frozenset((400, 401, 402, 422))
 PROVIDER_URL = 'https://api.deepseek.com/chat/completions'
 RETRY_INSTRUCTION = ('上一次输出不符合要求（{error}）。请只输出严格 JSON，'
-                     '并严格遵守【任务】中的强制规则与格式。')
+                     '并严格遵守【A/B 配比规则】【长期运行·防塌方核心规则】'
+                     '【每期强制自检清单（不可跳过）】与输出格式。')
 
 POOL_MIN_OMISSION = 8
 POOL_SIZE = 5
