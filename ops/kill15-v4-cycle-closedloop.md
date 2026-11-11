@@ -99,7 +99,8 @@
 | 抽样复盘 | `python3 scripts/kill15_review.py --force` → review #1 `bucket=0 status=ok`，样本 1 期（整组 1/1、单码 4/4），不一致 0、提醒 0；`reviews.json` 落盘 |
 | 健康巡检 | `kill15_tail` ok ／ `kill15_policy` ok（v2/v4：候选池/A→上限/B 强制轮换/周期字段/惯性护栏/自检）／ `kill15_retry` ok（近 6h runs=20 retries=0 failures=0）／ `kill15_review` ok（未到期 1/30） |
 | 面板 | 区块 3320 bytes，含「第1轮」「第 2/40 期」「B 子策略每期强制轮换」；`PENTA5_PANEL_TIMING status=success` |
-| 回放 | v4 45 期大样本回放 06:26 启动（隔离账本 `replay_v4.json`），用于验证第 41 期周期边界；结果单列 |
+| v4 45 期回放 | 整组 **34/45 = 75.6%**、单码 **166/180 = 92.2%**；第 41 条记录（ref `20261112072`）进入第 2 轮：`cycle_no=1, cycle_pos=1, settled_in_cycle=0, settled_total=40`，轮内绩效从 0 重新累计（随后 periods=1,2,3,4）——周期边界在真实请求链路上验证通过 |
+| 并行改动兼容性 | 06:43 另一会话上线 `ai-scope`（cron 全部作用域化，kill15 行被包为 `with_scope.sh kill15`）；06:45 v4 第 5 期照常 attempt 1 通过（21.6s），`kill15_*` 四项探针全 ok，确认不受影响 |
 
 **部署时序备注**：06:20 那期仍是 v3（进程在文件上传前已 import）；06:25 起 v4，符合“等下一个整 5 分钟验证”的既有结论。
 
