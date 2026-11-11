@@ -14,6 +14,8 @@
   A 组下限 1 个号位（禁止 A=0）；B 占多个号位时子策略不得重复（分散）；
   runaway_warning 时必须打乱 A/B 分布并轮换全部 B 子策略；
   每期必须输出 self_check 五项自检且全为 true，缺项或 false 一律拒收重试；
+- 防塌方 v3（惯性护栏）：完整方案（A/B 分配 + B 子策略映射）不得与最近 2 期重复，
+  用于打破“两套分配交替”式拟合惯性；与 v2 规则叠加执行；
 - 命中 = 该号位实际开奖号 != 该号位杀码（单项随机 90%）；整组随机基线 (9/10)^4 = 65.61%；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零。
 
@@ -63,6 +65,7 @@ POOL_MIN_OMISSION = 8
 POOL_SIZE = 5
 DEEP_COLD_OMISSION = 25
 RUNAWAY_LIMIT = 14
+SCHEME_REPEAT_WINDOW = 2
 B_SUBS = ('B1', 'B2', 'B3')
 
 POSITIONS = (
@@ -76,7 +79,7 @@ POSITION_LABELS = {key: label for key, label, _index in POSITIONS}
 POSITION_INDEX = {key: index for key, _label, index in POSITIONS}
 
 RULE_VERSION = 'kill15-tail-v1-ab-position-kill'
-PROMPT_VERSION = 'kill15-tail-prompt-v2-anticollapse'
+PROMPT_VERSION = 'kill15-tail-prompt-v3-inertia-guard'
 SELF_CHECK_KEYS = (
     'allocation_rederived',
     'runaway_shuffled',
@@ -233,6 +236,16 @@ def _allocation_key(record):
     return a, b, sub_key
 
 
+def _scheme_key(allocation):
+    """Full inertia key: A/B position split + B sub-strategy mapping."""
+    allocation = allocation or {}
+    a = tuple(sorted(str(key) for key in allocation.get('a') or []))
+    b = tuple(sorted(str(key) for key in allocation.get('b') or []))
+    subs = allocation.get('b_sub') or {}
+    sub_key = tuple(sorted((str(key), str(value).upper()) for key, value in subs.items()))
+    return a, b, sub_key
+
+
 def performance_from_settlements(settlements, window=HIT_WINDOW):
     """Rolling Hit-A / Hit-B over the last N settled periods."""
     recent = [row for row in settlements if isinstance(row.get('positions'), dict)][-window:]
@@ -316,6 +329,8 @@ def build_context(rows, settlements=None):
     runaway = runaway_state(settlements)
     cap = a_cap(burst, perf['hit_a_15'], perf['hit_b_15'])
     last = settlements[-1] if settlements else None
+    recent = [row.get('allocation') for row in settlements[-SCHEME_REPEAT_WINDOW:]
+              if isinstance(row.get('allocation'), dict)]
     return {
         'positions': positions,
         'regime': {'cold_burst_3': burst,
@@ -324,6 +339,7 @@ def build_context(rows, settlements=None):
         'runaway': runaway,
         'a_cap': cap,
         'last_allocation': (last or {}).get('allocation'),
+        'recent_allocations': recent,
         'history_rows': len(rows),
         'latest_digits': {key: str(rows[-1][index]) for key, _label, index in POSITIONS},
     }
@@ -345,8 +361,19 @@ def _pct(value):
     return ('%.1f%%' % (100 * value)) if isinstance(value, (int, float)) else '无样本'
 
 
+def _scheme_text(allocation):
+    """Human-readable A/B allocation + B sub-strategy mapping."""
+    if not isinstance(allocation, dict) or not allocation:
+        return '无'
+    a = '、'.join(POSITION_LABELS.get(key, key) for key in allocation.get('a') or []) or '无'
+    b = '、'.join(POSITION_LABELS.get(key, key) for key in allocation.get('b') or []) or '无'
+    sub = '、'.join('%s=%s' % (POSITION_LABELS.get(key, key), value)
+                    for key, value in (allocation.get('b_sub') or {}).items()) or '无'
+    return 'A %s／B %s／子策略 %s' % (a, b, sub)
+
+
 def build_prompt(reference, target, rows, *, context=None):
-    """Frozen prompt v2: operator rules (long-run anti-collapse) plus backend numbers only."""
+    """Frozen prompt v3: anti-collapse rules + anti-inertia scheme guard, numbers only."""
     rows = _normalize_rows(rows)
     context = context or build_context(rows)
     pool_lines = []
@@ -358,12 +385,10 @@ def build_prompt(reference, target, rows, *, context=None):
     regime = context['regime']
     runaway = context['runaway']
     last = context['last_allocation'] or {}
-    last_a = '、'.join(POSITION_LABELS.get(key, key) for key in last.get('a') or []) or '无'
-    last_b = '、'.join(POSITION_LABELS.get(key, key) for key in last.get('b') or []) or '无'
-    last_sub = '、'.join('%s=%s' % (POSITION_LABELS.get(key, key), sub)
-                         for key, sub in (last.get('b_sub') or {}).items()) or '无'
     rotation = (isinstance(perf['hit_b_15'], (int, float)) and perf['hit_b_15'] < 0.70)
     runaway_hit = runaway.get('runaway_warning') is True
+    recent = context.get('recent_allocations') or []
+    two_ago_text = _scheme_text(recent[0]) if len(recent) >= 2 else '无'
 
     header = (
         '你是「分位杀号决策引擎」。四个号位：千位、百位、十位、个位。'
@@ -379,7 +404,8 @@ def build_prompt(reference, target, rows, *, context=None):
         % (_pct(perf['hit_a_15']), perf['a_n'], _pct(perf['hit_b_15']), perf['b_n']),
         '· 顺局预警：%s（同一套分配连续命中 %d 期）'
         % ('是' if runaway_hit else '否', runaway.get('consecutive_same_allocation')),
-        '· 上期分配：A %s／B %s／子策略 %s' % (last_a, last_b, last_sub),
+        '· 上期方案：%s' % _scheme_text(last),
+        '· 前第2期方案（本期禁止重复）：%s' % two_ago_text,
         '· 本期 A 组号位上限：%d 个（下限 1 个，禁止 A=0）' % context['a_cap'],
         '· 本期 B 子策略强制轮换：%s'
         % ('是（Hit-B 低于 70% 或顺局预警）' if (rotation or runaway_hit) else '否'),
@@ -394,8 +420,9 @@ def build_prompt(reference, target, rows, *, context=None):
     )
     hard_rules = (
         '【长期运行·防塌方核心规则（每期必须执行，禁止惯性）】\n'
-        '1. 禁止惯性复制上期方案：本期 A/B 号位组合必须依据本期下发指标重新推导，'
-        '不得直接沿用上期搭配（组合与上期完全相同直接拒收）；\n'
+        '1. 禁止惯性复制上期方案：本期 A/B 组合必须依据本期指标重新推导，不得沿用上期搭配；'
+        '完整方案（A/B 分配 + B 子策略映射）不得与最近 2 期重复——上期组合直接拒收，'
+        '与前第2期方案完全相同同样拒收；\n'
         '2. 顺局风控：顺局预警为「是」（连续同分配 ≥14 期）时，必须立即打乱 A/B 号位分布，'
         '并轮换全部 B 子策略，打破长期拟合惯性，规避拐点塌方；\n'
         '3. 分散原则：A、B 策略错落分布在四个号位，避免策略高度趋同，'
@@ -407,7 +434,8 @@ def build_prompt(reference, target, rows, *, context=None):
     )
     checklist = (
         '【每期强制自检清单（不可跳过，必须写入 self_check，全部为 true 才允许发布）】\n'
-        '1. allocation_rederived：A/B 组合已按本期指标重新推导，且与上期组合不同；\n'
+        '1. allocation_rederived：A/B 组合已按本期指标重新推导——与上期组合不同，'
+        '且完整方案（含 B 子策略映射）不与最近 2 期重复；\n'
         '2. runaway_shuffled：顺局预警时已打乱 A/B 分布并轮换 B 子策略（未触发也填 true）；\n'
         '3. dispersed：B 占多个号位时子策略不重复，四号位策略错落；\n'
         '4. cold_rebound_adjusted：冷反弹活跃时 A 已压到上限内且保留对冲 B（未触发也填 true）；\n'
@@ -424,7 +452,7 @@ def build_prompt(reference, target, rows, *, context=None):
         '"reason":"40字以内"}\n'
         '注意：allocation.a 与 allocation.b 合起来必须恰好是 q/b/s/g 四个键；'
         'b_sub 的键必须与 allocation.b 一致；kills 的四个值必须取自对应号位候选池；'
-        'A 组号位数量必须在 1..上限 之间，且 A/B 组合不得与上期相同。'
+        'A 组号位数量必须在 1..上限 之间；完整方案（分配+B 子策略）不得与最近 2 期重复。'
     )
     prompt = '\n'.join([header] + data_lines + ['', alloc_rules + hard_rules + checklist + output_spec])
 
@@ -444,9 +472,16 @@ def build_prompt(reference, target, rows, *, context=None):
         'a_cap': context['a_cap'],
         'a_min': 1,
         'last_allocation': context['last_allocation'],
+        'recent_schemes': [
+            {'a': list(alloc.get('a') or []), 'b': list(alloc.get('b') or []),
+             'b_sub': dict(alloc.get('b_sub') or {})}
+            for alloc in recent if isinstance(alloc, dict)
+        ],
+        'scheme_repeat_window': SCHEME_REPEAT_WINDOW,
         'rotation_required': rotation or runaway_hit,
         'runaway_shuffle_required': runaway_hit,
         'allocation_reuse_forbidden': True,
+        'scheme_reuse_forbidden': True,
         'b_sub_dispersion_required': True,
         'self_check_required': list(SELF_CHECK_KEYS),
     }
@@ -516,6 +551,16 @@ def normalize_response(response, context=None, audit=None):
         if (last_a or last_b) and set(a_keys) == last_a and set(b_keys) == last_b:
             raise ValueError('禁止惯性复制上期方案：A/B 号位组合与上期相同，'
                              '必须按本期下发指标重新推导')
+
+        # 防塌方 v3 · 惯性护栏：完整方案（分配 + B 子策略）不得与最近 2 期重复
+        recent = [alloc for alloc in (context.get('recent_allocations') or [])
+                  if isinstance(alloc, dict)]
+        scheme = _scheme_key({'a': a_keys, 'b': b_keys, 'b_sub': current_subs})
+        for offset, alloc in enumerate(reversed(recent), 1):
+            if _scheme_key(alloc) != scheme:
+                continue
+            raise ValueError('禁止惯性方案复用：完整方案（A/B 分配 + B 子策略）'
+                             '与前第 %d 期完全相同，必须重新推导' % offset)
 
         # 防塌方 v2 · 规则4：A 组下限 1，冷反弹活跃时上限为 1（由 a_cap 给出）
         if len(a_keys) < 1:
@@ -820,6 +865,8 @@ def create_seal(reference, target, reference_open_time, prediction, rows, *,
         'policy': {
             'a_min': 1,
             'allocation_reuse_forbidden': True,
+            'scheme_reuse_forbidden': True,
+            'scheme_repeat_window': SCHEME_REPEAT_WINDOW,
             'b_sub_dispersion_required': True,
             'runaway_shuffle_required': bool(audit.get('runaway_shuffle_required')),
             'rotation_required': bool(audit.get('rotation_required')),

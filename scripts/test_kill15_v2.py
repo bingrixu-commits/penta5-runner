@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""kill15 v2 防塌方校验逻辑自测：不调用模型、不写正式账本。
+"""kill15 v2/v3 防塌方与惯性护栏自测：不调用模型、不写正式账本。
+
+覆盖：
+  v2 —— 禁止沿用上期组合、A 组上下限、B 子策略分散、池内选码、runaway/Hit-B 轮换、强制自检；
+  v3 —— 完整方案（分配 + B 子策略映射）不得与最近 2 期重复。
 
 用法：python3 scripts/test_kill15_v2.py
 """
 import copy
-import json
 import sys
-from itertools import combinations
+from itertools import combinations, permutations
 from pathlib import Path
 
 ROOT = Path('/root/penta5-runner')
@@ -45,7 +48,7 @@ def load_rows():
     return rows
 
 
-def settlement(a_keys, b_keys, b_sub, hit=True, b_hit=None):
+def settlement(a_keys, b_keys, b_sub, hit=True, b_hit=None, scheme=None):
     positions = {}
     for key in KEYS:
         if key in b_keys:
@@ -53,18 +56,30 @@ def settlement(a_keys, b_keys, b_sub, hit=True, b_hit=None):
         else:
             positions[key] = {'hit': hit}
     group_hit = hit and (b_hit if b_hit is not None else hit)
-    return {'allocation': {'a': list(a_keys), 'b': list(b_keys), 'b_sub': dict(b_sub)},
-            'positions': positions,
-            'group_hit': group_hit}
+    alloc = {'a': list(a_keys), 'b': list(b_keys), 'b_sub': dict(b_sub)}
+    if scheme is not None:
+        alloc = scheme
+    return {'allocation': alloc, 'positions': positions, 'group_hit': group_hit}
+
+
+def scheme_key(allocation):
+    return kill15_tail._scheme_key(allocation)
 
 
 def make_valid(context):
-    """Construct one response that should pass every v2 check."""
+    """Construct one response that should pass every v2 + v3 check."""
     last = context.get('last_allocation') or {}
+    recent = context.get('recent_allocations') or []
+    blocked = {scheme_key(alloc) for alloc in recent if isinstance(alloc, dict)}
     cap = int(context['a_cap'])
-    last_a = set(last.get('a') or [])
-    last_b = set(last.get('b') or [])
-    chosen_a = chosen_b = None
+    last_a = set(str(key) for key in (last.get('a') or []))
+    last_b = set(str(key) for key in (last.get('b') or []))
+    last_sub = {str(key): str(value).upper() for key, value in (last.get('b_sub') or {}).items()}
+    perf = context.get('performance') or {}
+    hit_b = perf.get('hit_b_15')
+    runaway = context.get('runaway') or {}
+    rotation = ((isinstance(hit_b, (int, float)) and hit_b < 0.70)
+                or runaway.get('runaway_warning') is True)
     for combo in combinations(KEYS, cap):
         combo = list(combo)
         b_keys = [key for key in KEYS if key not in combo]
@@ -72,28 +87,20 @@ def make_valid(context):
             continue
         if set(combo) == last_a and set(b_keys) == last_b:
             continue
-        chosen_a, chosen_b = combo, b_keys
-        break
-    if chosen_a is None:
-        raise AssertionError('cannot build allocation')
-    last_sub = {str(key): str(value) for key, value in (last.get('b_sub') or {}).items()}
-    b_sub = {}
-    used = set()
-    for key in chosen_b:
-        options = [s for s in kill15_tail.B_SUBS
-                   if s != last_sub.get(key) and s not in used]
-        if not options:
-            options = [s for s in kill15_tail.B_SUBS if s not in used]
-        if not options:
-            raise AssertionError('cannot assign b_sub')
-        b_sub[key] = options[0]
-        used.add(options[0])
-    return {
-        'allocation': {'a': chosen_a, 'b': chosen_b, 'b_sub': b_sub},
-        'kills': {key: context['positions'][key]['pool'][0] for key in KEYS},
-        'self_check': {key: True for key in kill15_tail.SELF_CHECK_KEYS},
-        'reason': '自测：按本期指标错落分配',
-    }
+        for subs in permutations(kill15_tail.B_SUBS, len(b_keys)):
+            allocation = {'a': combo, 'b': b_keys, 'b_sub': dict(zip(b_keys, subs))}
+            if scheme_key(allocation) in blocked:
+                continue
+            if rotation and any(last_sub.get(key) == sub
+                                for key, sub in zip(b_keys, subs) if key in last_sub):
+                continue
+            return {
+                'allocation': allocation,
+                'kills': {key: context['positions'][key]['pool'][0] for key in KEYS},
+                'self_check': {key: True for key in kill15_tail.SELF_CHECK_KEYS},
+                'reason': '自测：按本期指标重新推导',
+            }
+    raise AssertionError('cannot build a valid response for this context')
 
 
 def out_of_pool(context, key):
@@ -112,7 +119,7 @@ def tamper_one_rotation(response, context):
     if not retained:
         return False
     key = retained[0]
-    last_value = {str(k): str(v) for k, v in last_sub.items()}[str(key)]
+    last_value = {str(k): str(v).upper() for k, v in last_sub.items()}[str(key)]
     used = {last_value}
     for other in b_keys:
         if other == key:
@@ -128,29 +135,33 @@ def tamper_one_rotation(response, context):
 
 def main():
     rows = load_rows()
-    low_b = [settlement(['q'], ['b', 's', 'g'],
-                        {'b': 'B1', 's': 'B2', 'g': 'B3'}, hit=True, b_hit=False)
-             for _ in range(3)]
     high_b = [settlement(['q'], ['b', 's', 'g'],
                          {'b': 'B1', 's': 'B2', 'g': 'B3'}, hit=True)
               for _ in range(3)]
+    low_b = [settlement(['q'], ['b', 's', 'g'],
+                        {'b': 'B1', 's': 'B2', 'g': 'B3'}, hit=True, b_hit=False)
+             for _ in range(3)]
 
-    # ---- 1. prompt v2 ----
+    # ---- 1. prompt v3 ----
     ctx = kill15_tail.build_context(rows, settlements=high_b)
-    prompt, audit = kill15_tail.build_prompt('20261112062', '20261112063', rows, context=ctx)
-    for needle in ('长期运行·防塌方核心规则', '禁止惯性复制上期方案', '顺局风控',
-                   '每期强制自检清单', 'allocation_rederived', '候选不足', 'self_check'):
+    prompt, audit = kill15_tail.build_prompt('20261112064', '20261112065', rows, context=ctx)
+    for needle in ('长期运行·防塌方核心规则', '禁止惯性复制上期方案', '前第2期方案',
+                   '最近 2 期', '每期强制自检清单', 'allocation_rederived',
+                   '候选不足', 'self_check', '顺局风控'):
         if needle not in prompt:
             FAILED.append('prompt 缺少 %r' % needle)
     if '%%' in prompt or '%s' in prompt:
         FAILED.append('prompt 残留未格式化占位符')
     if audit.get('version') != kill15_tail.PROMPT_VERSION:
         FAILED.append('audit.version 错误')
+    if audit.get('scheme_repeat_window') != kill15_tail.SCHEME_REPEAT_WINDOW:
+        FAILED.append('audit.scheme_repeat_window 错误')
     if audit.get('self_check_required') != list(kill15_tail.SELF_CHECK_KEYS):
         FAILED.append('audit.self_check_required 错误')
-    print('PASS prompt v2 (%d chars, version=%s)' % (len(prompt), audit['version']))
+    print('PASS prompt v3 (%d chars, version=%s, recent_schemes=%d)'
+          % (len(prompt), audit['version'], len(audit.get('recent_schemes') or [])))
 
-    # ---- 2. 合法输出通过 ----
+    # ---- 2. 合法输出通过（v2+v3 全部检查）----
     valid = make_valid(ctx)
     parsed = kill15_tail.normalize_response(valid, ctx)
     if parsed['self_check'].get('pool_confirmed') is not True:
@@ -158,10 +169,11 @@ def main():
     for key in KEYS:
         if parsed['kills'][key] not in ctx['positions'][key]['pool']:
             FAILED.append('normalize 返回池外码')
-    print('PASS valid response accepted (a=%s b=%s)' % (parsed['allocation']['a'],
-                                                        parsed['allocation']['b']))
+    print('PASS valid response accepted (a=%s b=%s subs=%s)'
+          % (parsed['allocation']['a'], parsed['allocation']['b'],
+             parsed['allocation']['b_sub']))
 
-    # ---- 3. 规则1：沿用上期组合 -> 拒收 ----
+    # ---- 3. v2 规则1：沿用上期组合 -> 拒收 ----
     last = ctx.get('last_allocation') or {}
     reused = copy.deepcopy(valid)
     reused['allocation'] = {'a': list(last.get('a') or []),
@@ -170,14 +182,37 @@ def main():
     expect_raise(reused, ctx, '禁止惯性复制上期方案', '规则1 沿用上期组合')
     print('PASS rule1: 沿用上期 A/B 组合被拒收')
 
-    # ---- 4. 规则3：B 子策略重复 -> 拒收 ----
+    # ---- 4. v3 惯性护栏：与前第 2 期“完整方案”相同 -> 拒收 ----
+    history3 = [
+        settlement(['q'], ['b', 's', 'g'], {'b': 'B1', 's': 'B2', 'g': 'B3'}),
+        settlement(['s'], ['q', 'b', 'g'], {'q': 'B2', 'b': 'B3', 'g': 'B1'}),
+        settlement(['g'], ['q', 'b', 's'], {'q': 'B1', 'b': 'B2', 's': 'B3'}),
+    ]
+    ctx3 = kill15_tail.build_context(rows, settlements=history3)
+    if len(ctx3.get('recent_allocations') or []) != kill15_tail.SCHEME_REPEAT_WINDOW:
+        FAILED.append('recent_allocations 数量错误: %r' % (len(ctx3.get('recent_allocations') or []),))
+    replay_two_ago = {
+        'allocation': {'a': ['s'], 'b': ['q', 'b', 'g'],
+                       'b_sub': {'q': 'B2', 'b': 'B3', 'g': 'B1'}},
+        'kills': {key: ctx3['positions'][key]['pool'][0] for key in KEYS},
+        'self_check': {key: True for key in kill15_tail.SELF_CHECK_KEYS},
+        'reason': '自测：照抄前第2期方案',
+    }
+    expect_raise(replay_two_ago, ctx3, '禁止惯性方案复用', 'v3 与近2期方案重复')
+    print('PASS v3: 与前第2期完整方案相同被拒收（即使 A/B 分配与上期不同）')
+
+    same_split_new_subs = copy.deepcopy(replay_two_ago)
+    same_split_new_subs['allocation']['b_sub'] = {'q': 'B1', 'b': 'B2', 'g': 'B3'}
+    kill15_tail.normalize_response(same_split_new_subs, ctx3)
+    print('PASS v3: 同一分配但 B 子策略已轮换 -> 放行（护栏只锁完整方案）')
+
+    # ---- 5. v2 规则3：B 子策略重复 -> 拒收 ----
     dup = copy.deepcopy(valid)
-    b_keys = dup['allocation']['b']
-    dup['allocation']['b_sub'] = {key: 'B1' for key in b_keys}
+    dup['allocation']['b_sub'] = {key: 'B1' for key in dup['allocation']['b']}
     expect_raise(dup, ctx, 'B 子策略不得重复', '规则3 B子策略重复')
     print('PASS rule3: B 子策略重复被拒收')
 
-    # ---- 5. 规则4：A=0 -> 拒收 / 超上限 -> 拒收 ----
+    # ---- 6. v2 规则4：A=0 / 超上限 -> 拒收 ----
     no_a = copy.deepcopy(valid)
     no_a['allocation'] = {'a': [], 'b': list(KEYS),
                           'b_sub': {key: kill15_tail.B_SUBS[index % 3]
@@ -195,22 +230,22 @@ def main():
         expect_raise(over, ctx, '超过本期上限', 'A 组超上限')
         print('PASS rule4: A 组 %d 个超过上限 %d 被拒收' % (len(over_a), cap))
 
-    # ---- 6. 规则5：池外杀码 -> 拒收 ----
+    # ---- 7. v2 规则5：池外杀码 -> 拒收 ----
     outside = copy.deepcopy(valid)
     outside['kills']['q'] = out_of_pool(ctx, 'q')
     expect_raise(outside, ctx, '不在候选池', '规则5 池外选码')
     print('PASS rule5: 池外杀码被拒收')
 
-    # ---- 7. 强制自检清单：缺失 / false -> 拒收 ----
+    # ---- 8. 强制自检清单：缺失 / false -> 拒收 ----
     missing = copy.deepcopy(valid)
     missing.pop('self_check')
     expect_raise(missing, ctx, '强制自检', '自检缺失')
     false_flag = copy.deepcopy(valid)
-    false_flag['self_check']['pool_confirmed'] = False
+    false_flag['self_check']['allocation_rederived'] = False
     expect_raise(false_flag, ctx, '强制自检', '自检 false')
     print('PASS checklist: self_check 缺失/false 被拒收')
 
-    # ---- 8. 规则2：runaway=true 时 B 子策略必须轮换 ----
+    # ---- 9. v2 规则2：runaway=true 时 B 子策略必须轮换 ----
     runaway_pool = [settlement(['q'], ['b', 's', 'g'],
                                {'b': 'B1', 's': 'B2', 'g': 'B3'}, hit=True)
                     for _ in range(kill15_tail.RUNAWAY_LIMIT)]
@@ -242,7 +277,7 @@ def main():
         print('PASS rule2: runaway=true 且已打乱/轮换的合法输出可通过 (a=%s b=%s)'
               % (parsed_run['allocation']['a'], parsed_run['allocation']['b']))
 
-    # ---- 9. 规则2 扩展：Hit-B<70% 时同样强制轮换 ----
+    # ---- 10. 规则2 扩展：Hit-B<70% 时同样强制轮换 ----
     ctx_low = kill15_tail.build_context(rows, settlements=low_b)
     hit_b = ctx_low['performance']['hit_b_15']
     if isinstance(hit_b, (int, float)) and hit_b < 0.70:
@@ -255,8 +290,8 @@ def main():
     else:
         FAILED.append('Hit-B 构造失败: %r' % (hit_b,))
 
-    # ---- 10. 封存字段 ----
-    seal = kill15_tail.create_seal('20261112062', '20261112063', '2026-11-12T05:10:00+08:00',
+    # ---- 11. 封存字段 ----
+    seal = kill15_tail.create_seal('20261112064', '20261112065', '2026-11-12T05:20:00+08:00',
                                    kill15_tail.normalize_response(valid, ctx), rows,
                                    context=ctx, audit=audit,
                                    extra={'mode': 'selftest'})
@@ -264,7 +299,10 @@ def main():
         FAILED.append('seal 缺 self_check/policy')
     if seal.get('prompt_version') != kill15_tail.PROMPT_VERSION:
         FAILED.append('seal prompt_version 错误')
-    print('PASS seal fields (prompt_version=%s)' % seal.get('prompt_version'))
+    if (seal.get('policy') or {}).get('scheme_repeat_window') != kill15_tail.SCHEME_REPEAT_WINDOW:
+        FAILED.append('seal policy.scheme_repeat_window 错误')
+    print('PASS seal fields (prompt_version=%s, policy.scheme_repeat_window=%s)'
+          % (seal.get('prompt_version'), (seal.get('policy') or {}).get('scheme_repeat_window')))
 
     print()
     if FAILED:
