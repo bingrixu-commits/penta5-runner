@@ -25,8 +25,15 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import kill15_tail  # noqa: E402
 from stats_history import beijing_now, load_snapshot  # noqa: E402
 from ai_call_control import require_ai_enabled, AICallsDisabled  # noqa: E402
+from panel_io import update_panel  # noqa: E402
+from kill_fifteen_view import apply_kill_fifteen_block  # noqa: E402
 
 WAIT_SECONDS = 150
+
+
+def publish_block():
+    """把最新封存/结算渲染进 panel.html（与 kill3/kill14 同一管线）。"""
+    update_panel(lambda page: apply_kill_fifteen_block(page))
 
 
 def _snapshot(wait_seconds=WAIT_SECONDS):
@@ -61,6 +68,11 @@ def main():
         seals = kill15_tail.load_seals()
         if kill15_tail.find_seal(seals, reference) is not None:
             print('kill15 existing seal preserved; ref=%s' % reference)
+            try:
+                publish_block()
+                print('kill15 panel block restored')
+            except Exception as error:
+                print('kill15 panel restore failed: %s' % type(error).__name__)
             return 0
 
         rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
@@ -94,6 +106,12 @@ def main():
                                        generated_at=generated_at, response_meta=meta)
         kill15_tail.save_seal(seal)
         kill15_tail.mark_published(reference)
+        try:
+            publish_block()
+        except Exception as error:
+            kill15_tail.mark_publication_failed(reference, 'panel-write-%s' % type(error).__name__)
+            print('kill15 panel publication failed: %s' % type(error).__name__)
+            return 1
 
         allocation = prediction['allocation']
         picked = ' · '.join(
@@ -101,7 +119,7 @@ def main():
                               'A' if key in allocation['a'] else 'B',
                               ('/' + allocation['b_sub'][key]) if key in allocation['b_sub'] else '')
             for key in kill15_tail.POSITION_KEYS)
-        print('kill15 SHADOW sealed: ref=%s target=%s %s' % (reference, target, picked))
+        print('kill15 sealed: ref=%s target=%s %s' % (reference, target, picked))
         print('kill15 reason: %s' % (prediction.get('reason') or '-'))
         return 0
     finally:

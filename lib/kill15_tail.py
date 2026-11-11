@@ -78,8 +78,13 @@ POSITION_KEYS = tuple(key for key, _label, _index in POSITIONS)
 POSITION_LABELS = {key: label for key, label, _index in POSITIONS}
 POSITION_INDEX = {key: index for key, _label, index in POSITIONS}
 
-RULE_VERSION = 'kill15-tail-v1-ab-position-kill'
+RULE_VERSION = 'kill15-tail-v3-inertia-guard'
 PROMPT_VERSION = 'kill15-tail-prompt-v3-inertia-guard'
+# 旧代际记录原样保留、不迁移；统计与回放按 rule_version 切分。
+LEGACY_RULES = (
+    'kill15-tail-v1-ab-position-kill',
+    'kill15-tail-v2-anticollapse',
+)
 SELF_CHECK_KEYS = (
     'allocation_rederived',
     'runaway_shuffled',
@@ -329,6 +334,11 @@ def build_context(rows, settlements=None):
     runaway = runaway_state(settlements)
     cap = a_cap(burst, perf['hit_a_15'], perf['hit_b_15'])
     last = settlements[-1] if settlements else None
+    last_kills = {
+        str(key): int(item.get('kill'))
+        for key, item in ((last or {}).get('positions') or {}).items()
+        if isinstance(item, dict) and item.get('kill') is not None
+    }
     recent = [row.get('allocation') for row in settlements[-SCHEME_REPEAT_WINDOW:]
               if isinstance(row.get('allocation'), dict)]
     return {
@@ -339,6 +349,7 @@ def build_context(rows, settlements=None):
         'runaway': runaway,
         'a_cap': cap,
         'last_allocation': (last or {}).get('allocation'),
+        'last_kills': last_kills,
         'recent_allocations': recent,
         'history_rows': len(rows),
         'latest_digits': {key: str(rows[-1][index]) for key, _label, index in POSITIONS},
@@ -430,7 +441,9 @@ def build_prompt(reference, target, rows, *, context=None):
         '4. 冷反弹阶段：盘面为「冷反弹活跃」时，主动降低遗漏系 A 占比（取上限内最小值 1 个），'
         '提高对冲 B 权重，抵御冷号批量爆发带来的连续出错；\n'
         '5. 候选池纪律：四个杀码严格取自对应号位候选池；池内无合适标的时不得自选、'
-        '不得放宽或收紧排除标准，理由标注「候选不足」。\n\n'
+        '不得放宽或收紧排除标准，理由标注「候选不足」；\n'
+        '6. 杀码去重：四个杀码不得与上期四个杀码完全相同——即使 A/B 分配变了，'
+        '四码原样照搬同样拒收，必须按本期指标重新选码。\n\n'
     )
     checklist = (
         '【每期强制自检清单（不可跳过，必须写入 self_check，全部为 true 才允许发布）】\n'
@@ -452,7 +465,8 @@ def build_prompt(reference, target, rows, *, context=None):
         '"reason":"40字以内"}\n'
         '注意：allocation.a 与 allocation.b 合起来必须恰好是 q/b/s/g 四个键；'
         'b_sub 的键必须与 allocation.b 一致；kills 的四个值必须取自对应号位候选池；'
-        'A 组号位数量必须在 1..上限 之间；完整方案（分配+B 子策略）不得与最近 2 期重复。'
+        'A 组号位数量必须在 1..上限 之间；完整方案（分配+B 子策略）不得与最近 2 期重复；'
+        '四个杀码不得与上期完全相同。'
     )
     prompt = '\n'.join([header] + data_lines + ['', alloc_rules + hard_rules + checklist + output_spec])
 
@@ -580,6 +594,16 @@ def normalize_response(response, context=None, audit=None):
             if parsed_kills[key] not in pool:
                 raise ValueError('%s位杀码 %d 不在候选池 %s 内'
                                  % (POSITION_LABELS[key], parsed_kills[key], pool))
+
+        # 防塌方 v3 · 规则7：四个杀码与上期完全相同，同样视为照搬
+        last_kills = context.get('last_kills') or {}
+        if len(last_kills) == len(POSITION_KEYS):
+            same = [POSITION_LABELS[key] for key in POSITION_KEYS
+                    if str(parsed_kills[key]) == str(last_kills.get(key))]
+            if len(same) == len(POSITION_KEYS):
+                raise ValueError('四个杀码与上期完全相同（%s），必须按本期指标重新选码'
+                                 % '、'.join('%s%d' % (POSITION_LABELS[k], parsed_kills[k])
+                                             for k in POSITION_KEYS))
 
         # 防塌方 v2 · 规则2：runaway 或 Hit-B 偏低时，B 子策略必须逐位轮换
         if runaway_hit or (isinstance(hit_b, (int, float)) and hit_b < 0.70):
@@ -912,6 +936,19 @@ def mark_published(reference, published_at=None):
         return seal
     seal['publication_state'] = 'published'
     seal['published_at'] = (published_at or beijing_now()).isoformat()
+    _write_seals(seals)
+    return seal
+
+
+def mark_publication_failed(reference, error):
+    """回滚发布状态：面板写入失败时把封存退回 prepared，便于下一轮重试。"""
+    reference = str(reference)
+    seals = load_seals()
+    seal = find_seal(seals, reference)
+    if seal is None:
+        return None
+    seal['publication_state'] = 'prepared'
+    seal['publication_error'] = str(error)[:120]
     _write_seals(seals)
     return seal
 
