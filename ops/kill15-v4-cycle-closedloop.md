@@ -73,17 +73,19 @@
 
 ### 3.4 面板与巡检
 
-- 面板 meta 增加「周期 第 N 轮 x/40 期」「复盘通过/异常/待到期」，统计行增加本轮期号。
+- 面板 meta 增加「周期 第 N 轮 x/40 期」「复盘通过/异常/待到期」，统计行增加本轮期号；
+  并展示「全代际累计整组命中」作为对照（旧代际只读展示，不参与调参）。
 - `ops_health_check`：`kill15_policy` 增 v4 校验（`policy.b_rotation_forced`、`cycle.*` 字段、
-  B 子策略与上期同位不同）→ 违规 fail；新增 `kill15_review` 探针：
+  B 子策略与上期同位不同、四码去重规则 7）→ 违规 fail；新增 `kill15_review` 探针：
   未到期 ok / 到期未复盘 warn / 复盘不一致 fail。
+- runner `--dry-run` 改为零副作用：不结算、不复盘、不调用；只打印上下文与 prompt。
 
 ## 4. 自测结果
 
 | 脚本 | 结果 |
 | --- | --- |
 | `python3 scripts/test_kill15_v2.py` | **SELFTEST OK**：prompt v4、合法输出、v2 规则 1–5、v3 惯性护栏、v4 强制轮换/周期重置/封存字段、复盘一致/篡改两路（共 19 项 PASS） |
-| `python3 scripts/test_kill15_health.py` | **SELFTEST OK**：kill15_tail / policy（含 v4 轮换/周期字段）/ retry / review 四类探针（共 14 项 PASS） |
+| `python3 scripts/test_kill15_health.py` | **SELFTEST OK**：kill15_tail / policy（含 v4 轮换、周期字段、四码去重规则 7）/ retry / review 四类探针（共 15 项 PASS） |
 
 ## 5. 线上验证（2026-11-12 06:26–06:31）
 
@@ -100,6 +102,11 @@
 | 回放 | v4 45 期大样本回放 06:26 启动（隔离账本 `replay_v4.json`），用于验证第 41 期周期边界；结果单列 |
 
 **部署时序备注**：06:20 那期仍是 v3（进程在文件上传前已 import）；06:25 起 v4，符合“等下一个整 5 分钟验证”的既有结论。
+
+**并行会话并入说明**：部署窗口内另一并行会话（git 作者 `ops-bot`）于 06:28 在同一工作区追加了三项兼容改动——
+`kill15_policy` 增四码去重规则 7 巡检、面板增全代际累计对照、runner `--dry-run` 零副作用；
+随 v4 代码一并提交（`20040ed`）。本轮已合入本地工作副本并重跑自测（15 项全过），口径不变。
+**后续如需再改同一批文件，请只保留一个会话操作，避免互相覆盖。**
 
 ## 6. 回滚方法
 

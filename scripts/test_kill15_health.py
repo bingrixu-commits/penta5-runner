@@ -3,7 +3,8 @@
 
 覆盖 ops_health_check.check_kill15 的四类探针：
   kill15_tail    封存/发布及时性
-  kill15_policy  v2/v4 规则合规（池内选码 / A 上下限 / B 子策略分散 / 强制轮换 / 惯性护栏 / 周期字段 / 自检 / 版本漂移）
+  kill15_policy  v2/v4 规则合规（池内选码 / A 上下限 / B 子策略分散 / 强制轮换 / 四码去重规则7 /
+                 惯性护栏 / 周期字段 / 自检 / 版本漂移）
   kill15_retry   近 6h 重试/失败统计
   kill15_review  抽样复盘（未到期 ok / 到期未复盘 warn / 通过 ok / 不一致 fail）
 
@@ -130,11 +131,14 @@ def expect(name, entries, status, needle=None):
 
 VALID_SEALS = [
     make_seal('20261112070', '20261112071', ['q'], ['b', 's', 'g'],
-              {'b': 'B1', 's': 'B2', 'g': 'B3'}),
+              {'b': 'B1', 's': 'B2', 'g': 'B3'},
+              kills={'q': 1, 'b': 2, 's': 3, 'g': 4}),
     make_seal('20261112072', '20261112073', ['s'], ['q', 'b', 'g'],
-              {'q': 'B2', 'b': 'B3', 'g': 'B1'}),
+              {'q': 'B2', 'b': 'B3', 'g': 'B1'},
+              kills={'q': 2, 'b': 3, 's': 4, 'g': 5}),
     make_seal('20261112074', '20261112075', ['b'], ['q', 's', 'g'],
-              {'q': 'B1', 's': 'B2', 'g': 'B3'}),
+              {'q': 'B1', 's': 'B2', 'g': 'B3'},
+              kills={'q': 3, 'b': 4, 's': 5, 'g': 6}),
 ]
 
 
@@ -187,6 +191,17 @@ def test_rotation_violation():
     entries = check_entries(make_ctx(root, '20261112074'))
     expect('kill15_policy', entries, 'fail', '未强制轮换')
     print('PASS rotation: v4 B 子策略与上期相同 -> fail')
+
+
+def test_rule7_repeat():
+    # 四个杀码与上期完全相同（仅换分配）-> fail（规则7）
+    repeat_kills = make_seal('20261112074', '20261112075', ['b'], ['q', 's', 'g'],
+                             {'q': 'B1', 's': 'B2', 'g': 'B3'},
+                             kills={'q': 2, 'b': 3, 's': 4, 'g': 5})
+    root = build_root([VALID_SEALS[0], VALID_SEALS[1], repeat_kills])
+    entries = check_entries(make_ctx(root, '20261112074'))
+    expect('kill15_policy', entries, 'fail', '规则7')
+    print('PASS rule7: 四码与上期全同（仅换分配）-> fail')
 
 
 def test_out_of_pool():
@@ -286,10 +301,10 @@ def test_review_mismatch():
 
 def main():
     for test in (test_valid, test_scheme_repeat, test_a_zero, test_dup_subs,
-                 test_rotation_violation, test_out_of_pool, test_self_check_missing,
-                 test_prompt_drift, test_retry_and_failure, test_seal_lag,
-                 test_unpublished, test_review_due_missing, test_review_ok,
-                 test_review_mismatch):
+                 test_rotation_violation, test_rule7_repeat, test_out_of_pool,
+                 test_self_check_missing, test_prompt_drift, test_retry_and_failure,
+                 test_seal_lag, test_unpublished, test_review_due_missing,
+                 test_review_ok, test_review_mismatch):
         try:
             test()
         except Exception as error:
