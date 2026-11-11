@@ -10,6 +10,7 @@
 const http = require("http");
 const webSecurity = require("./web_security");
 const { createAiControlHandler } = require("./ai_control_routes");
+const { createAiScopeHandler } = require("./ai_scope_routes");
 const { createKill8RunHandler } = require("./kill8_run_routes");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -17227,6 +17228,7 @@ function sendForbidden(res) {
 }
 
 const handleAiControlRequest = createAiControlHandler({ root: __dirname, authRoleForRequest });
+const handleAiScopeRequest = createAiScopeHandler({ root: __dirname, authRoleForRequest });
 const handleKill8RunRequest = createKill8RunHandler({ root: __dirname, authRoleForRequest });
 
 async function handleRequest(req, res) {
@@ -17240,6 +17242,7 @@ async function handleRequest(req, res) {
   const parsedUrl = new URL(req.url, "http://localhost");
   const pathname = parsedUrl.pathname;
   if (await handleAiControlRequest(req, res)) return;
+  if (await handleAiScopeRequest(req, res)) return;
   if (await handleKill8RunRequest(req, res)) return;
   if (req.method === "GET" && pathname === "/login") {
     sendPasswordLoginHtml(req, res, "");
