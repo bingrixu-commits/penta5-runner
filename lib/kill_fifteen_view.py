@@ -1,12 +1,14 @@
-"""分位杀号（kill15 独立框架，v3）面板区块。
+"""分位杀号（kill15 独立框架，v4）面板区块。
 
 数据源 data/kill15_tail/{seals,settlements}.json，由 scripts/run_kill15_tail.py 每期生成。
-与既有框架完全独立：独立封存 / 结算 / 统计 / 面板区块。
+与既有框架完全独立：独立封存 / 结算 / 统计 / 周期台账 / 抽样复盘 / 面板区块。
 
 命中口径（写死，面板脚注同步展示）：
 - 四个号位（千/百/十/个）每期各杀 1 码（0-9），整组固定 4 项全部计入整组；
 - A 组 = 遗漏系，B 组 = 对冲系（B1 热码杀 / B2 反弹杀 / B3 形态对冲）；
 - A 组号位上限由盘面与滚动 Hit-A/Hit-B 决定（冷反弹活跃=1，否则 2，命中率异常再压 1）；
+- v4：每 40 期为一轮，跨轮清空历史胜率偏好；B 子策略每期强制轮换；
+  每 30 期自动抽样复盘一次，核对封存/结算与原始开奖（reviews.json）；
 - 命中 = 该号位实际开奖号 != 该号位杀码（单项随机 90%）；
 - 整组命中 = 4 项同时命中；整组随机基线 65.61%（(9/10)^4，10^4 开奖空间精确枚举）；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；
@@ -69,6 +71,11 @@ def render_block():
     seals = kill15_tail.load_seals()
     settlements = kill15_tail.load_settlements()
     stats = kill15_tail.today_stats()
+    try:
+        reviews = kill15_tail.load_reviews()
+    except (OSError, ValueError):
+        reviews = []
+    review = reviews[-1] if reviews else None
 
     if not seals:
         return '%s<section id="%s"><h3 class="k15-title">%s</h3>' \
@@ -88,8 +95,17 @@ def render_block():
 
     regime = seal.get('regime') or {}
     perf = seal.get('performance') or {}
-    meta = ('参考期 %s → 目标期 %s ｜ 盘面 %s ｜ A %s ｜ B %s ｜ 规则 %s ｜ 状态 %s'
+    cycle = seal.get('cycle') or {}
+    if cycle:
+        cycle_text = '第%d轮 %d/%d期' % (int(cycle.get('cycle_no') or 0) + 1,
+                                       int(cycle.get('cycle_pos') or 1),
+                                       int(cycle.get('cycle_periods') or 40))
+    else:
+        cycle_text = '-'
+    review_text = ('复盘通过' if review.get('status') == 'ok' else '复盘异常') if review else '复盘待到期'
+    meta = ('参考期 %s → 目标期 %s ｜ 盘面 %s ｜ A %s ｜ B %s ｜ 周期 %s ｜ %s ｜ 规则 %s ｜ 状态 %s'
             % (reference, target, regime.get('label') or '-', a_text, b_text,
+               cycle_text, review_text,
                seal.get('rule_version') or '-', seal.get('publication_state') or '-'))
 
     recent_rows = []
@@ -107,19 +123,31 @@ def render_block():
         recent_html = ('<table><thead><tr><th>目标期</th><th>整组</th><th>明细</th></tr></thead>'
                        '<tbody>%s</tbody></table>' % ''.join(recent_rows))
 
-    stats_html = ('今日整组 %s（%s/%s）｜ 单码 %s（%s/%s）｜ 近15期 Hit-A %s ／ Hit-B %s ｜ 累计封存 %s 期'
+    stats_cycle = stats.get('cycle') or {}
+    cycle_note = ''
+    if stats_cycle:
+        cycle_note = '｜ 本轮 第 %d/%d 期' % (int(stats_cycle.get('cycle_pos') or 1),
+                                           int(stats_cycle.get('cycle_periods') or 40))
+    # 全代际累计（版本升级后“本代际”会清零，需同时展示全部，避免看起来像坏了）
+    all_total = len([row for row in settlements if isinstance(row.get('positions'), dict)])
+    all_hits = sum(1 for row in settlements if row.get('group_hit') is True)
+    all_html = ('｜ 全部代际 整组 %s（%d/%d）'
+                % (_pct((all_hits / float(all_total)) if all_total else None), all_hits, all_total))
+    stats_html = ('今日整组 %s（%s/%s）｜ 单码 %s（%s/%s）｜ 近15期 Hit-A %s ／ Hit-B %s ｜ 累计封存 %s 期%s%s'
                   % (_pct(stats.get('group_rate')), stats.get('group_hits'), stats.get('total'),
                      _pct((stats.get('position') or {}).get('rate')),
                      (stats.get('position') or {}).get('hits'),
                      (stats.get('position') or {}).get('bets'),
                      _pct(perf.get('hit_a_15')), _pct(perf.get('hit_b_15')),
-                     len(seals)))
+                     len(seals), cycle_note, all_html))
 
     foot = ('口径：每号位杀 1 码，命中=实际开奖≠杀码（单项随机 90%）；'
             '整组 4 项全中才算命中，随机基线 65.61%。'
             'A 组为遗漏系、B 组为对冲系，A 组号位上限随盘面与滚动命中率自动收紧；'
             '四个杀码必须落在后端候选池内，且不得与上期完全相同。'
-            'v1/v2 旧记录保留在原账本，统计按规则代际切分。')
+            'v4：每 40 期为一轮、跨轮清空胜率偏好；B 子策略每期强制轮换；'
+            '每 30 期自动抽样复盘，逐项核对封存/结算与原始开奖。'
+            'v1/v2/v3 旧记录保留在原账本，统计按规则代际切分。')
 
     return (
         '%s<section id="%s">'

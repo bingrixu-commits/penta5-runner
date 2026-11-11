@@ -16,6 +16,10 @@
   每期必须输出 self_check 五项自检且全为 true，缺项或 false 一律拒收重试；
 - 防塌方 v3（惯性护栏）：完整方案（A/B 分配 + B 子策略映射）不得与最近 2 期重复，
   用于打破“两套分配交替”式拟合惯性；与 v2 规则叠加执行；
+- 防塌方 v4（周期闭环）：每 CYCLE_PERIODS=40 期为一轮，跨轮清空历史胜率偏好
+  （Hit-A/Hit-B 只统计本轮周期内最近 15 期，runaway 连击同样只在轮内累计）；
+  B 组三子策略每期强制轮换（任一 B 号位不得连续两期使用同一子策略）；
+  每 REVIEW_PERIODS=30 期自动抽样复盘，核对封存/结算账本与原始开奖是否一致；
 - 命中 = 该号位实际开奖号 != 该号位杀码（单项随机 90%）；整组随机基线 (9/10)^4 = 65.61%；
 - 只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零。
 
@@ -44,6 +48,9 @@ ROOT = Path('/root/penta5-runner')
 DATA_DIR = ROOT / 'data' / 'kill15_tail'
 SEALS_PATH = DATA_DIR / 'seals.json'
 SETTLEMENTS_PATH = DATA_DIR / 'settlements.json'
+CYCLES_PATH = DATA_DIR / 'cycles.json'
+REVIEWS_PATH = DATA_DIR / 'reviews.json'
+REVIEW_ALERTS_PATH = DATA_DIR / 'review_alerts.log'
 STATE_PATH = ROOT / 'data' / 'state.json'
 HISTORY_PATH = ROOT / 'data' / 'stats_draw_history.json'
 
@@ -66,6 +73,9 @@ POOL_SIZE = 5
 DEEP_COLD_OMISSION = 25
 RUNAWAY_LIMIT = 14
 SCHEME_REPEAT_WINDOW = 2
+CYCLE_PERIODS = 40
+REVIEW_PERIODS = 30
+REVIEW_SAMPLE = 30
 B_SUBS = ('B1', 'B2', 'B3')
 
 POSITIONS = (
@@ -78,12 +88,13 @@ POSITION_KEYS = tuple(key for key, _label, _index in POSITIONS)
 POSITION_LABELS = {key: label for key, label, _index in POSITIONS}
 POSITION_INDEX = {key: index for key, _label, index in POSITIONS}
 
-RULE_VERSION = 'kill15-tail-v3-inertia-guard'
-PROMPT_VERSION = 'kill15-tail-prompt-v3-inertia-guard'
+RULE_VERSION = 'kill15-tail-v4-cycle-closedloop'
+PROMPT_VERSION = 'kill15-tail-prompt-v4-cycle-closedloop'
 # 旧代际记录原样保留、不迁移；统计与回放按 rule_version 切分。
 LEGACY_RULES = (
     'kill15-tail-v1-ab-position-kill',
     'kill15-tail-v2-anticollapse',
+    'kill15-tail-v3-inertia-guard',
 )
 SELF_CHECK_KEYS = (
     'allocation_rederived',
@@ -141,6 +152,30 @@ def _write_seals(records):
 
 def _write_settlements(records):
     atomic_json(SETTLEMENTS_PATH, {'version': 1, 'records': records})
+
+
+def load_cycles():
+    document = _load_json(CYCLES_PATH, {'version': 1, 'records': []})
+    records = document.get('records')
+    if not isinstance(records, list):
+        raise ValueError('kill15 cycles records must be a list')
+    return [item for item in records if isinstance(item, dict)]
+
+
+def _write_cycles(records):
+    atomic_json(CYCLES_PATH, {'version': 1, 'records': records})
+
+
+def load_reviews():
+    document = _load_json(REVIEWS_PATH, {'version': 1, 'records': []})
+    records = document.get('records')
+    if not isinstance(records, list):
+        raise ValueError('kill15 reviews records must be a list')
+    return [item for item in records if isinstance(item, dict)]
+
+
+def _write_reviews(records):
+    atomic_json(REVIEWS_PATH, {'version': 1, 'records': records})
 
 
 def find_seal(seals, reference):
@@ -251,6 +286,44 @@ def _scheme_key(allocation):
     return a, b, sub_key
 
 
+# ---------------------------------------------------------------------------
+# v4 · 周期闭环：每 CYCLE_PERIODS 期一轮，跨轮清空历史胜率偏好
+# ---------------------------------------------------------------------------
+def generation_settlements(settlements, rule_version=RULE_VERSION):
+    """Return settled periods that belong to the given rule generation."""
+    target = str(rule_version)
+    return [row for row in (settlements or [])
+            if isinstance(row, dict) and str(row.get('rule_version') or '') == target]
+
+
+def cycle_state(settlements):
+    """Current reset-cycle position for the active rule generation.
+
+    cycle_no: 0-based cycle index; cycle_pos: 1-based position of the *next*
+    period inside the cycle; is_cycle_start: True for the first period after a
+    soft reset (history win-rate preference is cleared).
+    """
+    rows = generation_settlements(settlements)
+    total = len(rows)
+    settled_in_cycle = total % CYCLE_PERIODS
+    return {
+        'cycle_no': total // CYCLE_PERIODS,
+        'cycle_pos': settled_in_cycle + 1,
+        'settled_in_cycle': settled_in_cycle,
+        'cycle_periods': CYCLE_PERIODS,
+        'settled_total': total,
+        'is_cycle_start': settled_in_cycle == 0,
+        'rule_version': RULE_VERSION,
+    }
+
+
+def current_cycle_settlements(settlements):
+    """Settled periods of the current reset cycle (older cycles excluded)."""
+    rows = generation_settlements(settlements)
+    start = (len(rows) // CYCLE_PERIODS) * CYCLE_PERIODS
+    return rows[start:]
+
+
 def performance_from_settlements(settlements, window=HIT_WINDOW):
     """Rolling Hit-A / Hit-B over the last N settled periods."""
     recent = [row for row in settlements if isinstance(row.get('positions'), dict)][-window:]
@@ -279,12 +352,12 @@ def performance_from_settlements(settlements, window=HIT_WINDOW):
 
 
 def runaway_state(settlements):
-    """顺局预警：同一套 A/B 分配连续命中（整组全中）的期数。
+    """顺局预警：同一套 A/B 分配连续命中（整组全中）的期数，只在当前周期内累计。
 
     安全规则原文：runaway_warning = 连续 14 期同一套分配命中。
-    任一条件被打破（分配变化 / 该期未整组命中）即中断连击，重新计数。
+    任一条件被打破（分配变化 / 该期未整组命中 / 周期软重置）即中断连击，重新计数。
     """
-    rows = [row for row in settlements
+    rows = [row for row in current_cycle_settlements(settlements)
             if isinstance(row.get('allocation'), dict) and 'group_hit' in row]
     if not rows:
         return {'consecutive_same_allocation': 0, 'runaway_warning': False}
@@ -330,7 +403,8 @@ def build_context(rows, settlements=None):
             'hot30': {str(digit): hot[digit] for digit in range(10)},
         }
     burst = deep_cold_burst(rows)
-    perf = performance_from_settlements(settlements)
+    cycle = cycle_state(settlements)
+    perf = performance_from_settlements(current_cycle_settlements(settlements))
     runaway = runaway_state(settlements)
     cap = a_cap(burst, perf['hit_a_15'], perf['hit_b_15'])
     last = settlements[-1] if settlements else None
@@ -347,6 +421,7 @@ def build_context(rows, settlements=None):
                    'label': '冷反弹活跃' if burst >= 3 else '冷沉寂'},
         'performance': perf,
         'runaway': runaway,
+        'cycle': cycle,
         'a_cap': cap,
         'last_allocation': (last or {}).get('allocation'),
         'last_kills': last_kills,
@@ -395,8 +470,9 @@ def build_prompt(reference, target, rows, *, context=None):
     perf = context['performance']
     regime = context['regime']
     runaway = context['runaway']
+    cycle = context['cycle']
     last = context['last_allocation'] or {}
-    rotation = (isinstance(perf['hit_b_15'], (int, float)) and perf['hit_b_15'] < 0.70)
+    rotation = True      # v4：B 子策略每期强制轮换，不再只在低命中/顺局时触发
     runaway_hit = runaway.get('runaway_warning') is True
     recent = context.get('recent_allocations') or []
     two_ago_text = _scheme_text(recent[0]) if len(recent) >= 2 else '无'
@@ -417,17 +493,24 @@ def build_prompt(reference, target, rows, *, context=None):
         % ('是' if runaway_hit else '否', runaway.get('consecutive_same_allocation')),
         '· 上期方案：%s' % _scheme_text(last),
         '· 前第2期方案（本期禁止重复）：%s' % two_ago_text,
+        '· 本轮周期：第 %d 轮 · 第 %d/%d 期（胜率统计只在本轮周期内累计，跨轮清零）'
+        % (cycle['cycle_no'] + 1, cycle['cycle_pos'], cycle['cycle_periods']),
         '· 本期 A 组号位上限：%d 个（下限 1 个，禁止 A=0）' % context['a_cap'],
-        '· 本期 B 子策略强制轮换：%s'
-        % ('是（Hit-B 低于 70% 或顺局预警）' if (rotation or runaway_hit) else '否'),
+        '· 本期 B 子策略强制轮换：是（每个 B 号位都必须与上期不同；B 占多个号位时子策略互不重复）',
     ]
+    if cycle.get('is_cycle_start'):
+        data_lines.append(
+            '· 周期软重置：本期为第 %d 轮起点，历史胜率偏好已清空——A/B 配比与四个号位'
+            '必须仅依据本期下发指标重新推导，禁止参照上一轮任何配置'
+            % (cycle['cycle_no'] + 1))
     alloc_rules = (
         '【A/B 配比规则】\n'
         '1. A 组号位数量必须在 1 到本期上限之间；禁止四个号位全部给 A；\n'
         '2. 遗漏系 A 适合冷号延续；对冲 B 用于分散，B 必须标明子策略 B1/B2/B3；\n'
         '3. Hit-A 偏低或过高都要减少 A；Hit-A、Hit-B 同时低于 70% 时 A 只留 1 个；\n'
-        '4. Hit-B 低于 70% 时，全部 B 子策略必须与上期不同（强制轮换）；\n'
-        '5. 四个号位的策略尽量错落，不要高度趋同；B 占多个号位时子策略不得重复。\n\n'
+        '4. B 子策略强制轮换：每个 B 号位每期都必须与上期使用不同的子策略；'
+        'B 占多个号位时子策略也不得重复；\n'
+        '5. 四个号位的策略尽量错落，不要高度趋同。\n\n'
     )
     hard_rules = (
         '【长期运行·防塌方核心规则（每期必须执行，禁止惯性）】\n'
@@ -443,14 +526,18 @@ def build_prompt(reference, target, rows, *, context=None):
         '5. 候选池纪律：四个杀码严格取自对应号位候选池；池内无合适标的时不得自选、'
         '不得放宽或收紧排除标准，理由标注「候选不足」；\n'
         '6. 杀码去重：四个杀码不得与上期四个杀码完全相同——即使 A/B 分配变了，'
-        '四码原样照搬同样拒收，必须按本期指标重新选码。\n\n'
+        '四码原样照搬同样拒收，必须按本期指标重新选码；\n'
+        '7. 周期纪律：每 %d 期为一轮，跨轮历史胜率偏好清零，必须按本期指标重新推导配比；'
+        'B 组三子策略每期强制轮换，任何 B 号位不得连续两期使用同一子策略。\n\n'
+        % CYCLE_PERIODS
     )
     checklist = (
         '【每期强制自检清单（不可跳过，必须写入 self_check，全部为 true 才允许发布）】\n'
         '1. allocation_rederived：A/B 组合已按本期指标重新推导——与上期组合不同，'
         '且完整方案（含 B 子策略映射）不与最近 2 期重复；\n'
         '2. runaway_shuffled：顺局预警时已打乱 A/B 分布并轮换 B 子策略（未触发也填 true）；\n'
-        '3. dispersed：B 占多个号位时子策略不重复，四号位策略错落；\n'
+        '3. dispersed：B 占多个号位时子策略不重复，且每个 B 号位子策略与上期不同，'
+        '四号位策略错落；\n'
         '4. cold_rebound_adjusted：冷反弹活跃时 A 已压到上限内且保留对冲 B（未触发也填 true）；\n'
         '5. pool_confirmed：四个杀码全部在对应号位候选池内，无池外码。\n'
         '自检缺项或任一项为 false，后端直接拒收并重试。\n\n'
@@ -466,7 +553,7 @@ def build_prompt(reference, target, rows, *, context=None):
         '注意：allocation.a 与 allocation.b 合起来必须恰好是 q/b/s/g 四个键；'
         'b_sub 的键必须与 allocation.b 一致；kills 的四个值必须取自对应号位候选池；'
         'A 组号位数量必须在 1..上限 之间；完整方案（分配+B 子策略）不得与最近 2 期重复；'
-        '四个杀码不得与上期完全相同。'
+        '每个 B 号位子策略必须与上期不同；四个杀码不得与上期完全相同。'
     )
     prompt = '\n'.join([header] + data_lines + ['', alloc_rules + hard_rules + checklist + output_spec])
 
@@ -482,7 +569,13 @@ def build_prompt(reference, target, rows, *, context=None):
         'hot30': {key: context['positions'][key]['hot30'] for key in POSITION_KEYS},
         'regime': context['regime'],
         'performance': context['performance'],
+        'performance_scope': 'current-cycle-last-15',
         'runaway': context['runaway'],
+        'cycle': cycle,
+        'cycle_periods': CYCLE_PERIODS,
+        'cycle_reset': bool(cycle.get('is_cycle_start')),
+        'review_periods': REVIEW_PERIODS,
+        'legacy_rules': list(LEGACY_RULES),
         'a_cap': context['a_cap'],
         'a_min': 1,
         'last_allocation': context['last_allocation'],
@@ -492,7 +585,8 @@ def build_prompt(reference, target, rows, *, context=None):
             for alloc in recent if isinstance(alloc, dict)
         ],
         'scheme_repeat_window': SCHEME_REPEAT_WINDOW,
-        'rotation_required': rotation or runaway_hit,
+        'rotation_required': True,
+        'b_rotation_forced': True,
         'runaway_shuffle_required': runaway_hit,
         'allocation_reuse_forbidden': True,
         'scheme_reuse_forbidden': True,
@@ -605,14 +699,14 @@ def normalize_response(response, context=None, audit=None):
                                  % '、'.join('%s%d' % (POSITION_LABELS[k], parsed_kills[k])
                                              for k in POSITION_KEYS))
 
-        # 防塌方 v2 · 规则2：runaway 或 Hit-B 偏低时，B 子策略必须逐位轮换
-        if runaway_hit or (isinstance(hit_b, (int, float)) and hit_b < 0.70):
-            last_sub = {str(k): str(v).upper() for k, v in (last.get('b_sub') or {}).items()}
-            unchanged = [POSITION_LABELS.get(key, key) for key, sub in current_subs.items()
-                         if last_sub.get(key) == sub]
-            if unchanged:
-                raise ValueError('B 子策略必须轮换：%s位子策略与上期相同'
-                                 % '、'.join(unchanged))
+        # 防塌方 v4 · 规则2（强制轮换）：B 组三子策略每期逐位轮换——任何 B 号位
+        # 都不得连续两期使用同一子策略；runaway / Hit-B 偏低时同样适用（更严格）。
+        last_sub = {str(k): str(v).upper() for k, v in (last.get('b_sub') or {}).items()}
+        unchanged = [POSITION_LABELS.get(key, key) for key, sub in current_subs.items()
+                     if last_sub.get(key) == sub]
+        if unchanged:
+            raise ValueError('B 子策略必须强制轮换：%s位子策略与上期相同，'
+                             '每个 B 号位每期都必须换子策略' % '、'.join(unchanged))
 
     # 强制自检清单：缺项或任一项非 true 一律拒收
     self_check = response.get('self_check')
@@ -846,6 +940,7 @@ def create_seal(reference, target, reference_open_time, prediction, rows, *,
     if len(rows) < WINDOW:
         raise ValueError('insufficient-kill15-history')
     context = context or build_context(rows)
+    cycle = dict(context.get('cycle') or cycle_state(load_settlements()))
     kills = prediction['kills']
     allocation = prediction['allocation']
     positions = {}
@@ -884,6 +979,7 @@ def create_seal(reference, target, reference_open_time, prediction, rows, *,
         'regime': context['regime'],
         'performance': context['performance'],
         'runaway': context['runaway'],
+        'cycle': cycle,
         'candidate_pools': {key: context['positions'][key]['pool'] for key in POSITION_KEYS},
         'self_check': prediction.get('self_check') or {},
         'policy': {
@@ -892,8 +988,16 @@ def create_seal(reference, target, reference_open_time, prediction, rows, *,
             'scheme_reuse_forbidden': True,
             'scheme_repeat_window': SCHEME_REPEAT_WINDOW,
             'b_sub_dispersion_required': True,
+            'b_rotation_forced': True,
+            'cycle_periods': CYCLE_PERIODS,
+            'cycle_no': cycle.get('cycle_no'),
+            'cycle_pos': cycle.get('cycle_pos'),
+            'cycle_reset_required': bool(cycle.get('is_cycle_start')),
+            'stats_scope': 'current-cycle-last-15',
+            'review_periods': REVIEW_PERIODS,
+            'request_isolation': 'single-turn-fresh-request',
             'runaway_shuffle_required': bool(audit.get('runaway_shuffle_required')),
-            'rotation_required': bool(audit.get('rotation_required')),
+            'rotation_required': True,
         },
         'reason': str(prediction.get('reason') or '')[:200],
         'window': len(window_rows),
@@ -924,6 +1028,53 @@ def save_seal(seal):
         raise PublicationRejected('existing-kill15-seal-cannot-be-replaced')
     seals.append(seal)
     _write_seals(seals)
+    try:
+        record_cycle_start(seal)
+    except OSError:
+        # 周期台账写失败不阻塞本期发布；health/复盘仍可从封存 cycle 字段重建。
+        pass
+
+
+def record_cycle_start(seal):
+    """每轮首期封存成功后追加一条周期起点记录（append-only，不重复）。"""
+    cycle = seal.get('cycle') or {}
+    try:
+        cycle_pos = int(cycle.get('cycle_pos') or 0)
+        cycle_no = int(cycle.get('cycle_no') or 0)
+    except (TypeError, ValueError):
+        return None
+    if cycle_pos != 1:
+        return None
+    rule_version = str(seal.get('rule_version') or RULE_VERSION)
+    cycles = load_cycles()
+    if any(str(item.get('rule_version')) == rule_version
+           and int(item.get('cycle_no') or 0) == cycle_no for item in cycles):
+        return None
+    previous = None
+    if cycle_no > 0:
+        rows = generation_settlements(load_settlements(), rule_version)
+        previous_rows = rows[max(0, len(rows) - CYCLE_PERIODS):]
+        if previous_rows:
+            group_hits = sum(1 for row in previous_rows if row.get('group_hit') is True)
+            previous = {
+                'settled': len(previous_rows),
+                'group_hits': group_hits,
+                'group_rate': group_hits / float(len(previous_rows)),
+            }
+    record = {
+        'version': 1,
+        'cycle_no': cycle_no,
+        'rule_version': rule_version,
+        'prompt_version': seal.get('prompt_version'),
+        'start_ref': seal.get('ref_period'),
+        'start_target': seal.get('target_period'),
+        'started_at': seal.get('generated_at'),
+        'cycle_periods': CYCLE_PERIODS,
+        'previous_cycle': previous,
+    }
+    cycles.append(record)
+    _write_cycles(cycles)
+    return record
 
 
 def mark_published(reference, published_at=None):
@@ -991,6 +1142,8 @@ def settle_pending(snapshot=None, now=None):
             'rule_version': seal.get('rule_version'),
             'ref_period': seal.get('ref_period'),
             'target_period': target,
+            'cycle_no': (seal.get('cycle') or {}).get('cycle_no'),
+            'cycle_pos': (seal.get('cycle') or {}).get('cycle_pos'),
             'open_time': record.get('opentime'),
             'settled_at': (now or beijing_now()).isoformat(),
             'allocation': seal.get('allocation'),
@@ -1030,7 +1183,8 @@ def today_stats(now=None):
             position_bets += 1
             if item.get('hit') is True:
                 position_hits += 1
-    perf = performance_from_settlements(settlements)
+    perf = performance_from_settlements(current_cycle_settlements(settlements))
+    cycle = cycle_state(settlements)
     return {
         'total': total,
         'group_hits': hits,
@@ -1039,7 +1193,262 @@ def today_stats(now=None):
                      'rate': (position_hits / float(position_bets)) if position_bets else None},
         'hit_a_15': perf['hit_a_15'],
         'hit_b_15': perf['hit_b_15'],
+        'cycle': cycle,
         'pending': len([seal for seal in load_seals()
                         if seal.get('publication_state') == 'published']),
         'latest_period': latest_period(),
     }
+
+
+# ---------------------------------------------------------------------------
+# v4 · 抽样复盘：每 REVIEW_PERIODS 期核对封存/结算账本 vs 原始开奖
+# ---------------------------------------------------------------------------
+def _history_map(snapshot=None):
+    """period -> first-four draw digits, read from the canonical draw history."""
+    snapshot = snapshot or load_snapshot(persist=False)
+    mapping = {}
+    for record in snapshot.get('records') or []:
+        if not isinstance(record, dict):
+            continue
+        period = str(record.get('period') or '')
+        try:
+            digits = [int(value) for value in list(record.get('numbers') or [])[:4]]
+        except (TypeError, ValueError):
+            continue
+        if period and len(digits) == 4 and all(0 <= digit <= 9 for digit in digits):
+            mapping[period] = digits
+    return mapping
+
+
+def _wilson_interval(successes, trials, z=1.96):
+    """Wilson score 95% interval for a binomial rate."""
+    if trials <= 0:
+        return None, None
+    p = successes / float(trials)
+    denominator = 1.0 + z * z / trials
+    center = (p + z * z / (2.0 * trials)) / denominator
+    margin = z * ((p * (1.0 - p) / trials + z * z / (4.0 * trials * trials)) ** 0.5) / denominator
+    return max(0.0, center - margin), min(1.0, center + margin)
+
+
+def _parse_iso(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed
+
+
+def audit_settlements(seals, settlements, history, sample=REVIEW_SAMPLE,
+                      rule_version=RULE_VERSION):
+    """核对最近 sample 期：封存/结算账本 vs 原始开奖（纯函数，可离线自测）。
+
+    返回复盘记录：discrepancies（硬不一致，必须告警）与 warnings（口径提醒）。
+    """
+    rows = generation_settlements(settlements, rule_version)[-sample:]
+    seals_by_target = {}
+    for seal in seals or []:
+        if not isinstance(seal, dict):
+            continue
+        if str(seal.get('rule_version') or '') != str(rule_version):
+            continue
+        target = str(seal.get('target_period') or '')
+        if target:
+            seals_by_target[target] = seal
+    discrepancies = []
+    warnings = []
+    group_hits = position_bets = position_hits = 0
+    for index, row in enumerate(rows):
+        target = str(row.get('target_period') or '') or '?'
+        seal = seals_by_target.get(target)
+        actuals = history.get(target)
+        if seal is None:
+            discrepancies.append('%s 结算无对应封存' % target)
+        if actuals is None:
+            discrepancies.append('%s 原始开奖缺失，无法核对' % target)
+        positions = row.get('positions') if isinstance(row.get('positions'), dict) else {}
+        if sorted(positions) != sorted(POSITION_KEYS):
+            discrepancies.append('%s 结算号位不完整' % target)
+        hits = []
+        for key, label, pos_index in POSITIONS:
+            item = positions.get(key)
+            if not isinstance(item, dict):
+                discrepancies.append('%s %s位结算缺失' % (target, label))
+                continue
+            try:
+                kill = int(item.get('kill'))
+                recorded_actual = int(item.get('actual'))
+            except (TypeError, ValueError):
+                discrepancies.append('%s %s位杀码/开奖号非法' % (target, label))
+                continue
+            hit = item.get('hit') is True
+            hits.append(hit)
+            position_bets += 1
+            if hit:
+                position_hits += 1
+            if actuals is not None:
+                real = actuals[pos_index]
+                if recorded_actual != real:
+                    discrepancies.append('%s %s位台账开奖 %d ≠ 原始 %d'
+                                         % (target, label, recorded_actual, real))
+                if hit != (real != kill):
+                    discrepancies.append('%s %s位命中判定错误（台账 %s）'
+                                         % (target, label, hit))
+            if seal is None:
+                continue
+            seal_item = (seal.get('positions') or {}).get(key) or {}
+            try:
+                seal_kill = int(seal_item.get('kill'))
+            except (TypeError, ValueError):
+                seal_kill = None
+            if seal_kill is not None and seal_kill != kill:
+                discrepancies.append('%s %s位封存杀码 %s ≠ 结算 %d'
+                                     % (target, label, seal_kill, kill))
+            pool = (seal.get('candidate_pools') or {}).get(key) or []
+            try:
+                pool_digits = [int(digit) for digit in pool]
+            except (TypeError, ValueError):
+                pool_digits = []
+            if pool_digits and kill not in pool_digits:
+                discrepancies.append('%s %s位杀码 %d 不在封存候选池' % (target, label, kill))
+        group_hit = row.get('group_hit') is True
+        if hits and group_hit != all(hits):
+            discrepancies.append('%s 整组命中判定错误' % target)
+        if group_hit:
+            group_hits += 1
+        if seal is None:
+            continue
+        if str(seal.get('publication_state') or '') != 'published':
+            discrepancies.append('%s 封存未发布即结算' % target)
+        else:
+            published = _parse_iso(seal.get('published_at'))
+            opened = _parse_iso(row.get('open_time'))
+            if published is None:
+                warnings.append('%s 封存发布时间为空' % target)
+            elif opened is not None and published >= opened:
+                discrepancies.append('%s 封存发布晚于开奖时间' % target)
+        self_check = seal.get('self_check') if isinstance(seal.get('self_check'), dict) else {}
+        missing = [key for key in SELF_CHECK_KEYS if self_check.get(key) is not True]
+        if missing:
+            discrepancies.append('%s 封存自检缺失/未通过: %s' % (target, ','.join(missing)))
+        allocation = seal.get('allocation') if isinstance(seal.get('allocation'), dict) else {}
+        a_keys = [str(key) for key in allocation.get('a') or []]
+        try:
+            cap = int(seal.get('a_cap'))
+        except (TypeError, ValueError):
+            cap = None
+        if len(a_keys) < 1:
+            discrepancies.append('%s A 组为空' % target)
+        if cap is not None and len(a_keys) > cap:
+            discrepancies.append('%s A 组 %d 个超过上限 %d' % (target, len(a_keys), cap))
+        subs = [str(value).upper() for value in (allocation.get('b_sub') or {}).values()]
+        if len(subs) >= 2 and len(set(subs)) < len(subs):
+            discrepancies.append('%s B 子策略重复' % target)
+        if _scheme_key(allocation) != _scheme_key(row.get('allocation')):
+            discrepancies.append('%s 结算分配与封存不一致' % target)
+        # v3 惯性护栏（近 2 期完整方案不得重复）+ v4 强制轮换，与后端实时校验口径一致
+        for offset in (1, 2):
+            if index - offset < 0:
+                continue
+            older = rows[index - offset]
+            if _scheme_key(older.get('allocation')) != _scheme_key(allocation):
+                continue
+            discrepancies.append('%s 完整方案与前 %d 期重复' % (target, offset))
+        if index > 0:
+            previous = rows[index - 1]
+            previous_sub = (previous.get('allocation') or {}).get('b_sub') or {}
+            previous_keys = {str(key) for key in previous_sub}
+            for key, value in (allocation.get('b_sub') or {}).items():
+                key = str(key)
+                if key in previous_keys and str(previous_sub[key]).upper() == str(value).upper():
+                    discrepancies.append('%s %s位 B 子策略未强制轮换'
+                                         % (target, POSITION_LABELS.get(key, key)))
+    settled_all = {str(item.get('target_period')) for item in (settlements or [])
+                   if isinstance(item, dict)}
+    pending = [target for target in seals_by_target
+               if target in history and target not in settled_all]
+    if pending:
+        discrepancies.append('已开奖但未结算的封存: %s' % '、'.join(sorted(pending)[:5]))
+    total = len(rows)
+    group_rate = (group_hits / float(total)) if total else None
+    single_rate = (position_hits / float(position_bets)) if position_bets else None
+    low, high = _wilson_interval(group_hits, total) if total else (None, None)
+    if total >= REVIEW_SAMPLE and low is not None:
+        if EXPECTED_GROUP_RATE < low:
+            warnings.append('整组命中率显著高于随机基线 65.61%%（95%%CI %.1f%%–%.1f%%），'
+                            '疑似判分口径/数据泄漏，需人工复核' % (100 * low, 100 * high))
+        elif EXPECTED_GROUP_RATE > high:
+            warnings.append('整组命中率显著低于随机基线 65.61%%（95%%CI %.1f%%–%.1f%%），'
+                            '需复核候选池/配比口径' % (100 * low, 100 * high))
+    return {
+        'status': 'ok' if not discrepancies else 'mismatch',
+        'rule_version': str(rule_version),
+        'sample': sample,
+        'reviewed_periods': total,
+        'from_ref': str(rows[0].get('ref_period')) if rows else None,
+        'to_target': str(rows[-1].get('target_period')) if rows else None,
+        'seals_checked': len([target for target in seals_by_target
+                              if target in {str(item.get('target_period')) for item in rows}]),
+        'discrepancies': discrepancies[:30],
+        'warnings': warnings[:20],
+        'rates': {
+            'group': {'hits': group_hits, 'bets': total, 'rate': group_rate,
+                      'ci95': [low, high]},
+            'single': {'hits': position_hits, 'bets': position_bets, 'rate': single_rate},
+        },
+        'baseline': {'group_rate': EXPECTED_GROUP_RATE,
+                     'expected_basis': EXPECTED_BASIS},
+    }
+
+
+def _append_review_alert(record):
+    line = json.dumps({
+        'created_at': record.get('created_at'),
+        'review_no': record.get('review_no'),
+        'review_bucket': record.get('review_bucket'),
+        'status': record.get('status'),
+        'reviewed_periods': record.get('reviewed_periods'),
+        'from_ref': record.get('from_ref'),
+        'to_target': record.get('to_target'),
+        'discrepancies': record.get('discrepancies') or [],
+        'warnings': record.get('warnings') or [],
+    }, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    try:
+        with open(REVIEW_ALERTS_PATH, 'a', encoding='utf-8') as stream:
+            stream.write((record.get('created_at') or beijing_now().isoformat()) + ' ' + line + '\n')
+    except OSError:
+        pass
+
+
+def run_scheduled_review(snapshot=None, force=False):
+    """每 REVIEW_PERIODS 期复盘一次最近窗口；force=True 立即复盘（手动核对用）。"""
+    settlements = load_settlements()
+    total = len(generation_settlements(settlements))
+    if total < 1:
+        return None
+    if not force and total < REVIEW_PERIODS:
+        return None
+    bucket = total // REVIEW_PERIODS
+    reviews = load_reviews()
+    if not force and any(int(item.get('review_bucket') or -1) == bucket for item in reviews):
+        return None
+    history = _history_map(snapshot)
+    seals = load_seals()
+    result = audit_settlements(seals, settlements, history)
+    record = {
+        'version': 1,
+        'review_no': len(reviews) + 1,
+        'review_bucket': bucket,
+        'review_periods': REVIEW_PERIODS,
+        'review_sample': REVIEW_SAMPLE,
+        'created_at': beijing_now().isoformat(),
+        'trigger': 'forced' if force else 'scheduled',
+    }
+    record.update(result)
+    reviews.append(record)
+    _write_reviews(reviews)
+    if result['discrepancies']:
+        _append_review_alert(record)
+    return record

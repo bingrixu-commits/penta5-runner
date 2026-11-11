@@ -174,6 +174,7 @@ def main():
             'group_hit': all(hits),
             'a_cap': ctx['a_cap'],
             'regime': ctx['regime'],
+            'cycle': ctx.get('cycle'),
             'performance_before': ctx['performance'],
             'candidate_pools': {k: ctx['positions'][k]['pool'] for k in kill15_tail.POSITION_KEYS},
             'reason': prediction.get('reason'),

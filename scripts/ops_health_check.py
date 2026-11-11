@@ -11,8 +11,9 @@ Collects a fixed set of probes into one JSON report plus a human table:
   stat50_seal        max prediction_seals key in data/stat50_compare_seals.json
   he3_refine         reference_period lag + status
   kill15_tail        kill15 最新期封存/发布是否及时（开奖后 7 分钟宽限）
-  kill15_policy      kill15 v2/v3 防塌方规则合规复核（候选池/自检/分散/惯性护栏/版本漂移）
+  kill15_policy      kill15 v2/v4 防塌方规则合规复核（候选池/自检/分散/惯性护栏/B 强制轮换/周期字段/版本漂移）
   kill15_retry       kill15 近 6h 模型调用重试/失败统计
+  kill15_review      kill15 抽样复盘（每 30 期核对封存/结算与原始开奖；到期未复盘 warn，不一致 fail）
   panel_html         panel.html mtime age (warn > 10 min, fail > 30 min)
   evidence_backup    /root/evidence-archives/latest-verified.json age + archive file
   manifest_drift     evidence_backup.newest_source_manifest() still matches live sources
@@ -134,12 +135,14 @@ KILL3_LATENCY_FAIL_SECONDS = 300
 KILL3_FREEZE_JSON = 'ops/kill3-freeze.json'
 KILL3_FREEZE_HOURS = 72
 KILL3_FREEZE_PERIODS = 100
-# kill15 分位杀号（影子跑）：封存及时性 + v2/v3 防塌方规则合规 + 近 6h 重试/失败。
+# kill15 分位杀号（影子跑）：封存及时性 + v2/v4 防塌方规则合规 + 近 6h 重试/失败 + 抽样复盘。
 KILL15_SEAL_GRACE_SECONDS = 420
 KILL15_POLICY_DEPTH = 3
 KILL15_RETRY_WINDOW_SECONDS = 6 * 3600
 KILL15_RETRY_WARN_COUNT = 3
 KILL15_RETRY_WARN_RATIO = 0.25
+KILL15_REVIEW_PERIODS = 30
+KILL15_REVIEWS = 'kill15_tail/reviews.json'
 KILL15_CRON_LOG = 'kill15_tail_cron.log'
 KILL15_POSITIONS = ('q', 'b', 's', 'g')
 KILL15_B_SUBS = ('B1', 'B2', 'B3')
@@ -929,10 +932,46 @@ def _kill15_audit_seal(seal, past):
             soft.append('scheme_repeat_window=%s（预期 2）' % window)
         if policy.get('scheme_reuse_forbidden') is not True:
             hard.append('policy.scheme_reuse_forbidden 缺失')
+    if major >= 4:
+        policy = seal.get('policy') if isinstance(seal.get('policy'), dict) else {}
+        cycle = seal.get('cycle') if isinstance(seal.get('cycle'), dict) else {}
+        if policy.get('b_rotation_forced') is not True:
+            hard.append('policy.b_rotation_forced 缺失（v4 强制轮换未启用）')
+        if policy.get('stats_scope') != 'current-cycle-last-15':
+            soft.append('policy.stats_scope=%s（预期 current-cycle-last-15）'
+                        % policy.get('stats_scope'))
+        if not isinstance(cycle.get('cycle_periods'), int):
+            hard.append('cycle.cycle_periods 缺失')
+        if not isinstance(cycle.get('cycle_pos'), int):
+            hard.append('cycle.cycle_pos 缺失')
+        if not isinstance(cycle.get('cycle_no'), int):
+            hard.append('cycle.cycle_no 缺失')
+        if past:
+            previous_allocation = (past[0] or {}).get('allocation') or {}
+            previous_subs = (previous_allocation.get('b_sub') or {})
+            previous_map = {str(key): str(value).upper()
+                            for key, value in previous_subs.items()}
+            reused = [key for key, value in b_sub.items()
+                      if str(key) in previous_map
+                      and str(value).upper() == previous_map[str(key)]]
+            if reused:
+                hard.append('B 子策略未强制轮换（v4 违反）: %s' % ','.join(sorted(reused)))
     if past:
         previous = past[0] if isinstance(past[0], dict) else None
         if _kill15_allocation_key(allocation) == _kill15_allocation_key(previous):
             hard.append('与上期 A/B 组合相同（规则1 违反）')
+        # 规则7：四个杀码与上期完全相同（即使分配变了）也算照搬
+        previous_positions = (previous or {}).get('positions') or {}
+        current_positions = seal.get('positions') or {}
+        try:
+            previous_kills = {key: int((previous_positions.get(key) or {}).get('kill'))
+                              for key in KILL15_POSITIONS}
+            current_kills = {key: int((current_positions.get(key) or {}).get('kill'))
+                             for key in KILL15_POSITIONS}
+            if all(current_kills[key] == previous_kills[key] for key in KILL15_POSITIONS):
+                hard.append('四个杀码与上期完全相同（规则7 违反）')
+        except (TypeError, ValueError, AttributeError):
+            pass
         current = _kill15_scheme(allocation)
         for offset, older in enumerate(past, 1):
             if not isinstance(older, dict):
@@ -1005,8 +1044,64 @@ def _kill15_retry_entry(ctx):
     return _entry('kill15_retry', OK, detail, stats)
 
 
+def _kill15_review_entry(root):
+    """v4 抽样复盘探针：本轮每 30 期应有一条 ok 复盘；不一致 fail，到期未复盘 warn。"""
+    seals_payload, seals_error = _load_json(Path(root) / 'data' / 'kill15_tail' / 'seals.json')
+    seals = seals_payload.get('records') if isinstance(seals_payload, dict) else None
+    settlements_payload, _error = _load_json(
+        Path(root) / 'data' / 'kill15_tail' / 'settlements.json')
+    settlements = ((settlements_payload.get('records')
+                    if isinstance(settlements_payload, dict) else None) or [])
+    if not isinstance(seals, list) or not seals:
+        return _entry('kill15_review', WARN, 'no seals yet: %s' % (seals_error or 'empty'))
+    usable = [item for item in seals if isinstance(item, dict)]
+    rule_version = str((usable[-1] if usable else {}).get('rule_version') or '')
+    settled = [item for item in settlements
+               if isinstance(item, dict)
+               and str(item.get('rule_version') or '') == rule_version]
+    total = len(settled)
+    if total < KILL15_REVIEW_PERIODS:
+        return _entry('kill15_review', OK,
+                      '尚未到期：本轮已结算 %d/%d 期' % (total, KILL15_REVIEW_PERIODS),
+                      {'settled': total})
+    bucket = total // KILL15_REVIEW_PERIODS
+    reviews_payload, reviews_error = _load_json(Path(root) / 'data' / KILL15_REVIEWS)
+    reviews = ((reviews_payload.get('records')
+                if isinstance(reviews_payload, dict) else None) or [])
+    latest = None
+    for item in reversed(reviews):
+        if not isinstance(item, dict):
+            continue
+        try:
+            item_bucket = int(item.get('review_bucket'))
+        except (TypeError, ValueError):
+            continue
+        if item_bucket == bucket:
+            latest = item
+            break
+    if latest is None:
+        return _entry('kill15_review', WARN,
+                      '到期未复盘：已结算 %d 期（bucket %d）%s'
+                      % (total, bucket, reviews_error or ''),
+                      {'settled': total, 'bucket': bucket})
+    discrepancies = latest.get('discrepancies') or []
+    if str(latest.get('status') or '') != 'ok' or discrepancies:
+        return _entry('kill15_review', FAIL,
+                      '抽样复盘不一致 %d 项: %s'
+                      % (len(discrepancies),
+                         '; '.join(str(item) for item in discrepancies[:3])),
+                      {'bucket': bucket, 'discrepancies': discrepancies[:10]})
+    rates = latest.get('rates') if isinstance(latest.get('rates'), dict) else {}
+    group = rates.get('group') if isinstance(rates.get('group'), dict) else {}
+    return _entry('kill15_review', OK,
+                  'bucket %d 复盘通过：样本 %s 期，整组 %s/%s'
+                  % (bucket, latest.get('reviewed_periods'),
+                     group.get('hits'), group.get('bets')),
+                  {'bucket': bucket, 'review_no': latest.get('review_no')})
+
+
 def check_kill15(ctx):
-    """kill15 分位杀号（影子跑）：封存及时性 / v2+v3 规则合规 / 近 6h 重试失败。"""
+    """kill15 分位杀号（影子跑）：封存及时性 / v2+v4 规则合规 / 近 6h 重试失败 / 抽样复盘。"""
     latest = ctx.get('latest') if isinstance(ctx.get('latest'), dict) else None
     root = ctx['root']
     entries = []
@@ -1025,6 +1120,7 @@ def check_kill15(ctx):
                                   'missing/unreadable seals.json: %s' % (error or 'empty')))
         entries.append(_entry('kill15_policy', FAIL, 'no seals to audit'))
         entries.append(_kill15_retry_entry(ctx))
+        entries.append(_kill15_review_entry(root))
         return entries
     usable = [item for item in records if isinstance(item, dict)]
     seal = usable[-1] if usable else {}
@@ -1069,7 +1165,7 @@ def check_kill15(ctx):
                     % (latest_version, expected))
     if hard:
         entries.append(_entry('kill15_policy', FAIL,
-                              'v2/v3 规则违规 %d 项: %s'
+                              'v2/v4 规则违规 %d 项: %s'
                               % (len(hard), '; '.join(hard[:4])),
                               {'violations': hard}))
     elif soft:
@@ -1077,12 +1173,14 @@ def check_kill15(ctx):
                               {'warnings': soft}))
     else:
         entries.append(_entry('kill15_policy', OK,
-                              '最新期 v2/v3 合规（prompt=%s，候选池/A→上限/子策略分散/惯性护栏/自检全过）'
+                              '最新期 v2/v4 合规（prompt=%s，候选池/A→上限/子策略分散/'
+                              'B 强制轮换/周期字段/惯性护栏/自检全过）'
                               % (latest_version or '?'),
                               {'prompt_version': latest_version,
                                'expected': expected,
                                'audited_periods': 1 + len(past)}))
     entries.append(_kill15_retry_entry(ctx))
+    entries.append(_kill15_review_entry(root))
     return entries
 
 

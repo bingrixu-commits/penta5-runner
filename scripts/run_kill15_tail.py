@@ -59,7 +59,25 @@ def main():
         if not args.dry_run:
             require_ai_enabled()
         snapshot = _snapshot()
-        kill15_tail.settle_pending(snapshot)
+        if not args.dry_run:
+            kill15_tail.settle_pending(snapshot)
+        if not args.dry_run:
+            try:
+                review = kill15_tail.run_scheduled_review(snapshot)
+            except Exception as error:
+                print('kill15 review failed: %s: %s'
+                      % (type(error).__name__, str(error)[:160]))
+            else:
+                if review:
+                    rates = review.get('rates') or {}
+                    group = rates.get('group') or {}
+                    print('kill15 review #%s bucket=%s: 样本 %s 期（%s→%s）'
+                          '整组 %s/%s，不一致 %s 项，提醒 %s 项'
+                          % (review.get('review_no'), review.get('review_bucket'),
+                             review.get('reviewed_periods'), review.get('from_ref'),
+                             review.get('to_target'), group.get('hits'), group.get('bets'),
+                             len(review.get('discrepancies') or []),
+                             len(review.get('warnings') or [])))
         latest = snapshot.get('latest') or {}
         reference = str(args.reference or latest.get('period') or '')
         if len(reference) != 11:
@@ -86,6 +104,10 @@ def main():
         print('kill15 perf: hit_a=%s hit_b=%s periods=%s'
               % (context['performance']['hit_a_15'], context['performance']['hit_b_15'],
                  context['performance']['periods']))
+        cycle = context['cycle']
+        print('kill15 cycle: 第 %d 轮 第 %d/%d 期%s'
+              % (cycle['cycle_no'] + 1, cycle['cycle_pos'], cycle['cycle_periods'],
+                 '（周期软重置）' if cycle.get('is_cycle_start') else ''))
         print('kill15 window: opened=%s deadline=%s (target %s)'
               % (latest.get('opentime'), deadline.isoformat(), target))
 
