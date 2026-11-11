@@ -107,3 +107,50 @@ python3 scripts/ai_scope_control.py stop-all
 - `.env` 里 `PENTA5_API_KEY_*` 已填好，改完 key 不必重启，下一次 cron 自动生效；
 - `with_scope.sh` 会显式 `source .env`，因为 cron 不继承环境变量；
 - 余额守卫的缓存文件 `data/ai_scope_balance_cache.json` 只存 key 尾部 6 位，不存明文。
+
+---
+
+## 七、面板结构（2026-11-12 07:20 定稿）
+
+### 入口
+
+| 地址 | 说明 |
+| --- | --- |
+| `http://8.210.5.221:3001/` | 主入口；未登录先登录，登录后 → `/f/` |
+| `/f/` | 框架总览（13 个框架列表） |
+| `/f/<框架>` | 单框架页，各自独立、可单独收藏 |
+| `/full` | 旧长版面板（备用，平时不用） |
+| `/panel` | 302 → `/f/`（保留兼容旧链接） |
+
+### 单框架页
+
+`/f/kill1` `/f/kill3` `/f/kill10` `/f/kill11` `/f/kill12` `/f/kill13` `/f/kill14`
+`/f/kill15` `/f/cold15` `/f/cold30` `/f/he3` `/f/killer` `/f/framework`
+
+每页只渲染该框架自己的面板区块 + 自己的启停开关；顶部导航保留，可一键切换。
+页面内容每次请求都从最新 `panel.html` 抽取，不存在数据滞后。
+
+### 启停开关
+
+- 面板：单框架页顶部「运行中 / 已停用」+ 停止/启动按钮（切换需管理员账号密码）
+- 命令行：`python3 scripts/ai_scope_control.py {status|start|stop} --scope <框架>`
+- 停止语义：cron 仍触发，但 `with_scope.sh` 在入口直接退出，**不启动 python 进程**
+- 应急绕过：`PENTA5_SCOPE_GATE=0`
+- 跳过记录：`data/scope_skip.log`
+
+### 14 个作用域的独立 key
+
+killer / framework / he3 / kill1 / kill3 / kill10 / kill11 / kill12 / kill13 /
+kill14 / kill15 / cold15 / cold30（与 cold15 共用一把）/ replay = 13 把 key。
+
+**限制**：DeepSeek 余额是账号级，key 只隔离「吊销范围」与「识别」，不隔离额度。
+
+### 路由实现位置（便于后续维护）
+
+| 文件 | 职责 |
+| --- | --- |
+| `framework_pages.js` | `/f/` 与 `/f/<scope>` 渲染；单框架开关；导航 |
+| `ai_scope_routes.js` | `/api/ai-scope` 读写接口（admin 才能写） |
+| `penta5_backend_runner.js` | 挂载上述路由；`/` 与 `/panel` 跳转；登录回跳白名单 |
+| `lib/ai_scope.py` | 作用域状态、key 解析、开关判断 |
+| `lib/ai_scope_view.py` | 长版面板里的「按框架启停」区块 |
