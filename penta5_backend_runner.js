@@ -17077,12 +17077,14 @@ async function handleClaudeProxyRequest(req, res, pathname) {
 
 function safeLoginNextPath(raw) {
   const text = String(raw || "").trim();
+  // 框架分页（/f/ 与 /f/<scope>）也允许作为登录回跳目标
+  if (/^\/f(?:\/[a-z0-9]{2,16})?\/?$/.test(text)) return text;
   if (text === "/attack-txt" || text === "/gongjiyu" || text === "/panel" || isAccuracyPath(text) || isHitratePath(text) || isStatsPath(text)) return text;
-  return "/panel";
+  return "/f/";
 }
 
 function sendPasswordLoginHtml(req, res, message, nextPath) {
-  const next = safeLoginNextPath(nextPath || (req && req.url ? new URL(req.url, "http://localhost").searchParams.get("next") : "") || "/panel");
+  const next = safeLoginNextPath(nextPath || (req && req.url ? new URL(req.url, "http://localhost").searchParams.get("next") : "") || "/f/");
   const errorHtml = message ? `<div class="error">${String(message).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))}</div>` : "";
   const html = `<!doctype html>
 <html lang="zh-CN">
