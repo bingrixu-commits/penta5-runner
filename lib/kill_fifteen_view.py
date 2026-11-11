@@ -75,7 +75,6 @@ def render_block():
         reviews = kill15_tail.load_reviews()
     except (OSError, ValueError):
         reviews = []
-    review = reviews[-1] if reviews else None
 
     if not seals:
         return '%s<section id="%s"><h3 class="k15-title">%s</h3>' \
@@ -102,7 +101,38 @@ def render_block():
                                        int(cycle.get('cycle_periods') or 40))
     else:
         cycle_text = '-'
-    review_text = ('复盘通过' if review.get('status') == 'ok' else '复盘异常') if review else '复盘待到期'
+    # 复盘状态只认 scheduled 记录（forced 为手动核对，不计入合规）；到期未跑明确提示。
+    rule_version = kill15_tail.RULE_VERSION
+    review_periods = int(kill15_tail.REVIEW_PERIODS)
+    settled_total = len([row for row in settlements
+                         if str(row.get('rule_version') or '') == rule_version])
+    scheduled = {}
+    for row in reviews:
+        if str(row.get('trigger') or 'scheduled') != 'scheduled':
+            continue
+        if str(row.get('rule_version') or '') != rule_version:
+            continue
+        try:
+            bucket = int(row.get('review_bucket'))
+        except (TypeError, ValueError):
+            continue
+        if bucket >= 1:
+            scheduled[bucket] = row
+    expected = settled_total // review_periods
+    missing = [bucket for bucket in range(1, expected + 1) if bucket not in scheduled]
+    if missing:
+        review_text = '复盘待执行（应 %d 次，缺第 %s 次）' % (
+            expected, ','.join(str(bucket) for bucket in missing))
+    elif scheduled:
+        bucket = max(scheduled)
+        ok = str(scheduled[bucket].get('status') or '') == 'ok'
+        review_text = '复盘%s（第 %d 次，%s 期）' % (
+            '通过' if ok else '异常', bucket,
+            scheduled[bucket].get('reviewed_periods') or '?')
+    else:
+        remain = review_periods - (settled_total % review_periods)
+        review_text = '复盘待到期（%d/%d 期，还差 %d 期）' % (
+            settled_total, review_periods, remain)
     meta = ('参考期 %s → 目标期 %s ｜ 盘面 %s ｜ A %s ｜ B %s ｜ 周期 %s ｜ %s ｜ 规则 %s ｜ 状态 %s'
             % (reference, target, regime.get('label') or '-', a_text, b_text,
                cycle_text, review_text,

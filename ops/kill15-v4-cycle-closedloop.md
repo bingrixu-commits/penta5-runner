@@ -125,3 +125,36 @@
 3. **首次自动复盘**：第 30 期（约 2.5h 后）检查 `reviews.json` 第 1 条 `status=ok`、`kill15_review`=ok；
    若 mismatch，先人工核对原始开奖与台账再决定是否暂停发布。
 4. **命中率口径**：只信 `reviews.json` 与 `kill15_policy` 的核对结果；面板数字需与复盘样本对得上。
+5. **v4.1（07:05 起）**：约 08:55 第 30 期应出现第 1 条 `trigger=scheduled` 复盘（bucket 1）；
+   约 09:45 第 41 期进入第 2 轮，`cycles.json` 应出现第 2 条、封存 `cycle_no=1`。
+   若 AI 全局关闭，台账/结算/复盘仍继续（只停预测）；若 kill15 作用域被 stop，进程不启动（设计如此，恢复后自动补结算）。
+
+## 8. v4.1 修复完善（2026-11-12 07:05 部署）
+
+上线前检查发现 4 处闭环不完善，已修复并部署：
+
+| # | 问题 | 修复 |
+| --- | --- | --- |
+| 1 | AI 关闭时 runner 在入口 `require_ai_enabled()` 直接退出 → 结算/复盘也停摆 | 结算+复盘抽成 `maintain_ledger()` 并前置执行，不依赖 AI 开关；模型调用单独 `request_or_skip()`，遇到 `AICallsDisabled` 只跳过本期预测（退出码 0），台账已维护 |
+| 2 | 复盘只查当前 bucket，错过即永久缺失；`--force` 手核记录被当成 30 期合规 | `run_scheduled_review()` 按 bucket 顺序补跑（如 60 期一次补 1/2）、幂等；forced 记录 `trigger=forced` 不计入合规；`audit_settlements(upto=...)` 支持按 bucket 切片 |
+| 3 | `kill15_review` 巡检只看最新 bucket；面板会拿 forced 记录显示“复盘通过” | 巡检改为检查**所有到期 bucket**且只认 scheduled；面板按到期 bucket 显示「待到期（x/30）/待执行/通过/异常」 |
+| 4 | 周期台账无独立巡检，cycles.json 与封存/结算可能静默不一致 | 新增 `kill15_cycle` 探针：周期编号连续性、与最新封存轮次一致、与结算期数推导周期一致（允许 1 期结算滞后）、起点记录滞后 1 轮给 warn |
+
+参数去重：复盘周期/周期长度优先读取最新封存的 `policy.review_periods` / `cycle.cycle_periods`（缺省回落 30/40），避免巡检常量与代码脱节。
+
+**自测（全部通过）**
+
+| 脚本 | 结果 |
+| --- | --- |
+| `python3 scripts/test_kill15_v2.py` | 新增 `audit upto` 切片、复盘调度补跑/幂等/forced 单列 → 全过 |
+| `python3 scripts/test_kill15_health.py` | 新增 forced 不计合规、缺旧 bucket、cycle 缺失/断号/滞后 → 20 项全过 |
+| `python3 scripts/test_kill15_runner.py` | 台账顺序 settle→review、AI 关闭降级、正常透传、dry-run 保护 → 4 项全过 |
+
+**线上验证**
+
+- 07:01 `--dry-run`：seals/settlements/cycles/reviews 四个账本 sha256 前后一致（零副作用）。
+- 07:05 新 runner 首期 `20261112085→086`：attempt 1 通过（14.6s），面板发布成功；
+  `kill15_tail / kill15_policy / kill15_retry / kill15_review / kill15_cycle` 五项探针全 ok
+  （retry 近 6h runs=27 retries=0 failures=0）。
+- 面板显示「第1轮 9/40期 ｜ 复盘待到期（8/30 期，还差 22 期）」，与账本一致（forced #1 不再冒充合规）。
+

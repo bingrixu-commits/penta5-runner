@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """kill15 分位杀号决策引擎 runner（影子跑）。
 
-每期由 cron 调用：
+每期由 cron 调用（06:43 起由 with_scope.sh 包一层作用域开关）：
   */5 * * * * flock -n /var/lock/penta5-kill15.lock bash -c \
     'sleep 25 && cd /root/penta5-runner && timeout --kill-after=5s 280 \
-     python3 -u scripts/run_kill15_tail.py >> data/kill15_tail_cron.log 2>&1'
+     bash scripts/with_scope.sh kill15 python3 -u scripts/run_kill15_tail.py >> data/kill15_tail_cron.log 2>&1'
+
+v4.1：结算 + 抽样复盘先于模型调用执行，AI 被关闭时台账仍保持连续（只跳过本期预测）。
+作用域被 stop 时 with_scope.sh 闸门直接不拉起进程（这是作用域层的显式选择）。
 
 用法：
-  python3 scripts/run_kill15_tail.py --dry-run           # 只打印上下文与 prompt，不调模型
+  python3 scripts/run_kill15_tail.py --dry-run           # 只打印上下文与 prompt，不写任何账本
   python3 scripts/run_kill15_tail.py --reference 20261112055   # 指定参考期（补跑）
   python3 scripts/run_kill15_tail.py                     # 正常一期
 """
@@ -24,7 +27,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 
 import kill15_tail  # noqa: E402
 from stats_history import beijing_now, load_snapshot  # noqa: E402
-from ai_call_control import require_ai_enabled, AICallsDisabled  # noqa: E402
+from ai_call_control import AICallsDisabled  # noqa: E402
 from panel_io import update_panel  # noqa: E402
 from kill_fifteen_view import apply_kill_fifteen_block  # noqa: E402
 
@@ -34,6 +37,45 @@ WAIT_SECONDS = 150
 def publish_block():
     """把最新封存/结算渲染进 panel.html（与 kill3/kill14 同一管线）。"""
     update_panel(lambda page: apply_kill_fifteen_block(page))
+
+
+def _print_review(records):
+    for review in records or []:
+        rates = review.get('rates') or {}
+        group = rates.get('group') or {}
+        print('kill15 review #%s bucket=%s trigger=%s: 样本 %s 期（%s→%s）'
+              '整组 %s/%s，不一致 %s 项，提醒 %s 项'
+              % (review.get('review_no'), review.get('review_bucket'),
+                 review.get('trigger'), review.get('reviewed_periods'),
+                 review.get('from_ref'), review.get('to_target'),
+                 group.get('hits'), group.get('bets'),
+                 len(review.get('discrepancies') or []),
+                 len(review.get('warnings') or [])))
+
+
+def maintain_ledger(snapshot):
+    """结算 + 抽样复盘：不依赖 AI 开关，停机期间也保持台账连续。
+
+    只在真实运行（非 --dry-run）时调用；任何异常都不允许中断后续流程。
+    """
+    kill15_tail.settle_pending(snapshot)
+    try:
+        records = kill15_tail.run_scheduled_review(snapshot)
+    except Exception as error:
+        print('kill15 review failed: %s: %s'
+              % (type(error).__name__, str(error)[:160]))
+        return []
+    _print_review(records)
+    return records
+
+
+def request_or_skip(prompt, reference, target, deadline, context):
+    """调模型；AI 被关闭（全局/作用域/余额）时返回 None，不影响已维护的台账。"""
+    try:
+        return kill15_tail.request_prediction(prompt, reference, target, deadline, context)
+    except AICallsDisabled as error:
+        print('kill15 skipped: AI calls disabled (%s); 台账/结算/复盘已维护' % error)
+        return None
 
 
 def _snapshot(wait_seconds=WAIT_SECONDS):
@@ -56,28 +98,9 @@ def main():
 
     handle = None
     try:
-        if not args.dry_run:
-            require_ai_enabled()
         snapshot = _snapshot()
         if not args.dry_run:
-            kill15_tail.settle_pending(snapshot)
-        if not args.dry_run:
-            try:
-                review = kill15_tail.run_scheduled_review(snapshot)
-            except Exception as error:
-                print('kill15 review failed: %s: %s'
-                      % (type(error).__name__, str(error)[:160]))
-            else:
-                if review:
-                    rates = review.get('rates') or {}
-                    group = rates.get('group') or {}
-                    print('kill15 review #%s bucket=%s: 样本 %s 期（%s→%s）'
-                          '整组 %s/%s，不一致 %s 项，提醒 %s 项'
-                          % (review.get('review_no'), review.get('review_bucket'),
-                             review.get('reviewed_periods'), review.get('from_ref'),
-                             review.get('to_target'), group.get('hits'), group.get('bets'),
-                             len(review.get('discrepancies') or []),
-                             len(review.get('warnings') or [])))
+            maintain_ledger(snapshot)
         latest = snapshot.get('latest') or {}
         reference = str(args.reference or latest.get('period') or '')
         if len(reference) != 11:
@@ -121,8 +144,10 @@ def main():
             print('kill15 skipped: publishing window closed (%.0fs left)' % remaining)
             return 0
 
-        prediction, generated_at, meta = kill15_tail.request_prediction(
-            prompt, reference, target, deadline, context)
+        bundle = request_or_skip(prompt, reference, target, deadline, context)
+        if bundle is None:
+            return 0
+        prediction, generated_at, meta = bundle
         seal = kill15_tail.create_seal(reference, target, latest.get('opentime'), prediction,
                                        rows, context=context, prompt=prompt, audit=audit,
                                        generated_at=generated_at, response_meta=meta)

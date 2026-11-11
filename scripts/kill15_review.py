@@ -27,37 +27,39 @@ def _fmt_rate(rate):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--force', action='store_true',
-                        help='忽略周期/去重，立即复盘最近窗口')
+                        help='忽略周期/去重，立即复盘最近窗口（forced 记录不计入巡检合规）')
     parser.add_argument('--json', action='store_true', help='输出完整复盘记录')
     args = parser.parse_args()
 
-    record = kill15_tail.run_scheduled_review(force=args.force)
-    if record is None:
+    records = kill15_tail.run_scheduled_review(force=args.force)
+    if not records:
         print('kill15 review: 未到期或本轮 bucket 已复盘（每 %d 期一次）'
               % kill15_tail.REVIEW_PERIODS)
         return 0
     if args.json:
-        print(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True))
+        print(json.dumps(records, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        rates = record.get('rates') or {}
-        group = rates.get('group') or {}
-        single = rates.get('single') or {}
-        print('kill15 review #%d bucket=%d trigger=%s'
-              % (record.get('review_no'), record.get('review_bucket'),
-                 record.get('trigger')))
-        print('样本 %d 期（%s → %s）| 整组 %s/%s = %s | 单码 %s/%s = %s'
-              % (record.get('reviewed_periods'), record.get('from_ref'),
-                 record.get('to_target'), group.get('hits'), group.get('bets'),
-                 _fmt_rate(group.get('rate')), single.get('hits'),
-                 single.get('bets'), _fmt_rate(single.get('rate'))))
-        print('不一致 %d 项：%s'
-              % (len(record.get('discrepancies') or []),
-                 '；'.join(record.get('discrepancies') or ['无'])))
-        print('提醒 %d 项：%s'
-              % (len(record.get('warnings') or []),
-                 '；'.join(record.get('warnings') or ['无'])))
-        print('status=%s' % record.get('status'))
-    return 0 if record.get('status') == 'ok' else 1
+        for record in records:
+            rates = record.get('rates') or {}
+            group = rates.get('group') or {}
+            single = rates.get('single') or {}
+            print('kill15 review #%d bucket=%d trigger=%s'
+                  % (record.get('review_no'), record.get('review_bucket'),
+                     record.get('trigger')))
+            print('样本 %d 期（%s → %s）| 整组 %s/%s = %s | 单码 %s/%s = %s'
+                  % (record.get('reviewed_periods'), record.get('from_ref'),
+                     record.get('to_target'), group.get('hits'), group.get('bets'),
+                     _fmt_rate(group.get('rate')), single.get('hits'),
+                     single.get('bets'), _fmt_rate(single.get('rate'))))
+            print('不一致 %d 项：%s'
+                  % (len(record.get('discrepancies') or []),
+                     '；'.join(record.get('discrepancies') or ['无'])))
+            print('提醒 %d 项：%s'
+                  % (len(record.get('warnings') or []),
+                     '；'.join(record.get('warnings') or ['无'])))
+            print('status=%s' % record.get('status'))
+    bad = [record for record in records if record.get('status') != 'ok']
+    return 0 if not bad else 1
 
 
 if __name__ == '__main__':

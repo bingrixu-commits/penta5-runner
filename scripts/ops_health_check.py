@@ -14,6 +14,7 @@ Collects a fixed set of probes into one JSON report plus a human table:
   kill15_policy      kill15 v2/v4 防塌方规则合规复核（候选池/自检/分散/惯性护栏/B 强制轮换/周期字段/版本漂移）
   kill15_retry       kill15 近 6h 模型调用重试/失败统计
   kill15_review      kill15 抽样复盘（每 30 期核对封存/结算与原始开奖；到期未复盘 warn，不一致 fail）
+  kill15_cycle       kill15 周期台账（40 期一轮；cycles.json 连续性与封存/结算周期一致）
   panel_html         panel.html mtime age (warn > 10 min, fail > 30 min)
   evidence_backup    /root/evidence-archives/latest-verified.json age + archive file
   manifest_drift     evidence_backup.newest_source_manifest() still matches live sources
@@ -143,6 +144,7 @@ KILL15_RETRY_WARN_COUNT = 3
 KILL15_RETRY_WARN_RATIO = 0.25
 KILL15_REVIEW_PERIODS = 30
 KILL15_REVIEWS = 'kill15_tail/reviews.json'
+KILL15_CYCLES = 'kill15_tail/cycles.json'
 KILL15_CRON_LOG = 'kill15_tail_cron.log'
 KILL15_POSITIONS = ('q', 'b', 's', 'g')
 KILL15_B_SUBS = ('B1', 'B2', 'B3')
@@ -1045,7 +1047,10 @@ def _kill15_retry_entry(ctx):
 
 
 def _kill15_review_entry(root):
-    """v4 抽样复盘探针：本轮每 30 期应有一条 ok 复盘；不一致 fail，到期未复盘 warn。"""
+    """v4 抽样复盘探针：每 30 期应有一条 scheduled ok 复盘（forced 不计合规）。
+
+    未到期 ok；到期有缺失 bucket warn；已完成的复盘不一致 fail。
+    """
     seals_payload, seals_error = _load_json(Path(root) / 'data' / 'kill15_tail' / 'seals.json')
     seals = seals_payload.get('records') if isinstance(seals_payload, dict) else None
     settlements_payload, _error = _load_json(
@@ -1055,53 +1060,148 @@ def _kill15_review_entry(root):
     if not isinstance(seals, list) or not seals:
         return _entry('kill15_review', WARN, 'no seals yet: %s' % (seals_error or 'empty'))
     usable = [item for item in seals if isinstance(item, dict)]
-    rule_version = str((usable[-1] if usable else {}).get('rule_version') or '')
+    latest_seal = usable[-1] if usable else {}
+    policy = latest_seal.get('policy') if isinstance(latest_seal.get('policy'), dict) else {}
+    try:
+        review_periods = int(policy.get('review_periods') or KILL15_REVIEW_PERIODS)
+    except (TypeError, ValueError):
+        review_periods = KILL15_REVIEW_PERIODS
+    if review_periods < 1:
+        review_periods = KILL15_REVIEW_PERIODS
+    rule_version = str(latest_seal.get('rule_version') or '')
     settled = [item for item in settlements
                if isinstance(item, dict)
                and str(item.get('rule_version') or '') == rule_version]
     total = len(settled)
-    if total < KILL15_REVIEW_PERIODS:
+    if total < review_periods:
         return _entry('kill15_review', OK,
-                      '尚未到期：本轮已结算 %d/%d 期' % (total, KILL15_REVIEW_PERIODS),
-                      {'settled': total})
-    bucket = total // KILL15_REVIEW_PERIODS
+                      '尚未到期：本轮已结算 %d/%d 期' % (total, review_periods),
+                      {'settled': total, 'review_periods': review_periods})
     reviews_payload, reviews_error = _load_json(Path(root) / 'data' / KILL15_REVIEWS)
     reviews = ((reviews_payload.get('records')
                 if isinstance(reviews_payload, dict) else None) or [])
-    latest = None
-    for item in reversed(reviews):
+    scheduled = {}
+    for item in reviews:
         if not isinstance(item, dict):
             continue
+        if str(item.get('trigger') or 'scheduled') != 'scheduled':
+            continue
+        if str(item.get('rule_version') or '') != rule_version:
+            continue
         try:
-            item_bucket = int(item.get('review_bucket'))
+            bucket = int(item.get('review_bucket'))
         except (TypeError, ValueError):
             continue
-        if item_bucket == bucket:
-            latest = item
-            break
-    if latest is None:
+        if bucket >= 1:
+            scheduled[bucket] = item
+    expected = total // review_periods
+    missing = [bucket for bucket in range(1, expected + 1) if bucket not in scheduled]
+    if missing:
         return _entry('kill15_review', WARN,
-                      '到期未复盘：已结算 %d 期（bucket %d）%s'
-                      % (total, bucket, reviews_error or ''),
-                      {'settled': total, 'bucket': bucket})
-    discrepancies = latest.get('discrepancies') or []
-    if str(latest.get('status') or '') != 'ok' or discrepancies:
-        return _entry('kill15_review', FAIL,
-                      '抽样复盘不一致 %d 项: %s'
-                      % (len(discrepancies),
-                         '; '.join(str(item) for item in discrepancies[:3])),
-                      {'bucket': bucket, 'discrepancies': discrepancies[:10]})
-    rates = latest.get('rates') if isinstance(latest.get('rates'), dict) else {}
+                      '到期未复盘：已结算 %d 期，缺 bucket %s%s'
+                      % (total, ','.join(str(bucket) for bucket in missing),
+                         (' (%s)' % reviews_error) if reviews_error else ''),
+                      {'settled': total, 'missing_buckets': missing})
+    for bucket in sorted(scheduled):
+        item = scheduled[bucket]
+        discrepancies = item.get('discrepancies') or []
+        if str(item.get('status') or '') != 'ok' or discrepancies:
+            return _entry('kill15_review', FAIL,
+                          'bucket %d 复盘不一致 %d 项: %s'
+                          % (bucket, len(discrepancies),
+                             '; '.join(str(x) for x in discrepancies[:3])),
+                          {'bucket': bucket, 'discrepancies': discrepancies[:10]})
+    latest_bucket = max(scheduled)
+    rates = scheduled[latest_bucket].get('rates')
+    rates = rates if isinstance(rates, dict) else {}
     group = rates.get('group') if isinstance(rates.get('group'), dict) else {}
+    remainder = (expected + 1) * review_periods - total
     return _entry('kill15_review', OK,
-                  'bucket %d 复盘通过：样本 %s 期，整组 %s/%s'
-                  % (bucket, latest.get('reviewed_periods'),
-                     group.get('hits'), group.get('bets')),
-                  {'bucket': bucket, 'review_no': latest.get('review_no')})
+                  '已复盘 %d 次（最新 bucket %d：样本 %s 期，整组 %s/%s）；下次还差 %d 期'
+                  % (len(scheduled), latest_bucket,
+                     scheduled[latest_bucket].get('reviewed_periods'),
+                     group.get('hits'), group.get('bets'), max(0, remainder)),
+                  {'buckets': sorted(scheduled), 'review_periods': review_periods})
+
+
+def _kill15_cycle_entry(root):
+    """v4 周期台账探针：cycles.json 连续，且与最新封存/结算周期一致。"""
+    seals_payload, _seals_error = _load_json(Path(root) / 'data' / 'kill15_tail' / 'seals.json')
+    seals = seals_payload.get('records') if isinstance(seals_payload, dict) else None
+    if not isinstance(seals, list) or not seals:
+        return _entry('kill15_cycle', OK, 'no seals yet', {'state': 'empty'})
+    usable = [item for item in seals if isinstance(item, dict)]
+    latest_seal = usable[-1] if usable else {}
+    cycle = latest_seal.get('cycle') if isinstance(latest_seal.get('cycle'), dict) else None
+    if not cycle:
+        return _entry('kill15_cycle', OK, '周期台账未启用（v4 之前的封存）',
+                      {'state': 'legacy'})
+    try:
+        cycle_periods = int(cycle.get('cycle_periods') or 0)
+        latest_cycle_no = int(cycle.get('cycle_no') or 0)
+        latest_cycle_pos = int(cycle.get('cycle_pos') or 0)
+    except (TypeError, ValueError):
+        return _entry('kill15_cycle', FAIL, '最新封存 cycle 字段非法', {'cycle': cycle})
+    if cycle_periods < 1:
+        return _entry('kill15_cycle', FAIL, 'cycle.cycle_periods 非法: %r' % (cycle_periods,))
+    rule_version = str(latest_seal.get('rule_version') or '')
+    settlements_payload, _error = _load_json(
+        Path(root) / 'data' / 'kill15_tail' / 'settlements.json')
+    settlements = ((settlements_payload.get('records')
+                    if isinstance(settlements_payload, dict) else None) or [])
+    total = len([item for item in settlements
+                 if isinstance(item, dict)
+                 and str(item.get('rule_version') or '') == rule_version])
+    cycles_payload, cycles_error = _load_json(Path(root) / 'data' / KILL15_CYCLES)
+    cycles = ((cycles_payload.get('records')
+               if isinstance(cycles_payload, dict) else None) or [])
+    ledger = []
+    for item in cycles:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get('rule_version') or '') != rule_version:
+            continue
+        try:
+            ledger.append(int(item.get('cycle_no')))
+        except (TypeError, ValueError):
+            continue
+    problems, warnings = [], []
+    if not ledger:
+        problems.append('cycles.json 缺少本轮周期记录（%s）' % (cycles_error or 'empty'))
+    else:
+        if sorted(ledger) != list(range(len(ledger))):
+            problems.append('周期编号不连续: %s' % sorted(ledger))
+        max_ledger = max(ledger)
+        if max_ledger == latest_cycle_no - 1:
+            warnings.append('周期起点记录滞后 1 轮（最新封存第 %d 轮，台账 %d 轮）'
+                            % (latest_cycle_no + 1, max_ledger + 1))
+        elif max_ledger != latest_cycle_no:
+            problems.append('周期台账 %d 轮与最新封存第 %d 轮不一致'
+                            % (max_ledger + 1, latest_cycle_no + 1))
+    expected_cycle = total // cycle_periods
+    if latest_cycle_no not in (expected_cycle, expected_cycle - 1):
+        problems.append('最新封存周期 %d 与结算 %d 期推导周期 %d 不一致'
+                        % (latest_cycle_no + 1, total, expected_cycle + 1))
+    if latest_cycle_pos < 1 or latest_cycle_pos > cycle_periods:
+        problems.append('cycle_pos 越界: %d/%d' % (latest_cycle_pos, cycle_periods))
+    if problems:
+        return _entry('kill15_cycle', FAIL,
+                      '周期台账异常: %s' % '; '.join(problems[:3]),
+                      {'problems': problems, 'ledger': sorted(ledger)})
+    detail = ('周期台账 %d 轮（每轮 %d 期）；最新第 %d 轮第 %d/%d 期；已结算 %d 期'
+              % (len(ledger), cycle_periods, latest_cycle_no + 1,
+                 latest_cycle_pos, cycle_periods, total))
+    if warnings:
+        return _entry('kill15_cycle', WARN, '%s；%s' % (detail, '; '.join(warnings)),
+                      {'warnings': warnings})
+    return _entry('kill15_cycle', OK, detail,
+                  {'cycles': len(ledger), 'cycle_periods': cycle_periods,
+                   'settled': total})
 
 
 def check_kill15(ctx):
-    """kill15 分位杀号（影子跑）：封存及时性 / v2+v4 规则合规 / 近 6h 重试失败 / 抽样复盘。"""
+    """kill15 分位杀号（影子跑）：封存及时性 / v2+v4 规则合规 / 近 6h 重试失败 /
+    抽样复盘 / 周期台账。"""
     latest = ctx.get('latest') if isinstance(ctx.get('latest'), dict) else None
     root = ctx['root']
     entries = []
@@ -1121,6 +1221,7 @@ def check_kill15(ctx):
         entries.append(_entry('kill15_policy', FAIL, 'no seals to audit'))
         entries.append(_kill15_retry_entry(ctx))
         entries.append(_kill15_review_entry(root))
+        entries.append(_kill15_cycle_entry(root))
         return entries
     usable = [item for item in records if isinstance(item, dict)]
     seal = usable[-1] if usable else {}
@@ -1181,6 +1282,7 @@ def check_kill15(ctx):
                                'audited_periods': 1 + len(past)}))
     entries.append(_kill15_retry_entry(ctx))
     entries.append(_kill15_review_entry(root))
+    entries.append(_kill15_cycle_entry(root))
     return entries
 
 

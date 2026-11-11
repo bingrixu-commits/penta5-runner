@@ -1242,12 +1242,16 @@ def _parse_iso(value):
 
 
 def audit_settlements(seals, settlements, history, sample=REVIEW_SAMPLE,
-                      rule_version=RULE_VERSION):
+                      rule_version=RULE_VERSION, upto=None):
     """核对最近 sample 期：封存/结算账本 vs 原始开奖（纯函数，可离线自测）。
 
+    upto：只核对代际内前 upto 期（补跑历史 bucket 用）；None 表示取最新窗口。
     返回复盘记录：discrepancies（硬不一致，必须告警）与 warnings（口径提醒）。
     """
-    rows = generation_settlements(settlements, rule_version)[-sample:]
+    generation = generation_settlements(settlements, rule_version)
+    if isinstance(upto, int) and upto > 0:
+        generation = generation[:upto]
+    rows = generation[-sample:]
     seals_by_target = {}
     for seal in seals or []:
         if not isinstance(seal, dict):
@@ -1423,32 +1427,55 @@ def _append_review_alert(record):
 
 
 def run_scheduled_review(snapshot=None, force=False):
-    """每 REVIEW_PERIODS 期复盘一次最近窗口；force=True 立即复盘（手动核对用）。"""
+    """每 REVIEW_PERIODS 期复盘一次；错过的 bucket 会按顺序补跑。
+
+    返回本次新增的复盘记录列表（未到期或已全部复盘时为空列表）。
+    force=True 时立即对当前窗口追加一条 forced 记录（手动核对用，不计入巡检合规）。
+    """
     settlements = load_settlements()
     total = len(generation_settlements(settlements))
     if total < 1:
-        return None
-    if not force and total < REVIEW_PERIODS:
-        return None
-    bucket = total // REVIEW_PERIODS
+        return []
     reviews = load_reviews()
-    if not force and any(int(item.get('review_bucket') or -1) == bucket for item in reviews):
-        return None
-    history = _history_map(snapshot)
+    scheduled_done = set()
+    for item in reviews:
+        if str(item.get('trigger') or 'scheduled') != 'scheduled':
+            continue
+        try:
+            bucket = int(item.get('review_bucket'))
+        except (TypeError, ValueError):
+            continue
+        if bucket >= 1:
+            scheduled_done.add(bucket)
+    current_bucket = total // REVIEW_PERIODS
+    if force:
+        targets = [(current_bucket, None, 'forced')]
+    else:
+        if total < REVIEW_PERIODS:
+            return []
+        targets = [(bucket, bucket * REVIEW_PERIODS, 'scheduled')
+                   for bucket in range(1, current_bucket + 1)
+                   if bucket not in scheduled_done]
+    if not targets:
+        return []
     seals = load_seals()
-    result = audit_settlements(seals, settlements, history)
-    record = {
-        'version': 1,
-        'review_no': len(reviews) + 1,
-        'review_bucket': bucket,
-        'review_periods': REVIEW_PERIODS,
-        'review_sample': REVIEW_SAMPLE,
-        'created_at': beijing_now().isoformat(),
-        'trigger': 'forced' if force else 'scheduled',
-    }
-    record.update(result)
-    reviews.append(record)
-    _write_reviews(reviews)
-    if result['discrepancies']:
-        _append_review_alert(record)
-    return record
+    history = _history_map(snapshot)
+    created = []
+    for bucket, upto, trigger in targets:
+        result = audit_settlements(seals, settlements, history, upto=upto)
+        record = {
+            'version': 1,
+            'review_no': len(reviews) + len(created) + 1,
+            'review_bucket': bucket,
+            'review_periods': REVIEW_PERIODS,
+            'review_sample': REVIEW_SAMPLE,
+            'created_at': beijing_now().isoformat(),
+            'trigger': trigger,
+        }
+        record.update(result)
+        reviews.append(record)
+        created.append(record)
+        _write_reviews(reviews)
+        if result['discrepancies']:
+            _append_review_alert(record)
+    return created

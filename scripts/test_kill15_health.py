@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """kill15 健康巡检探针自测：用临时目录合成封存账本，不读真实运营数据。
 
-覆盖 ops_health_check.check_kill15 的四类探针：
+覆盖 ops_health_check.check_kill15 的五类探针：
   kill15_tail    封存/发布及时性
   kill15_policy  v2/v4 规则合规（池内选码 / A 上下限 / B 子策略分散 / 强制轮换 / 四码去重规则7 /
                  惯性护栏 / 周期字段 / 自检 / 版本漂移）
   kill15_retry   近 6h 重试/失败统计
-  kill15_review  抽样复盘（未到期 ok / 到期未复盘 warn / 通过 ok / 不一致 fail）
+  kill15_review  抽样复盘（未到期 ok / 到期缺口 warn / 通过 ok / 不一致 fail；forced 不计合规）
+  kill15_cycle   周期台账（cycles.json 连续性 / 与封存·结算周期一致 / 滞后 warn）
 
 用法：python3 scripts/test_kill15_health.py
 """
@@ -31,7 +32,8 @@ POOLS = {'q': [1, 2, 3, 4, 5], 'b': [2, 3, 4, 5, 6],
 
 
 def make_seal(ref, target, a, b, subs, prompt_version=PROMPT, published=True,
-              self_check=True, policy=True, a_cap=1, kills=None, rule=RULE):
+              self_check=True, policy=True, a_cap=1, kills=None, rule=RULE,
+              cycle_no=0, cycle_pos=1, cycle_periods=40, review_periods=30):
     positions = {}
     kill_map = kills or {key: POOLS[key][0] for key in POOLS}
     for key in POOLS:
@@ -60,10 +62,12 @@ def make_seal(ref, target, a, b, subs, prompt_version=PROMPT, published=True,
         'policy': ({'a_min': 1, 'allocation_reuse_forbidden': True,
                     'scheme_reuse_forbidden': True, 'scheme_repeat_window': 2,
                     'b_sub_dispersion_required': True, 'b_rotation_forced': True,
-                    'stats_scope': 'current-cycle-last-15', 'cycle_periods': 40}
+                    'stats_scope': 'current-cycle-last-15', 'cycle_periods': cycle_periods,
+                    'review_periods': review_periods}
                    if policy else {}),
-        'cycle': {'cycle_no': 0, 'cycle_pos': 1, 'cycle_periods': 40,
-                  'is_cycle_start': True},
+        'cycle': {'cycle_no': cycle_no, 'cycle_pos': cycle_pos,
+                  'cycle_periods': cycle_periods,
+                  'is_cycle_start': cycle_pos == 1},
         'mode': 'panel',
     }
     return seal
@@ -74,7 +78,16 @@ def make_settlement(ref, target, rule=RULE):
             'target_period': target, 'group_hit': True, 'positions': {}}
 
 
-def build_root(seals, cron_lines=None, settlements=None, reviews=None):
+def make_cycle(cycle_no, rule=RULE, cycle_periods=40, start_ref=None):
+    return {'version': 1, 'cycle_no': cycle_no, 'rule_version': rule,
+            'prompt_version': PROMPT,
+            'start_ref': start_ref or ('2026111207%d' % (cycle_no + 1)),
+            'start_target': '2026111207%d' % (cycle_no + 2),
+            'started_at': NOW.isoformat(), 'cycle_periods': cycle_periods,
+            'previous_cycle': None}
+
+
+def build_root(seals, cron_lines=None, settlements=None, reviews=None, cycles='default'):
     """Build a throwaway project root with only what check_kill15 needs."""
     tmp = Path(tempfile.mkdtemp(prefix='kill15-health-'))
     (tmp / 'lib').mkdir()
@@ -89,6 +102,12 @@ def build_root(seals, cron_lines=None, settlements=None, reviews=None):
     if reviews is not None:
         (tmp / 'data' / 'kill15_tail' / 'reviews.json').write_text(
             json.dumps({'version': 1, 'records': reviews}, ensure_ascii=False),
+            encoding='utf-8')
+    if cycles == 'default':
+        cycles = [make_cycle(0)]
+    if cycles is not None:
+        (tmp / 'data' / 'kill15_tail' / 'cycles.json').write_text(
+            json.dumps({'version': 1, 'records': cycles}, ensure_ascii=False),
             encoding='utf-8')
     log = tmp / 'data' / 'kill15_tail_cron.log'
     if cron_lines is None:
@@ -149,7 +168,8 @@ def test_valid():
     expect('kill15_policy', entries, 'ok', '合规')
     expect('kill15_retry', entries, 'ok', 'runs=0')
     expect('kill15_review', entries, 'ok', '尚未到期')
-    print('PASS valid: 正常封存 + v4 规则合规 + 无重试 + 复盘未到期')
+    expect('kill15_cycle', entries, 'ok', '周期台账 1 轮')
+    print('PASS valid: 正常封存 + v4 规则合规 + 无重试 + 复盘未到期 + 周期台账')
 
 
 def test_scheme_repeat():
@@ -181,11 +201,7 @@ def test_dup_subs():
 
 def test_rotation_violation():
     stale = make_seal('20261112074', '20261112075', ['b'], ['q', 's', 'g'],
-                      {'q': 'B2', 's': 'B2', 'g': 'B3'})
-    stale['allocation']['b_sub'] = {'q': 'B2', 's': 'B3', 'g': 'B1'}
-    stale['positions']['q']['b_sub'] = 'B2'
-    stale['positions']['s']['b_sub'] = 'B3'
-    stale['positions']['g']['b_sub'] = 'B1'
+                      {'q': 'B2', 's': 'B3', 'g': 'B1'})
     # 上期（VALID_SEALS[1]）q=B2 / g=B1：当前 q=B2 未轮换
     root = build_root([VALID_SEALS[0], VALID_SEALS[1], stale])
     entries = check_entries(make_ctx(root, '20261112074'))
@@ -265,38 +281,92 @@ def test_unpublished():
     print('PASS unpublished: 已封存未发布 -> warn')
 
 
-def review_settlements():
-    return [make_settlement('20261112070', '20261112071')
-            for _ in range(health.KILL15_REVIEW_PERIODS)]
+def review_settlements(count=30):
+    return [make_settlement('2026111207%d' % (index % 10),
+                            '2026111208%d' % (index % 10))
+            for index in range(count)]
 
 
 def test_review_due_missing():
-    root = build_root(VALID_SEALS, settlements=review_settlements())
+    root = build_root(VALID_SEALS, settlements=review_settlements(30))
     entries = check_entries(make_ctx(root, '20261112074'))
     expect('kill15_review', entries, 'warn', '到期未复盘')
     print('PASS review-due: 已到 30 期未复盘 -> warn')
 
 
 def test_review_ok():
-    reviews = [{'review_no': 1, 'review_bucket': 1, 'status': 'ok',
+    reviews = [{'review_no': 1, 'review_bucket': 1, 'trigger': 'scheduled',
+                'rule_version': RULE, 'status': 'ok',
                 'reviewed_periods': 30, 'rates': {'group': {'hits': 20, 'bets': 30}},
                 'discrepancies': [], 'warnings': []}]
-    root = build_root(VALID_SEALS, settlements=review_settlements(), reviews=reviews)
+    root = build_root(VALID_SEALS, settlements=review_settlements(30), reviews=reviews)
     entries = check_entries(make_ctx(root, '20261112074'))
-    expect('kill15_review', entries, 'ok', '复盘通过')
-    print('PASS review-ok: bucket 1 复盘通过 -> ok')
+    expect('kill15_review', entries, 'ok', '已复盘 1 次')
+    print('PASS review-ok: bucket 1 scheduled 复盘通过 -> ok')
+
+
+def test_review_forced_ignored():
+    reviews = [{'review_no': 1, 'review_bucket': 0, 'trigger': 'forced',
+                'rule_version': RULE, 'status': 'ok', 'reviewed_periods': 1,
+                'rates': {}, 'discrepancies': [], 'warnings': []}]
+    root = build_root(VALID_SEALS, settlements=review_settlements(30), reviews=reviews)
+    entries = check_entries(make_ctx(root, '20261112074'))
+    expect('kill15_review', entries, 'warn', '到期未复盘')
+    print('PASS review-forced: forced 手核记录不计入 30 期合规 -> warn')
+
+
+def test_review_missing_old_bucket():
+    reviews = [{'review_no': 1, 'review_bucket': 2, 'trigger': 'scheduled',
+                'rule_version': RULE, 'status': 'ok', 'reviewed_periods': 30,
+                'rates': {}, 'discrepancies': [], 'warnings': []}]
+    root = build_root(VALID_SEALS, settlements=review_settlements(60), reviews=reviews)
+    entries = check_entries(make_ctx(root, '20261112074'))
+    expect('kill15_review', entries, 'warn', '缺 bucket 1')
+    print('PASS review-gap: 已到 60 期但缺 bucket 1 -> warn（补跑逻辑应补上）')
 
 
 def test_review_mismatch():
-    reviews = [{'review_no': 1, 'review_bucket': 1, 'status': 'mismatch',
-                'reviewed_periods': 30,
+    reviews = [{'review_no': 1, 'review_bucket': 1, 'trigger': 'scheduled',
+                'rule_version': RULE, 'status': 'mismatch', 'reviewed_periods': 30,
                 'rates': {'group': {'hits': 20, 'bets': 30}},
                 'discrepancies': ['20261112073 千位台账开奖 1 ≠ 原始 2'],
                 'warnings': []}]
-    root = build_root(VALID_SEALS, settlements=review_settlements(), reviews=reviews)
+    root = build_root(VALID_SEALS, settlements=review_settlements(30), reviews=reviews)
     entries = check_entries(make_ctx(root, '20261112074'))
     expect('kill15_review', entries, 'fail', '不一致')
     print('PASS review-mismatch: 复盘发现不一致 -> fail')
+
+
+def test_cycle_missing():
+    root = build_root(VALID_SEALS, cycles=None)
+    entries = check_entries(make_ctx(root, '20261112074'))
+    expect('kill15_cycle', entries, 'fail', '缺少本轮周期记录')
+    print('PASS cycle-missing: cycles.json 缺失 -> fail')
+
+
+def test_cycle_gap():
+    seals = [VALID_SEALS[0], VALID_SEALS[1],
+             make_seal('20261112074', '20261112075', ['b'], ['q', 's', 'g'],
+                       {'q': 'B1', 's': 'B2', 'g': 'B3'},
+                       kills={'q': 3, 'b': 4, 's': 5, 'g': 6},
+                       cycle_no=1, cycle_pos=1)]
+    root = build_root(seals, settlements=review_settlements(40),
+                      cycles=[make_cycle(0), make_cycle(2)])
+    entries = check_entries(make_ctx(root, '20261112074'))
+    expect('kill15_cycle', entries, 'fail', '不连续')
+    print('PASS cycle-gap: 周期编号不连续 -> fail')
+
+
+def test_cycle_lag():
+    seals = [VALID_SEALS[0], VALID_SEALS[1],
+             make_seal('20261112074', '20261112075', ['b'], ['q', 's', 'g'],
+                       {'q': 'B1', 's': 'B2', 'g': 'B3'},
+                       kills={'q': 3, 'b': 4, 's': 5, 'g': 6},
+                       cycle_no=1, cycle_pos=1)]
+    root = build_root(seals, settlements=review_settlements(40), cycles=[make_cycle(0)])
+    entries = check_entries(make_ctx(root, '20261112074'))
+    expect('kill15_cycle', entries, 'warn', '滞后')
+    print('PASS cycle-lag: 周期起点记录暂缺 1 条 -> warn')
 
 
 def main():
@@ -304,7 +374,9 @@ def main():
                  test_rotation_violation, test_rule7_repeat, test_out_of_pool,
                  test_self_check_missing, test_prompt_drift, test_retry_and_failure,
                  test_seal_lag, test_unpublished, test_review_due_missing,
-                 test_review_ok, test_review_mismatch):
+                 test_review_ok, test_review_forced_ignored, test_review_missing_old_bucket,
+                 test_review_mismatch, test_cycle_missing, test_cycle_gap,
+                 test_cycle_lag):
         try:
             test()
         except Exception as error:

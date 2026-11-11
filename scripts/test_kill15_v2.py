@@ -198,6 +198,62 @@ def review_fixture():
     return seals, settlements, history
 
 
+def test_review_scheduler_catchup():
+    """复盘调度：60 期补跑 bucket 1/2、幂等、90 期补 3、forced 单列（临时目录，不碰正式账本）。"""
+    import json as _json
+    import tempfile
+    names = ('SEALS_PATH', 'SETTLEMENTS_PATH', 'REVIEWS_PATH', 'REVIEW_ALERTS_PATH',
+             'audit_settlements')
+    saved = {name: getattr(kill15_tail, name) for name in names}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kill15_tail.SEALS_PATH = root / 'seals.json'
+            kill15_tail.SETTLEMENTS_PATH = root / 'settlements.json'
+            kill15_tail.REVIEWS_PATH = root / 'reviews.json'
+            kill15_tail.REVIEW_ALERTS_PATH = root / 'review_alerts.log'
+            kill15_tail.audit_settlements = (
+                lambda seals, settlements, history, **kwargs: {
+                    'status': 'ok', 'rule_version': kill15_tail.RULE_VERSION,
+                    'reviewed_periods': kwargs.get('sample') or 30,
+                    'from_ref': 'x', 'to_target': 'y',
+                    'discrepancies': [], 'warnings': [], 'rates': {}})
+
+            def write_settlements(count):
+                rows = [{'rule_version': kill15_tail.RULE_VERSION,
+                         'ref_period': str(20261112000 + index),
+                         'target_period': str(20261112001 + index),
+                         'allocation': {}, 'positions': {}, 'group_hit': True}
+                        for index in range(count)]
+                kill15_tail.SETTLEMENTS_PATH.write_text(
+                    _json.dumps({'version': 1, 'records': rows}), encoding='utf-8')
+
+            write_settlements(60)
+            records = kill15_tail.run_scheduled_review(snapshot={})
+            if [row.get('review_bucket') for row in records] != [1, 2]:
+                FAILED.append('复盘补跑 bucket 错误: %r'
+                              % ([row.get('review_bucket') for row in records],))
+            elif [row.get('trigger') for row in records] != ['scheduled', 'scheduled']:
+                FAILED.append('复盘补跑 trigger 错误')
+            elif kill15_tail.run_scheduled_review(snapshot={}):
+                FAILED.append('复盘重复执行（幂等失败）')
+            else:
+                write_settlements(90)
+                third = kill15_tail.run_scheduled_review(snapshot={})
+                if [row.get('review_bucket') for row in third] != [3]:
+                    FAILED.append('90 期未补 bucket 3: %r'
+                                  % ([row.get('review_bucket') for row in third],))
+                else:
+                    forced = kill15_tail.run_scheduled_review(snapshot={}, force=True)
+                    if not forced or forced[-1].get('trigger') != 'forced':
+                        FAILED.append('forced 复盘未单列')
+                    else:
+                        print('PASS review-scheduler: 60 期补跑 bucket 1/2、幂等、90 期补 3、forced 单列')
+    finally:
+        for name, value in saved.items():
+            setattr(kill15_tail, name, value)
+
+
 def main():
     rows = load_rows()
     high_b = [settlement(['q'], ['b', 's', 'g'],
@@ -428,6 +484,12 @@ def main():
     else:
         print('PASS review: 3 期一致样本 -> ok（整组 %d/%d）'
               % (good['rates']['group']['hits'], good['rates']['group']['bets']))
+    early = kill15_tail.audit_settlements(seals, settlements, history, upto=2)
+    if early['reviewed_periods'] != 2 or early.get('to_target') != settlements[1].get('target_period'):
+        FAILED.append('复盘 upto 窗口切片错误: %r' % (
+            (early.get('reviewed_periods'), early.get('to_target')),))
+    else:
+        print('PASS review-upto: 补跑 bucket 时只核对前 upto 期（2 期）')
     tampered = copy.deepcopy(settlements)
     tampered[1]['positions']['q']['actual'] = 9
     bad_actual = kill15_tail.audit_settlements(seals, tampered, history)
@@ -445,6 +507,9 @@ def main():
         FAILED.append('复盘应发现 B 子策略未轮换: %r' % (rotation_audit.get('discrepancies'),))
     else:
         print('PASS review: B 子策略未轮换 -> mismatch')
+
+    # ---- 15. 复盘调度：错过的 bucket 依次补跑、幂等、forced 不计合规 ----
+    test_review_scheduler_catchup()
 
     print()
     if FAILED:
