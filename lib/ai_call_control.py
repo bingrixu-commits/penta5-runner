@@ -128,15 +128,25 @@ def read_control(root=ROOT):
     return {key: document[key] for key in _PUBLIC_FIELDS}
 
 
-def require_ai_enabled(*, root=ROOT, clock=beijing_now):
+def require_ai_enabled(*, root=ROOT, clock=beijing_now, scope=None):
     """Re-read immediately before each egress attempt; do not cache this result.
 
     ``clock`` is accepted for the shared caller-injection API. The manual switch
     deliberately never consults the hour, so 08:00 cannot turn it back on.
+
+    ``scope``（或环境变量 PENTA5_AI_SCOPE）用于按框架隔离：全局开关之外，
+    再叠加该作用域自己的开关。未设置作用域时行为与旧版完全一致。
     """
     result = read_control(root)
     if not result['enabled']:
         raise AICallsDisabled('ai-api-stopped')
+    scope = (scope or os.getenv('PENTA5_AI_SCOPE') or '').strip().lower()
+    if scope:
+        try:
+            from ai_scope import require_scope_enabled
+        except Exception:          # 作用域层缺失时不影响全局开关语义
+            return result
+        require_scope_enabled(scope, clock=clock)
     return result
 
 

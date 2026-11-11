@@ -255,10 +255,44 @@ def main(argv=None):
     else:
         state['last_error'] = balance.get('error')
     result['auto_paused'] = bool(state.get('auto_paused'))
+
+    # --- 按框架的独立额度守卫：只处理配置了独立 key 的作用域 ---
+    scope_results = []
+    try:
+        import ai_scope
+    except Exception:
+        ai_scope = None
+    if ai_scope is not None:
+        for scope, scoped_key in ai_scope.scopes_with_keys():
+            info = fetch_balance(args.balance_url, scoped_key)
+            value = info.get('total_balance')
+            entry = ai_scope.scope_entry(ai_scope.read_state(), scope)
+            enabled = entry.get('enabled') is not False
+            auto = bool(entry.get('auto_paused'))
+            if not info.get('ok') or not isinstance(value, (int, float)):
+                scope_results.append({'scope': scope, 'action': 'skip-error',
+                                      'balance': None, 'error': info.get('error')})
+                continue
+            if value < PAUSE_BALANCE_CNY and enabled:
+                if not args.dry_run:
+                    ai_scope.set_scope_enabled(scope, False, auto=True,
+                                               note='balance<%.2f' % PAUSE_BALANCE_CNY)
+                scope_results.append({'scope': scope, 'action': 'pause', 'balance': value})
+            elif value >= RESUME_BALANCE_CNY and (not enabled) and auto:
+                if not args.dry_run:
+                    ai_scope.set_scope_enabled(scope, True,
+                                               note='balance>=%.2f' % RESUME_BALANCE_CNY)
+                scope_results.append({'scope': scope, 'action': 'resume', 'balance': value})
+            else:
+                scope_results.append({'scope': scope, 'action': 'none', 'balance': value})
+        if scope_results:
+            result['scopes'] = scope_results
+
     if not args.dry_run:
         save_state(state_path(root), state)
 
-    notable = (args.verbose or args.dry_run or result['action'] != 'none'
+    scope_changed = any(row.get('action') in ('pause', 'resume') for row in scope_results)
+    notable = (args.verbose or args.dry_run or result['action'] != 'none' or scope_changed
                or bool(result['action_error']) or bool(result['balance_error'])
                or bool(state.get('auto_paused')))
     if notable:
