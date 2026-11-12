@@ -56,6 +56,9 @@ STYLE = """
 #kill-twelve-ai .k1-attack-title{font-size:13px;font-weight:600;color:#3730a3}
 #kill-twelve-ai .k1-foot{margin-top:8px;font-size:12px;color:#94a3b8}
 #kill-twelve-ai .k1-empty{padding:6px 2px;font-size:14px;color:#475569}
+#kill-twelve-ai .k1-stale{margin:8px 0;padding:9px 12px;border:1px solid #fca5a5;border-radius:8px;background:#fef2f2;color:#991b1b;font-size:13px;line-height:1.65;font-weight:600}
+#kill-twelve-ai .k1-basis{font-size:12px;color:#475569;margin-bottom:6px}
+#kill-twelve-ai .k1-attack button[disabled]{opacity:.55;cursor:not-allowed}
 """
 
 
@@ -123,8 +126,16 @@ def _stats_html(stats):
     return '<div class="k1-stats"><span>%s</span></div>' % join
 
 
-def _settlement_line(settlement):
+def _settlement_line(settlement, seal=None, latest=None):
     if not isinstance(settlement, dict):
+        seal = seal if isinstance(seal, dict) else {}
+        target = str(seal.get('target_period') or '')
+        state = str(seal.get('publication_state') or '')
+        if state and state != 'published':
+            return '本期尚未发布（仅封存，未计入统计）；任务恢复后下一期重新发布。'
+        if target and latest and target <= str(latest):
+            return ('目标期 %s 已开奖（数据源最新期 %s），尚未结算；下个任务周期补结算。'
+                    % (escape(target), escape(str(latest))))
         return '已发布，等待目标期开奖核验。'
     positions = settlement.get('positions') or {}
     counted = settlement.get('counted') or list(positions)
@@ -191,12 +202,16 @@ def _tail_policy_html(seal):
     if not isinstance(policy, dict) or not policy:
         return ''
     note = str(policy.get('note') or '').strip()
-    bits = ['合尾稳定化：' + (note or 'hold3-until-miss（命中自动沿用，最多自动沿用 3 期）')]
+    bits = ['合尾稳定化：' + (note or 'hold3-until-miss（命中后最多连用 3 期（含首次封存））')]
     model_tail = policy.get('model_tail')
     if isinstance(model_tail, dict):
-        bits.append('AI 候选 %s合尾 杀%s' % (model_tail.get('label') or '', model_tail.get('kill')))
+        key = str(model_tail.get('key') or '')
+        label = str(model_tail.get('label') or (kill12_tail.TAILS.get(key) or {}).get('label') or '')
+        bits.append('AI 候选 %s合尾 杀%s' % (label, model_tail.get('kill')))
     if policy.get('previous_hit') is True:
         bits.append('上期命中')
+    elif policy.get('previous_contiguous') is False:
+        bits.append('上期与本期不连续，未沿用')
     return '<div class="k1-drop">%s</div>' % escape(' · '.join(bits))
 
 
@@ -266,12 +281,20 @@ def _version_html(stats=None):
                 detail += '，含待核验 %d 期' % pending
             parts.append('自 ref ' + escape(str(first)) + ' 起（' + detail + '）')
         missing = _missing_version_targets(rule)
+        published_count = int(info.get('count') or 0)
         if missing:
             shown = '；'.join(missing[:3])
             if len(missing) > 3:
                 shown += '；等'
-            parts.append('缺期 %d 槽（%s），不计入累计 n、不按 0 命中'
-                         % (len(missing), escape(shown)))
+            planned = published_count + len(missing)
+            coverage = (published_count / planned * 100.0) if planned else 0.0
+            parts.append('规划 %d 槽 · 已发布 %d 槽（覆盖率 %.1f%%） · 未发布 %d 槽'
+                         '（未发布含全局 AI 停用/数据未就绪窗口，示例 %s；'
+                         '不计入累计 n、不按 0 命中）'
+                         % (planned, published_count, coverage, len(missing), escape(shown)))
+        elif published_count:
+            parts.append('规划 %d 槽 · 已发布 %d 槽 · 无未发布槽位'
+                         % (published_count, published_count))
         parts.append('整组精确基线 %.2f%%（%d 项）'
                      % (float(baseline[1]) * 100.0, int(baseline[0])))
         parts.append('kill12 独立框架：与既有框架完全独立封存 / 结算 / 统计')
@@ -281,17 +304,30 @@ def _version_html(stats=None):
 
 
 def _cumulative_html():
-    """只读：本版累计 + 跨版本核心杀项（切版不清零）；数据源 data/hitrate_stability.json。"""
+    """只读：本版累计（与 /hitrate 同源：framework_hitrate_cumulative.json；缺失回退稳定性报告）。"""
     try:
-        path = Path('/root/penta5-runner/data/hitrate_stability.json')
-        report = json.loads(path.read_text(encoding='utf-8'))
-        rows = report.get('rows') if isinstance(report, dict) else None
-        if not isinstance(rows, list):
-            return ''
         rule = str(getattr(kill12_tail, 'RULE_VERSION', '') or '')
-        row = next((item for item in rows if isinstance(item, dict)
-                    and item.get('key') == 'kill12_tail'), None)
-        if not row or str(row.get('rule') or '') != rule:
+        row = None
+        as_of = None
+        for filename in ('framework_hitrate_cumulative.json', 'hitrate_stability.json'):
+            try:
+                report = json.loads((Path('/root/penta5-runner/data') / filename).read_text(encoding='utf-8'))
+            except Exception:
+                continue
+            rows = report.get('rows') if isinstance(report, dict) else None
+            if not isinstance(rows, list):
+                continue
+            candidate = next((item for item in rows if isinstance(item, dict)
+                              and item.get('key') == 'kill12_tail'), None)
+            if candidate is None or str(candidate.get('rule') or '') != rule:
+                continue
+            row = candidate
+            if filename.startswith('framework_'):
+                as_of = candidate.get('last_period') or report.get('as_of_period')
+            else:
+                as_of = report.get('as_of_period')
+            break
+        if not row:
             return ''
         n = row.get('n')
         hits = row.get('hits')
@@ -301,10 +337,9 @@ def _cumulative_html():
         ci = row.get('ci95')
         ci_text = ('，95%%CI %.1f%%–%.1f%%' % (ci[0] * 100.0, ci[1] * 100.0)
                    if isinstance(ci, (list, tuple)) and len(ci) >= 2 else '')
-        as_of = report.get('as_of_period') if isinstance(report, dict) else None
         parts = ['<b>本版累计（跨天不清零）</b>']
         if as_of:
-            parts.append('数据截至 <b>%s</b>（每 15 分钟刷新，最多滞后约 4 期/约 20 分钟；'
+            parts.append('数据截至 <b>%s</b>（与 /hitrate 同源，每 15 分钟刷新，最多滞后约 4 期/约 20 分钟；'
                          '今日行按业务日实时）' % escape(str(as_of)))
         parts.append('整组 <b>%.2f%%</b>（%d/%d 期%s）'
                      % (float(rate) * 100.0, hits, n, ci_text))
@@ -344,6 +379,37 @@ def _cumulative_html():
         return ''
 
 
+def _stale_banner_html(seal, latest):
+    """最新一期未发布时，明确提示当前展示的是历史推荐（防止照旧投注）。"""
+    if not isinstance(seal, dict):
+        return ''
+    ref = str(seal.get('ref_period') or '-')
+    target = str(seal.get('target_period') or '-')
+    latest_text = str(latest or '-')
+    return ('<div class="k1-stale">⚠ 本框架最近一期未发布：数据源最新开奖期 %s，当前展示的是'
+            '参考期 %s（目标期 %s）的历史推荐，已过期。请勿照此投注；攻击语复制已禁用。'
+            '可能原因：全局 AI 已停止 / 本框架已停用 / 任务失败。恢复后下一期会重新发布。</div>'
+            % (escape(latest_text), escape(ref), escape(target)))
+
+
+def _position_basis_html(basis):
+    """定位依据留档展示（仅新封存带 position_basis 字段）。"""
+    if not isinstance(basis, dict) or not basis.get('candidates'):
+        return ''
+    key = str(basis.get('key') or '')
+    label = kill12_tail.POSITION_LABELS.get(key, key)
+    top = '、'.join(str(value) for value in (basis.get('hot_top3') or [])) or '-'
+    repeat = str(basis.get('repeat') if basis.get('repeat') is not None else '-')
+    neighbor = '%s/%s' % (basis.get('neighbor_prev') or '-', basis.get('neighbor_next') or '-')
+    ok = basis.get('in_candidates') is True
+    status = ('合规（候选内%s）' % ('，热码 top3' if basis.get('in_hot_top3') else '')
+              if ok else '超出候选集，请核查')
+    return ('<div class="k1-basis">定位依据：%s 热码 top3 %s · 上期重码 %s · 邻码 %s；'
+            '排除码 %s → %s</div>'
+            % (escape(label), escape(top), escape(repeat), escape(neighbor),
+               escape(str(basis.get('kill') or '-')), escape(status)))
+
+
 def render_block():
     """渲染 kill12 面板区块（最新已发布封存 + 当日统计 + 攻击语）。"""
     try:
@@ -358,6 +424,8 @@ def render_block():
                 + '</section>')
     stats = summary.get('stats') or {}
     settlement = summary.get('settlement')
+    latest = str(summary.get('latest_period') or stats.get('latest_period') or '')
+    stale = bool(isinstance(summary, dict) and summary.get('seal') is None)
     reference = seal.get('ref_period')
     target = seal.get('target_period')
     positions = seal.get('positions') or {}
@@ -375,6 +443,8 @@ def render_block():
                 % (escape(str(reference or '-')), escape(str(target or '-')),
                    _clock(seal.get('generated_at')),
                    escape(str(seal.get('model_label') or seal.get('model') or '-'))))
+    if stale:
+        html.append(_stale_banner_html(seal, latest))
     cards = []
     for key, label, _index in kill12_tail.POSITIONS:
         if key not in positions:
@@ -415,23 +485,27 @@ def render_block():
         html.append('<div class="k1-reason">理由：%s</div>' % reason)
     html.append(_tail_policy_html(seal))
     html.append(_form_derivation(seal))
+    html.append(_position_basis_html(seal.get('position_basis')))
     html.append('<div class="k1-drop">整组 3 项：1 定位杀码 + 1 单双反向形态 + 1 合尾；'
                 '位置与杀码不做连用限制（完全由模型每期自选）；'
-                '合尾稳定化 hold3-until-miss（命中自动沿用，最多自动沿用 3 期）</div>')
+                '合尾稳定化 hold3-until-miss（命中后最多连用 3 期（含首次封存），缺期不沿用）</div>')
     html.append('<div class="k1-drop">发布 %s · 窗口 %s 期 · 关盘按开奖槽位倒推 70 秒</div>'
                 % (_clock(seal.get('published_at')), escape(str(seal.get('window') or '-'))))
-    html.append('<div class="k1-verify">' + _settlement_line(settlement) + '</div>')
+    html.append('<div class="k1-verify">' + _settlement_line(settlement, seal, latest) + '</div>')
     html.append(_stats_html(stats))
     html.append(_cumulative_html())
     html.append(_version_html(stats))
-    html.append(_attack_html(seal))
+    html.append(_attack_html(seal, stale=stale))
     html.append(_foot_html())
     html.append('</section>')
     return ''.join(html)
 
 
-def _attack_html(seal):
-    """与既有框架同格式的攻击语 + 复制按钮（复制脚本沿用同款，只换元素 id）。"""
+def _attack_html(seal, stale=False):
+    """与既有框架同格式的攻击语 + 复制按钮（复制脚本沿用同款，只换元素 id）。
+
+    stale=True（展示的是已过期的历史推荐）时禁用复制，避免照旧投注。
+    """
     if not isinstance(seal, dict) or not seal.get('published_at'):
         return ''
     try:
@@ -458,15 +532,23 @@ def _attack_html(seal):
         "try{ok=document.execCommand('copy')===true;}catch(e){}a.remove();done(ok);};"
         "if(navigator.clipboard&&navigator.clipboard.writeText){"
         "navigator.clipboard.writeText(t).then(function(){done(true);},fb);}else{fb();}")
+    title = '攻击语（复制到平台，与八项同格式）'
+    if stale:
+        title += ' · ⚠ 已过期，禁止复制'
+        button = ('<button id="kill12-attack-copy" type="button" disabled '
+                  'style="padding:7px 15px;border:0;border-radius:7px;background:#94a3b8;color:#fff;cursor:not-allowed;">'
+                  '已过期，禁止复制</button>')
+    else:
+        button = ('<button id="kill12-attack-copy" type="button" onclick="' + copy_action + '" '
+                  'style="padding:7px 15px;border:0;border-radius:7px;background:#4f46e5;color:#fff;cursor:pointer;">'
+                  '复制攻击语</button>')
     return ('<div class="k1-attack">'
-            '<div class="k1-attack-title">攻击语（复制到平台，与八项同格式）</div>'
+            '<div class="k1-attack-title">' + title + '</div>'
             '<textarea id="kill12-attack-text" readonly rows="3" aria-label="AI 单位置+单双形态+一合尾攻击语" '
             'style="display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:9px;resize:vertical;'
             'border:1px solid #c7d2fe;border-radius:7px;background:#fff;font:15px/1.8 serif;overflow-wrap:anywhere;">'
             + escape(text) + '</textarea>'
-            '<button id="kill12-attack-copy" type="button" onclick="' + copy_action + '" '
-            'style="padding:7px 15px;border:0;border-radius:7px;background:#4f46e5;color:#fff;cursor:pointer;">'
-            '复制攻击语</button>'
+            + button +
             '<span id="kill12-copy-status" role="status" style="margin-left:8px;font-size:12px;"></span></div>'
             '<script id="kill12-attack-data" type="application/json">' + payload + '</script>')
 
@@ -478,9 +560,10 @@ def _foot_html():
             '（杀码为奇数→双、偶数→单），其余 3 位由 AI 自选；'
             '命中 = 目标期实际四位单双形态串 ≠ 封存形态串；'
             '合尾杀码 = 该合尾实际和值个位 ≠ 排除码（5 种合尾选 1；hold3-until-miss 稳定化：'
-            '命中自动沿用、最多自动沿用 3 期；失手或满 3 期后由模型重选，重选可与上期同码；AI 尾项为换码候选）；'
+            '命中后最多连用 3 期（含首次封存）；失手、连用满 3 期或缺期时由模型重选，重选可与上期同码；AI 尾项为换码候选）；'
             '整组命中 = 1 位置 + 1 项单双反向形态 + 1 合尾同时命中（共 3 项）；'
-            '位置与杀码不做连用限制（完全由模型每期自选）；'
+            '定位依据：排除码须取自该位置近 50 期热码 top3、上期重码、上期邻码（±1，0↔9 循环），'
+            '不得以上期冷码 / 长遗漏码为依据；位置与杀码不做连用限制（每期由模型自选）；'
             '只统计开奖前已发布、开奖后按真实开奖核验的记录；北京时间 05:00 清零；'
             '累计四手连败自本版本上线起跨天叠加：连续 4 期整组未全中记 1 次、8 期记 2 次，'
             '赢一次清零，不随 05:00 清零；只使用前 4 球（千/百/十/个），第 5 球不参与；'

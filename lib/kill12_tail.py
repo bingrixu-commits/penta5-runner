@@ -4,10 +4,11 @@
 - 由 DeepSeek 从 千/百/十/个 四个位置中选 1 个位置，排除 1 个数字（杀码），该位置计 1 注；
 - 定位依据：每个位置给出近 50 期热码 top3 与上期（参考期）该位置重码/邻码
   （±1，0↔9 循环），模型须从中选择排除码，不得以冷码（出现次数少、当前遗漏长）为依据；
+  本地不做硬校验，封存留档 position_basis（候选集与是否合规）供事后核验；
 - 从五种合尾（千百十个 / 千百十 / 千百个 / 千十个 / 百十个）中选 1 种，排除 1 个和尾数字；
-- 尾码稳定化 hold3-until-miss：上期尾码命中且自动沿用未满 3 期时沿用上期尾码；失手或自动沿用
-  满 3 期后由模型本期重选（重选可与上期同码）；模型尾项在封存里记为换码候选
-  （tail_policy.model_tail）；
+- 尾码稳定化 hold3-until-miss：上期尾码命中且已连用未满 3 期时沿用上期尾码；失手或已连用
+  满 3 期后由模型本期重选（重选可与上期同码）；上期封存与当前参考期不连续（缺期/停跑）时
+  不沿用；模型尾项在封存里记为换码候选（tail_policy.model_tail，含合尾类型）；
 - 单双反向形态（唯一形态，reverse_parity）：输出恰好 4 个字符（按千百十个顺序），
   字符集仅 {单, 双}（合法形态共 8 种）；被杀位置的字符必须取杀码数字单双的反面
   （杀码为奇数→双，偶数→单），其余 3 个位置字符由 AI 自选；
@@ -394,8 +395,9 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         prev_label = TAILS[previous_tail['key']]['label']
         prev_kill = str(previous_tail.get('kill', '-'))
         restriction = (f'上一期合尾：{prev_label} 杀 {prev_kill}。'
-                       'hold3-until-miss 规则：上期该尾码命中且连用未满 3 期时，系统直接沿用上期尾码；'
-                       '否则采用你本期新选。你的尾项仍会记为换码候选，可正常自主选择。')
+                       'hold3-until-miss 规则：上期该尾码命中且已连用未满 3 期时，系统直接沿用上期尾码；'
+                       '否则采用你本期新选。若上期与本期之间缺期/停跑，则不沿用上期尾码。'
+                       '你的尾项仍会记为换码候选，可正常自主选择。')
     else:
         restriction = '本期无上一期尾码，按你本期自主选择封存。'
     panel_section = ''
@@ -423,7 +425,7 @@ def build_prompt(reference, target, rows, *, previous_tail=None,
         '【五种合尾候选对比（合尾 = 对应位置数字之和的个位；'
         '按该尾候选码近50期真实杀号命中率排序，顺序不代表推荐）】\n'
         + '\n'.join(tail_lines) + '\n\n'
-        '【合尾稳定化规则（hold3-until-miss：命中自动沿用，最多自动沿用 3 期）】\n'
+        '【合尾稳定化规则（hold3-until-miss：命中后最多连用 3 期（含首次封存）；缺期不沿用；满 3 期由模型重选）】\n'
         + restriction + '\n\n'
         '【任务】\n'
         '1. 从 千/百/十/个 四个位置中挑 1 个位置，并从该位置的近50期热码 top3、'
@@ -512,15 +514,26 @@ def _trailing_tail_streak(seals):
     return previous, count
 
 
-def tail_hold_state(seals, settlements):
-    """State used by the tail-hold policy; read-only."""
+def tail_hold_state(seals, settlements, reference=None):
+    """State used by the tail-hold policy; read-only.
+
+    只以当前规则版本的封存作为沿用依据（跨版本不继承）；上一封存的目标期必须等于
+    当前参考期（连续），否则视为无法核对上期命中（缺期/停跑）：封存回退为模型新选。
+    """
     seals = [item for item in (seals or []) if isinstance(item, dict)]
     settlements = [item for item in (settlements or []) if isinstance(item, dict)]
-    previous, streak = _trailing_tail_streak(seals)
-    previous_ref = str(seals[-1].get('ref_period') or '') if seals else ''
-    previous_target = str(seals[-1].get('target_period') or '') if seals else ''
+    versioned = [item for item in seals if item.get('rule_version') == RULE_VERSION]
+    previous, streak = _trailing_tail_streak(versioned)
+    last = versioned[-1] if versioned else None
+    previous_ref = str(last.get('ref_period') or '') if last else ''
+    previous_target = str(last.get('target_period') or '') if last else ''
+    contiguous = True
+    if reference is not None:
+        reference = str(reference).strip()
+        if previous_target and reference and previous_target != reference:
+            contiguous = False
     previous_hit = None
-    if previous_target:
+    if contiguous and previous_target:
         for item in reversed(settlements):
             if str(item.get('target_period') or '') == previous_target:
                 previous_hit = (item.get('tail') or {}).get('hit') is True
@@ -528,27 +541,32 @@ def tail_hold_state(seals, settlements):
     return {'policy': TAIL_POLICY, 'hold_max': TAIL_HOLD_MAX,
             'previous_tail': previous, 'previous_streak': streak,
             'previous_hit': previous_hit,
+            'previous_contiguous': contiguous,
             'previous_ref_period': previous_ref or None,
             'previous_target_period': previous_target or None}
 
 
-def apply_tail_policy(prediction, seals, settlements):
+def apply_tail_policy(prediction, seals, settlements, reference=None):
     """Return a copy whose sealed tail follows the stability policy."""
     if not isinstance(prediction, dict):
         raise ValueError('prediction must be an object')
-    state = tail_hold_state(seals, settlements)
+    state = tail_hold_state(seals, settlements, reference=reference)
     model_tail = dict(prediction.get('tail') or {})
     previous = state.get('previous_tail')
     reused = False
-    if (previous and state.get('previous_hit') is True
+    if previous and not state.get('previous_contiguous', True):
+        final = model_tail
+        note = '换码（上一期封存与当前参考期不连续，无法核对上期命中）'
+    elif (previous and state.get('previous_hit') is True
             and int(state.get('previous_streak') or 0) < TAIL_HOLD_MAX):
         final = {'key': previous['key'], 'label': TAILS[previous['key']]['label'],
                  'kill': str(previous['kill'])}
         reused = True
-        note = '沿用上期尾码（第%s期，上期命中）' % state.get('previous_streak')
+        note = '沿用上期尾码（已连用%s期，上期命中）' % (
+            int(state.get('previous_streak') or 0) + 1)
     elif previous and state.get('previous_hit') is True:
         final = model_tail
-        note = '换码（自动沿用已满%s期，改由模型重选）' % TAIL_HOLD_MAX
+        note = '换码（已连用%s期，改由模型重选）' % TAIL_HOLD_MAX
         if model_tail.get('key') == previous.get('key') and str(model_tail.get('kill')) == str(previous.get('kill')):
             note += '（模型本次仍选同码）'
     elif previous and state.get('previous_hit') is False:
@@ -562,13 +580,17 @@ def apply_tail_policy(prediction, seals, settlements):
         note = '新选（无上一期尾码）'
     result = dict(prediction)
     result['tail'] = final
+    model_meta = {'key': model_tail.get('key'), 'kill': model_tail.get('kill')}
+    if model_tail.get('key') in TAILS:
+        model_meta['label'] = TAILS[model_tail['key']]['label']
     result['tail_policy'] = {
         'policy': TAIL_POLICY, 'hold_max': TAIL_HOLD_MAX,
-        'model_tail': {'key': model_tail.get('key'), 'kill': model_tail.get('kill')},
+        'model_tail': model_meta,
         'reused_previous': reused, 'note': note,
         'previous_tail': previous,
         'previous_streak': state.get('previous_streak'),
         'previous_hit': state.get('previous_hit'),
+        'previous_contiguous': bool(state.get('previous_contiguous', True)),
         'previous_ref_period': state.get('previous_ref_period'),
     }
     if reused:
@@ -768,6 +790,42 @@ def request_prediction(prompt, reference, target, deadline, log=print, value_che
                        f'{last_error}{status_note}; not published')
 
 
+def position_basis_audit(prediction, audit):
+    """定位依据留档：热码 top3 / 上期重码 / 邻码，以及排除码是否落在候选集。"""
+    try:
+        positions = prediction.get('positions') if isinstance(prediction, dict) else None
+        if not isinstance(positions, dict) or len(positions) != 1:
+            return None
+        key = next(iter(positions))
+        kill = digit(positions.get(key))
+        if kill is None:
+            return None
+        hot_top = []
+        for item in (audit or {}).get('hot_ranking') or []:
+            if isinstance(item, dict) and item.get('key') == key:
+                hot_top = [str(entry.get('number')) for entry in (item.get('top') or [])
+                           if isinstance(entry, dict) and entry.get('number') is not None]
+                break
+        latest_digits = (((audit or {}).get('latest_row') or {}).get('digits') or {})
+        latest = digit(latest_digits.get(key)) if isinstance(latest_digits, dict) else None
+        repeat = neighbor_prev = neighbor_next = None
+        if latest is not None:
+            repeat = str(latest)
+            neighbor_prev = str((latest - 1) % 10)
+            neighbor_next = str((latest + 1) % 10)
+        candidates = list(dict.fromkeys(
+            hot_top + [value for value in (repeat, neighbor_prev, neighbor_next)
+                       if value is not None]))
+        kill_text = str(kill)
+        return {'key': key, 'kill': kill_text, 'hot_top3': hot_top,
+                'repeat': repeat, 'neighbor_prev': neighbor_prev,
+                'neighbor_next': neighbor_next, 'candidates': candidates,
+                'in_candidates': kill_text in candidates,
+                'in_hot_top3': kill_text in hot_top}
+    except Exception:
+        return None
+
+
 def create_seal(reference, target, reference_open_time, prediction, prompt, audit,
                 generated_at, response_meta, extra=None):
     seal = {
@@ -794,6 +852,8 @@ def create_seal(reference, target, reference_open_time, prediction, prompt, audi
         'model_label': model_label(),
         'model_metadata': response_meta,
         'prompt_sha256': sha256(prompt.encode('utf-8')).hexdigest(),
+        'prompt_version': PROMPT_VERSION,
+        'position_basis': position_basis_audit(prediction, audit),
         'input_sha256': audit.get('history_sha256'),
         'panel_context_sha256': audit.get('panel_context_sha256'),
         'panel_context': audit.get('panel_context'),
@@ -932,6 +992,13 @@ def _business_key(value):
     return business_start(moment)
 
 
+def _drawn_business_key(item):
+    """业务日归属按开奖时间（drawn_at），缺失时回退结算时间；与 05:00 清零口径一致。"""
+    if not isinstance(item, dict):
+        return None
+    return _business_key(item.get('drawn_at')) or _business_key(item.get('settled_at'))
+
+
 def _streak_stats(rows):
     """Streak stats for settlement rows: (win, loss, max_loss, four_loss_cycles)."""
     win = loss = max_loss = four_loss = 0
@@ -956,7 +1023,7 @@ def today_stats(now=None):
     seals = load_seals()
     verified = [item for item in settlements
                 if item.get('verified') is True
-                and _business_key(item.get('settled_at')) == start]
+                and _drawn_business_key(item) == start]
     verified_all = [item for item in settlements if item.get('verified') is True]
     seal_rule = {str(seal.get('ref_period')): seal.get('rule_version')
                  for seal in seals if isinstance(seal, dict)}
@@ -1009,7 +1076,7 @@ def today_stats(now=None):
         if target and target > latest and target not in settled_targets:
             pending += 1
     late = sum(1 for item in settlements
-               if item.get('verified') is False and _business_key(item.get('settled_at')) == start)
+               if item.get('verified') is False and _drawn_business_key(item) == start)
     return {
         'business_start': start.isoformat(),
         'total': total,

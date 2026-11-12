@@ -67,7 +67,19 @@ def _acquire_job_lock():
 
 def main():
     _acquire_job_lock()
-    require_ai_enabled()
+    try:
+        require_ai_enabled()
+    except AICallsDisabled:
+        # AI 开关只控制模型调用：停机期间仍结算已开奖封存并刷新面板，
+        # 避免页面冻结在旧推荐 / 旧“等待开奖核验”状态（只读结算 + 面板刷新，不调用模型）。
+        try:
+            snapshot = load_snapshot(persist=False)
+            kill12_tail.settle_pending(snapshot)
+            publish_block()
+            print('AI API manually stopped; settlement/panel refreshed only; no request launched.')
+        except Exception as error:
+            print(f'kill12 stopped-state refresh failed: {type(error).__name__}')
+        return 0
     snapshot = wait_for_source()
     kill12_tail.settle_pending(snapshot)
     latest = snapshot.get('latest') or {}
@@ -85,7 +97,11 @@ def main():
         return 0
     deadline, target = kill12_tail.deadline_for(reference)
     rows = [list(record.get('numbers') or [])[:4] for record in (snapshot.get('records') or [])]
-    previous_seal = seals[-1] if seals else None
+    # 上一期尾码只取当前规则版本的封存（跨版本不继承）；与当前参考期不连续时由策略层回退为模型新选。
+    versioned_seals = [item for item in seals
+                       if isinstance(item, dict)
+                       and item.get('rule_version') == kill12_tail.RULE_VERSION]
+    previous_seal = versioned_seals[-1] if versioned_seals else None
     previous_tail = (previous_seal.get('tail') or {}) if isinstance(previous_seal, dict) else {}
     panel_snapshot = panel_context.build(
         reference, target,
@@ -109,7 +125,8 @@ def main():
         print(f'kill12 publication rejected after inference: {rejection}; ref={reference}')
         return 0
     settlements = kill12_tail.load_settlements()
-    prediction = kill12_tail.apply_tail_policy(prediction, seals, settlements)
+    prediction = kill12_tail.apply_tail_policy(prediction, seals, settlements,
+                                              reference=reference)
     seal = kill12_tail.create_seal(reference, target, latest.get('opentime'), prediction,
                                   prompt, audit, generated_at, meta)
     kill12_tail.save_seal(seal)
@@ -131,7 +148,13 @@ def main():
               + ' · sealed=' + str(prediction['tail'].get('key')) + '/'
               + str(prediction['tail'].get('kill'))
               + ' · model=' + str((tail_policy.get('model_tail') or {}).get('key')) + '/'
-              + str((tail_policy.get('model_tail') or {}).get('kill')))
+              + str((tail_policy.get('model_tail') or {}).get('kill'))
+              + ' · contiguous=' + str(tail_policy.get('previous_contiguous')))
+    basis = seal.get('position_basis') or {}
+    if basis:
+        print('kill12 position basis: key=%s kill=%s in_candidates=%s in_hot_top3=%s hot_top3=%s candidates=%s'
+              % (basis.get('key'), basis.get('kill'), basis.get('in_candidates'),
+                 basis.get('in_hot_top3'), basis.get('hot_top3'), basis.get('candidates')))
     return 0
 
 

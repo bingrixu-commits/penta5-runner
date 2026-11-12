@@ -42,6 +42,8 @@ body{margin:0;background:#f1f5f9;font:14px/1.6 system-ui,sans-serif;color:#0f172
 .fw-switch button.start{border-color:#86efac;color:#15803d}
 .fw-switch input{padding:2px 6px;border:1px solid #cbd5e1;border-radius:5px;font-size:12px;width:110px}
 .fw-switch .msg{color:#92400e;font-size:12px}
+.fw-switch .ai-global{font-size:12px;color:#475569}
+.fw-switch .ai-global.off{color:#b91c1c;font-weight:700}
 .fw-missing{margin:24px auto;max-width:640px;padding:16px;border:1px solid #fca5a5;
  border-radius:10px;background:#fef2f2;color:#991b1b}
 </style></head><body>`;
@@ -69,6 +71,7 @@ function switchBlock(fw) {
 <strong>${fw.title}</strong>
 <span class="st" id="fw-state">读取中…</span>
 <button id="fw-toggle" disabled>…</button>
+<span class="ai-global" id="fw-global">全局 AI：读取中…</span>
 <details style="margin-left:auto"><summary style="cursor:pointer;color:#475569">管理员操作</summary>
 <span style="margin-left:8px">账号 <input id="fw-user" autocomplete="username"></span>
 <span style="margin-left:6px">密码 <input id="fw-pass" type="password" autocomplete="current-password"></span>
@@ -87,6 +90,20 @@ function switchBlock(fw) {
     s.textContent=on?'运行中':'已停用';s.className='st '+(on?'on':'off');
     b.textContent=on?'停止':'启动';b.className=on?'stop':'start';
     b.dataset.action=on?'stop':'start';b.disabled=false;
+  }
+  function readGlobal(){
+    fetch('/api/ai-control',{credentials:'same-origin',cache:'no-store'})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var el=n('fw-global');if(!el)return;
+        if(!d.ok){el.textContent='全局 AI：读取失败';el.className='ai-global';return;}
+        var s=d.state||{};var on=s.enabled===true;
+        el.textContent='全局 AI：'+(on?'运行中':'已停止')+'（第'+(s.generation==null?'?':s.generation)+'代）';
+        el.className='ai-global'+(on?'':' off');
+        if(!on){say('全局 AI 已停止：本框架不会发布新一期，页面停留在最近一期；请先在主面板开启全局 AI。');}
+      }).catch(function(){
+        var el=n('fw-global');if(el){el.textContent='全局 AI：网络错误';el.className='ai-global off';}
+      });
   }
   function read(){
     fetch('/api/ai-scope',{credentials:'same-origin',cache:'no-store'})
@@ -112,7 +129,9 @@ function switchBlock(fw) {
   }
   n('fw-toggle').addEventListener('click',function(){change(this.dataset.action||'stop');});
   read();
+  readGlobal();
   setInterval(read,60000);
+  setInterval(readGlobal,60000);
 })();
 </script>`;
 }
