@@ -139,6 +139,36 @@ def _submit_delivery(path, before, committed, committed_at):
         pass
 
 
+def _audit(kind, **fields):
+    """Append a bounded operational record for panel write forensics.
+
+    Never raises: an audit failure must not change a publication result.
+    """
+    try:
+        destination = Path(PANEL_PATH).parent / 'data' / 'panel_writes.log'
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if destination.exists() and destination.stat().st_size > 1024 * 1024:
+                os.replace(str(destination), str(destination) + '.1')
+        except OSError:
+            pass
+        record = {'kind': kind, **fields}
+        with destination.open('a', encoding='utf-8') as stream:
+            stream.write(datetime.now(timezone.utc).isoformat() + ' '
+                         + json.dumps(record, ensure_ascii=False, allow_nan=False, separators=(',', ':')) + '\n')
+    except Exception:
+        pass
+
+
+def _structural_problem(text):
+    """Return a short reason when a page could not be a complete panel."""
+    if '</body>' not in text:
+        return 'no-body'
+    if not text.rstrip().endswith('</html>'):
+        return 'no-html-end'
+    return None
+
+
 def update_panel(transform, path=PANEL_PATH):
     started = _tick()
     timings = {name: 0.0 for name in _PHASES}
@@ -164,6 +194,19 @@ def update_panel(transform, path=PANEL_PATH):
             if not isinstance(updated, str):
                 raise TypeError('Panel transform must return text')
             phase, phase_started = 'commit', transformed
+            if updated != content:
+                # A cooperating writer may only commit a complete page. A
+                # fragment (missing </body> / </html>) is a bug and would
+                # otherwise poison every later read-modify-write.
+                problem = _structural_problem(updated)
+                if problem is not None:
+                    module = getattr(transform, '__module__', None) or '?'
+                    _audit('REJECT', module=module, reason=problem,
+                           before=len(content), after=len(updated), head=updated[:120])
+                    raise ValueError('panel-fragment:%s:%s' % (module, problem))
+                if len(updated) + 60000 < len(content):
+                    _audit('SHRINK', module=getattr(transform, '__module__', None) or '?',
+                           before=len(content), after=len(updated))
             if updated == content:
                 # A prior replace may have completed before its directory fsync
                 # failed. A same-card retry must finish that durable commit too.
