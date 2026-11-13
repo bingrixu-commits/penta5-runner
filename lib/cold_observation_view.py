@@ -126,6 +126,10 @@ _STYLE = '''<style>
 #cold-observation .cold-pick{grid-template-columns:minmax(0,1fr)}
 #cold-observation .cold-pick .cold-item{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:7px 9px}
 #cold-observation .cold-item{min-width:0;background:#f1f5fb;padding:4px 5px;border-radius:5px;font-size:13px;line-height:1.5}
+#cold-observation .cold-item.is-min{background:#fff1f2;box-shadow:inset 0 0 0 1px #fecdd3}
+#cold-observation .cold-item.is-min .cold-value{color:#be123c}
+#cold-observation .cold-head{display:inline-flex;align-items:center;gap:5px}
+#cold-observation .cold-tag{display:inline-block;padding:0 6px;border-radius:999px;background:#be123c;color:#fff;font-size:11px;font-style:normal;font-weight:700;line-height:1.6}
 #cold-observation .cold-value{font-size:16px;color:#3730a3;letter-spacing:1px;white-space:nowrap}
 #cold-observation .cold-item small{display:block;color:#475569;font-size:12px;white-space:nowrap}
 #cold-observation details{margin-top:5px;font-size:13px}
@@ -136,18 +140,20 @@ _STYLE = '''<style>
 </style>'''
 
 
-def _item(item):
+def _item(item, is_min=False):
     omission = ('≥' if item['omission_lower_bound'] else '') + str(item['current_omission'])
-    return ('<div class="cold-item"><b class="cold-value">' + escape(item['value'])
-            + '</b><small>出现 ' + str(item['count']) + ' 次</small><small>遗漏 '
+    return ('<div class="cold-item' + (' is-min' if is_min else '') + '"><span class="cold-head"><b class="cold-value">'
+            + escape(item['value']) + '</b>' + ('<em class="cold-tag">最少</em>' if is_min else '')
+            + '</span><small>出现 ' + str(item['count']) + ' 次</small><small>遗漏 '
             + omission + ' 期</small></div>')
 
 
 def _card(group, label, key):
     items = {item['value']: item for item in group['items']}
     latest = escape(group['latest']) if group['latest'] is not None else '—'
-    cold = ''.join(_item(items[value]) for value in group['cold'])
-    expanded = ''.join(_item(item) for item in group['items'])
+    cold_values = set(group['cold'])
+    cold = ''.join(_item(items[value], True) for value in group['cold'])
+    expanded = ''.join(_item(item, item['value'] in cold_values) for item in group['items'])
     if not cold:
         cold = '<div class="cold-meta">暂无开奖样本，等待更新。</div>'
         expanded = '<div class="cold-meta">暂无样本，暂不显示出现次数与遗漏。</div>'
