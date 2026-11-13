@@ -28,6 +28,11 @@ const STATS = [
   {anchor: 'cold-shapes', label: '形态统计'},
 ];
 
+// 独立统计页（不挂在冷码观察锚点下）：三数共现 4 组 + 单组统计。
+const EXTRA_PAGES = [
+  {scope: 'three-avoid2', label: '三数共现'},
+];
+
 const PAGE_HEAD = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>%TITLE% · Penta5</title>
@@ -66,7 +71,10 @@ function nav(active) {
   const stats = STATS.map(s =>
     `<a class="stat${active === 'stats' ? ' active' : ''}" href="/f/stats#${s.anchor}">${s.label}</a>`
   ).join('');
-  return `<nav class="fw-nav"><a class="brand" href="/f/"${active === '' ? ' class="active"' : ''}>总览</a>${links}<span class="fw-nav-sep"></span>${stats}</nav>`;
+  const extras = EXTRA_PAGES.map(p =>
+    `<a class="stat${active === p.scope ? ' active' : ''}" href="/f/${p.scope}">${p.label}</a>`
+  ).join('');
+  return `<nav class="fw-nav"><a class="brand" href="/f/"${active === '' ? ' class="active"' : ''}>总览</a>${links}<span class="fw-nav-sep"></span>${stats}${extras}</nav>`;
 }
 
 function extract(html, marker) {
@@ -162,7 +170,7 @@ function indexPage(html) {
 <table style="width:100%;border-collapse:collapse;font-size:13px">
 <thead><tr><th style="text-align:left">框架</th><th style="text-align:left">作用域</th><th style="text-align:left">状态</th></tr></thead>
 <tbody>${items}</tbody></table>
-<p style="margin:10px 0 0;font-size:13px;color:#475569">统计入口：<a href="/f/stats#cold-positions">定位统计</a> · <a href="/f/stats#cold-tails">合尾统计</a> · <a href="/f/stats#cold-shapes">形态统计</a></p>
+<p style="margin:10px 0 0;font-size:13px;color:#475569">统计入口：<a href="/f/stats#cold-positions">定位统计</a> · <a href="/f/stats#cold-tails">合尾统计</a> · <a href="/f/stats#cold-shapes">形态统计</a> · <a href="/f/three-avoid2">三数共现</a></p>
 </section></div></body></html>`;
 }
 
@@ -177,11 +185,22 @@ function frameworkPage(html, fw) {
 function statsPage(html) {
   const block = extract(html, 'COLD_OBSERVATION');
   const body = block || '<div class="fw-missing">统计区块暂时没有数据（COLD_OBSERVATION 标记不存在）。</div>';
-  const links = STATS.map(s => `<a href="#${s.anchor}">${s.label}</a>`).join('');
+  const links = STATS.map(s => `<a href="#${s.anchor}">${s.label}</a>`)
+    .concat('<a href="/f/three-avoid2">三数共现</a>').join('');
   return `${PAGE_HEAD.replace('%TITLE%', '统计')}${nav('stats')}` +
          `<div class="fw-wrap"><section class="fw-switch"><strong>统计</strong>` +
-         `<span style="color:#475569">定位 / 合尾 / 形态三组统计，取自最新面板的「冷码观察」区块；也可直接点：</span>` +
+         `<span style="color:#475569">定位 / 合尾 / 形态三组统计，取自最新面板的「冷码观察」区块；三数共现另页展示；也可直接点：</span>` +
          `<span style="display:flex;gap:8px;flex-wrap:wrap">${links}</span></section>${body}</div></body></html>`;
+}
+
+// 三数共现页：顶部精简卡片 + 详细 4 组单组统计（取面板 THREE_AVOID2_TOP / THREE_AVOID2 区块）。
+function threeAvoidPage(html) {
+  const top = extract(html, 'THREE_AVOID2_TOP');
+  const detail = extract(html, 'THREE_AVOID2');
+  const body = (top + detail) ||
+    '<div class="fw-missing">三数共现区块暂时没有数据（THREE_AVOID2 标记不存在）。</div>';
+  return `${PAGE_HEAD.replace('%TITLE%', '三数共现')}${nav('three-avoid2')}` +
+         `<div class="fw-wrap">${body}</div></body></html>`;
 }
 
 function createFrameworkPageHandler(options) {
@@ -192,7 +211,7 @@ function createFrameworkPageHandler(options) {
     if (req.method !== 'GET') return false;
     let url;
     try { url = new URL(req.url || '/', 'http://localhost'); } catch (_) { return false; }
-    const m = /^\/f(?:\/([a-z0-9]{2,16}))?\/?$/.exec(url.pathname);
+    const m = /^\/f(?:\/([a-z0-9-]{2,20}))?\/?$/.exec(url.pathname);
     if (!m) return false;
     const role = authRoleForRequest(req);
     if (role !== 'admin' && role !== 'viewer') {
@@ -214,6 +233,8 @@ function createFrameworkPageHandler(options) {
       page = indexPage(html);
     } else if (scope === 'stats') {
       page = statsPage(html);
+    } else if (scope === 'three-avoid2') {
+      page = threeAvoidPage(html);
     } else {
       const fw = FRAMEWORKS.find(item => item.scope === scope);
       if (!fw) { res.writeHead(404, {'Content-Type': 'text/plain; charset=utf-8'}); res.end('unknown framework'); return true; }

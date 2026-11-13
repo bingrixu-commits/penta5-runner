@@ -26,6 +26,9 @@
   4 组号码与本业务日 4 组单组命中率，锚点跳到 `#three-avoid2`。
 - `run_stats.py`（/root，不在 git）：包装原详细区块调用，先后更新详细区块和顶部卡片。
 - `lib/panel_live_refresh.py`：前端热刷新 names 加入 `THREE_AVOID2_TOP`。
+- `framework_pages.js`：框架导航新增「三数共现」入口（统计链接组末尾），新增
+  `/f/three-avoid2` 页（抽取 `THREE_AVOID2_TOP` + `THREE_AVOID2` 两个区块）；
+  `/f/stats` 快捷入口与 `/f/` 总览统计入口同步加链接。
 
 ## 验证（2026-11-13）
 
@@ -33,6 +36,8 @@
   1/1，四组合并 1/1（精确基线 91.84%）。
 - 服务端 `/panel` 同时含 `THREE_AVOID2_TOP` 与 `THREE_AVOID2` 区块，顶部卡片在
   R1 killer 之前；热刷新脚本已含新 section 名。
+- 服务端 `/f/three-avoid2` 返回 200（13KB），导航「三数共现」active，页面含
+  4 组号码条 + 单组统计；`/f/stats` 与 `/f/` 均出现入口链接。
 - `kill3_tail.THREE_AVOID_KEYS` / `kill1_tail.THREE_AVOID_KEYS` 仍为 3 组；
   `panel_context._three_avoid2()` 仍只输出避开1/2/3组，今日合并口径仍为三组合并。
 
