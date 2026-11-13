@@ -38,6 +38,36 @@
 
 长驻进程 `penta5-position-cold.service` 持有旧版 `panel_io`，已重启加载新逻辑。
 
+## 写入归属（fanotify，2026-11-13 新增）
+
+`scripts/panel_write_watch.py` 由 pm2 托管（`penta5-panel-watch`，id 11）：
+
+- `fanotify(FAN_CLOSE_WRITE | FAN_EVENT_ON_CHILD)` 监听仓库根目录直接子文件；
+- 命中 `panel.html` / `stats.html` / `hitrate.html` / `accuracy.html`（含其原子写临时文件
+  `.panel.html.*.tmp`）时，记录 **pid / comm / cmdline / ppid / 大小 / 命中类型** 到
+  `data/panel_write_watch.log`（1MB 轮转）；
+- 若 `panel.html` 被**直接写**且关闭时小于 120KB（典型截断），立即拉起
+  `scripts/panel_guard.py`，通常 1 秒内还原（实测 11:15:00 的演练：0.04s 恢复）；
+- `panel.html.lock`、`.tmp` 中间文件不会触发还原，避免自激循环。
+
+日志示例（2026-11-13 11:15 演练，人为把 panel.html 截成 2 字节）：
+
+```
+{"event":"write","path":"/root/penta5-runner/panel.html","size":2,"match":"direct",
+ "target":"panel.html","pid":404066,"comm":"bash","cmdline":"bash /tmp/watch_drill.sh","ppid":404017}
+{"event":"trigger_guard",...,"pid":404066,...}
+```
+
+正常提交也会逐条记录（`python3 scripts/run_runtime_observability.py` 等），便于事后回放
+“谁在什么时候写了面板”。
+
+排查结论：10:10 那次截断没有留下写入进程证据（未装 auditd、sshd 不记录远程命令）；同日
+10:51–10:59 仓库里出现了本会话之外的新文件与 crontab（model_stat / kill15-drift），说明存在
+**并行操作源**直接改服务器。现在起，任何直接写 `panel.html` 都会在 `panel_write_watch.log`
+里带上 pid 和完整命令行；协作写入方若返回碎片则被 `panel_io` 拒绝并在
+`panel_writes.log` 里记下模块名。
+
+
 ## 读取侧守卫（cron）
 
 `scripts/panel_guard.py` 由 cron 每 2 分钟执行：
