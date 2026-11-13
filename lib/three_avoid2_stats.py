@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
-"""三数共现避开 1/2/3 组 · 业务日核验统计（只读派生，不改任何模型）。
+"""三数共现避开 1/2/3/4 组 · 业务日核验统计（只读派生，不改任何模型）。
 
 口径（写死，避免误读）：
-- 三组兄弟项：threeDigitAvoid「避开1组」、threeDigitHit「避开2组」、
-  threeDigitAvoid2「避开3组」，每期各给出 1 组 3 个数字并要求避开；
+- 四组兄弟项：threeDigitAvoid「避开1组」、threeDigitHit「避开2组」、
+  threeDigitAvoid2「避开3组」、threeDigitAvoid3「避开4组（参考）」；
+  第 4 组自 2026-11-13 起由后端按同一候选池生成，只做面板展示与单组统计，
+  不进入 kill1/kill3 的攻击语与整组命中（那两个框架仍按前 3 组、口径不变）。
 - 单项命中 = 该组 3 个数字【未全部】出现在 4 球开奖号中（避开成功），
   即 evaluation.independentExtras.<key>.success == True；单项随机基线
   = 1 - P(3 个指定数字在 4 球全部出现) = 97.96%（10^4 精确枚举）；
-- 三组合并命中 = 同一期三组【全部】避开成功（合取，缺任一组不计入）；
-  合并随机基线 = 每期按该期三组号码对 10^4 开奖组合精确枚举
+- 三组合并命中（历史口径）= 同一期前 3 组【全部】避开成功（合取，缺任一组不计入）；
+- 四组合并命中（现行口径）= 同一期 4 组【全部】避开成功（合取，第 4 组缺失不计入）；
+- 合并随机基线 = 每期按该期各组号码对 10^4 开奖组合精确枚举
   (1 - P(至少一组的数字全部出现))，再按期平均；
 - 业务日 = 北京时间 05:00 切日（PENTA5_DAY_RESET_HOUR=5）；
 - 过滤条件与后端 projectDailyDisplayCounters / filterDailyDisplayPredictions
@@ -17,10 +20,11 @@
   按 targetPeriod 去重；业务日归属按「开奖时刻 - 5h」分组。
 
 产物：
-- data/three_avoid2_daily.json：本业务日 + 上一业务日核验表（合并为主、3组单项参照）
-  + 最新已核验 / 下一期待核验三组号码；
+- data/three_avoid2_daily.json：本业务日 + 上一业务日的 4 组单组统计
+  （groups_current/groups_previous）、三组合并（current/previous，兼容旧调用方）、
+  四组合并（merged4_current/merged4_previous）+ 最新已核验 / 下一期待核验四组号码；
 - data/three_avoid2_history.json：按业务日累计（单调取 max(total)，跨预测
-  滚动窗口保留已封盘日）。
+  滚动窗口保留已封盘日），按日存 groups / merged / merged4 / single。
 """
 import json
 import math
@@ -35,11 +39,13 @@ STATE_PATH = ROOT / 'data' / 'state.json'
 OUT_PATH = ROOT / 'data' / 'three_avoid2_daily.json'
 HISTORY_PATH = ROOT / 'data' / 'three_avoid2_history.json'
 
-GROUP_KEYS = ('threeDigitAvoid', 'threeDigitHit', 'threeDigitAvoid2')
+GROUP_KEYS = ('threeDigitAvoid', 'threeDigitHit', 'threeDigitAvoid2', 'threeDigitAvoid3')
+HISTORICAL_KEYS = GROUP_KEYS[:3]
 GROUP_LABELS = {
     'threeDigitAvoid': '避开1组',
     'threeDigitHit': '避开2组',
     'threeDigitAvoid2': '避开3组',
+    'threeDigitAvoid3': '避开4组',
 }
 SINGLE_KEY = 'threeDigitAvoid2'
 SINGLE_BASELINE = 97.96  # 10^4 精确枚举：1 - P(3 个指定数字在 4 球全部出现)
@@ -232,7 +238,7 @@ def _cooccur_prob(group_sets):
 
 
 def _count_single(rows, day, key=SINGLE_KEY):
-    """单项核验计数（避开成功=命中），供参照列使用。"""
+    """单项核验计数（避开成功=命中），供单组统计/参照列使用。"""
     total = 0
     hit = 0
     first = None
@@ -262,9 +268,12 @@ def _count_single(rows, day, key=SINGLE_KEY):
             last_opened = opened
     rate = round(hit * 100.0 / total, 4) if total else None
     return {
+        'key': key,
+        'label': GROUP_LABELS.get(key, key),
         'total': total,
         'hit': hit,
         'rate': rate,
+        'baseline': SINGLE_BASELINE,
         'delta': round(rate - SINGLE_BASELINE, 4) if rate is not None else None,
         'first_period': first,
         'last_period': last,
@@ -273,8 +282,8 @@ def _count_single(rows, day, key=SINGLE_KEY):
     }
 
 
-def _count_merged(rows, day):
-    """三组合并核验计数（同一期三组全部避开成功才记命中）+ 逐期精确枚举基线。"""
+def _count_merged(rows, day, keys=HISTORICAL_KEYS):
+    """合并核验计数（同一期 keys 全部避开成功才记命中）+ 逐期精确枚举基线。"""
     total = 0
     hit = 0
     expected = 0.0
@@ -289,7 +298,7 @@ def _count_merged(rows, day):
         extras = ev.get('independentExtras') or {}
         successes = {}
         group_sets = []
-        for key in GROUP_KEYS:
+        for key in keys:
             entry = extras.get(key) or {}
             success = entry.get('success') if isinstance(entry, dict) else None
             digits = _group_digits(entry.get('value')) if isinstance(entry, dict) else None
@@ -328,6 +337,10 @@ def _count_merged(rows, day):
     }
 
 
+def _count_groups(rows, day):
+    return {key: _count_single(rows, day, key) for key in GROUP_KEYS}
+
+
 def _write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(prefix='.' + path.name + '.', suffix='.tmp', dir=str(path.parent))
@@ -353,19 +366,29 @@ def _load_history():
         return {}
 
 
-def _upsert_history(history, day, single, merged, current_day, now):
+def _monotonic(old, new):
+    """同一业务日只允许样本量增长，不回退（跨预测滚动窗口）。"""
+    out = dict(old or {})
+    if int((new or {}).get('total') or 0) >= int(out.get('total') or 0):
+        out.update(new or {})
+    return out
+
+
+def _upsert_history(history, day, groups, merged3, merged4, current_day, now):
     entry = history.get(day)
     if not isinstance(entry, dict):
         entry = {}
-    merged_out = dict(entry.get('merged') or {})
-    if int(merged.get('total') or 0) >= int(merged_out.get('total') or 0):
-        merged_out.update(merged)
-    single_out = dict(entry.get('single') or {})
-    if int(single.get('total') or 0) >= int(single_out.get('total') or 0):
-        single_out.update(single)
+    groups_out = dict(entry.get('groups') or {})
+    for key in GROUP_KEYS:
+        groups_out[key] = _monotonic(groups_out.get(key), groups.get(key) or {})
+    merged_out = _monotonic(entry.get('merged'), merged3)
+    merged4_out = _monotonic(entry.get('merged4'), merged4)
+    single_out = _monotonic(entry.get('single'), groups.get(SINGLE_KEY) or {})
     history[day] = {
         'expected_periods': PERIODS_PER_DAY,
+        'groups': groups_out,
         'merged': merged_out,
+        'merged4': merged4_out,
         'single': single_out,
         'sealed': bool(day < current_day),
         'updated_at': now.strftime('%Y-%m-%dT%H:%M:%S+08:00'),
@@ -384,6 +407,14 @@ def _groups_of(extras, with_success):
     return groups
 
 
+def _merged_compat(groups, keys):
+    """合并结论；缺任一组/非布尔返回 False，另给出是否齐全。"""
+    values_ready = all(isinstance((groups.get(key) or {}).get('success'), bool) for key in keys)
+    if not values_ready:
+        return False, False
+    return all(groups[key]['success'] is True for key in keys), True
+
+
 def compute(now=None, write=True):
     now = now if isinstance(now, datetime) else datetime.now(TZ)
     if now.tzinfo is None:
@@ -392,21 +423,31 @@ def compute(now=None, write=True):
     shifted = now - timedelta(hours=DAY_RESET_HOUR)
     current_day = shifted.strftime('%Y-%m-%d')
     previous_day = (shifted - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    groups_current = _count_groups(rows, current_day)
+    groups_previous_rows = _count_groups(rows, previous_day)
+    merged3_current = _count_merged(rows, current_day, HISTORICAL_KEYS)
+    merged3_previous_rows = _count_merged(rows, previous_day, HISTORICAL_KEYS)
+    merged4_current = _count_merged(rows, current_day, GROUP_KEYS)
+    merged4_previous_rows = _count_merged(rows, previous_day, GROUP_KEYS)
+
     history = _load_history()
-    for day in (current_day, previous_day):
-        history = _upsert_history(history, day, _count_single(rows, day),
-                                  _count_merged(rows, day), current_day, now)
-    current = _count_merged(rows, current_day)
-    current_single = _count_single(rows, current_day)
-    previous = history.get(previous_day) or {}
-    previous_merged = previous.get('merged') or {}
-    if not previous_merged.get('total'):
-        previous_merged = _count_merged(rows, previous_day)
-    previous_single = previous.get('single') or {}
-    if not previous_single.get('total'):
-        previous_single = _count_single(rows, previous_day)
-    as_of_period = current.get('last_period') or previous_merged.get('last_period')
-    as_of_time = current.get('last_open_time') or previous_merged.get('last_open_time')
+    history = _upsert_history(history, current_day, groups_current, merged3_current,
+                              merged4_current, current_day, now)
+    history = _upsert_history(history, previous_day, groups_previous_rows,
+                              merged3_previous_rows, merged4_previous_rows, current_day, now)
+    previous_entry = history.get(previous_day) or {}
+    groups_previous = previous_entry.get('groups') or groups_previous_rows
+    previous_merged = previous_entry.get('merged') or merged3_previous_rows
+    previous_merged4 = previous_entry.get('merged4') or merged4_previous_rows
+
+    current = merged3_current
+    as_of_period = (current.get('last_period')
+                    or merged4_current.get('last_period')
+                    or previous_merged.get('last_period'))
+    as_of_time = (current.get('last_open_time')
+                  or merged4_current.get('last_open_time')
+                  or previous_merged.get('last_open_time'))
 
     latest_groups = None
     pending_groups = None
@@ -415,36 +456,43 @@ def compute(now=None, write=True):
         extras = ev.get('independentExtras') or {}
         groups = _groups_of(extras, with_success=True)
         if any(isinstance(g.get('success'), bool) for g in groups.values()):
+            merged3, _ = _merged_compat(groups, HISTORICAL_KEYS)
+            merged4, merged4_available = _merged_compat(groups, GROUP_KEYS)
             latest_groups = {
                 'period': (ev.get('targetPeriod') or ev.get('targetUid') or '').replace('period:', '', 1).strip(),
                 'groups': groups,
                 'actual': ev.get('actualNumbers'),
-                'merged_success': all(g.get('success') is True for g in groups.values()),
+                'merged_success': merged3,
+                'merged4_success': merged4,
+                'merged4_available': merged4_available,
             }
             break
     current_prediction = (doc or {}).get('currentPrediction')
     if isinstance(current_prediction, dict) and current_prediction.get('evaluated') is not True:
         extras = current_prediction.get('extraKills') or {}
         groups = _groups_of(extras, with_success=False)
-        if all(g.get('value') for g in groups.values()):
+        if any(g.get('value') for g in groups.values()):
             pending_groups = {
                 'period': (current_prediction.get('targetPeriod') or current_prediction.get('targetUid') or '').replace('period:', '', 1).strip(),
                 'groups': groups,
+                'merged4_ready': all(bool(g.get('value')) for g in groups.values()),
             }
     if pending_groups and latest_groups and pending_groups['period'] <= latest_groups['period']:
         pending_groups = None  # 磁盘快照滞后：该期已核验，不显示重复待核验
 
     report = {
-        'version': 'three-avoid2-daily-v2',
+        'version': 'three-avoid2-daily-v3',
         'group_keys': list(GROUP_KEYS),
         'group_labels': dict(GROUP_LABELS),
+        'historical_keys': list(HISTORICAL_KEYS),
         'single_key': SINGLE_KEY,
         'baseline_single': SINGLE_BASELINE,
         'baseline_source': ('单项基线 = 1 - P(3 个指定数字在 4 球全部出现)；'
-                            '合并基线 = 每期按该期三组号码 10^4 开奖组合精确枚举'
+                            '合并基线 = 每期按该期各组号码 10^4 开奖组合精确枚举'
                             '(1 - P(至少一组的数字全部出现)) 再按期平均'),
         'hit_definition': ('单项：该组 3 个数字未在 4 球开奖号中全部出现（避开成功）；'
-                           '合并：同一期三组全部避开成功（合取）'),
+                           '三组合并：同一期前 3 组全部避开成功（历史口径）；'
+                           '四组合并：同一期 4 组全部避开成功（第 4 组缺失不计入）'),
         'generated_at': now.strftime('%Y-%m-%dT%H:%M:%S+08:00'),
         'state_updated_at': (doc or {}).get('updatedAt'),
         'business_day': current_day,
@@ -462,11 +510,27 @@ def compute(now=None, write=True):
             'first_period': previous_merged.get('first_period'),
             'last_period': previous_merged.get('last_period'),
             'last_open_time': previous_merged.get('last_open_time'),
-            'sealed': previous.get('sealed', False),
+            'sealed': previous_entry.get('sealed', False),
             'sample_low': int(previous_merged.get('total') or 0) < MIN_SAMPLE,
         },
-        'single_current': current_single,
-        'single_previous': previous_single,
+        'merged4_current': merged4_current,
+        'merged4_previous': {
+            'business_day': previous_day,
+            'total': previous_merged4.get('total', 0),
+            'hit': previous_merged4.get('hit', 0),
+            'rate': previous_merged4.get('rate'),
+            'baseline': previous_merged4.get('baseline'),
+            'delta': previous_merged4.get('delta'),
+            'first_period': previous_merged4.get('first_period'),
+            'last_period': previous_merged4.get('last_period'),
+            'last_open_time': previous_merged4.get('last_open_time'),
+            'sealed': previous_entry.get('sealed', False),
+            'sample_low': int(previous_merged4.get('total') or 0) < MIN_SAMPLE,
+        },
+        'groups_current': groups_current,
+        'groups_previous': groups_previous,
+        'single_current': groups_current.get(SINGLE_KEY) or _count_single(rows, current_day),
+        'single_previous': groups_previous.get(SINGLE_KEY) or _count_single(rows, previous_day),
         'latest_groups': latest_groups,
         'pending_groups': pending_groups,
         'diagnostics': {
@@ -484,14 +548,14 @@ def compute(now=None, write=True):
 
 def _fmt(row, day_label):
     if not row.get('total'):
-        return '  %-14s 暂无已核验记录' % day_label
+        return '  %-24s 暂无已核验记录' % day_label
     rate = ('%.2f%%' % row['rate']) if row.get('rate') is not None else '-'
     delta = row.get('delta')
     delta_text = ('%+.2fpp' % delta) if delta is not None else '-'
     baseline = row.get('baseline')
     baseline_text = ('%.2f%%' % baseline) if isinstance(baseline, (int, float)) else '-'
     note = '样本不足(n<%d)' % MIN_SAMPLE if row.get('sample_low') else '已核验'
-    return '  %-14s %s  命中 %d/%d  合并基线 %s  与基线 %s  %s  期号 %s~%s' % (
+    return '  %-24s %s  命中 %d/%d  基线 %s  与基线 %s  %s  期号 %s~%s' % (
         day_label, rate, row.get('hit', 0), row.get('total', 0), baseline_text, delta_text, note,
         row.get('first_period'), row.get('last_period'))
 
@@ -516,25 +580,33 @@ def main(argv=None):
             continue
         index += 1
     report, history = compute(now=now, write=not dry)
-    print('== 三数共现避开 1/2/3 组 · 业务日核验 ==')
-    print('合并口径：同一期三组全部避开成功才记命中；合并基线按每期三组号码 10^4 精确枚举按期平均')
+    print('== 三数共现避开 1/2/3/4 组 · 业务日核验 ==')
+    print('单组：4 组各自结算；三组合并=前 3 组全避开（历史口径）；四组合并=4 组全避开')
     print('模拟时刻: %s' % (now.strftime('%Y-%m-%d %H:%M:%S') if now else '实时'))
-    print(_fmt(report['current'], '本业务日 ' + report['business_day']))
-    print(_fmt(report['previous'], '上一业务日 ' + report['previous']['business_day']))
-    sc = report['single_current']
-    print('  仅3组单项参照: 本业务日 %s (%d/%d) · 基线 %.2f%%' % (
-        ('%.2f%%' % sc['rate']) if sc.get('rate') is not None else '-', sc.get('hit', 0), sc.get('total', 0), SINGLE_BASELINE))
+    for key in GROUP_KEYS:
+        row = (report['groups_current'] or {}).get(key) or {}
+        print(_fmt(row, '本业务日 ' + report['business_day'] + ' ' + GROUP_LABELS[key]))
+    for key in GROUP_KEYS:
+        row = (report['groups_previous'] or {}).get(key) or {}
+        print(_fmt(row, '上一业务日 ' + report['previous']['business_day'] + ' ' + GROUP_LABELS[key]))
+    print(_fmt(report['current'], '三组合并 · 本业务日 ' + report['business_day']))
+    print(_fmt(report['previous'], '三组合并 · 上一业务日 ' + report['previous']['business_day']))
+    print(_fmt(report['merged4_current'], '四组合并 · 本业务日 ' + report['business_day']))
+    print(_fmt(report['merged4_previous'], '四组合并 · 上一业务日 ' + report['previous']['business_day']))
     if report.get('pending_groups'):
         pg = report['pending_groups']
         print('  下一期 %s 待核验: %s' % (pg['period'], ' '.join(
-            '%s=%s' % (g['label'], g['value']) for g in pg['groups'].values())))
+            '%s=%s' % (g['label'], g['value'] or '-') for g in pg['groups'].values())))
     if report.get('latest_groups'):
         lg = report['latest_groups']
-        print('  最新一期 %s 已核验: %s 开奖=%s 合并=%s' % (
-            lg['period'], ' '.join('%s=%s(%s)' % (g['label'], g['value'],
-            '✓' if g.get('success') else '✗') for g in lg['groups'].values()),
+        print('  最新一期 %s 已核验: %s 开奖=%s 三组合并=%s 四组合并=%s' % (
+            lg['period'], ' '.join('%s=%s(%s)' % (g['label'], g['value'] or '-',
+            '✓' if g.get('success') else ('—' if lg.get('merged4_available') is False and g['key'] not in HISTORICAL_KEYS else '✗'))
+            for g in lg['groups'].values()),
             '·'.join(str(x) for x in (lg.get('actual') or [])[:4]),
-            '全避开✓' if lg.get('merged_success') else '未全避开✗'))
+            '全避开✓' if lg.get('merged_success') else '未全避开✗',
+            ('全避开✓' if lg.get('merged4_success') else '未全避开✗')
+            if lg.get('merged4_available') else '第4组未发布'))
     print('as_of_period=%s as_of_time=%s' % (report['as_of_period'], report['as_of_time']))
     print('collected=%d drops=%s enum_cache=%d' % (report['diagnostics']['collected'],
           json.dumps(report['diagnostics']['drops'], sort_keys=True),

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CLI 入口：三数共现避开3组 · 业务日核验统计。
+"""CLI 入口：三数共现避开 1/2/3/4 组 · 业务日核验统计。
 
 用法：
   python3 scripts/three_avoid2_daily.py            # 实算并写 data/three_avoid2_daily.json

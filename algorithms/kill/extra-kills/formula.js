@@ -673,7 +673,7 @@ function calculateExtraAvoidKills(history, performance) {
     const low = !!(lowRaw && !(Number.isFinite(topRate120) && topRate120 >= 90));
     let picked = pickByRank(scored, low, `extra.${key}`, opts.rankOptions || null);
     // 三数共现：短窗实绩落后时跟数据换码（只动该组），避免 hardness 同分把烂码粘死
-    if (["threeDigitAvoid", "threeDigitHit", "threeDigitAvoid2"].includes(key) && picked && picked.selected && picked.primary) {
+    if (["threeDigitAvoid", "threeDigitHit", "threeDigitAvoid2", "threeDigitAvoid3"].includes(key) && picked && picked.selected && picked.primary) {
       const sel = picked.selected;
       const pri = picked.primary;
       const selVal = String(sel.value != null ? sel.value : "");
@@ -837,6 +837,9 @@ function calculateExtraAvoidKills(history, performance) {
   const threeAvoid2 = calculateOne("threeDigitHit", "三数共现避开2组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: threeAvoidRankOptions, preferDigits: stablePreferDigits });
   if (threeAvoid2.value) threePicked.push(threeAvoid2.value);
   const threeAvoid3 = calculateOne("threeDigitAvoid2", "三数共现避开3组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: threeAvoidRankOptions, preferDigits: stablePreferDigits });
+  if (threeAvoid3.value) threePicked.push(threeAvoid3.value);
+  // 第 4 组：面板展示/单组统计参考项，不进入 kill1/kill3 的攻击语与整组命中
+  const threeAvoid4 = calculateOne("threeDigitAvoid3", "三数共现避开4组（参考）", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: threeAvoidRankOptions, preferDigits: stablePreferDigits });
   return {
     sumAvoid: calculateOne("sumAvoid", "单点和值过滤（高基线）", sumAvoidCandidates(), (record, value) => firstFourSum(record) === Number(value), 0.8),
     sumRangeAvoid: calculateOne("sumRangeAvoid", "和值极端区间过滤（高基线）", sumRangeAvoidCandidates(), (record, value) => firstFourSumInRange(record, value), 0.55),
@@ -852,6 +855,7 @@ function calculateExtraAvoidKills(history, performance) {
     twoDigitHit: calculateOne("twoDigitHit", "两数共现避开（基线参考）", twoDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.45, null, { rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits }),
     threeDigitHit: threeAvoid2,
     threeDigitAvoid2: threeAvoid3,
+    threeDigitAvoid3: threeAvoid4,
     anyTwoHeweiHit: calculateOne("anyTwoHeweiHit", "二数合尾02468排1码命中（高基线参考）", anyTwoHeweiCandidates(), (record, value) => anyHeweiCombinationHit(record, value, 2, 1), 0.55, "hit"),
     anyThreeHeweiHit: calculateOne("anyThreeHeweiHit", "三数合尾宽命中（高基线参考）", digitSetCandidatesMixedParity(5), (record, value) => anyHeweiCombinationHit(record, value, 3, 1), 0.62, "hit")
   };

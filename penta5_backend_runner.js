@@ -5288,6 +5288,7 @@ function modelKeyLabel(key) {
     "extra.twoDigitHit": "两数共现避开（基线参考）",
     "extra.threeDigitHit": "三数共现避开2组",
     "extra.threeDigitAvoid2": "三数共现避开3组",
+    "extra.threeDigitAvoid3": "三数共现避开4组（参考）",
     "extra.anyTwoHeweiHit": "二数合尾02468排1码命中（高基线参考）",
     "extra.anyThreeHeweiHit": "三数合尾宽命中（高基线参考）",
     "threeDuishu.backup": "三对数备用对"
@@ -5302,7 +5303,7 @@ function watchdogThresholdForModel(key) {
   if (key === "hewei.total") return MODEL_WATCHDOG_LOW_RATE;
   if (key === "hewei.unified") return HEWEI_UNIFIED_GUARD_RATE;
   if (/^hewei\.(wanQianBai|qianBaiShi|wanQianBaiShi|wanQianGe|wanBaiShi)$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
-  if (/^extra\.(sumAvoid|sumRangeAvoid|spanAvoid|repeatAvoid|consecutiveAvoid|parityRatioAvoid|sizeRatioAvoid|threeDigitAvoid|threeDigitAvoid2|twoDigitAvoid|twoDigitAvoid2|twoDigitAvoid3|twoDigitHit|threeDigitHit)$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
+  if (/^extra\.(sumAvoid|sumRangeAvoid|spanAvoid|repeatAvoid|consecutiveAvoid|parityRatioAvoid|sizeRatioAvoid|threeDigitAvoid|threeDigitAvoid2|threeDigitAvoid3|twoDigitAvoid|twoDigitAvoid2|twoDigitAvoid3|twoDigitHit|threeDigitHit)$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
   if (/^extra\.(anyTwoHeweiHit|anyThreeHeweiHit)$/.test(key)) return MODEL_WATCHDOG_LOW_RATE;
   return null;
 }
@@ -5459,7 +5460,7 @@ function extraModelIntegrityReason(key, item) {
   if (["twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit"].includes(key)) {
     if (!/^\d{2}$/.test(value) || new Set(value.split("")).size !== 2) return "invalid-two-digit-code";
   }
-  if (["threeDigitAvoid", "threeDigitHit", "threeDigitAvoid2"].includes(key)) {
+  if (["threeDigitAvoid", "threeDigitHit", "threeDigitAvoid2", "threeDigitAvoid3"].includes(key)) {
     if (!/^\d{3}$/.test(value) || new Set(value.split("")).size !== 3) return "invalid-three-digit-code";
   }
   if (key === "anyTwoHeweiHit") {
@@ -7301,6 +7302,10 @@ function calculateExtraAvoidKills(history, performance) {
   const threeAvoid2 = calculateOne("threeDigitHit", "三数共现避开2组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
   if (threeAvoid2.value) threePicked.push(threeAvoid2.value);
   const threeAvoid3 = calculateOne("threeDigitAvoid2", "三数共现避开3组", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
+  if (threeAvoid3.value) threePicked.push(threeAvoid3.value);
+  // 第 4 组为面板展示/单组统计参考项：kill1/kill3 的攻击语与整组仍按前 3 组，
+  // 不进入 REQUIRED_EXTRA_KILL_KEYS，旧 tip 缺该键也不会被判结构不完整。
+  const threeAvoid4 = calculateOne("threeDigitAvoid3", "三数共现避开4组（参考）", threeCandidates, (record, value) => threeDigitCooccurs(record, value), 0.25, null, { excludeValues: threePicked, rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits });
   return {
     sumAvoid: calculateOne("sumAvoid", "单点和值过滤（高基线）", sumAvoidCandidates(), (record, value) => firstFourSum(record) === Number(value), 0.8),
     sumRangeAvoid: calculateOne("sumRangeAvoid", "和值极端区间过滤（高基线）", sumRangeAvoidCandidates(), (record, value) => firstFourSumInRange(record, value), 0.55),
@@ -7316,6 +7321,7 @@ function calculateExtraAvoidKills(history, performance) {
     twoDigitHit: calculateOne("twoDigitHit", "两数共现避开（基线参考）", twoDigitAvoidCandidates(), (record, value) => threeDigitCooccurs(record, value), 0.45, null, { rankOptions: twoAvoidRankOptions, preferDigits: stablePreferDigits }),
     threeDigitHit: threeAvoid2,
     threeDigitAvoid2: threeAvoid3,
+    threeDigitAvoid3: threeAvoid4,
     anyTwoHeweiHit: calculateOne("anyTwoHeweiHit", "二数合尾02468排1码命中（高基线参考）", anyTwoHeweiCandidates(), (record, value) => anyHeweiCombinationHit(record, value, 2, 1), 0.55, "hit"),
     anyThreeHeweiHit: calculateOne("anyThreeHeweiHit", "三数合尾宽命中（高基线参考）", digitSetCandidatesMixedParity(ANY_THREE_HEWEI_CODE_SIZE), (record, value) => anyHeweiCombinationHit(record, value, 3, 1), 0.62, "hit")
   };
@@ -13894,6 +13900,7 @@ function evaluatePrediction(prediction, actualRecord) {
   const twoDigitHitValue = extraValue("twoDigitHit");
   const threeDigitHitValue = extraValue("threeDigitHit");
   const threeDigitAvoid2Value = extraValue("threeDigitAvoid2");
+  const threeDigitAvoid3Value = extraValue("threeDigitAvoid3");
   const anyTwoHeweiHitValue = extraValue("anyTwoHeweiHit");
   const anyThreeHeweiHitValue = extraValue("anyThreeHeweiHit");
   const sumRangeAvoidValue = extraValue("sumRangeAvoid");
@@ -13975,6 +13982,11 @@ function evaluatePrediction(prediction, actualRecord) {
       actualDigits: actualFirstFourDigits,
       success: threeDigitAvoid2Value ? !threeDigitCooccurs(actualRecord, threeDigitAvoid2Value) : null
     },
+    threeDigitAvoid3: {
+      value: threeDigitAvoid3Value,
+      actualDigits: actualFirstFourDigits,
+      success: threeDigitAvoid3Value ? !threeDigitCooccurs(actualRecord, threeDigitAvoid3Value) : null
+    },
     anyTwoHeweiHit: {
       value: anyTwoHeweiHitValue,
       actualTails: heweiCombinationTails(actualRecord, 2),
@@ -14026,6 +14038,7 @@ function evaluatePrediction(prediction, actualRecord) {
       twoDigitHit: twoDigitHitValue,
       threeDigitHit: threeDigitHitValue,
       threeDigitAvoid2: threeDigitAvoid2Value,
+      threeDigitAvoid3: threeDigitAvoid3Value,
       anyTwoHeweiHit: anyTwoHeweiHitValue,
       anyThreeHeweiHit: anyThreeHeweiHitValue,
       sumRangeAvoid: sumRangeAvoidValue,
@@ -15385,7 +15398,7 @@ function slimExtraKill(entry) {
 function slimExtraKills(extraKills) {
   if (!extraKills || typeof extraKills !== "object") return {};
   const out = {};
-  ["sumAvoid", "sumRangeAvoid", "spanAvoid", "repeatAvoid", "consecutiveAvoid", "parityRatioAvoid", "sizeRatioAvoid", "threeDigitAvoid", "twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit", "threeDigitHit", "threeDigitAvoid2", "anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((key) => {
+  ["sumAvoid", "sumRangeAvoid", "spanAvoid", "repeatAvoid", "consecutiveAvoid", "parityRatioAvoid", "sizeRatioAvoid", "threeDigitAvoid", "twoDigitAvoid", "twoDigitAvoid2", "twoDigitAvoid3", "twoDigitHit", "threeDigitHit", "threeDigitAvoid2", "threeDigitAvoid3", "anyTwoHeweiHit", "anyThreeHeweiHit"].forEach((key) => {
     if (extraKills[key]) out[key] = slimExtraKill(Object.assign({ key }, extraKills[key]));
   });
   return out;
