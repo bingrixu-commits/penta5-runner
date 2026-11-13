@@ -116,7 +116,7 @@ _STYLE = '''<style>
 #cold-observation{box-sizing:border-box;width:calc(100% - 24px);max-width:1240px;margin:12px auto;padding:14px;border:1px solid #a5b4fc;border-radius:12px;background:#fafbff;color:#334155;font:14px/1.65 sans-serif;min-width:0;overflow-wrap:anywhere}
 #cold-observation *{box-sizing:border-box}
 #cold-observation h3{font-size:18px;color:#3730a3;margin:0 0 4px}
-#cold-observation h4{font-size:15px;margin:12px 0 6px;color:#1e293b}
+#cold-observation h4{font-size:15px;margin:12px 0 6px;color:#1e293b;scroll-margin-top:56px}
 #cold-observation .cold-meta,#cold-observation .cold-note{font-size:13px;color:#64748b}
 #cold-observation .cold-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,275px),1fr));gap:8px;min-width:0}
 #cold-observation .cold-card{min-width:0;padding:9px 10px;border:1px solid #dbe4fb;border-radius:8px;background:#fff}
@@ -170,7 +170,7 @@ def render_observation(summary):
     groups = []
     for family, labels, title in (('positions', POSITIONS, '四个位置'), ('tails', TAILS, '五种合尾'),
                                    ('shapes', SHAPES, '四位形态')):
-        groups.append('<h4>' + title + '</h4><div class="cold-grid">'
+        groups.append('<h4 id="cold-' + family + '">' + title + '</h4><div class="cold-grid">'
                       + ''.join(_card(data[family][spec[0]], spec[1], family + '-' + spec[0]) for spec in labels)
                       + '</div>')
     period_range = (data['first_period'] + ' ～ ' + data['last_period']) if data['sample_count'] else '暂无可用样本'

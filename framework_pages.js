@@ -21,6 +21,13 @@ const FRAMEWORKS = [
   {scope: 'framework', marker: 'R1_FRAMEWORK', title: 'framework 框架'},
 ];
 
+// 统计分组：取自面板「冷码观察」区块的三个分组（定位 / 合尾 / 形态）。
+const STATS = [
+  {anchor: 'cold-positions', label: '定位统计'},
+  {anchor: 'cold-tails', label: '合尾统计'},
+  {anchor: 'cold-shapes', label: '形态统计'},
+];
+
 const PAGE_HEAD = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>%TITLE% · Penta5</title>
@@ -32,6 +39,10 @@ body{margin:0;background:#f1f5f9;font:14px/1.6 system-ui,sans-serif;color:#0f172
 .fw-nav a:hover{background:#1e293b;color:#fff}
 .fw-nav a.active{background:#2563eb;color:#fff}
 .fw-nav .brand{font-weight:700;color:#fff;margin-right:6px}
+.fw-nav .fw-nav-sep{width:1px;height:15px;background:#334155;margin:0 4px}
+.fw-nav a.stat{color:#5eead4}
+.fw-nav a.stat:hover{background:#134e4a;color:#ccfbf1}
+.fw-nav a.stat.active{background:#0d9488;color:#fff}
 .fw-wrap{padding:6px 0 24px}
 .fw-switch{max-width:1240px;margin:10px auto;padding:10px 14px;border:1px solid #cbd5e1;
  border-radius:10px;background:#fff;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:13px}
@@ -52,7 +63,10 @@ function nav(active) {
   const links = FRAMEWORKS.map(f =>
     `<a href="/f/${f.scope}"${f.scope === active ? ' class="active"' : ''}>${f.title.split(' ')[0]}</a>`
   ).join('');
-  return `<nav class="fw-nav"><a class="brand" href="/f/"${active === '' ? ' class="active"' : ''}>总览</a>${links}</nav>`;
+  const stats = STATS.map(s =>
+    `<a class="stat${active === 'stats' ? ' active' : ''}" href="/f/stats#${s.anchor}">${s.label}</a>`
+  ).join('');
+  return `<nav class="fw-nav"><a class="brand" href="/f/"${active === '' ? ' class="active"' : ''}>总览</a>${links}<span class="fw-nav-sep"></span>${stats}</nav>`;
 }
 
 function extract(html, marker) {
@@ -147,7 +161,9 @@ function indexPage(html) {
 <h3 style="margin:0 0 8px">框架总览（每框架一页）</h3>
 <table style="width:100%;border-collapse:collapse;font-size:13px">
 <thead><tr><th style="text-align:left">框架</th><th style="text-align:left">作用域</th><th style="text-align:left">状态</th></tr></thead>
-<tbody>${items}</tbody></table></section></div></body></html>`;
+<tbody>${items}</tbody></table>
+<p style="margin:10px 0 0;font-size:13px;color:#475569">统计入口：<a href="/f/stats#cold-positions">定位统计</a> · <a href="/f/stats#cold-tails">合尾统计</a> · <a href="/f/stats#cold-shapes">形态统计</a></p>
+</section></div></body></html>`;
 }
 
 function frameworkPage(html, fw) {
@@ -155,6 +171,17 @@ function frameworkPage(html, fw) {
   const body = block || `<div class="fw-missing">该框架暂时没有面板区块（${fw.marker} 标记不存在）。</div>`;
   return `${PAGE_HEAD.replace('%TITLE%', fw.title)}${nav(fw.scope)}` +
          `<div class="fw-wrap">${switchBlock(fw)}${body}</div>`;
+}
+
+// 统计页：定位 / 合尾 / 形态三组统计（取面板「冷码观察」区块，三个分组各带锚点）。
+function statsPage(html) {
+  const block = extract(html, 'COLD_OBSERVATION');
+  const body = block || '<div class="fw-missing">统计区块暂时没有数据（COLD_OBSERVATION 标记不存在）。</div>';
+  const links = STATS.map(s => `<a href="#${s.anchor}">${s.label}</a>`).join('');
+  return `${PAGE_HEAD.replace('%TITLE%', '统计')}${nav('stats')}` +
+         `<div class="fw-wrap"><section class="fw-switch"><strong>统计</strong>` +
+         `<span style="color:#475569">定位 / 合尾 / 形态三组统计，取自最新面板的「冷码观察」区块；也可直接点：</span>` +
+         `<span style="display:flex;gap:8px;flex-wrap:wrap">${links}</span></section>${body}</div></body></html>`;
 }
 
 function createFrameworkPageHandler(options) {
@@ -185,6 +212,8 @@ function createFrameworkPageHandler(options) {
     let page;
     if (!scope) {
       page = indexPage(html);
+    } else if (scope === 'stats') {
+      page = statsPage(html);
     } else {
       const fw = FRAMEWORKS.find(item => item.scope === scope);
       if (!fw) { res.writeHead(404, {'Content-Type': 'text/plain; charset=utf-8'}); res.end('unknown framework'); return true; }
